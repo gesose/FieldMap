@@ -1,13 +1,16 @@
 // FieldMap service worker
 // Strategy:
-//  - App shell (HTML, manifest, icons, Leaflet CSS/JS): cache-first, so the app
-//    always loads instantly and works fully offline once installed.
+//  - App shell (HTML, manifest, icons, Leaflet CSS/JS, Firebase SDK files): cache-first,
+//    so the app always loads instantly and works fully offline once installed.
 //  - Map tiles & GMU/public-land data: stale-while-revalidate — serve a cached
 //    tile instantly if we have one, and quietly refresh it in the background
 //    when online. This means any area you've viewed before stays available
 //    offline, even without an explicit "download this area" step.
+//  - Firebase/Google sign-in & sync traffic: passed straight through, untouched.
+//    Firestore has its own IndexedDB-based offline queueing built in — our cache
+//    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v2';
+var SHELL_CACHE = 'fieldmap-shell-v3';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -19,7 +22,10 @@ var SHELL_FILES = [
   './icon-512-maskable.png',
   './icon-180.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
-  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+  'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js',
+  'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js',
+  'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js'
 ];
 
 self.addEventListener('install', function(event){
@@ -60,9 +66,21 @@ var TILE_HOSTS = [
   'api.openrouteservice.org'
 ];
 
-function isTileRequest(url){
-  for (var i=0;i<TILE_HOSTS.length;i++){
-    if (url.indexOf(TILE_HOSTS[i]) !== -1) return true;
+// Hosts we never intercept at all — sign-in and sync traffic passes straight
+// to the network so Firebase's own offline handling stays in full control.
+var BYPASS_HOSTS = [
+  'firestore.googleapis.com',
+  'identitytoolkit.googleapis.com',
+  'securetoken.googleapis.com',
+  'www.googleapis.com',
+  'accounts.google.com',
+  'apis.google.com',
+  'firebaseapp.com'
+];
+
+function hostMatches(url, list){
+  for (var i=0;i<list.length;i++){
+    if (url.indexOf(list[i]) !== -1) return true;
   }
   return false;
 }
@@ -73,7 +91,9 @@ self.addEventListener('fetch', function(event){
 
   var url = req.url;
 
-  if (isTileRequest(url)){
+  if (hostMatches(url, BYPASS_HOSTS)) return; // let the browser handle it natively
+
+  if (hostMatches(url, TILE_HOSTS)){
     // Stale-while-revalidate for map tiles & data
     event.respondWith(
       caches.open(TILE_CACHE).then(function(cache){

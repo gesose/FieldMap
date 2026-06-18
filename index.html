@@ -216,6 +216,13 @@
   .offline-area-name{font-size:13px;font-weight:500;}
   .offline-area-meta{font-size:11px;color:var(--text-muted);margin-top:1px;}
   #offline-areas-empty{padding:10px 0;font-size:12px;color:var(--text-muted);}
+  .offline-boundary-label{position:relative;}
+  .offline-boundary-label div{
+    position:absolute;top:0;left:0;transform:translate(-50%,-50%);
+    white-space:nowrap;background:rgba(90,155,216,0.85);color:#fff;
+    font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4);pointer-events:none;
+  }
   .import-item-info{flex:1;min-width:0;}
   .import-item-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .import-row-cb{accent-color:var(--accent);flex-shrink:0;}
@@ -291,11 +298,18 @@
     width:40px;height:40px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
     display:flex;align-items:center;justify-content:center;cursor:pointer;
-    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative;
   }
   .map-icon-btn:hover{background:var(--bg-elevated-2);}
   .map-icon-btn.active{background:var(--accent);border-color:var(--accent);color:#2a1208;}
   #map.measure-mode{cursor:crosshair;}
+  #account-sync-dot{
+    position:absolute;top:1px;right:1px;width:9px;height:9px;border-radius:50%;
+    background:#5fa86b;border:1.5px solid var(--bg-elevated);
+  }
+  #account-sync-dot.hidden{display:none;}
+  #account-sync-dot.syncing{background:#d9a13f;}
+  #account-sync-dot.error{background:var(--danger);}
 
   #cluster-panel{
     position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
@@ -598,6 +612,32 @@
       <path d="M3 14v2.5a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V14"/>
     </svg>
   </button>
+  <button class="map-icon-btn" id="account-btn" aria-label="Account and sync">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="10" cy="6.5" r="3.2"/>
+      <path d="M3.5 17c1-3.8 4-5.8 6.5-5.8s5.5 2 6.5 5.8"/>
+    </svg>
+    <span id="account-sync-dot" class="hidden"></span>
+  </button>
+</div>
+
+<div id="account-panel" class="floating-panel hidden">
+  <h2>Account &amp; sync</h2>
+  <div id="account-signed-out">
+    <p class="hint" style="margin-bottom:14px;">Sign in with Google to sync your pins, tracks, and tags across all your devices. Your data stays private to your account — nobody else can see it.</p>
+    <button class="btn btn-primary btn-block" id="google-signin-btn">Sign in with Google</button>
+  </div>
+  <div id="account-signed-in" class="hidden">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <img id="account-avatar" src="" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;" alt="">
+      <div style="min-width:0;">
+        <div id="account-name" style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+        <div id="account-email" style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+      </div>
+    </div>
+    <div id="account-sync-status" class="hint" style="margin-bottom:14px;">Synced</div>
+    <button class="btn btn-ghost btn-block" id="google-signout-btn">Sign out</button>
+  </div>
 </div>
 
 <div id="layers-panel" class="floating-panel hidden">
@@ -659,6 +699,11 @@
   </label>
   <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="offline-boundaries-toggle" checked> Offline area outlines
+  </label>
+  <p class="hint" style="margin:4px 0 0;">Shows a dashed box around each downloaded offline area, even when zoomed out past it — handy for getting your bearings.</p>
 
   <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
@@ -1055,6 +1100,8 @@
     pins: [],
     tracks: [],
     tags: SEED_TAGS.slice(),
+    tombstones: {},      // id -> deletedAt timestamp, prevents deleted items reappearing after sync
+    lastLocalEditAt: 0,  // bumped on every change; used to resolve sync conflicts
     settings: {
       layers: {
         aerial: { on:false, opacity:1 },
@@ -1067,6 +1114,7 @@
       mvumOn: false, mvumOpacity: 0.8,
       hydroOn: false, hydroOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
+      showOfflineBoundaries: true,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM
     }
   };
@@ -1183,6 +1231,10 @@
     return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
   }
 
+  function recordTombstone(id){
+    state.tombstones[id] = Date.now();
+  }
+
   function slugify(label){
     var base = label.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'tag';
     var id = base, n = 1;
@@ -1259,6 +1311,7 @@
     map.attributionControl.setPosition('bottomleft');
 
     clusterLayerGroup = L.layerGroup().addTo(map);
+    offlineBoundaryLayerGroup = L.layerGroup().addTo(map);
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
     map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
     map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
@@ -1385,6 +1438,9 @@
     }
 
     if (state.settings.gmuAzOn) toggleGmuLayer('az', true);
+
+    document.getElementById('offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries;
+    renderOfflineBoundaries();
 
     map.on('click', function(e){
       closeClusterPanel();
@@ -1755,6 +1811,7 @@
 
   function deleteTrackById(id){
     state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+    recordTombstone(id);
     removeTrackFromMap(id);
     renderPinList();
     scheduleSave();
@@ -1994,6 +2051,7 @@
 
   function deletePinById(id){
     state.pins = state.pins.filter(function(p){ return p.id !== id; });
+    recordTombstone(id);
     removeMarkerForPin(id);
     renderPinList();
     scheduleSave();
@@ -2791,10 +2849,12 @@
     var total = pinIds.length + trackIds.length;
     pinIds.forEach(function(id){
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
+      recordTombstone(id);
       removeMarkerForPin(id);
     });
     trackIds.forEach(function(id){
       state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+      recordTombstone(id);
       removeTrackFromMap(id);
     });
     document.getElementById('bulk-delete-modal').classList.add('hidden');
@@ -2918,10 +2978,12 @@
     });
     pinIds.forEach(function(id){
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
+      recordTombstone(id);
       removeMarkerForPin(id);
     });
     trackIds.forEach(function(id){
       state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+      recordTombstone(id);
       removeTrackFromMap(id);
     });
     document.getElementById('find-dupes-modal').classList.add('hidden');
@@ -3022,6 +3084,7 @@
     if (!confirm(msg)) return;
 
     state.tags = state.tags.filter(function(t){ return t.id !== id; });
+    recordTombstone(id);
     function fixTags(arr){
       arr.forEach(function(item){
         if (!item.tags) return;
@@ -3739,6 +3802,38 @@
     }
   }
 
+  // ---------- Offline area boundary outlines ----------
+  // Shows a dashed rectangle + label for every downloaded area, so you can
+  // still see roughly where your offline coverage is even when zoomed out
+  // past it (e.g. to get your bearings if you've lost track of position).
+  var offlineBoundaryLayerGroup = null;
+
+  function renderOfflineBoundaries(){
+    if (!offlineBoundaryLayerGroup) return;
+    offlineBoundaryLayerGroup.clearLayers();
+    if (!state.settings.showOfflineBoundaries) return;
+    loadOfflineAreas().then(function(areas){
+      areas.forEach(function(area){
+        var bounds = L.latLngBounds(area.boundsSW, area.boundsNE);
+        var rect = L.rectangle(bounds, {
+          color:'#5a9bd8', weight:2, dashArray:'6,5', fill:true,
+          fillColor:'#5a9bd8', fillOpacity:0.04, interactive:false
+        });
+        offlineBoundaryLayerGroup.addLayer(rect);
+        var label = L.marker(bounds.getCenter(), {
+          icon: L.divIcon({
+            className:'offline-boundary-label',
+            html:'<div>' + escapeHtml(area.name) + ' (offline)</div>',
+            iconSize:[0,0]
+          }),
+          interactive:false
+        });
+        offlineBoundaryLayerGroup.addLayer(label);
+      });
+    });
+  }
+
+
   function renderOfflineAreasList(){
     loadOfflineAreas().then(function(areas){
       var wrap = document.getElementById('offline-areas-list');
@@ -3770,6 +3865,7 @@
             var updated = current.filter(function(a){ return a.id !== area.id; });
             saveOfflineAreas(updated);
             renderOfflineAreasList();
+            renderOfflineBoundaries();
             showToast('Deleted offline area "' + area.name + '"');
           });
         });
@@ -3850,6 +3946,7 @@
         areas.push(areaEntry);
         saveOfflineAreas(areas);
         renderOfflineAreasList();
+        renderOfflineBoundaries();
         document.getElementById('offline-progress-wrap').classList.add('hidden');
         var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
         showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
@@ -3866,14 +3963,113 @@
     caches.delete(TILE_CACHE_NAME).then(function(){
       saveOfflineAreas([]);
       renderOfflineAreasList();
+      renderOfflineBoundaries();
       showToast('All offline map data cleared');
     });
   }
 
+  // ---------- Cloud sync bridge ----------
+  // This app's core logic (above) runs as a classic script and knows nothing about
+  // Firebase. The actual Firebase calls live in a separate <script type="module">
+  // block at the bottom of the file (ES modules are required for the Firebase CDN
+  // SDK). The two communicate through this small bridge object on window.
+  var cloudPushTimer = null;
+  var isSignedIn = false;
+  var appIsReady = false;
+  var appReadyCallbacks = [];
+
+  function whenAppReady(cb){
+    if (appIsReady) cb(); else appReadyCallbacks.push(cb);
+  }
+
+  function scheduleCloudPush(){
+    if (!isSignedIn || !window.FieldMapSync) return;
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(function(){
+      window.FieldMapSync.pushNow(getSyncableState());
+    }, 1500);
+  }
+
+  function getSyncableState(){
+    // Only the data that should travel between devices — map view, layer
+    // toggles, and other per-device display settings intentionally stay local.
+    return {
+      pins: state.pins,
+      tracks: state.tracks,
+      tags: state.tags,
+      tombstones: state.tombstones,
+      lastLocalEditAt: state.lastLocalEditAt
+    };
+  }
+
+  function applyMergedState(merged){
+    state.pins = merged.pins;
+    state.tracks = merged.tracks;
+    state.tags = merged.tags && merged.tags.length ? merged.tags : SEED_TAGS.slice();
+    state.tombstones = merged.tombstones || {};
+    state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
+
+    // Full re-render: clear and rebuild every map layer + UI list from scratch
+    Object.keys(markersById).forEach(function(id){ if (markersById[id]) map.removeLayer(markersById[id]); });
+    markersById = {};
+    Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
+    trackLayersById = {};
+    state.pins.forEach(addMarkerForPin);
+    state.tracks.forEach(addTrackToMap);
+    refreshStateChips();
+    renderTagChips();
+    renderTripChips();
+    refreshTripSuggestions();
+    renderDateChips();
+    renderPinList();
+    refreshAllVisibility();
+    persist();
+    showToast('Synced — ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
+  }
+
+  function updateAccountUI(user){
+    isSignedIn = !!user;
+    var dot = document.getElementById('account-sync-dot');
+    if (user){
+      document.getElementById('account-signed-out').classList.add('hidden');
+      document.getElementById('account-signed-in').classList.remove('hidden');
+      document.getElementById('account-avatar').src = user.photoURL || '';
+      document.getElementById('account-name').textContent = user.displayName || 'Signed in';
+      document.getElementById('account-email').textContent = user.email || '';
+      dot.classList.remove('hidden', 'error', 'syncing');
+    } else {
+      document.getElementById('account-signed-out').classList.remove('hidden');
+      document.getElementById('account-signed-in').classList.add('hidden');
+      dot.classList.add('hidden');
+    }
+  }
+
+  function updateSyncStatusUI(statusText, kind){
+    var statusEl = document.getElementById('account-sync-status');
+    if (statusEl) statusEl.textContent = statusText;
+    var dot = document.getElementById('account-sync-dot');
+    if (!dot || dot.classList.contains('hidden')) return;
+    dot.classList.remove('syncing', 'error');
+    if (kind === 'syncing') dot.classList.add('syncing');
+    if (kind === 'error') dot.classList.add('error');
+  }
+
+  // Exposed for the Firebase module (loaded later in the file) to call into.
+  window.FieldMapApp = {
+    getSyncableState: getSyncableState,
+    applyMergedState: applyMergedState,
+    updateAccountUI: updateAccountUI,
+    updateSyncStatusUI: updateSyncStatusUI,
+    showToast: showToast,
+    whenReady: whenAppReady
+  };
+
   // ---------- Persistence ----------
   function scheduleSave(){
+    state.lastLocalEditAt = Date.now();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(persist, 700);
+    scheduleCloudPush();
   }
 
   function persist(){
@@ -3921,6 +4117,9 @@
             if (!state.settings.layers.relief) state.settings.layers.relief = { on:false, opacity:1 };
             if (!state.settings.layers.imagerytopo) state.settings.layers.imagerytopo = { on:false, opacity:1 };
             if (!state.settings.layers.opentopo) state.settings.layers.opentopo = { on:false, opacity:1 };
+            if (state.settings.showOfflineBoundaries === undefined) state.settings.showOfflineBoundaries = true;
+            if (!state.tombstones) state.tombstones = {};
+            if (state.lastLocalEditAt === undefined) state.lastLocalEditAt = 0;
             if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
             if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
             state.pins.forEach(function(p){
@@ -3946,6 +4145,7 @@
   function closeAllPanels(){
     document.getElementById('layers-panel').classList.add('hidden');
     document.getElementById('filter-panel').classList.add('hidden');
+    document.getElementById('account-panel').classList.add('hidden');
   }
 
   // ---------- Wire up UI ----------
@@ -4024,6 +4224,20 @@
       closeAllPanels();
       if (willOpen) panel.classList.remove('hidden');
     });
+    document.getElementById('account-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      var panel = document.getElementById('account-panel');
+      var willOpen = panel.classList.contains('hidden');
+      closeAllPanels();
+      if (willOpen) panel.classList.remove('hidden');
+    });
+    document.getElementById('google-signin-btn').addEventListener('click', function(){
+      if (window.FieldMapSync) window.FieldMapSync.signIn();
+      else showToast('Sync is still loading — try again in a moment');
+    });
+    document.getElementById('google-signout-btn').addEventListener('click', function(){
+      if (window.FieldMapSync) window.FieldMapSync.signOut();
+    });
     document.getElementById('map-search-input').addEventListener('keydown', function(e){
       if (e.key === 'Enter') searchGoto();
     });
@@ -4067,7 +4281,7 @@
       if (!searchBar.contains(e.target)){
         document.getElementById('map-search-results').innerHTML = '';
       }
-      ['layers-panel','filter-panel','sort-menu','export-menu'].forEach(function(id){
+      ['layers-panel','filter-panel','account-panel','sort-menu','export-menu'].forEach(function(id){
         var panel = document.getElementById(id);
         if (!panel.classList.contains('hidden') && !panel.contains(e.target)){
           panel.classList.add('hidden');
@@ -4303,6 +4517,11 @@
       closeAllPanels();
       openOfflineModal();
     });
+    document.getElementById('offline-boundaries-toggle').addEventListener('change', function(){
+      state.settings.showOfflineBoundaries = this.checked;
+      renderOfflineBoundaries();
+      scheduleSave();
+    });
     document.getElementById('offline-zoom-min').addEventListener('change', updateOfflineEstimate);
     document.getElementById('offline-zoom-max').addEventListener('change', updateOfflineEstimate);
     document.getElementById('offline-download-btn').addEventListener('click', startOfflineDownload);
@@ -4353,12 +4572,188 @@
     state.tracks.forEach(addTrackToMap);
     renderPinList();
     document.getElementById('loading-overlay').classList.add('hidden');
+    appIsReady = true;
+    appReadyCallbacks.forEach(function(cb){ cb(); });
+    appReadyCallbacks = [];
   }).catch(function(){
     document.getElementById('loading-overlay').classList.add('hidden');
     showToast('Something went wrong loading the app — check the browser console for details', 6000);
   });
 
 })();
+</script>
+
+<script type="module">
+  // FieldMap cloud sync — Firebase Auth (Google) + Firestore.
+  // This is a separate ES module because the Firebase CDN SDK requires ES module
+  // imports. It talks to the main app (a classic script above) only through the
+  // window.FieldMapApp / window.FieldMapSync bridge objects defined there.
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+  import {
+    initializeFirestore, doc, getDoc, setDoc, onSnapshot,
+    persistentLocalCache, persistentMultipleTabManager
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+  var firebaseConfig = {
+    apiKey: "AIzaSyCLWePvUIXul5k-mBPyxyzLVmP_tOnI0l0",
+    authDomain: "fieldmap-4d8bc.firebaseapp.com",
+    projectId: "fieldmap-4d8bc",
+    storageBucket: "fieldmap-4d8bc.firebasestorage.app",
+    messagingSenderId: "733585974605",
+    appId: "1:733585974605:web:7bee756b07871a3fb10304"
+  };
+
+  var fbApp = initializeApp(firebaseConfig);
+  var auth = getAuth(fbApp);
+  var provider = new GoogleAuthProvider();
+
+  // Offline persistence: writes made while offline queue in IndexedDB and sync
+  // automatically once back online. Multi-tab manager avoids errors if the app
+  // is ever open in more than one browser tab at once.
+  var db = initializeFirestore(fbApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+
+  var currentUid = null;
+  var remoteUnsubscribe = null;
+  var applyingRemote = false; // true briefly while we apply our own or a remote write, to avoid feedback loops
+
+  // Combines local + cloud data. Items present on only one side are kept (union).
+  // Items present on both sides with the same id use whichever side was edited
+  // more recently overall. Anything tombstoned (deleted) on either side is dropped.
+  function mergeStates(local, cloud){
+    var localNewer = (local.lastLocalEditAt || 0) >= (cloud.updatedAtMs || 0);
+
+    var tombstones = {};
+    Object.keys(cloud.tombstones || {}).forEach(function(id){ tombstones[id] = cloud.tombstones[id]; });
+    Object.keys(local.tombstones || {}).forEach(function(id){
+      tombstones[id] = tombstones[id] ? Math.max(tombstones[id], local.tombstones[id]) : local.tombstones[id];
+    });
+
+    function mergeArray(localArr, cloudArr){
+      var byId = {};
+      (cloudArr || []).forEach(function(item){ byId[item.id] = item; });
+      (localArr || []).forEach(function(item){
+        if (!byId[item.id] || localNewer) byId[item.id] = item;
+      });
+      return Object.keys(byId)
+        .filter(function(id){ return !tombstones[id]; })
+        .map(function(id){ return byId[id]; });
+    }
+
+    return {
+      pins: mergeArray(local.pins, cloud.pins),
+      tracks: mergeArray(local.tracks, cloud.tracks),
+      tags: mergeArray(local.tags, cloud.tags),
+      tombstones: tombstones,
+      lastLocalEditAt: Math.max(local.lastLocalEditAt || 0, cloud.updatedAtMs || 0)
+    };
+  }
+
+  function performInitialSync(uid){
+    window.FieldMapApp.updateSyncStatusUI('Syncing…', 'syncing');
+    var ref = doc(db, 'users', uid);
+    return getDoc(ref).then(function(snap){
+      var local = window.FieldMapApp.getSyncableState();
+      if (!snap.exists()){
+        return setDoc(ref, {
+          pins: local.pins, tracks: local.tracks, tags: local.tags,
+          tombstones: local.tombstones, updatedAtMs: local.lastLocalEditAt || Date.now()
+        }).then(function(){
+          window.FieldMapApp.updateSyncStatusUI('Synced', null);
+        });
+      }
+      var cloud = snap.data();
+      var merged = mergeStates(local, cloud);
+      applyingRemote = true;
+      return setDoc(ref, {
+        pins: merged.pins, tracks: merged.tracks, tags: merged.tags,
+        tombstones: merged.tombstones, updatedAtMs: merged.lastLocalEditAt
+      }).then(function(){
+        window.FieldMapApp.applyMergedState(merged);
+        applyingRemote = false;
+        window.FieldMapApp.updateSyncStatusUI('Synced', null);
+      });
+    }).catch(function(err){
+      console.error('Initial sync failed', err);
+      applyingRemote = false;
+      window.FieldMapApp.updateSyncStatusUI('Sync error — will retry on next change', 'error');
+    });
+  }
+
+  function startLiveSync(uid){
+    var ref = doc(db, 'users', uid);
+    remoteUnsubscribe = onSnapshot(ref, function(snap){
+      if (!snap.exists() || applyingRemote) return;
+      var cloud = snap.data();
+      var local = window.FieldMapApp.getSyncableState();
+      // Only react to changes that genuinely came from elsewhere — if this cloud
+      // version is no newer than what we already have, it's an echo of our own write.
+      if ((cloud.updatedAtMs || 0) <= (local.lastLocalEditAt || 0)) return;
+
+      applyingRemote = true;
+      window.FieldMapApp.applyMergedState({
+        pins: cloud.pins, tracks: cloud.tracks, tags: cloud.tags,
+        tombstones: cloud.tombstones, lastLocalEditAt: cloud.updatedAtMs
+      });
+      applyingRemote = false;
+    }, function(err){
+      console.error('Live sync listener error', err);
+      window.FieldMapApp.updateSyncStatusUI('Sync error', 'error');
+    });
+  }
+
+  function pushNow(localState){
+    if (!currentUid) return;
+    window.FieldMapApp.updateSyncStatusUI('Syncing…', 'syncing');
+    var ref = doc(db, 'users', currentUid);
+    applyingRemote = true;
+    setDoc(ref, {
+      pins: localState.pins, tracks: localState.tracks, tags: localState.tags,
+      tombstones: localState.tombstones, updatedAtMs: localState.lastLocalEditAt
+    }).then(function(){
+      applyingRemote = false;
+      window.FieldMapApp.updateSyncStatusUI('Synced', null);
+    }).catch(function(err){
+      applyingRemote = false;
+      console.error('Push failed', err);
+      window.FieldMapApp.updateSyncStatusUI('Sync error — will retry on next change', 'error');
+    });
+  }
+
+  onAuthStateChanged(auth, function(user){
+    if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
+    window.FieldMapApp.whenReady(function(){
+      if (user){
+        currentUid = user.uid;
+        window.FieldMapApp.updateAccountUI(user);
+        performInitialSync(user.uid).then(function(){
+          startLiveSync(user.uid);
+        });
+      } else {
+        currentUid = null;
+        window.FieldMapApp.updateAccountUI(null);
+      }
+    });
+  });
+
+  window.FieldMapSync = {
+    signIn: function(){
+      signInWithPopup(auth, provider).catch(function(err){
+        console.error('Sign-in failed', err);
+        if (err && err.code !== 'auth/popup-closed-by-user'){
+          window.FieldMapApp.showToast("Sign-in didn't go through — try again");
+        }
+      });
+    },
+    signOut: function(){
+      signOut(auth);
+    },
+    pushNow: pushNow
+  };
 </script>
 
 <script>
