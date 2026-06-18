@@ -1,0 +1,3944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FieldMap — Pin Tracker</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#191f1b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FieldMap">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --bg:#191f1b;
+    --bg-elevated:#222a23;
+    --bg-elevated-2:#2c352d;
+    --text:#ece7d8;
+    --text-muted:#9aa395;
+    --accent:#c2622d;
+    --accent-hover:#d8722f;
+    --border:rgba(255,255,255,0.09);
+    --danger:#a23b2e;
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;font-family:var(--font-sans);background:var(--bg);color:var(--text);}
+  #app{position:fixed;inset:0;display:flex;}
+
+  /* Floating coordinate readout (replaces old topbar) */
+  #center-readout-float{
+    position:absolute;top:14px;right:14px;z-index:1000;cursor:pointer;
+    font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+    background:var(--bg-elevated);border:1px solid var(--border);
+    padding:5px 9px;border-radius:8px;white-space:nowrap;
+    width:150px;box-sizing:border-box;text-align:center;
+  }
+  #center-readout-float:hover{color:var(--text);border-color:var(--accent);}
+  #scale-bar{
+    position:absolute;top:50px;right:14px;z-index:1000;
+    width:150px;box-sizing:border-box;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+    padding:6px 9px;display:flex;flex-direction:column;gap:3px;
+  }
+  #scale-bar-line{height:4px;background:var(--text);border-left:1.5px solid var(--text);border-right:1.5px solid var(--text);}
+  #scale-bar-label{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);}
+  #map-crosshair{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:18px;height:18px;z-index:500;pointer-events:none;
+  }
+  #map-crosshair::before, #map-crosshair::after{
+    content:'';position:absolute;background:rgba(255,255,255,0.65);box-shadow:0 0 1px rgba(0,0,0,0.8);
+  }
+  #map-crosshair::before{left:0;right:0;top:50%;height:1px;}
+  #map-crosshair::after{top:0;bottom:0;left:50%;width:1px;}
+  #mobile-handle{display:none;}
+
+  /* Buttons */
+  .btn{
+    font-family:var(--font-sans);font-size:13px;font-weight:500;
+    border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
+    padding:8px 14px;border-radius:8px;cursor:pointer;
+  }
+  .btn:hover{background:var(--bg-elevated-2);}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#2a1208;font-weight:600;}
+  .btn-primary:hover{background:var(--accent-hover);}
+  .btn-primary.active{background:#e8e4d9;border-color:#e8e4d9;color:#191f1b;}
+  .btn.active{background:var(--accent);border-color:var(--accent);color:#2a1208;}
+  .btn-ghost{background:transparent;}
+  .btn-danger{background:transparent;border-color:var(--danger);color:#e3897d;}
+  .btn-danger:hover{background:rgba(162,59,46,0.15);}
+  .btn-small{padding:5px 10px;font-size:12px;}
+  .btn-block{width:100%;}
+  .btn:disabled{opacity:0.4;cursor:default;}
+
+  /* Sidebar */
+  #sidebar{
+    width:330px;flex-shrink:0;height:100%;
+    background:var(--bg-elevated);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;
+    z-index:900;position:relative;
+  }
+  #sidebar-header{padding:14px 16px 12px;border-bottom:1px solid var(--border);}
+  #sidebar-header-row1{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;}
+  #app-title{font-weight:600;font-size:18px;letter-spacing:0.2px;white-space:nowrap;}
+  #app-title span{color:var(--accent);}
+  #sidebar-header-row2{display:flex;gap:6px;}
+  #sidebar-header-row2 > *{flex:1;}
+  #sidebar-header-row2 .btn{width:100%;}
+  .dropdown-wrap{position:relative;}
+  .dropdown-menu{
+    position:absolute;top:calc(100% + 6px);left:0;z-index:950;min-width:150px;
+    background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;
+    padding:4px;box-shadow:0 4px 12px rgba(0,0,0,0.4);
+  }
+  .dropdown-menu.hidden{display:none;}
+  .dropdown-item{padding:8px 10px;font-size:13px;border-radius:6px;cursor:pointer;}
+  .dropdown-item:hover{background:var(--bg);}
+
+  #bulk-bar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-elevated-2);font-size:12px;}
+  #bulk-bar.hidden{display:none;}
+  #bulk-bar #bulk-count{flex:1;color:var(--text-muted);}
+  .bulk-checkbox{margin-right:2px;accent-color:var(--accent);flex-shrink:0;}
+
+  .group-header{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);background:var(--bg);}
+  .group-header:hover{color:var(--text);}
+  .group-chevron{font-size:10px;width:10px;}
+  .group-label{flex:1;}
+  .group-count{font-weight:400;}
+  .group-vis-btn{background:none;border:none;padding:2px 3px;cursor:pointer;color:var(--text-muted);display:flex;align-items:center;border-radius:4px;flex-shrink:0;}
+  .group-vis-btn:hover{color:var(--text);background:var(--bg-elevated-2);}
+  .group-vis-btn.vis-off{opacity:0.3;}
+  #group-vis-bar{display:none;align-items:center;gap:6px;padding:5px 16px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-muted);}
+  #group-vis-bar.show{display:flex;}
+  #group-vis-bar span{flex:1;}
+
+  .section{padding:14px 16px;border-bottom:1px solid var(--border);}
+  .section h2{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
+
+  .radio-row{display:flex;flex-direction:column;gap:6px;}
+  .radio-opt{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;}
+  .radio-opt input{accent-color:var(--accent);}
+  .layer-overlay-row{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .layer-overlay-row input{accent-color:var(--accent);}
+  #mvum-opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
+  #mvum-opacity-row input{flex:1;accent-color:var(--accent);}
+  .opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
+  .opacity-row.show{display:flex;}
+  .opacity-row input{flex:1;accent-color:var(--accent);}
+  .hint{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.4;}
+
+  #search-input{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:8px 10px;border-radius:8px;font-size:13px;margin-bottom:10px;
+  }
+  #search-input:focus{outline:1px solid var(--accent);}
+  .chip-row{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{
+    font-size:11px;padding:4px 9px;border-radius:999px;border:1px solid var(--border);
+    cursor:pointer;color:var(--text-muted);background:var(--bg);user-select:none;
+  }
+  .chip.active{color:#191f1b;border-color:transparent;}
+
+  .hidden{display:none;}
+
+  #sidebar-scroll-area{flex:1;display:flex;flex-direction:column;min-height:0;}
+  #pin-list{flex:1;overflow-y:auto;padding:8px 0;}
+  .track-mark{border-radius:3px;width:16px;height:6px;margin-top:7px;}
+  .pin-row{
+    display:flex;align-items:flex-start;gap:10px;padding:9px 16px;cursor:pointer;
+  }
+  .pin-row:hover{background:var(--bg-elevated-2);}
+  .pin-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;margin-top:4px;}
+  .pin-row-text{flex:1;min-width:0;}
+  .pin-row-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pin-row-meta{font-size:11px;color:var(--text-muted);margin-top:1px;}
+  #pin-empty{padding:24px 16px;font-size:12px;color:var(--text-muted);text-align:center;}
+
+  #sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+  .footer-btn-row{display:flex;gap:8px;}
+  .footer-btn-row .btn{flex:1;}
+  #pin-count{font-size:11px;color:var(--text-muted);text-align:center;}
+
+  /* Map */
+  #map{flex:1;height:100%;background:#0e1210;position:relative;}
+  #map.add-mode{cursor:crosshair;}
+
+  /* Modals */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(10,12,10,0.6);z-index:2000;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-overlay.hidden{display:none;}
+  .modal{
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;
+    width:100%;max-width:380px;padding:20px;
+  }
+  .modal h2{font-size:16px;margin:0 0 14px;font-weight:600;}
+  .modal label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:14px;}
+  .modal label span{display:block;margin-bottom:5px;}
+  .modal input[type=text], .modal select, .modal textarea{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:9px 10px;border-radius:8px;font-size:14px;font-family:var(--font-sans);
+  }
+  .modal textarea{resize:vertical;min-height:60px;}
+  .coord-display{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-bottom:14px;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;}
+  .modal-actions .btn-danger{margin-right:auto;}
+
+  .modal-wide{max-width:540px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;}
+  .modal-wide .modal-actions{position:sticky;bottom:0;background:var(--bg-elevated);padding-top:10px;border-top:1px solid var(--border);margin-top:auto;}
+  #import-pins-section, #import-tracks-section{margin-bottom:14px;}
+  #import-item-list{max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px;}
+  #import-track-list{max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;}
+  .import-item-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .import-item-row:last-child{border-bottom:none;}
+  .import-item-row.import-selected{background:rgba(194,98,45,0.12);}
+  .import-item-row.import-dupe{background:rgba(180,140,0,0.08);}
+  .dupe-badge{display:inline-block;margin-left:7px;font-size:10px;color:#c9a227;font-weight:600;vertical-align:middle;}
+  .dupe-group{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;}
+  .dupe-group-header{background:var(--bg);padding:7px 12px;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.3px;}
+  .dupe-group-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--border);}
+  .dupe-group-row label{flex:1;font-size:13px;cursor:pointer;display:flex;flex-direction:column;gap:2px;}
+  .dupe-row-meta{font-size:11px;color:var(--text-muted);}
+  .dupe-group-row input[type=checkbox]{accent-color:var(--danger);flex-shrink:0;}
+  .import-item-info{flex:1;min-width:0;}
+  .import-item-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .import-row-cb{accent-color:var(--accent);flex-shrink:0;}
+  .import-item-coords{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);}
+  .import-item-row select{width:150px;flex-shrink:0;font-size:12px;padding:5px 6px;}
+
+  #tags-manage-list{max-height:240px;overflow-y:auto;margin-bottom:14px;}
+  .tag-manage-row{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--border);}
+  .tag-swatch{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;}
+  .tag-manage-label{flex:1;font-size:13px;}
+  .tag-manage-row .btn{padding:4px 9px;font-size:11px;}
+  #tag-editor-form{display:flex;gap:8px;align-items:center;margin-bottom:6px;}
+  #tag-editor-form input[type=text]{flex:1;}
+  #tag-new-color{width:38px;height:34px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--bg);flex-shrink:0;}
+  #tag-new-icon{width:56px;flex-shrink:0;}
+  #tag-icon-picker{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;}
+  .icon-pick-btn{width:30px;height:30px;border-radius:50%;background:var(--bg);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .icon-pick-btn:hover{background:var(--bg-elevated-2);}
+
+  /* Toast */
+  #toast{
+    position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(10px);
+    background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);
+    padding:10px 18px;border-radius:10px;font-size:13px;z-index:3000;
+    opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* Loading overlay */
+  #loading-overlay{
+    position:fixed;inset:0;background:var(--bg);z-index:4000;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  }
+  #loading-overlay.hidden{display:none;}
+  #loading-overlay p{color:var(--text-muted);font-size:13px;}
+
+  /* Popup styling */
+  .leaflet-popup-content-wrapper{background:var(--bg-elevated);color:var(--text);border-radius:10px;}
+  .leaflet-popup-tip{background:var(--bg-elevated);}
+  .draw-point-popup .leaflet-popup-content-wrapper{padding:2px;}
+  .draw-point-popup .leaflet-popup-content{margin:6px 8px;}
+  .pin-popup-name{font-weight:600;font-size:14px;margin-bottom:2px;}
+  .pin-popup-cat{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
+  .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;}
+  .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px;}
+  .pin-popup-actions{display:flex;gap:6px;}
+
+  .floating-panel{
+    position:absolute;bottom:24px;right:64px;z-index:1500;width:260px;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
+    padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
+    max-width:calc(100vw - 80px);
+  }
+  .floating-panel.hidden{display:none;}
+  .floating-panel h2{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
+  #filter-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
+  #layers-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
+  .layer-hint-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px;line-height:1;vertical-align:middle;border-radius:50%;border:1px solid var(--border);width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;}
+  .layer-hint-btn:hover{color:var(--text);}
+  .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
+  .layer-hint-text.show{display:block;}
+  .layer-section-header{font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);margin:4px 0 2px;}
+  .filter-label{font-size:11px;color:var(--text-muted);margin:12px 0 6px;}
+  .filter-label:first-of-type{margin-top:0;}
+  .filter-label-row{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--text-muted);margin:12px 0 6px;}
+  .filter-label-row:first-of-type{margin-top:0;}
+  .mini-toggle{display:flex;gap:8px;}
+  .link-btn{background:none;border:none;padding:0;font-size:11px;color:var(--text-muted);cursor:pointer;text-decoration:underline;}
+  .link-btn:hover{color:var(--text);}
+
+  #map-controls{position:absolute;bottom:24px;right:14px;z-index:1100;display:flex;flex-direction:column;gap:10px;}
+  .map-icon-btn{
+    width:40px;height:40px;border-radius:50%;
+    background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  }
+  .map-icon-btn:hover{background:var(--bg-elevated-2);}
+  .map-icon-btn.active{background:var(--accent);border-color:var(--accent);color:#2a1208;}
+  #map.measure-mode{cursor:crosshair;}
+
+  #cluster-panel{
+    position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
+    z-index:1500;min-width:260px;max-width:340px;width:max-content;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.5);overflow:hidden;
+  }
+  #cluster-panel.hidden{display:none;}
+  #cluster-panel-header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;border-bottom:1px solid var(--border);
+    font-size:12px;font-weight:600;color:var(--text-muted);
+  }
+  #cluster-panel-title{font-size:13px;font-weight:600;color:var(--text);}
+  #cluster-panel-list{max-height:260px;overflow-y:auto;}
+  .cluster-item-row{
+    display:flex;align-items:center;gap:10px;padding:9px 14px;
+    border-bottom:1px solid var(--border);cursor:pointer;
+  }
+  .cluster-item-row:last-child{border-bottom:none;}
+  .cluster-item-row:hover{background:var(--bg-elevated-2);}
+  .cluster-item-name{flex:1;font-size:13px;font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cluster-item-meta{font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cluster-item-text{flex:1;min-width:0;}
+  .cluster-item-actions{display:flex;gap:5px;flex-shrink:0;}
+
+  #measure-result{
+    position:absolute;bottom:24px;right:64px;z-index:1200;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+    padding:8px 12px;display:flex;align-items:center;gap:10px;
+    font-family:var(--font-mono);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.4);
+  }
+  #measure-result.hidden{display:none;}
+
+  #draw-bar{
+    position:absolute;bottom:24px;right:64px;z-index:1200;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+    padding:8px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    font-family:var(--font-mono);font-size:13px;
+    min-width:260px;
+  }
+  #draw-bar.hidden{display:none;}
+  #draw-bar-stats{white-space:nowrap;color:var(--text);margin-bottom:6px;}
+  #draw-bar-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;}
+  #draw-bar-actions .link-btn{white-space:nowrap;flex-shrink:0;}
+  #draw-finish-btn:disabled{opacity:0.4;cursor:default;}
+
+  #goto-results{margin-top:8px;}
+  .goto-result-row{padding:8px 4px;font-size:12px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .goto-result-row:last-child{border-bottom:none;}
+  .goto-result-row:hover{color:var(--accent);}
+
+  #map-search-bar{
+    position:absolute;top:14px;left:50%;transform:translateX(-50%);
+    z-index:1300;width:360px;max-width:calc(100% - 28px);
+  }
+  #map-search-input-wrap{position:relative;}
+  #map-search-input{
+    width:100%;box-sizing:border-box;
+    background:rgba(34,41,35,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.12);color:var(--text);
+    padding:11px 36px 11px 14px;border-radius:10px;font-size:14px;font-family:var(--font-sans);
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  #map-search-input::placeholder{color:rgba(232,228,217,0.6);}
+  #map-search-input:focus{outline:none;border-color:var(--accent);}
+  #map-search-clear-btn{
+    position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    background:none;border:none;color:var(--text-muted);font-size:20px;line-height:1;
+    cursor:pointer;padding:4px 6px;
+  }
+  #map-search-clear-btn:hover{color:var(--text);}
+  #map-search-results{
+    margin-top:8px;background:rgba(34,41,35,0.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.12);border-radius:10px;
+    max-height:280px;overflow-y:auto;box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  #map-search-results:empty{display:none;border:none;box-shadow:none;}
+  .map-search-result-row{padding:10px 14px;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.08);}
+  .map-search-result-row:last-child{border-bottom:none;}
+  .map-search-result-row:hover{background:rgba(255,255,255,0.08);color:var(--accent);}
+  .map-search-status{padding:10px 14px;font-size:12px;color:var(--text-muted);}
+
+  .leaflet-tooltip.gmu-label{
+    background:transparent;border:none;box-shadow:none;color:#e8854a;
+    font-size:12px;font-weight:700;padding:0;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 4px rgba(0,0,0,0.8);
+  }
+  .leaflet-tooltip.gmu-label::before{display:none;}
+
+  #publicland-legend{
+    position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+    z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.1);border-radius:10px;
+    padding:7px 12px;display:flex;align-items:center;gap:6px;
+    max-width:calc(100vw - 28px);overflow-x:auto;flex-wrap:nowrap;
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #publicland-legend.hidden{display:none;}
+  .pub-land-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;}
+  .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
+
+  /* Mobile */
+  @media (max-width:760px){
+    /* Sidebar bottom sheet */
+    #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
+    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
+    #sidebar{
+      position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;height:auto;
+      border-right:none;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
+      display:flex;flex-direction:column;
+    }
+    #sidebar-header{order:1;}
+    #sidebar-scroll-area{order:2;max-height:0;overflow:hidden;transition:max-height .25s ease;}
+    #sidebar.open #sidebar-scroll-area{max-height:55vh;overflow-y:auto;}
+
+    /* Desktop-only sidebar buttons hidden on mobile — Sort, Bulk edit, Import, Export
+       (Export removed in favor of per-pin/per-track Share) */
+    #sidebar-header-row2{display:none;}
+
+    /* Hide desktop coord readout — no room */
+    #center-readout-float{display:none;}
+
+    /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
+    .leaflet-control-zoom{display:none !important;}
+
+    /* Push Leaflet attribution above the bottom sheet, shrink it on mobile */
+    .leaflet-bottom.leaflet-left{margin-bottom:90px;}
+    .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
+
+    /* Scale bar: stacked above the attribution line, clear of overlap */
+    #scale-bar{
+      display:flex !important;
+      top:auto;right:auto;
+      bottom:112px;left:14px;
+      width:130px;
+    }
+
+    /* Search bar stays centered now that native zoom controls are hidden */
+    #map-search-bar{width:calc(100% - 28px);}
+
+    /* Map controls: push above bottom sheet */
+    #map-controls{bottom:90px;}
+
+    /* Floating panels: full-width above bottom sheet */
+    .floating-panel{
+      bottom:90px;right:14px;left:14px;
+      width:auto;max-width:none;
+    }
+    #filter-panel,#layers-panel{max-height:48vh;}
+
+    /* Draw bar and measure result: centered above bottom sheet */
+    #draw-bar,#measure-result{
+      bottom:90px;
+      left:50%;right:auto;
+      transform:translateX(-50%);
+      font-size:12px;
+      min-width:0;width:calc(100vw - 28px);max-width:340px;
+    }
+    #draw-bar-actions{gap:9px;justify-content:space-between;}
+
+    /* Cluster panel: full-width above bottom sheet */
+    #cluster-panel{
+      bottom:98px;left:14px;right:14px;
+      max-width:none;transform:none;
+    }
+    #cluster-panel-list{max-height:200px;}
+
+    /* Public land legend: tuck above bottom sheet */
+    #publicland-legend{bottom:90px;}
+
+    /* Larger tap targets for popup action buttons on mobile */
+    .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <p>Loading your pins…</p>
+</div>
+
+<div id="app">
+  <aside id="sidebar">
+    <div id="mobile-handle"></div>
+    <div id="sidebar-header">
+      <div id="sidebar-header-row1">
+        <div id="app-title">Field<span>Map</span></div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-primary btn-small" id="add-pin-btn">+ Add pin</button>
+          <button class="btn btn-small" id="draw-route-btn-sidebar">+ Route</button>
+        </div>
+      </div>
+      <div id="sidebar-header-row2">
+        <div class="dropdown-wrap">
+          <button class="btn btn-small" id="sort-btn">Sort</button>
+          <div id="sort-menu" class="dropdown-menu hidden">
+            <div class="dropdown-item" data-sort="chronological">Chronological</div>
+            <div class="dropdown-item" data-sort="category">By category</div>
+            <div class="dropdown-item" data-sort="trip">By trip</div>
+          </div>
+        </div>
+        <button class="btn btn-small" id="bulk-edit-btn">Bulk edit</button>
+        <button class="btn btn-small" id="import-btn">Import</button>
+        <div class="dropdown-wrap">
+          <button class="btn btn-small" id="export-btn">Export</button>
+          <div id="export-menu" class="dropdown-menu hidden">
+            <div class="dropdown-item" id="export-geojson-item">GeoJSON</div>
+            <div class="dropdown-item" id="export-gpx-item">GPX</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sidebar-scroll-area">
+      <div id="bulk-bar" class="hidden">
+        <span id="bulk-count">0 selected</span>
+        <button class="btn btn-small btn-primary" id="bulk-apply-btn">Edit selected</button>
+        <button class="btn btn-small btn-danger" id="bulk-delete-btn">Delete</button>
+        <button class="btn btn-small btn-ghost" id="bulk-cancel-btn">Cancel</button>
+      </div>
+      <div id="group-vis-bar">
+        <span>Group visibility</span>
+        <button class="link-btn" id="group-vis-all-btn">Show all</button>
+        <button class="link-btn" id="group-vis-none-btn">Hide all</button>
+      </div>
+      <div id="pin-list"></div>
+      <div id="pin-count">0 pins</div>
+    </div>
+    <input type="file" id="import-file" accept=".gpx,.kml,.csv,.geojson,.json" style="display:none;">
+  </aside>
+
+  <main id="map">
+    <div id="map-search-bar">
+      <div id="map-search-input-wrap">
+        <input type="text" id="map-search-input" placeholder="Search places or coordinates…">
+        <button id="map-search-clear-btn" aria-label="Clear search">&times;</button>
+      </div>
+      <div id="map-search-results"></div>
+    </div>
+    <div id="map-crosshair"></div>
+  </main>
+</div>
+
+<div id="center-readout-float">--, --</div>
+<div id="scale-bar">
+  <div id="scale-bar-line"></div>
+  <span id="scale-bar-label"></span>
+</div>
+
+<div id="publicland-legend" class="hidden">
+  <span style="color:#FEE679;">BLM</span>
+  <span style="color:#6FCF52;">USFS</span>
+  <span style="color:#A8B83F;">NPS</span>
+  <span style="color:#4DD9D9;">FWS</span>
+  <span style="color:#5B9BD5;">BOR</span>
+  <span style="color:#9B6FD1;">Tribal</span>
+  <span style="color:#E0645A;">DOD</span>
+  <span style="color:#4A7FC9;">State</span>
+  <span style="color:#C0C0C0;">Local</span>
+</div>
+
+
+<div id="map-controls">
+  <button class="map-icon-btn" id="layers-btn" aria-label="Layers">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M10 2 L18 6.5 L10 11 L2 6.5 Z"/>
+      <path d="M2.5 10.2 L10 14.5 L17.5 10.2"/>
+      <path d="M2.5 13.7 L10 18 L17.5 13.7"/>
+    </svg>
+  </button>
+  <button class="map-icon-btn" id="filter-btn" aria-label="Search and filter">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M3 4h14l-5 6.5v6L8 18v-7.5Z"/>
+    </svg>
+  </button>
+  <button class="map-icon-btn" id="measure-btn" aria-label="Measure distance and bearing">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="rotate(-45 10 10)">
+        <rect x="2" y="7.5" width="16" height="5" rx="1" stroke-width="1.4"/>
+        <line x1="5" y1="7.5" x2="5" y2="10" stroke-width="1.2"/>
+        <line x1="8" y1="7.5" x2="8" y2="10.5" stroke-width="1.2"/>
+        <line x1="11" y1="7.5" x2="11" y2="10" stroke-width="1.2"/>
+        <line x1="14" y1="7.5" x2="14" y2="10.5" stroke-width="1.2"/>
+      </g>
+    </svg>
+  </button>
+  <button class="map-icon-btn" id="locate-btn" aria-label="Locate me">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+      <circle cx="10" cy="10" r="3"/>
+      <line x1="10" y1="0.5" x2="10" y2="4"/>
+      <line x1="10" y1="16" x2="10" y2="19.5"/>
+      <line x1="0.5" y1="10" x2="4" y2="10"/>
+      <line x1="16" y1="10" x2="19.5" y2="10"/>
+    </svg>
+  </button>
+</div>
+
+<div id="layers-panel" class="floating-panel hidden">
+
+  <div class="layer-section-header">BASE LAYERS <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-stack');h.classList.toggle('show')" title="Info">?</button></div>
+  <div class="layer-hint-text" id="lh-stack">Turn on more than one to stack them — aerial sits at the bottom, topo on top.</div>
+
+  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
+    <input type="checkbox" id="layer-street-toggle"> Street (OpenStreetMap)
+  </label>
+  <div class="opacity-row" id="layer-street-opacity-row"><input type="range" id="layer-street-opacity" min="10" max="100" value="100"></div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-aerial-toggle"> Aerial imagery
+  </label>
+  <div class="opacity-row" id="layer-aerial-opacity-row"><input type="range" id="layer-aerial-opacity" min="10" max="100" value="100"></div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-topo-toggle"> USGS topo / contour
+  </label>
+  <div class="opacity-row" id="layer-topo-opacity-row"><input type="range" id="layer-topo-opacity" min="10" max="100" value="100"></div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-relief-toggle"> Shaded relief <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-relief');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="layer-relief-opacity-row"><input type="range" id="layer-relief-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-hint-text" id="lh-relief">LiDAR-derived where available. Good for spotting old roadbeds under cover. Best at partial opacity over topo or aerial.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-imagerytopo-toggle"> Imagery + topo <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-imgtopo');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="layer-imagerytopo-opacity-row"><input type="range" id="layer-imagerytopo-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-hint-text" id="lh-imgtopo">USGS aerial + topo labels baked in as one layer.</div>
+
+  <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
+
+  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
+    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-hydro');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="hydro-opacity-row"><input type="range" id="hydro-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-hint-text" id="lh-hydro">USGS rivers, streams &amp; lakes — clean overlay over imagery where water is hard to pick out.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="mvum-toggle"> USFS roads &amp; trails (MVUM) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div id="mvum-opacity-row">
+    <input type="range" id="mvum-opacity" min="20" max="100" value="80">
+  </div>
+  <div class="layer-hint-text" id="lh-mvum">Loads live from a federal server; may lag. Only covers National Forest land.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
+  <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
+
+  <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
+  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
+    <input type="checkbox" id="gmu-az-toggle"> Arizona
+  </label>
+  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
+    <input type="checkbox" id="gmu-or-toggle" disabled> Oregon <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
+  </label>
+</div>
+
+<div id="filter-panel" class="floating-panel hidden">
+  <h2>Filters</h2>
+  <input type="text" id="search-input" placeholder="Search name or notes…" style="margin-bottom:12px;">
+
+  <div class="filter-label-row"><span>Tags</span><span class="mini-toggle">
+    <button class="link-btn" id="tag-filter-all-btn">All</button>
+    <button class="link-btn" id="tag-filter-none-btn">None</button>
+  </span></div>
+  <div class="chip-row" id="category-chips"></div>
+
+  <div class="filter-label-row"><span>State</span><span class="mini-toggle">
+    <button class="link-btn" id="state-filter-all-btn">All</button>
+    <button class="link-btn" id="state-filter-none-btn">None</button>
+  </span></div>
+  <div class="chip-row" id="state-chips"></div>
+  <p class="hint" id="state-chips-hint">States are detected automatically from each pin's location — approximate, not authoritative.</p>
+
+  <div class="filter-label-row"><span>Trip</span><span class="mini-toggle">
+    <button class="link-btn" id="trip-filter-all-btn">All</button>
+    <button class="link-btn" id="trip-filter-none-btn">None</button>
+  </span></div>
+  <div class="chip-row" id="trip-chips"></div>
+  <p class="hint" id="trip-chips-hint">Set a trip name or date when editing a pin or track to group and filter by it.</p>
+
+  <div class="filter-label-row"><span>Date</span><span class="mini-toggle">
+    <button class="link-btn" id="date-filter-all-btn">All</button>
+    <button class="link-btn" id="date-filter-none-btn">None</button>
+  </span></div>
+  <div class="chip-row" id="date-chips"></div>
+  <p class="hint">Based on when each pin or track was added — recovered from the file's own timestamp on import when available.</p>
+
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+    <button class="btn btn-small" id="manage-tags-btn">Manage tags</button>
+    <button class="btn btn-small" id="find-dupes-btn">Find duplicates</button>
+    <button class="btn btn-small" id="filters-reset-btn">Reset filters</button>
+  </div>
+</div>
+
+<div id="measure-result" class="hidden">
+  <span id="measure-result-text"></span>
+  <button id="measure-clear-btn" class="link-btn">Clear</button>
+</div>
+
+<div id="draw-bar" class="hidden">
+  <div id="draw-bar-stats">
+    <span id="draw-bar-text">0 points</span>
+  </div>
+  <div id="draw-bar-actions">
+    <button id="draw-undo-btn" class="link-btn">Undo</button>
+    <button id="draw-snap-btn" class="link-btn">Snap to trail</button>
+    <button id="draw-finish-btn" class="link-btn">Finish</button>
+    <button id="draw-cancel-btn" class="link-btn">Cancel</button>
+  </div>
+</div>
+
+<!-- Cluster item list panel -->
+<div id="cluster-panel" class="hidden">
+  <div id="cluster-panel-header">
+    <span id="cluster-panel-title">Items here</span>
+    <button id="cluster-panel-close" class="link-btn" style="font-size:16px;line-height:1;">×</button>
+  </div>
+  <div id="cluster-panel-list"></div>
+</div>
+
+<datalist id="trip-suggestions"></datalist>
+
+<!-- Pin add/edit modal -->
+<div class="modal-overlay hidden" id="pin-modal">
+  <div class="modal">
+    <h2 id="pin-modal-title">Add pin</h2>
+    <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
+    <label><span>Tags</span>
+      <div class="chip-row" id="pin-tags-row"></div>
+    </label>
+    <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
+    <label><span>Trip (optional)</span><input type="text" id="pin-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Date</span><input type="date" id="pin-date"></label>
+    <div class="coord-display">Lat <span id="pin-lat">—</span> · Lng <span id="pin-lng">—</span></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger hidden" id="pin-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="pin-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="pin-save-btn">Save pin</button>
+    </div>
+  </div>
+</div>
+
+<!-- Track/route edit modal -->
+<div class="modal-overlay hidden" id="track-modal">
+  <div class="modal">
+    <h2 id="track-modal-title">Edit track</h2>
+    <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
+    <label><span>Tags</span>
+      <div class="chip-row" id="track-tags-row"></div>
+    </label>
+    <label><span>Notes</span><textarea id="track-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
+    <label><span>Trip (optional)</span><input type="text" id="track-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Date</span><input type="date" id="track-date"></label>
+    <div class="coord-display" id="track-point-count"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="track-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="track-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="track-save-btn">Save track</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk edit modal -->
+<div class="modal-overlay hidden" id="bulk-modal">
+  <div class="modal">
+    <h2 id="bulk-modal-title">Edit selected</h2>
+    <label><span>Add tags (leave blank to skip)</span>
+      <div class="chip-row" id="bulk-tags-row"></div>
+    </label>
+    <label><span>Set trip (leave blank to skip)</span><input type="text" id="bulk-trip" list="trip-suggestions" maxlength="60"></label>
+    <label><span>Set date (leave blank to skip)</span><input type="date" id="bulk-date"></label>
+    <p class="hint">Tags get added to whatever each item already has. Trip and date overwrite the current value for every selected item.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="bulk-modal-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="bulk-modal-apply-btn">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk delete confirmation modal -->
+<div class="modal-overlay hidden" id="bulk-delete-modal">
+  <div class="modal">
+    <h2 id="bulk-delete-modal-title">Delete selected?</h2>
+    <p class="hint" id="bulk-delete-modal-body" style="margin-bottom:16px;font-size:13px;color:var(--text);">This will permanently delete the selected items. This cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="bulk-delete-cancel-btn">Cancel</button>
+      <button class="btn btn-danger" id="bulk-delete-confirm-btn">Delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- Find duplicates modal -->
+<div class="modal-overlay hidden" id="find-dupes-modal">
+  <div class="modal modal-wide">
+    <h2>Find duplicates</h2>
+    <p class="hint" id="find-dupes-summary" style="margin-bottom:12px;"></p>
+    <div id="find-dupes-list" style="max-height:50vh;overflow-y:auto;margin-bottom:14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="find-dupes-close-btn">Close</button>
+      <button class="btn btn-danger" id="find-dupes-delete-btn" disabled>Delete checked</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import confirm modal -->
+<div class="modal-overlay hidden" id="import-modal">
+  <div class="modal modal-wide">
+    <h2 id="import-modal-title">Import pins &amp; tracks</h2>
+    <p class="hint" id="import-summary" style="margin-bottom:10px;"></p>
+    <label style="margin-bottom:10px;"><span>Set tag for all (optional shortcut)</span>
+      <select id="import-bulk-category"></select>
+    </label>
+    <label style="margin-bottom:10px;"><span>Assign to trip (optional — applies to all items)</span>
+      <input type="text" id="import-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip">
+    </label>
+    <div id="import-pins-section" class="hidden">
+      <div class="filter-label">Pins</div>
+      <div id="import-item-list"></div>
+    </div>
+    <div id="import-tracks-section" class="hidden">
+      <div class="filter-label">Tracks &amp; routes</div>
+      <div id="import-track-list"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="import-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="import-confirm-btn">Import</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Tag management modal -->
+<div class="modal-overlay hidden" id="tags-modal">
+  <div class="modal modal-wide">
+    <h2>Manage tags</h2>
+    <div id="tags-manage-list"></div>
+    <div id="tag-editor-form">
+      <input type="text" id="tag-new-label" placeholder="Tag name">
+      <input type="color" id="tag-new-color" value="#6b7d6a">
+      <input type="text" id="tag-new-icon" placeholder="Icon" maxlength="12">
+    </div>
+    <div id="tag-icon-picker"></div>
+    <p class="hint">Pick a built-in icon, or type any short text or emoji instead. Leave blank for a plain colored dot.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost hidden" id="tag-cancel-edit-btn">Cancel edit</button>
+      <button class="btn btn-ghost" id="tags-close-btn">Close</button>
+      <button class="btn btn-primary" id="tag-save-btn">Add tag</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+
+  var SEED_TAGS = [
+    {id:'camp', label:'Camp', color:'#c2622d', icon:'svg:tent'},
+    {id:'scout', label:'Scout', color:'#3b8f76', icon:''},
+    {id:'glassing', label:'Glassing point', color:'#6c63b5', icon:''},
+    {id:'water', label:'Water source', color:'#3b82c4', icon:'svg:water'},
+    {id:'trailhead', label:'Trailhead', color:'#8a8d76', icon:'svg:hiker'},
+    {id:'parking', label:'Parking', color:'#5d6b7d', icon:'svg:parking'},
+    {id:'access', label:'Access', color:'#6b7d6a', icon:'svg:access'},
+    {id:'gate', label:'Gate', color:'#7d6b4a', icon:'svg:gate'},
+    {id:'sign', label:'Sign / trail cam', color:'#b5566c', icon:''},
+    {id:'harvest', label:'Harvest', color:'#a23b2e', icon:''},
+    {id:'quail', label:'Quail', color:'#c9923f', icon:'svg:bird'},
+    {id:'chukar', label:'Chukar', color:'#9a8463', icon:'svg:bird'},
+    {id:'pheasant', label:'Pheasant', color:'#b8723f', icon:'svg:bird'},
+    {id:'dove', label:'Dove', color:'#8d97a3', icon:'svg:dove'},
+    {id:'ducks', label:'Ducks', color:'#4d7a8c', icon:'svg:ducks'},
+    {id:'upland', label:'Upland (general)', color:'#a3915f', icon:'svg:upland'},
+    {id:'turkey', label:'Turkey', color:'#8a5a2e', icon:'svg:turkey'},
+    {id:'turkeystrut', label:'Turkey strut zone', color:'#6e4a35', icon:'svg:turkeytrack'},
+    {id:'deer', label:'Deer', color:'#7a6a4e', icon:'svg:deer'},
+    {id:'elk', label:'Elk', color:'#8a6d3f', icon:'svg:elk'},
+    {id:'elkshed', label:'Elk shed', color:'#7a6648', icon:'svg:elkshed'},
+    {id:'antelope', label:'Antelope', color:'#ab8456', icon:'svg:antelope'},
+    {id:'bear', label:'Bear', color:'#4a3c2e', icon:'svg:bear'},
+    {id:'rabbit', label:'Rabbit', color:'#9c8a72', icon:'svg:rabbit'},
+    {id:'fish', label:'Fish', color:'#3b82c4', icon:'svg:fish'},
+    {id:'cabin', label:'Cabin', color:'#a3673f', icon:'svg:cabin'},
+    {id:'lookout', label:'Lookout', color:'#5a4a3a', icon:'svg:lookout'},
+    {id:'truck', label:'Truck', color:'#4a5a6b', icon:'svg:truck'},
+    {id:'other', label:'Other', color:'#6b6b63', icon:''},
+    {id:'uncategorized', label:'Uncategorized', color:'#c9a227', icon:''}
+  ];
+
+  // Approximate bounding boxes for US states — fast client-side grouping only,
+  // not authoritative. Border-area points may be attributed to the wrong state.
+  var STATE_BBOXES = [
+    {name:'Alabama', minLat:30.2, maxLat:35.0, minLng:-88.5, maxLng:-84.9},
+    {name:'Alaska', minLat:51.0, maxLat:71.5, minLng:-179.5, maxLng:-129.9},
+    {name:'Arizona', minLat:31.3, maxLat:37.0, minLng:-114.9, maxLng:-109.0},
+    {name:'Arkansas', minLat:33.0, maxLat:36.5, minLng:-94.7, maxLng:-89.6},
+    {name:'California', minLat:32.5, maxLat:42.0, minLng:-124.5, maxLng:-114.1},
+    {name:'Colorado', minLat:36.9, maxLat:41.0, minLng:-109.1, maxLng:-102.0},
+    {name:'Connecticut', minLat:40.9, maxLat:42.1, minLng:-73.8, maxLng:-71.8},
+    {name:'Delaware', minLat:38.4, maxLat:39.9, minLng:-75.8, maxLng:-75.0},
+    {name:'Florida', minLat:24.4, maxLat:31.1, minLng:-87.7, maxLng:-79.9},
+    {name:'Georgia', minLat:30.3, maxLat:35.0, minLng:-85.7, maxLng:-80.8},
+    {name:'Hawaii', minLat:18.9, maxLat:22.3, minLng:-160.3, maxLng:-154.8},
+    {name:'Idaho', minLat:41.9, maxLat:49.1, minLng:-117.3, maxLng:-111.0},
+    {name:'Illinois', minLat:36.9, maxLat:42.6, minLng:-91.6, maxLng:-87.0},
+    {name:'Indiana', minLat:37.7, maxLat:41.8, minLng:-88.1, maxLng:-84.8},
+    {name:'Iowa', minLat:40.3, maxLat:43.6, minLng:-96.7, maxLng:-90.1},
+    {name:'Kansas', minLat:36.9, maxLat:40.1, minLng:-102.1, maxLng:-94.6},
+    {name:'Kentucky', minLat:36.4, maxLat:39.2, minLng:-89.6, maxLng:-81.9},
+    {name:'Louisiana', minLat:28.8, maxLat:33.1, minLng:-94.1, maxLng:-88.8},
+    {name:'Maine', minLat:42.9, maxLat:47.5, minLng:-71.1, maxLng:-66.9},
+    {name:'Maryland', minLat:37.9, maxLat:39.8, minLng:-79.5, maxLng:-75.0},
+    {name:'Massachusetts', minLat:41.2, maxLat:42.9, minLng:-73.6, maxLng:-69.9},
+    {name:'Michigan', minLat:41.6, maxLat:48.3, minLng:-90.5, maxLng:-82.1},
+    {name:'Minnesota', minLat:43.4, maxLat:49.4, minLng:-97.3, maxLng:-89.5},
+    {name:'Mississippi', minLat:30.1, maxLat:35.0, minLng:-91.7, maxLng:-88.0},
+    {name:'Missouri', minLat:35.9, maxLat:40.7, minLng:-95.8, maxLng:-89.1},
+    {name:'Montana', minLat:44.3, maxLat:49.1, minLng:-116.1, maxLng:-104.0},
+    {name:'Nebraska', minLat:39.9, maxLat:43.1, minLng:-104.1, maxLng:-95.3},
+    {name:'Nevada', minLat:35.0, maxLat:42.1, minLng:-120.1, maxLng:-114.0},
+    {name:'New Hampshire', minLat:42.6, maxLat:45.4, minLng:-72.6, maxLng:-70.6},
+    {name:'New Jersey', minLat:38.8, maxLat:41.4, minLng:-75.6, maxLng:-73.9},
+    {name:'New Mexico', minLat:31.3, maxLat:37.0, minLng:-109.1, maxLng:-103.0},
+    {name:'New York', minLat:40.4, maxLat:45.1, minLng:-79.8, maxLng:-71.8},
+    {name:'North Carolina', minLat:33.7, maxLat:36.6, minLng:-84.4, maxLng:-75.4},
+    {name:'North Dakota', minLat:45.9, maxLat:49.1, minLng:-104.1, maxLng:-96.5},
+    {name:'Ohio', minLat:38.3, maxLat:42.0, minLng:-84.9, maxLng:-80.5},
+    {name:'Oklahoma', minLat:33.6, maxLat:37.1, minLng:-103.1, maxLng:-94.4},
+    {name:'Oregon', minLat:41.9, maxLat:46.3, minLng:-124.7, maxLng:-116.4},
+    {name:'Pennsylvania', minLat:39.7, maxLat:42.5, minLng:-80.6, maxLng:-74.7},
+    {name:'Rhode Island', minLat:41.1, maxLat:42.1, minLng:-71.9, maxLng:-71.1},
+    {name:'South Carolina', minLat:32.0, maxLat:35.3, minLng:-83.4, maxLng:-78.5},
+    {name:'South Dakota', minLat:42.4, maxLat:45.95, minLng:-104.1, maxLng:-96.4},
+    {name:'Tennessee', minLat:34.9, maxLat:36.7, minLng:-90.4, maxLng:-81.6},
+    {name:'Texas', minLat:25.8, maxLat:36.6, minLng:-106.7, maxLng:-93.5},
+    {name:'Utah', minLat:36.9, maxLat:42.1, minLng:-114.1, maxLng:-109.0},
+    {name:'Vermont', minLat:42.7, maxLat:45.1, minLng:-73.5, maxLng:-71.4},
+    {name:'Virginia', minLat:36.5, maxLat:39.5, minLng:-83.7, maxLng:-75.1},
+    {name:'Washington', minLat:45.5, maxLat:49.1, minLng:-124.9, maxLng:-116.9},
+    {name:'West Virginia', minLat:37.1, maxLat:40.7, minLng:-82.7, maxLng:-77.7},
+    {name:'Wisconsin', minLat:42.4, maxLat:47.1, minLng:-92.9, maxLng:-86.2},
+    {name:'Wyoming', minLat:40.9, maxLat:45.1, minLng:-111.1, maxLng:-104.0}
+  ];
+
+  function stateForPoint(lat, lng){
+    if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+    for (var i=0;i<STATE_BBOXES.length;i++){
+      var s = STATE_BBOXES[i];
+      if (lat>=s.minLat && lat<=s.maxLat && lng>=s.minLng && lng<=s.maxLng) return s.name;
+    }
+    return null;
+  }
+
+  var STORAGE_KEY = 'field-map-state-v1';
+  var NO_TRIP_LABEL = '(No trip)';
+  var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
+  var DEFAULT_ZOOM = 9;
+
+  // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
+  var store = (function(){
+    if (typeof window.storage !== 'undefined' && typeof window.storage.get === 'function'){
+      return {
+        type: 'claude',
+        get: function(key){
+          return window.storage.get(key, false).then(function(r){ return (r && r.value) ? r.value : null; });
+        },
+        set: function(key, val){
+          return window.storage.set(key, val, false).then(function(r){ return !!r; });
+        }
+      };
+    }
+    if (typeof localStorage !== 'undefined'){
+      return {
+        type: 'local',
+        get: function(key){
+          try { return Promise.resolve(localStorage.getItem(key)); }
+          catch(e){ return Promise.resolve(null); }
+        },
+        set: function(key, val){
+          try { localStorage.setItem(key, val); return Promise.resolve(true); }
+          catch(e){ return Promise.resolve(false); }
+        }
+      };
+    }
+    return {
+      type: 'none',
+      get: function(){ return Promise.resolve(null); },
+      set: function(){ return Promise.resolve(false); }
+    };
+  })();
+
+  var state = {
+    pins: [],
+    tracks: [],
+    tags: SEED_TAGS.slice(),
+    settings: {
+      layers: {
+        aerial: { on:false, opacity:1 },
+        street: { on:true, opacity:1 },
+        topo: { on:false, opacity:1 },
+        relief: { on:false, opacity:1 },
+        imagerytopo: { on:false, opacity:1 }
+      },
+      mvumOn: false, mvumOpacity: 0.8,
+      hydroOn: false, hydroOpacity: 1,
+      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
+      center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM
+    }
+  };
+
+  var map, baseLayers = {}, mvumLayer, hydroLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
+  var clusterRefreshTimer = null;
+  var publicLandLayer = null;
+  var gmuLayers = { az: null };
+  var GMU_SOURCES = {
+    az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' }
+  };
+  var addMode = false;
+  var measureMode = false;
+  var measurePoints = [], measureMarkers = [], measureLine = null;
+  var drawMode = false, drawPoints = [], drawMarkers = [], drawLine = null, pendingDrawPoints = null, snappedPoints = null;
+  var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
+  var eyeHiddenTrips = {};  // tripKey → true when hidden via eye icon
+  var ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjhhYjgwZjdmYTdmZDQxNDI5YTdmNmExOWIzODAwOTY3IiwiaCI6Im11cm11cjY0In0=';
+  var searchResultMarker = null;
+  var editingPinId = null, editingTrackId = null;
+  var pendingLatLng = null;
+  var activeTagFilters = {};
+  var activeStateFilters = {};
+  var activeTripFilters = {};
+  var activeDateFilters = {};
+  var listSortMode = 'chronological';
+  var collapsedGroups = {};
+  var bulkMode = false;
+  var lastBulkClickedIdx = -1;
+  var bulkSelectedPins = {};
+  var bulkSelectedTracks = {};
+  var saveTimer = null;
+  var editingTagId = null;
+
+  function tagById(id){
+    for (var i=0;i<state.tags.length;i++){ if (state.tags[i].id===id) return state.tags[i]; }
+    return {id:id||'unknown', label:'Unknown', color:'#888888', icon:''};
+  }
+
+  function sortedTags(){
+    return state.tags.slice().sort(function(a,b){ return a.label.localeCompare(b.label); });
+  }
+
+  var SVG_ICONS = {
+    tent: '<path d="M12 3L21 20H3Z" fill="currentColor"/><line x1="12" y1="3" x2="12" y2="20" stroke="var(--bg-elevated)" stroke-width="1"/>',
+    water: '<path d="M12 2C12 2 5.5 11 5.5 15.5a6.5 6.5 0 0013 0C18.5 11 12 2 12 2Z" fill="currentColor"/>',
+    bird: '<ellipse cx="11" cy="14" rx="6" ry="4.5" fill="currentColor"/><path d="M16 12L20 10L17 14Z" fill="currentColor"/><path d="M6 11L3 8L7 9Z" fill="currentColor"/><path d="M6 9c-1-1-1-2-2-3" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>',
+    turkey: '<path d="M9 20c-1-3 0-7 2-9-1-3 0-6 2-8 2 2 3 5 2 8 2 2 3 6 2 9-1-2-2-3-4-3s-3 1-4 3Z" fill="currentColor"/><circle cx="11" cy="6" r="1.6" fill="currentColor"/>',
+    deer: '<path d="M12 21V9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 9C10.5 9 9 7.5 9 5M12 9C9 8 8 6 8 4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 9C13.5 9 15 7.5 15 5M12 9C15 8 16 6 16 4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>',
+    fish: '<path d="M2 12c4-5 13-5 17 0-4 5-13 5-17 0Z" fill="currentColor"/><path d="M19 12l3-3v6Z" fill="currentColor"/>',
+    elk: '<path d="M12 21V8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 8c-1-1-1-3 0-5M12 8c-2-1-3-2-3-4M12 8c-2 1-4 1-5 0" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M12 8c1-1 1-3 0-5M12 8c2-1 3-2 3-4M12 8c2 1 4 1 5 0" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/>',
+    elkshed: '<path d="M5 19c2 0 3-2 3-5 0-2 1-4 3-5-1 2 0 3 1 4 1-1 2-2 3-2-1 2 0 3 1 3 1-1 2-1 3 0-2 2-4 3-6 3-2 2-5 3-8 2Z" fill="currentColor"/>',
+    antelope: '<path d="M3 16c2-1 3-2 4-4l1-3 2 1 1-3c1 2 1 3 0 4l3-1c1 1 0 2-1 3l2 1c0 1-1 1-2 1-1 2-3 4-5 4-1-1 0-2 0-3-2 1-3 1-5 0Z" fill="currentColor"/><path d="M9 6l-1-2M11 6l0-2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>',
+    bear: '<path d="M3 17c-0.5-3 1-4 1.5-6 0.5-2 2-3 3-2 1-1 3-1 3 0.5 1-1 2-0.5 2.5 0.5 1 0 1.5 1 1.5 2 1 1 1 2.5 0 3.5-0.5 2-3 2.5-5 2.5-2 0.5-5 0.5-6.5-1Z" fill="currentColor"/><circle cx="5.5" cy="10" r="1.1" fill="currentColor"/>',
+    rabbit: '<ellipse cx="11" cy="16" rx="5" ry="4" fill="currentColor"/><path d="M8.5 13C7.5 9.5 8 5.5 9.5 3c0.7 2.3 0.7 6 0 9.5" fill="currentColor"/><path d="M12.5 13C12.5 9 13.3 5.3 14.5 3c0.8 2.3 0.3 6.3-0.8 9.5" fill="currentColor"/><circle cx="15.5" cy="15" r="0.9" fill="var(--bg-elevated)"/>',
+    dove: '<path d="M2 14c4-3 8-1 10 1 2-2 6-4 10-1-4 0-7 2-10 5-3-3-6-5-10-5Z" fill="currentColor"/>',
+    ducks: '<path d="M1 16c2-2 4-1 5 0 1-1 3-2 5 0-2 0-3 1-5 3-2-2-3-3-5-3Z" fill="currentColor"/><path d="M11 9c2-2 4-1 5 0 1-1 3-2 5 0-2 0-3 1-5 3-2-2-3-3-5-3Z" fill="currentColor"/>',
+    upland: '<path d="M12 4c1 3 0.5 6-1 8-3-0.5-6 0.5-8 3 1-4 3.5-6.5 6.5-7.5-0.7-2-0.7-4 0.3-6 0.7 1 1.5 1.7 2.2 2.5Z" fill="currentColor"/><path d="M12 4c-1 3-0.5 6 1 8 3-0.5 6 0.5 8 3-1-4-3.5-6.5-6.5-7.5 0.7-2 0.7-4-0.3-6-0.7 1-1.5 1.7-2.2 2.5Z" fill="currentColor"/>',
+    hiker: '<circle cx="14.5" cy="4.5" r="1.7" fill="currentColor"/><path d="M14 6.5l-2 3.5-3.5 1.5M14 6.5l2.5 2.5 1 5M9 12.5l-2 6.5M11.5 10l1 4.5-2 5.5M16.5 14l2 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    truck: '<path d="M2 16.5V12l1.5-3.5h6l2.5 3h6l2.5 2.5v2.5Z" fill="currentColor"/><circle cx="6" cy="17.5" r="2" fill="currentColor"/><circle cx="17" cy="17.5" r="2" fill="currentColor"/>',
+    gate: '<line x1="5" y1="3" x2="5" y2="21" stroke="currentColor" stroke-width="1.6"/><path d="M5 4l13 3.5-13 4Z" fill="currentColor"/>',
+    cabin: '<path d="M4 20V11L12 4l8 7v9Z" fill="currentColor"/><rect x="10" y="14" width="4" height="6" fill="var(--bg-elevated)"/>',
+    lookout: '<path d="M6 21L9.5 9M18 21L14.5 9M9.5 9H14.5M7.5 21H16.5M6.7 15H17.3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><rect x="8" y="4" width="8" height="5" rx="0.5" fill="currentColor"/>',
+    access: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.5" font-size="11" text-anchor="middle" fill="currentColor" font-weight="700" font-family="sans-serif">A</text>',
+    parking: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.5" font-size="11" text-anchor="middle" fill="currentColor" font-weight="700" font-family="sans-serif">P</text>',
+    turkeytrack: '<path d="M12 5v6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/><path d="M12 11l-4.5 8M12 11l4.5 8M12 11l-2.2 9M12 11l2.2 9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>'
+  };
+
+  function renderIconGlyph(iconValue, sizePx){
+    if (!iconValue) return '';
+    if (iconValue.indexOf('svg:') === 0){
+      var key = iconValue.slice(4);
+      var inner = SVG_ICONS[key];
+      if (!inner) return '';
+      var s = sizePx || 14;
+      return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" style="vertical-align:-3px;">' + inner + '</svg>';
+    }
+    return escapeHtml(iconValue);
+  }
+
+  function tagVisualFor(item){
+    var iconTag = null;
+    (item.tags||[]).forEach(function(tid){
+      if (iconTag) return;
+      var t = tagById(tid);
+      if (t && t.icon) iconTag = t;
+    });
+    var fallback = tagById((item.tags && item.tags[0]) || 'uncategorized');
+    return { color: (iconTag||fallback).color, icon: iconTag ? iconTag.icon : '' };
+  }
+
+  function chipLabelHtml(t){
+    return (t.icon ? renderIconGlyph(t.icon, 13) + ' ' : '') + escapeHtml(t.label);
+  }
+
+  function tagOptionLabel(t){
+    var prefix = (t.icon && t.icon.indexOf('svg:') !== 0) ? t.icon + ' ' : '';
+    return prefix + t.label;
+  }
+
+  function tagLabelsFor(item){
+    return (item.tags||[]).map(function(tid){ return tagById(tid).label; }).join(', ') || 'Uncategorized';
+  }
+
+  function showToast(msg, duration){
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.classList.remove('show'); }, duration || 2600);
+  }
+
+  function uid(){
+    return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+  }
+
+  function slugify(label){
+    var base = label.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'tag';
+    var id = base, n = 1;
+    while (state.tags.some(function(t){ return t.id === id; })){ id = base + '-' + (++n); }
+    return id;
+  }
+
+  var QUICK_TAG_PALETTE = ['#5a7a8a','#7a6a4e','#8a5a2e','#6c63b5','#3b8f76','#b5566c','#3b82c4'];
+
+  function quickAddTag(name){
+    name = (name || '').trim();
+    if (!name) return null;
+    var existing = state.tags.find(function(t){ return t.label.toLowerCase() === name.toLowerCase(); });
+    if (existing) return existing.id;
+    var color = QUICK_TAG_PALETTE[state.tags.length % QUICK_TAG_PALETTE.length];
+    var newTag = { id: slugify(name), label: name, color: color, icon: '' };
+    state.tags.push(newTag);
+    renderTagChips();
+    scheduleSave();
+    return newTag.id;
+  }
+
+  function escapeHtml(s){
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function escapeXml(s){
+    return String(s).replace(/[<>&'"]/g, function(c){
+      return {'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c];
+    });
+  }
+
+  // ---------- Map setup ----------
+  var MvumTileLayer = L.TileLayer.extend({
+    getTileUrl: function(coords){
+      var z = coords.z, x = coords.x, y = coords.y;
+      var n = Math.pow(2, z);
+      var worldSize = 40075016.685578488;
+      var half = 20037508.342789244;
+      var tileSize = worldSize / n;
+      var minX = -half + x * tileSize;
+      var maxX = minX + tileSize;
+      var maxY = half - y * tileSize;
+      var minY = maxY - tileSize;
+      return this._url + '/export?bbox=' + [minX, minY, maxX, maxY].join(',') +
+        '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0,1,2&f=image';
+    }
+  });
+
+  var CorsFetchTileLayer = L.TileLayer.extend({
+    createTile: function(coords, done){
+      var tile = document.createElement('img');
+      var url = this.getTileUrl(coords);
+      fetch(url, { mode:'cors' }).then(function(r){
+        if (!r.ok) throw new Error('bad status ' + r.status);
+        return r.blob();
+      }).then(function(blob){
+        var objUrl = URL.createObjectURL(blob);
+        tile.onload = function(){ URL.revokeObjectURL(objUrl); };
+        tile.src = objUrl;
+        done(null, tile);
+      }).catch(function(err){
+        done(err, tile);
+      });
+      return tile;
+    }
+  });
+
+  function createMap(){
+    map = L.map('map', { zoomControl:true, attributionControl:true })
+      .setView(state.settings.center, state.settings.zoom);
+    map.attributionControl.setPosition('bottomleft');
+
+    clusterLayerGroup = L.layerGroup().addTo(map);
+    map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
+    map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
+    map.createPane('topoPane'); map.getPane('topoPane').style.zIndex = 200;
+    map.createPane('reliefPane'); map.getPane('reliefPane').style.zIndex = 205;
+    map.createPane('imagerytopoPane'); map.getPane('imagerytopoPane').style.zIndex = 210;
+    map.createPane('hydroPane'); map.getPane('hydroPane').style.zIndex = 330;
+
+    baseLayers.street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:19, pane:'streetPane', attribution:'&copy; OpenStreetMap contributors'
+    });
+    baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
+    });
+    baseLayers.topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom:19, maxNativeZoom:16, pane:'topoPane', attribution:'USGS The National Map'
+    });
+    baseLayers.relief = new CorsFetchTileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}', {
+      minZoom:1, maxZoom:19, minNativeZoom:10, maxNativeZoom:13, pane:'reliefPane', attribution:'USGS The National Map'
+    });
+    baseLayers.imagerytopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom:19, maxNativeZoom:16, pane:'imagerytopoPane', attribution:'USGS The National Map'
+    });
+
+    try {
+      hydroLayer = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom:19, maxNativeZoom:16, pane:'hydroPane', attribution:'USGS The National Map'
+      });
+    } catch(e){ hydroLayer = null; }
+
+    var tileErrorShown = false;
+    function onTileError(){
+      if (tileErrorShown) return;
+      tileErrorShown = true;
+      showToast("Map tiles couldn't load here — try opening this file directly in your browser instead of the chat preview", 7000);
+    }
+    baseLayers.street.on('tileerror', onTileError);
+    baseLayers.aerial.on('tileerror', onTileError);
+    baseLayers.topo.on('tileerror', onTileError);
+    baseLayers.relief.on('tileerror', onTileError);
+    baseLayers.imagerytopo.on('tileerror', onTileError);
+
+    ['aerial','street','topo','relief','imagerytopo'].forEach(function(name){
+      var cfg = state.settings.layers[name];
+      baseLayers[name].setOpacity(cfg.opacity);
+      if (cfg.on) baseLayers[name].addTo(map);
+      var toggle = document.getElementById('layer-' + name + '-toggle');
+      var opacityInput = document.getElementById('layer-' + name + '-opacity');
+      var opacityRow = document.getElementById('layer-' + name + '-opacity-row');
+      toggle.checked = cfg.on;
+      opacityInput.value = Math.round(cfg.opacity * 100);
+      opacityRow.classList.toggle('show', cfg.on);
+    });
+
+    if (state.settings.hydroOn && hydroLayer){
+      hydroLayer.addTo(map);
+      document.getElementById('hydro-toggle').checked = true;
+      document.getElementById('hydro-opacity-row').classList.add('show');
+      document.getElementById('hydro-opacity').value = Math.round((state.settings.hydroOpacity || 1) * 100);
+    }
+
+
+    map.createPane('mvumPane');
+    map.getPane('mvumPane').style.zIndex = 350;
+    map.getPane('mvumPane').style.pointerEvents = 'none';
+
+    try {
+      mvumLayer = new MvumTileLayer('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer', {
+        opacity: state.settings.mvumOpacity,
+        maxZoom: 19,
+        pane: 'mvumPane',
+        attribution: 'USFS MVUM'
+      });
+    } catch(e){ mvumLayer = null; }
+    if (mvumLayer){
+      var mvumErrorShown = false;
+      mvumLayer.on('tileerror', function(){
+        if (mvumErrorShown) return;
+        mvumErrorShown = true;
+        showToast("USFS roads/trails layer failed to load — the federal server may be down or slow right now");
+      });
+    }
+
+    if (state.settings.mvumOn && mvumLayer){
+      mvumLayer.addTo(map);
+      document.getElementById('mvum-toggle').checked = true;
+      document.getElementById('mvum-opacity-row').style.display = 'flex';
+      document.getElementById('mvum-opacity').value = Math.round(state.settings.mvumOpacity*100);
+    }
+
+    map.createPane('publicLandPane');
+    map.getPane('publicLandPane').style.zIndex = 340;
+    map.getPane('publicLandPane').style.pointerEvents = 'none';
+    map.createPane('gmuPane');
+    map.getPane('gmuPane').style.zIndex = 360;
+
+    try {
+      publicLandLayer = L.tileLayer('https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, maxNativeZoom: 14, pane: 'publicLandPane',
+        opacity: state.settings.publicLandOpacity || 0.55,
+        attribution: 'BLM Surface Management Agency'
+      });
+    } catch(e){ publicLandLayer = null; }
+    if (publicLandLayer){
+      var publicLandErrorShown = false;
+      publicLandLayer.on('tileerror', function(){
+        if (publicLandErrorShown) return;
+        publicLandErrorShown = true;
+        showToast('Public/private land layer failed to load — the federal server may be down or slow right now');
+      });
+    }
+    if (state.settings.publicLandOn && publicLandLayer){
+      publicLandLayer.addTo(map);
+      document.getElementById('publicland-toggle').checked = true;
+      document.getElementById('publicland-opacity-row').classList.add('show');
+      document.getElementById('publicland-opacity').value = Math.round((state.settings.publicLandOpacity || 0.55) * 100);
+      document.getElementById('publicland-legend').classList.remove('hidden');
+      loadPublicLandLegend();
+    }
+
+    if (state.settings.gmuAzOn) toggleGmuLayer('az', true);
+
+    map.on('click', function(e){
+      closeClusterPanel();
+      if (measureMode){ handleMeasureClick(e.latlng); return; }
+      if (drawMode){ handleDrawClick(e.latlng); return; }
+      if (!addMode) return;
+      pendingLatLng = e.latlng;
+      openPinModal(null, e.latlng);
+    });
+
+    map.on('move', updateCenterReadout);
+    map.on('move', updateScaleBar);
+    map.on('zoomend', updateGmuLabelVisibility);
+    map.on('zoomend moveend', scheduleClusterRefresh);
+    updateCenterReadout();
+    updateScaleBar();
+
+    map.on('moveend', function(){
+      state.settings.center = [map.getCenter().lat, map.getCenter().lng];
+      state.settings.zoom = map.getZoom();
+      scheduleSave();
+    });
+
+    // Pinch-to-zoom only on touch devices — double-tap-zoom disabled because it
+    // conflicted with placing route points during route drawing.
+    if ('ontouchstart' in window) map.doubleClickZoom.disable();
+  }
+
+  function updateCenterReadout(){
+    var c = map.getCenter();
+    document.getElementById('center-readout-float').textContent = c.lat.toFixed(5) + ', ' + c.lng.toFixed(5);
+  }
+
+  function updateScaleBar(){
+    var centerLat = map.getCenter().lat;
+    var metersPerPixel = 40075016.686 * Math.cos(centerLat * Math.PI/180) / (256 * Math.pow(2, map.getZoom()));
+    var maxBarPx = 120;
+    var maxFeetFit = maxBarPx * metersPerPixel * 3.28084;
+    var maxMilesFit = maxFeetFit / 5280;
+    var feetSteps = [10,20,50,100,200,500,1000,2000,5000];
+    var mileSteps = [1,2,5,10,20,50,100,200,500,1000,2000];
+    var label, barFeet;
+    if (maxMilesFit < 1){
+      var chosenFeet = feetSteps[0];
+      for (var i=0;i<feetSteps.length;i++){ if (feetSteps[i] <= maxFeetFit) chosenFeet = feetSteps[i]; }
+      label = chosenFeet + ' ft';
+      barFeet = chosenFeet;
+    } else {
+      var chosenMiles = mileSteps[0];
+      for (var j=0;j<mileSteps.length;j++){ if (mileSteps[j] <= maxMilesFit) chosenMiles = mileSteps[j]; }
+      label = chosenMiles + ' mi';
+      barFeet = chosenMiles * 5280;
+    }
+    var barPx = (barFeet / 3.28084) / metersPerPixel;
+    document.getElementById('scale-bar-line').style.width = Math.max(4, Math.round(barPx)) + 'px';
+    document.getElementById('scale-bar-label').textContent = label + ' · Z' + map.getZoom();
+  }
+
+  function setBaseLayerOn(name, on){
+    var layer = baseLayers[name];
+    if (on){ if (!map.hasLayer(layer)) layer.addTo(map); }
+    else { if (map.hasLayer(layer)) map.removeLayer(layer); }
+    state.settings.layers[name].on = on;
+    document.getElementById('layer-' + name + '-opacity-row').classList.toggle('show', on);
+    scheduleSave();
+  }
+
+  function setBaseLayerOpacity(name, opacity){
+    baseLayers[name].setOpacity(opacity);
+    state.settings.layers[name].opacity = opacity;
+    scheduleSave();
+  }
+
+  var publicLandLegendLoaded = false;
+  var BLM_LEGEND = [
+    { abbr:'BLM',  label:'Bureau of Land Management', color:'#f5dfa8' },
+    { abbr:'USFS', label:'US Forest Service',          color:'#a8c98e' },
+    { abbr:'NPS',  label:'National Park Service',      color:'#d4b8d4' },
+    { abbr:'FWS',  label:'US Fish & Wildlife',         color:'#a8c8d8' },
+    { abbr:'BOR',  label:'Bureau of Reclamation',      color:'#b8d8e8' },
+    { abbr:'BIA',  label:'Bureau of Indian Affairs',   color:'#e8b888' },
+    { abbr:'DOD',  label:'Dept of Defense',            color:'#c8b8d8' },
+    { abbr:'State',label:'State',                      color:'#b8d8b8' },
+    { abbr:'Local',label:'Local',                      color:'#d8c8b8' }
+  ];
+
+  function loadPublicLandLegend(){
+    if (publicLandLegendLoaded) return;
+    var wrap = document.getElementById('publicland-legend');
+    wrap.innerHTML = '';
+    BLM_LEGEND.forEach(function(e){
+      var chip = document.createElement('div');
+      chip.className = 'pub-land-chip';
+      chip.title = e.label;
+      chip.textContent = e.abbr;
+      chip.style.background = e.color;
+      chip.style.color = '#1a1a1a';
+      wrap.appendChild(chip);
+    });
+    publicLandLegendLoaded = true;
+  }
+
+  function toggleGmuLayer(stateKey, on){
+    if (!on){
+      if (gmuLayers[stateKey]) map.removeLayer(gmuLayers[stateKey]);
+      return;
+    }
+    if (gmuLayers[stateKey]){
+      gmuLayers[stateKey].addTo(map);
+      updateGmuLabelVisibility();
+      return;
+    }
+    var src = GMU_SOURCES[stateKey];
+    if (!src) return;
+    fetch(src.url).then(function(r){ return r.json(); }).then(function(data){
+      gmuLayers[stateKey] = L.geoJSON(data, {
+        pane: 'gmuPane',
+        style: { color:'#e8854a', weight:1.5, fillOpacity:0.02, fillColor:'#e8854a' },
+        onEachFeature: function(feature, layer){
+          var p = feature.properties || {};
+          var label = p.GMU || p.UNIT_NAME || p.NAME || p.UNIT_ID || '';
+          if (!label) return;
+          layer.bindTooltip(String(label), { permanent: true, direction: 'center', className: 'gmu-label' });
+          var region = p.REG_NAME ? '<div class="pin-popup-cat">' + escapeHtml(p.REG_NAME) + '</div>' : '';
+          var azgfdUrl = 'https://www.azgfd.com/location/gmu-' + encodeURIComponent(String(label).toLowerCase()) + '/';
+          layer.bindPopup('<div class="pin-popup-name">GMU ' + escapeHtml(String(label)) + '</div>' + region +
+            '<div class="pin-popup-actions"><a class="btn btn-small" href="' + azgfdUrl + '" target="_blank" rel="noopener">AZGFD unit info</a></div>');
+        }
+      });
+      gmuLayers[stateKey].addTo(map);
+      updateGmuLabelVisibility();
+    }).catch(function(){
+      showToast(src.label + ' GMU boundaries failed to load — check your connection');
+      var cb = document.getElementById('gmu-' + stateKey + '-toggle');
+      if (cb) cb.checked = false;
+    });
+  }
+
+  function updateGmuLabelVisibility(){
+    var z = map.getZoom();
+    var show = z >= 7 && z <= 11;
+    Object.keys(gmuLayers).forEach(function(key){
+      var layer = gmuLayers[key];
+      if (!layer || !map.hasLayer(layer)) return;
+      layer.eachLayer(function(featLayer){
+        if (show) featLayer.openTooltip(); else featLayer.closeTooltip();
+      });
+    });
+  }
+
+  // ---------- Filtering (shared by pins and tracks) ----------
+  function dateLabelFor(ts){
+    if (!ts) return null;
+    return new Date(ts).toLocaleString('en-US', { month:'short', year:'numeric' });
+  }
+
+  function itemVisible(item, query){
+    var tagsOk = (item.tags||[]).some(function(tid){ return activeTagFilters[tid] !== false; });
+    if (!tagsOk) return false;
+    if (item.state && activeStateFilters[item.state] === false) return false;
+    var tripLabel = item.trip || NO_TRIP_LABEL;
+    if (activeTripFilters[tripLabel] === false) return false;
+    var dl = dateLabelFor(item.created);
+    if (dl && activeDateFilters[dl] === false) return false;
+    if (query){
+      var hay = (item.name + ' ' + (item.notes||'') + ' ' + (item.trip||'')).toLowerCase();
+      if (hay.indexOf(query) === -1) return false;
+    }
+    return true;
+  }
+
+  function refreshAllVisibility(){
+    state.pins.forEach(applyFilterToMarker);
+    state.tracks.forEach(applyFilterToTrack);
+  }
+
+  function zoomToVisible(){
+    var query = document.getElementById('search-input').value.trim().toLowerCase();
+    var bounds = L.latLngBounds([]);
+    var any = false;
+    state.pins.forEach(function(p){ if (itemVisible(p, query)){ bounds.extend([p.lat, p.lng]); any = true; } });
+    state.tracks.forEach(function(t){ if (itemVisible(t, query)){ bounds.extend(t.points); any = true; } });
+    if (any && bounds.isValid()) map.fitBounds(bounds, { padding:[50,50], maxZoom:16 });
+  }
+
+  // ---------- Pin markers ----------
+  function pinIcon(pin){
+    var v = tagVisualFor(pin);
+    var html = v.icon ?
+      '<div style="width:24px;height:24px;border-radius:50%;background:' + v.color +
+        ';border:2px solid rgba(255,255,255,0.85);box-shadow:0 1px 3px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;">' + renderIconGlyph(v.icon, 14) + '</div>' :
+      '<div style="width:22px;height:22px;border-radius:50%;background:' + v.color +
+        ';border:2px solid rgba(255,255,255,0.85);box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>';
+    return L.divIcon({ className:'pin-marker', html:html, iconSize:[24,24], iconAnchor:[12,12] });
+  }
+
+  function popupHtml(pin){
+    var notes = pin.notes ? '<div class="pin-popup-notes">' + escapeHtml(pin.notes) + '</div>' : '';
+    return '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
+      '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(pin)) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (pin.trip ? ' · ' + escapeHtml(pin.trip) : '') + '</div>' +
+      notes +
+      '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
+      '<div class="pin-popup-actions">' +
+      '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
+      '<button class="btn btn-small btn-danger" onclick="FieldMap.deletePin(\'' + pin.id + '\')">Delete</button>' +
+      '</div>';
+  }
+
+  function addMarkerForPin(pin){
+    var marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin) });
+    marker.bindPopup(popupHtml(pin));
+    markersById[pin.id] = marker;
+    scheduleClusterRefresh();
+  }
+
+  function removeMarkerForPin(id){
+    if (markersById[id]){
+      delete markersById[id];
+      scheduleClusterRefresh();
+    }
+  }
+
+  function refreshMarkerPopup(pin){
+    if (markersById[pin.id]){
+      markersById[pin.id].setIcon(pinIcon(pin));
+      markersById[pin.id].setPopupContent(popupHtml(pin));
+    }
+  }
+
+  function applyFilterToMarker(pin){
+    scheduleClusterRefresh();
+  }
+
+  function scheduleClusterRefresh(){
+    clearTimeout(clusterRefreshTimer);
+    clusterRefreshTimer = setTimeout(refreshClusters, 60);
+  }
+
+  function refreshClusters(){
+    if (!clusterLayerGroup) return;
+    clusterLayerGroup.clearLayers();
+    var points = [];
+    state.pins.forEach(function(p){
+      var marker = markersById[p.id];
+      if (!marker || !mapItemVisible(p)) return;
+      points.push({ pin:p, marker:marker, pt: map.latLngToContainerPoint([p.lat, p.lng]) });
+    });
+    var used = new Array(points.length).fill(false);
+    var RADIUS = 28;
+    for (var i=0;i<points.length;i++){
+      if (used[i]) continue;
+      var group = [points[i]];
+      used[i] = true;
+      for (var j=i+1;j<points.length;j++){
+        if (used[j]) continue;
+        var dx = points[j].pt.x - points[i].pt.x, dy = points[j].pt.y - points[i].pt.y;
+        if (Math.sqrt(dx*dx + dy*dy) <= RADIUS){ group.push(points[j]); used[j] = true; }
+      }
+      if (group.length === 1){
+        clusterLayerGroup.addLayer(group[0].marker);
+      } else {
+        var latSum = 0, lngSum = 0;
+        group.forEach(function(g){ latSum += g.pin.lat; lngSum += g.pin.lng; });
+        var center = [latSum/group.length, lngSum/group.length];
+        var count = group.length;
+        var size = count < 10 ? 32 : (count < 100 ? 38 : 44);
+        var icon = L.divIcon({
+          className: 'cluster-bubble',
+          html: '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:rgba(194,98,45,0.9);border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:' + (count<100?13:11) + 'px;box-shadow:0 1px 4px rgba(0,0,0,0.5);">' + count + '</div>',
+          iconSize: [size,size], iconAnchor: [size/2, size/2]
+        });
+        var clusterMarker = L.marker(center, { icon: icon });
+        clusterMarker.on('click', (function(members){
+          return function(e){
+            openClusterPanel(members);
+            L.DomEvent.stopPropagation(e);
+          };
+        })(group));
+        clusterLayerGroup.addLayer(clusterMarker);
+      }
+    }
+  }
+
+  function openClusterPanel(members){
+    var panel = document.getElementById('cluster-panel');
+    var listEl = document.getElementById('cluster-panel-list');
+    document.getElementById('cluster-panel-title').textContent = members.length + ' items here';
+    listEl.innerHTML = '';
+    members.forEach(function(m){
+      var p = m.pin;
+      var row = document.createElement('div');
+      row.className = 'cluster-item-row';
+      var v = tagVisualFor(p);
+      var dot = document.createElement('div');
+      dot.className = 'pin-dot'; dot.style.background = v.color; dot.style.flexShrink='0'; dot.style.marginTop='0';
+      if (v.icon){ dot.style.display='flex';dot.style.alignItems='center';dot.style.justifyContent='center';dot.style.color='#fff'; dot.innerHTML=renderIconGlyph(v.icon,9); }
+      var textEl = document.createElement('div'); textEl.className = 'cluster-item-text';
+      var nameEl = document.createElement('div'); nameEl.className = 'cluster-item-name'; nameEl.textContent = p.name;
+      var metaEl = document.createElement('div'); metaEl.className = 'cluster-item-meta';
+      metaEl.textContent = tagLabelsFor(p) + (p.state ? ' · ' + p.state : '') + (p.trip ? ' · ' + p.trip : '');
+      textEl.appendChild(nameEl); textEl.appendChild(metaEl);
+      var actions = document.createElement('div'); actions.className = 'cluster-item-actions';
+      var editBtn = document.createElement('button'); editBtn.className = 'btn btn-small'; editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', function(e){ e.stopPropagation(); closeClusterPanel(); FieldMap.editPin(p.id); });
+      var delBtn = document.createElement('button'); delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = '×';
+      delBtn.title = 'Delete'; delBtn.addEventListener('click', function(e){ e.stopPropagation(); if(confirm('Delete "'+p.name+'"?')){ closeClusterPanel(); FieldMap.deletePin(p.id); } });
+      actions.appendChild(editBtn); actions.appendChild(delBtn);
+      row.appendChild(dot); row.appendChild(textEl); row.appendChild(actions);
+      row.addEventListener('click', function(){
+        closeClusterPanel();
+        map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 16));
+        setTimeout(function(){ if(markersById[p.id]) markersById[p.id].openPopup(); }, 400);
+      });
+      listEl.appendChild(row);
+    });
+    panel.classList.remove('hidden');
+  }
+
+  function closeClusterPanel(){
+    document.getElementById('cluster-panel').classList.add('hidden');
+  }
+  function trackPopupHtml(track){
+    var dist = track.distMiles !== undefined ? track.distMiles : trackDistanceMiles(track.points);
+    var distLabel = formatDist(dist);
+    var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
+    return '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
+      '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel +
+      (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
+      notes +
+      '<div class="pin-popup-actions">' +
+      '<button class="btn btn-small" onclick="FieldMap.shareTrack(\'' + track.id + '\')">Share</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.editTrack(\'' + track.id + '\')">Edit</button>' +
+      '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteTrack(\'' + track.id + '\')">Delete</button>' +
+      '</div>';
+  }
+
+  function addTrackToMap(track){
+    var v = tagVisualFor(track);
+    var poly = L.polyline(track.points, { color: v.color, weight: 3, opacity: 0.85 });
+    poly.bindPopup(trackPopupHtml(track));
+    trackLayersById[track.id] = poly;
+    applyFilterToTrack(track);
+  }
+
+  function removeTrackFromMap(id){
+    if (trackLayersById[id]){
+      if (map.hasLayer(trackLayersById[id])) map.removeLayer(trackLayersById[id]);
+      delete trackLayersById[id];
+    }
+  }
+
+  function refreshTrackPopup(track){
+    var poly = trackLayersById[track.id];
+    if (poly){
+      poly.setStyle({ color: tagVisualFor(track).color });
+      poly.setPopupContent(trackPopupHtml(track));
+    }
+  }
+
+  function applyFilterToTrack(track){
+    var poly = trackLayersById[track.id];
+    if (!poly) return;
+    var visible = mapItemVisible(track);
+    if (visible){ if (!map.hasLayer(poly)) poly.addTo(map); }
+    else { if (map.hasLayer(poly)) map.removeLayer(poly); }
+  }
+
+  function deleteTrackById(id){
+    state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+    removeTrackFromMap(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Track deleted');
+  }
+
+  function renderTrackTagChips(selectedIds){
+    var wrap = document.getElementById('track-tags-row');
+    wrap.innerHTML = '';
+    sortedTags().forEach(function(t){
+      var chip = document.createElement('div');
+      var active = selectedIds.indexOf(t.id) !== -1;
+      chip.className = 'chip' + (active ? ' active' : '');
+      chip.style.background = active ? t.color : 'var(--bg)';
+      chip.style.borderColor = active ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = t.id;
+      chip.addEventListener('click', function(){
+        var isActive = chip.classList.toggle('active');
+        chip.style.background = isActive ? t.color : 'var(--bg)';
+        chip.style.borderColor = isActive ? t.color : 'var(--border)';
+      });
+      wrap.appendChild(chip);
+    });
+    var addChip = document.createElement('div');
+    addChip.className = 'chip';
+    addChip.style.borderStyle = 'dashed';
+    addChip.textContent = '+ New';
+    addChip.addEventListener('click', function(){
+      var current = selectedTrackTagIds();
+      var id = quickAddTag(prompt('New tag name:'));
+      if (id){ current.push(id); renderTrackTagChips(current); }
+    });
+    wrap.appendChild(addChip);
+  }
+
+  function selectedTrackTagIds(){
+    var ids = [];
+    document.querySelectorAll('#track-tags-row .chip.active').forEach(function(c){ ids.push(c.dataset.tagId); });
+    return ids;
+  }
+
+  function openTrackModal(track){
+    editingTrackId = track.id;
+    pendingDrawPoints = null;
+    document.getElementById('track-modal-title').textContent = 'Edit track';
+    document.getElementById('track-name').value = track.name;
+    document.getElementById('track-notes').value = track.notes || '';
+    document.getElementById('track-trip').value = track.trip || '';
+    document.getElementById('track-date').value = tsToDateInputValue(track.created);
+    document.getElementById('track-point-count').textContent = track.points.length + ' points' + (track.state ? ' · ' + track.state : '');
+    document.getElementById('track-delete-btn').classList.remove('hidden');
+    renderTrackTagChips(track.tags.slice());
+    document.getElementById('track-modal').classList.remove('hidden');
+  }
+
+  function openTrackModalForNew(points){
+    editingTrackId = null;
+    pendingDrawPoints = points;
+    document.getElementById('track-modal-title').textContent = 'Save route';
+    document.getElementById('track-name').value = '';
+    document.getElementById('track-notes').value = '';
+    document.getElementById('track-trip').value = '';
+    document.getElementById('track-date').value = tsToDateInputValue(Date.now());
+    document.getElementById('track-point-count').textContent = points.length + ' points';
+    document.getElementById('track-delete-btn').classList.add('hidden');
+    renderTrackTagChips([]);
+    document.getElementById('track-modal').classList.remove('hidden');
+    document.getElementById('track-name').focus();
+  }
+
+  function closeTrackModal(){
+    document.getElementById('track-modal').classList.add('hidden');
+    editingTrackId = null;
+    pendingDrawPoints = null;
+  }
+
+  function saveTrackFromModal(){
+    var name = document.getElementById('track-name').value.trim();
+    if (!name){ showToast('Give the track a name first'); return; }
+    var tags = [];
+    document.querySelectorAll('#track-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+    if (tags.length === 0) tags = ['uncategorized'];
+    var notes = document.getElementById('track-notes').value.trim();
+    var trip = document.getElementById('track-trip').value.trim();
+    var dateVal = dateInputValueToTs(document.getElementById('track-date').value);
+
+    if (editingTrackId){
+      var track = state.tracks.find(function(t){ return t.id === editingTrackId; });
+      track.name = name; track.tags = tags; track.notes = notes; track.trip = trip;
+      if (dateVal) track.created = dateVal;
+      if (track.distMiles === undefined) track.distMiles = trackDistanceMiles(track.points);
+      refreshTrackPopup(track);
+    } else if (pendingDrawPoints){
+      var pts = pendingDrawPoints.map(function(p){ return [p.lat, p.lng]; });
+      var newTrack = {
+        id: uid(), name: name, points: pts, tags: tags, notes: notes, trip: trip,
+        created: dateVal || Date.now(), source: 'drawn',
+        distMiles: trackDistanceMiles(pts),
+        state: stateForPoint(pts[0][0], pts[0][1])
+      };
+      state.tracks.push(newTrack);
+      addTrackToMap(newTrack);
+      refreshStateChips();
+    }
+    closeTrackModal();
+    renderPinList();
+    refreshTripSuggestions();
+    renderTripChips();
+    renderDateChips();
+    scheduleSave();
+  }
+
+  // ---------- Modal: add/edit pin ----------
+  function populateCategorySelect(selectEl){
+    selectEl.innerHTML = '';
+    sortedTags().forEach(function(t){
+      var opt = document.createElement('option');
+      opt.value = t.id; opt.textContent = tagOptionLabel(t);
+      selectEl.appendChild(opt);
+    });
+    var newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '+ New tag…';
+    selectEl.appendChild(newOpt);
+  }
+
+  function handleImportTagSelectChange(e){
+    var sel = e.target;
+    if (sel.value !== '__new__') return;
+    var id = quickAddTag(prompt('New tag name:'));
+    document.querySelectorAll('#import-item-list select, #import-track-list select').forEach(function(s){
+      var keep = (s === sel) ? (id || 'uncategorized') : s.value;
+      populateCategorySelect(s);
+      s.value = keep;
+    });
+  }
+
+  function renderPinTagChips(selectedIds){
+    var wrap = document.getElementById('pin-tags-row');
+    wrap.innerHTML = '';
+    sortedTags().forEach(function(t){
+      var chip = document.createElement('div');
+      var active = selectedIds.indexOf(t.id) !== -1;
+      chip.className = 'chip' + (active ? ' active' : '');
+      chip.style.background = active ? t.color : 'var(--bg)';
+      chip.style.borderColor = active ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = t.id;
+      chip.addEventListener('click', function(){
+        var isActive = chip.classList.toggle('active');
+        chip.style.background = isActive ? t.color : 'var(--bg)';
+        chip.style.borderColor = isActive ? t.color : 'var(--border)';
+      });
+      wrap.appendChild(chip);
+    });
+    var addChip = document.createElement('div');
+    addChip.className = 'chip';
+    addChip.style.borderStyle = 'dashed';
+    addChip.textContent = '+ New';
+    addChip.addEventListener('click', function(){
+      var current = selectedPinTagIds();
+      var id = quickAddTag(prompt('New tag name:'));
+      if (id){ current.push(id); renderPinTagChips(current); }
+    });
+    wrap.appendChild(addChip);
+  }
+
+  function selectedPinTagIds(){
+    var ids = [];
+    document.querySelectorAll('#pin-tags-row .chip.active').forEach(function(c){ ids.push(c.dataset.tagId); });
+    return ids;
+  }
+
+  function openPinModal(pin, latlng){
+    editingPinId = pin ? pin.id : null;
+    document.getElementById('pin-modal-title').textContent = pin ? 'Edit pin' : 'Add pin';
+    document.getElementById('pin-name').value = pin ? pin.name : '';
+    document.getElementById('pin-notes').value = pin ? pin.notes : '';
+    document.getElementById('pin-trip').value = pin ? (pin.trip || '') : '';
+    document.getElementById('pin-date').value = tsToDateInputValue(pin ? pin.created : Date.now());
+    renderPinTagChips(pin ? pin.tags.slice() : []);
+    var lat = pin ? pin.lat : latlng.lat;
+    var lng = pin ? pin.lng : latlng.lng;
+    document.getElementById('pin-lat').textContent = lat.toFixed(5);
+    document.getElementById('pin-lng').textContent = lng.toFixed(5);
+    document.getElementById('pin-delete-btn').classList.toggle('hidden', !pin);
+    document.getElementById('pin-modal').classList.remove('hidden');
+    document.getElementById('pin-name').focus();
+  }
+
+  function closePinModal(){
+    document.getElementById('pin-modal').classList.add('hidden');
+    editingPinId = null; pendingLatLng = null;
+    setAddMode(false);
+  }
+
+  function savePinFromModal(){
+    var name = document.getElementById('pin-name').value.trim();
+    if (!name){ showToast('Give the pin a name first'); return; }
+    var tags = selectedPinTagIds();
+    if (tags.length === 0) tags = ['uncategorized'];
+    var notes = document.getElementById('pin-notes').value.trim();
+    var trip = document.getElementById('pin-trip').value.trim();
+    var dateVal = dateInputValueToTs(document.getElementById('pin-date').value);
+
+    if (editingPinId){
+      var pin = state.pins.find(function(p){ return p.id === editingPinId; });
+      pin.name = name; pin.tags = tags; pin.notes = notes; pin.trip = trip;
+      if (dateVal) pin.created = dateVal;
+      refreshMarkerPopup(pin);
+    } else {
+      var newPin = {
+        id: uid(), lat: pendingLatLng.lat, lng: pendingLatLng.lng,
+        name: name, tags: tags, notes: notes, trip: trip,
+        created: dateVal || Date.now(), source: 'manual',
+        state: stateForPoint(pendingLatLng.lat, pendingLatLng.lng)
+      };
+      state.pins.push(newPin);
+      addMarkerForPin(newPin);
+      refreshStateChips();
+    }
+    closePinModal();
+    renderPinList();
+    refreshTripSuggestions();
+    renderTripChips();
+    renderDateChips();
+    scheduleSave();
+  }
+
+  function deletePinFromModal(){
+    if (!editingPinId) return;
+    if (!confirm('Delete this pin? This cannot be undone.')) return;
+    deletePinById(editingPinId);
+    closePinModal();
+  }
+
+  function deletePinById(id){
+    state.pins = state.pins.filter(function(p){ return p.id !== id; });
+    removeMarkerForPin(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Pin deleted');
+  }
+
+  window.FieldMap = {
+    editPin: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (pin) openPinModal(pin, null);
+    },
+    deletePin: function(id){
+      if (confirm('Delete this pin? This cannot be undone.')) deletePinById(id);
+    },
+    sharePin: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (!pin) return;
+      var url = 'https://www.google.com/maps?q=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6);
+      var text = pin.name + '\n' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5);
+      if (navigator.share){
+        navigator.share({ title: pin.name, text: text, url: url }).catch(function(){});
+      } else {
+        navigator.clipboard ? navigator.clipboard.writeText(url).then(function(){ showToast('Google Maps link copied'); }) :
+          showToast(pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5), 5000);
+      }
+    },
+    editTrack: function(id){
+      var track = state.tracks.find(function(t){ return t.id === id; });
+      if (track) openTrackModal(track);
+    },
+    deleteTrack: function(id){
+      if (confirm('Delete this track? This cannot be undone.')) deleteTrackById(id);
+    },
+    shareTrack: function(id){
+      var track = state.tracks.find(function(t){ return t.id === id; });
+      if (!track) return;
+      var trkpts = track.points.map(function(pt){ return '      <trkpt lat="'+pt[0]+'" lon="'+pt[1]+'"></trkpt>'; }).join('\n');
+      var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="FieldMap">\n  <trk>\n    <name>'+escapeXml(track.name)+'</name>\n    <desc>'+escapeXml(track.notes||'')+'</desc>\n    <trkseg>\n'+trkpts+'\n    </trkseg>\n  </trk>\n</gpx>';
+      var fname = track.name.replace(/[^a-z0-9]/gi,'_').replace(/_+/g,'_') + '.gpx';
+      if (navigator.share && navigator.canShare){
+        var file = new File([gpx], fname, {type:'application/gpx+xml'});
+        if (navigator.canShare({files:[file]})){
+          navigator.share({title:track.name, files:[file]}).catch(function(){ downloadBlob(gpx,fname,'application/gpx+xml'); showToast('Track saved as GPX'); });
+          return;
+        }
+      }
+      downloadBlob(gpx, fname, 'application/gpx+xml');
+      showToast('Track exported as GPX');
+    }
+  };
+
+  function setAddMode(on){
+    addMode = on;
+    if (on && measureMode) setMeasureMode(false);
+    if (on && drawMode) setDrawMode(false);
+    document.getElementById('map').classList.toggle('add-mode', on);
+    document.getElementById('add-pin-btn').classList.toggle('active', on);
+    document.getElementById('add-pin-btn').textContent = on ? 'Click the map…' : '+ Add pin';
+  }
+
+  // ---------- Measure tool ----------
+  function haversineMiles(lat1, lng1, lat2, lng2){
+    var R = 3958.8;
+    function toRad(d){ return d * Math.PI / 180; }
+    var dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)*Math.sin(dLng/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function trackDistanceMiles(points){
+    var total = 0;
+    for (var i=1;i<points.length;i++){
+      var a = points[i-1], b = points[i];
+      var aLat = Array.isArray(a) ? a[0] : a.lat, aLng = Array.isArray(a) ? a[1] : a.lng;
+      var bLat = Array.isArray(b) ? b[0] : b.lat, bLng = Array.isArray(b) ? b[1] : b.lng;
+      total += haversineMiles(aLat, aLng, bLat, bLng);
+    }
+    return total;
+  }
+
+  function formatDist(miles){
+    return miles < 0.2 ? Math.round(miles*5280) + ' ft' : miles.toFixed(2) + ' mi';
+  }
+
+  function bearingDegrees(lat1, lng1, lat2, lng2){
+    function toRad(d){ return d * Math.PI / 180; }
+    function toDeg(r){ return r * 180 / Math.PI; }
+    var y = Math.sin(toRad(lng2-lng1)) * Math.cos(toRad(lat2));
+    var x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lng2-lng1));
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function compassLabel(deg){
+    var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(deg/22.5) % 16];
+  }
+
+  function setMeasureMode(on){
+    measureMode = on;
+    if (on && addMode) setAddMode(false);
+    if (on && drawMode) setDrawMode(false);
+    document.getElementById('map').classList.toggle('measure-mode', on);
+    document.getElementById('measure-btn').classList.toggle('active', on);
+    if (!on) clearMeasure();
+  }
+
+  function setDrawMode(on){
+    drawMode = on;
+    if (on && addMode) setAddMode(false);
+    if (on && measureMode) setMeasureMode(false);
+    document.getElementById('map').classList.toggle('add-mode', on);
+    document.getElementById('draw-route-btn-sidebar').classList.toggle('active', on);
+    document.getElementById('draw-bar').classList.toggle('hidden', !on);
+    if (on) showToast('Click to add points, drag to move, click the line to insert — then Snap to trail if you want it to follow real paths', 6000);
+    if (!on) clearDraw();
+  }
+
+  function clearDraw(){
+    drawPoints = [];
+    snappedPoints = null;
+    drawMarkers.forEach(function(m){ map.removeLayer(m); });
+    drawMarkers = [];
+    if (drawLine){ map.removeLayer(drawLine); drawLine = null; }
+    updateDrawBar();
+  }
+
+  function updateDrawBar(){
+    var pts = snappedPoints || drawPoints;
+    var total = 0;
+    for (var i=1;i<pts.length;i++){
+      total += haversineMiles(pts[i-1].lat, pts[i-1].lng, pts[i].lat, pts[i].lng);
+    }
+    var distText = total < 0.2 ? Math.round(total*5280) + ' ft' : total.toFixed(2) + ' mi';
+    var snapTag = snappedPoints ? ' (snapped)' : '';
+    document.getElementById('draw-bar-text').textContent = drawPoints.length + ' point' + (drawPoints.length===1?'':'s') + (pts.length > 1 ? ' · ' + distText + snapTag : '');
+    document.getElementById('draw-finish-btn').disabled = drawPoints.length < 2;
+    document.getElementById('draw-undo-btn').disabled = drawPoints.length === 0;
+    document.getElementById('draw-snap-btn').disabled = drawPoints.length < 2;
+  }
+
+  function redrawDrawLine(){
+    if (drawLine){ map.removeLayer(drawLine); drawLine = null; }
+    var pts = snappedPoints || drawPoints;
+    if (pts.length > 1){
+      drawLine = L.polyline(pts, { color: snappedPoints ? '#5fa88f' : '#3b8f76', weight:4 }).addTo(map);
+      drawLine.on('click', function(e){
+        L.DomEvent.stopPropagation(e);
+        insertDrawPoint(e.latlng);
+      });
+    }
+  }
+
+  function distToSegmentSquared(p, a, b){
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / ((dx*dx + dy*dy) || 1);
+    t = Math.max(0, Math.min(1, t));
+    var px = a.x + t*dx, py = a.y + t*dy;
+    return (p.x-px)*(p.x-px) + (p.y-py)*(p.y-py);
+  }
+
+  function deleteDrawMarker(marker){
+    var idx = drawMarkers.indexOf(marker);
+    if (idx === -1) return;
+    drawPoints.splice(idx, 1);
+    drawMarkers.splice(idx, 1);
+    map.removeLayer(marker);
+    snappedPoints = null;
+    redrawDrawLine();
+    updateDrawBar();
+  }
+
+  function createDrawMarker(latlng){
+    var icon = L.divIcon({
+      className: 'draw-point-icon',
+      html: '<div style="width:13px;height:13px;border-radius:50%;background:#3b8f76;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);cursor:context-menu;" title="Tap or right-click to delete this point"></div>',
+      iconSize: [13,13], iconAnchor: [6,6]
+    });
+    var marker = L.marker(latlng, { icon: icon, draggable: true }).addTo(map);
+
+    // Tap-friendly delete popup (works on mobile where right-click isn't available)
+    var popupEl = document.createElement('div');
+    popupEl.style.textAlign = 'center';
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-small btn-danger';
+    delBtn.textContent = 'Delete this point';
+    delBtn.addEventListener('click', function(){
+      deleteDrawMarker(marker);
+      map.closePopup();
+    });
+    popupEl.appendChild(delBtn);
+    marker.bindPopup(popupEl, { closeButton:false, className:'draw-point-popup', offset:[0,-4] });
+
+    marker.on('dragstart', function(){ marker.closePopup(); });
+    marker.on('drag', function(){
+      var idx = drawMarkers.indexOf(marker);
+      if (idx === -1) return;
+      drawPoints[idx] = marker.getLatLng();
+      snappedPoints = null;
+      redrawDrawLine();
+      updateDrawBar();
+    });
+    marker.on('contextmenu', function(e){
+      L.DomEvent.stopPropagation(e);
+      deleteDrawMarker(marker);
+    });
+    return marker;
+  }
+
+  function insertDrawPoint(latlng){
+    if (drawPoints.length < 2) return;
+    var clickPt = map.latLngToContainerPoint(latlng);
+    var bestIdx = 0, bestDist = Infinity;
+    for (var i=0;i<drawPoints.length-1;i++){
+      var a = map.latLngToContainerPoint(drawPoints[i]);
+      var b = map.latLngToContainerPoint(drawPoints[i+1]);
+      var d = distToSegmentSquared(clickPt, a, b);
+      if (d < bestDist){ bestDist = d; bestIdx = i; }
+    }
+    drawPoints.splice(bestIdx+1, 0, latlng);
+    drawMarkers.splice(bestIdx+1, 0, createDrawMarker(latlng));
+    snappedPoints = null;
+    redrawDrawLine();
+    updateDrawBar();
+  }
+
+  function undoLastDrawPoint(){
+    if (drawPoints.length === 0) return;
+    drawPoints.pop();
+    var m = drawMarkers.pop();
+    if (m) map.removeLayer(m);
+    snappedPoints = null;
+    redrawDrawLine();
+    updateDrawBar();
+  }
+
+  function handleDrawClick(latlng){
+    drawMarkers.push(createDrawMarker(latlng));
+    drawPoints.push(latlng);
+    snappedPoints = null;
+    redrawDrawLine();
+    updateDrawBar();
+  }
+
+  function snapDrawnRouteToTrail(){
+    if (drawPoints.length < 2){ showToast('Add at least two points first'); return; }
+    showToast('Snapping to trail…');
+    var coords = drawPoints.map(function(p){ return [p.lng, p.lat]; });
+    fetch('https://api.openrouteservice.org/v2/directions/foot-hiking/geojson', {
+      method: 'POST',
+      headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coordinates: coords })
+    }).then(function(r){
+      if (!r.ok) throw new Error('ORS status ' + r.status);
+      return r.json();
+    }).then(function(data){
+      var line = data.features && data.features[0] && data.features[0].geometry && data.features[0].geometry.coordinates;
+      if (!line || line.length < 2) throw new Error('no route geometry returned');
+      snappedPoints = line.map(function(c){ return L.latLng(c[1], c[0]); });
+      redrawDrawLine();
+      updateDrawBar();
+      showToast('Snapped to trail');
+    }).catch(function(){
+      showToast("Couldn't snap to trail — check your connection or that the points are near a mapped trail/road", 5000);
+    });
+  }
+  function clearMeasure(){
+    measurePoints = [];
+    measureMarkers.forEach(function(m){ map.removeLayer(m); });
+    measureMarkers = [];
+    if (measureLine){ map.removeLayer(measureLine); measureLine = null; }
+    document.getElementById('measure-result').classList.add('hidden');
+  }
+
+  function handleMeasureClick(latlng){
+    var marker = L.circleMarker(latlng, { radius:6, color:'#c2622d', fillColor:'#c2622d', fillOpacity:1, weight:2 }).addTo(map);
+    measureMarkers.push(marker);
+    measurePoints.push(latlng);
+
+    if (measurePoints.length < 2) return;
+
+    if (measureLine) map.removeLayer(measureLine);
+    measureLine = L.polyline(measurePoints, { color:'#c2622d', weight:2, dashArray:'6,6' }).addTo(map);
+
+    var total = 0;
+    for (var i=1;i<measurePoints.length;i++){
+      total += haversineMiles(measurePoints[i-1].lat, measurePoints[i-1].lng, measurePoints[i].lat, measurePoints[i].lng);
+    }
+    var prev = measurePoints[measurePoints.length-2];
+    var brng = bearingDegrees(prev.lat, prev.lng, latlng.lat, latlng.lng);
+    var distText = total < 0.2 ? Math.round(total*5280) + ' ft' : total.toFixed(2) + ' mi';
+    var legLabel = measurePoints.length > 2 ? ' total · last leg ' : ' · ';
+    document.getElementById('measure-result-text').textContent = distText + legLabel + Math.round(brng) + '° ' + compassLabel(brng);
+    document.getElementById('measure-result').classList.remove('hidden');
+  }
+
+  // ---------- Go to place ----------
+  function showSearchResultMarker(lat, lng, label){
+    if (searchResultMarker) map.removeLayer(searchResultMarker);
+    searchResultMarker = L.circleMarker([lat, lng], { radius:9, color:'#fff', weight:2, fillColor:'#2dd4d4', fillOpacity:0.95 }).addTo(map);
+    if (label) searchResultMarker.bindPopup(escapeHtml(label)).openPopup();
+  }
+
+  function renderGotoResults(results){
+    var wrap = document.getElementById('map-search-results');
+    wrap.innerHTML = '';
+    if (!results || results.length === 0){
+      wrap.innerHTML = '<div class="map-search-status">No matches found.</div>';
+      return;
+    }
+    results.forEach(function(r){
+      var row = document.createElement('div');
+      row.className = 'map-search-result-row';
+      row.textContent = r.display_name;
+      row.addEventListener('click', function(){
+        var lat = parseFloat(r.lat), lng = parseFloat(r.lon);
+        map.setView([lat, lng], 13);
+        showSearchResultMarker(lat, lng, r.display_name);
+      });
+      wrap.appendChild(row);
+    });
+  }
+
+  function searchGoto(){
+    var query = document.getElementById('map-search-input').value.trim();
+    if (!query) return;
+    var coordMatch = query.match(/^(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)$/);
+    if (coordMatch){
+      var lat = parseFloat(coordMatch[1]), lng = parseFloat(coordMatch[2]);
+      if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180){
+        map.setView([lat, lng], 14);
+        showSearchResultMarker(lat, lng, lat.toFixed(5) + ', ' + lng.toFixed(5));
+        document.getElementById('map-search-results').innerHTML = '';
+        return;
+      }
+    }
+    document.getElementById('map-search-results').innerHTML = '<div class="map-search-status">Searching…</div>';
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(query))
+      .then(function(r){ return r.json(); })
+      .then(renderGotoResults)
+      .catch(function(){
+        document.getElementById('map-search-results').innerHTML = '<div class="map-search-status">Search failed — check your connection.</div>';
+      });
+  }
+
+  // ---------- Filter chips ----------
+  function renderTagChips(){
+    var wrap = document.getElementById('category-chips');
+    wrap.innerHTML = '';
+    sortedTags().forEach(function(t){
+      if (!(t.id in activeTagFilters)) activeTagFilters[t.id] = true;
+      var chip = document.createElement('div');
+      chip.className = 'chip' + (activeTagFilters[t.id] ? ' active' : '');
+      chip.style.background = activeTagFilters[t.id] ? t.color : 'var(--bg)';
+      chip.style.borderColor = activeTagFilters[t.id] ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.addEventListener('click', function(){
+        activeTagFilters[t.id] = !activeTagFilters[t.id];
+        renderTagChips();
+        renderPinList();
+        refreshAllVisibility();
+        zoomToVisible();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  function computeStatesPresent(){
+    var set = {};
+    state.pins.forEach(function(p){ if (p.state) set[p.state] = true; });
+    state.tracks.forEach(function(t){ if (t.state) set[t.state] = true; });
+    return Object.keys(set).sort();
+  }
+
+  function refreshStateChips(){ renderStateChips(); }
+
+  function renderStateChips(){
+    var wrap = document.getElementById('state-chips');
+    var hint = document.getElementById('state-chips-hint');
+    var states = computeStatesPresent();
+    wrap.innerHTML = '';
+    hint.style.display = states.length ? '' : 'none';
+    if (states.length === 0){
+      wrap.innerHTML = '<p class="hint" style="margin:0;">No states detected yet.</p>';
+      return;
+    }
+    states.forEach(function(s){
+      if (!(s in activeStateFilters)) activeStateFilters[s] = true;
+      var chip = document.createElement('div');
+      chip.className = 'chip' + (activeStateFilters[s] ? ' active' : '');
+      chip.style.background = activeStateFilters[s] ? '#3b82c4' : 'var(--bg)';
+      chip.style.borderColor = activeStateFilters[s] ? '#3b82c4' : 'var(--border)';
+      chip.textContent = s;
+      chip.addEventListener('click', function(){
+        activeStateFilters[s] = !activeStateFilters[s];
+        renderStateChips();
+        renderPinList();
+        refreshAllVisibility();
+        zoomToVisible();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  function computeTripsPresent(){
+    var set = {};
+    var hasNoTrip = false;
+    state.pins.concat(state.tracks).forEach(function(it){
+      if (it.trip) set[it.trip] = true; else hasNoTrip = true;
+    });
+    var list = Object.keys(set).sort();
+    if (hasNoTrip) list.unshift(NO_TRIP_LABEL);
+    return list;
+  }
+
+  function renderTripChips(){
+    var wrap = document.getElementById('trip-chips');
+    var hint = document.getElementById('trip-chips-hint');
+    var trips = computeTripsPresent();
+    wrap.innerHTML = '';
+    hint.style.display = trips.length ? 'none' : '';
+    if (trips.length === 0){
+      wrap.innerHTML = '<p class="hint" style="margin:0;">No trips assigned yet.</p>';
+      return;
+    }
+    trips.forEach(function(tr){
+      if (!(tr in activeTripFilters)) activeTripFilters[tr] = true;
+      var chip = document.createElement('div');
+      chip.className = 'chip' + (activeTripFilters[tr] ? ' active' : '');
+      chip.style.background = activeTripFilters[tr] ? '#5a7a8a' : 'var(--bg)';
+      chip.style.borderColor = activeTripFilters[tr] ? '#5a7a8a' : 'var(--border)';
+      chip.textContent = tr;
+      chip.addEventListener('click', function(){
+        activeTripFilters[tr] = !activeTripFilters[tr];
+        renderTripChips();
+        renderPinList();
+        refreshAllVisibility();
+        zoomToVisible();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  function refreshTripSuggestions(){
+    var dl = document.getElementById('trip-suggestions');
+    dl.innerHTML = '';
+    computeTripsPresent().forEach(function(tr){
+      var opt = document.createElement('option');
+      opt.value = tr;
+      dl.appendChild(opt);
+    });
+  }
+
+  function computeDatesPresent(){
+    var sortKeys = {};
+    function add(ts){
+      if (!ts) return;
+      var d = new Date(ts);
+      var label = dateLabelFor(ts);
+      sortKeys[label] = d.getFullYear()*100 + d.getMonth();
+    }
+    state.pins.forEach(function(p){ add(p.created); });
+    state.tracks.forEach(function(t){ add(t.created); });
+    return Object.keys(sortKeys).sort(function(a,b){ return sortKeys[a]-sortKeys[b]; });
+  }
+
+  function renderDateChips(){
+    var wrap = document.getElementById('date-chips');
+    var dates = computeDatesPresent();
+    wrap.innerHTML = '';
+    if (dates.length === 0){
+      wrap.innerHTML = '<p class="hint" style="margin:0;">No dated pins yet.</p>';
+      return;
+    }
+    dates.forEach(function(dlabel){
+      if (!(dlabel in activeDateFilters)) activeDateFilters[dlabel] = true;
+      var chip = document.createElement('div');
+      chip.className = 'chip' + (activeDateFilters[dlabel] ? ' active' : '');
+      chip.style.background = activeDateFilters[dlabel] ? '#a8853f' : 'var(--bg)';
+      chip.style.borderColor = activeDateFilters[dlabel] ? '#a8853f' : 'var(--border)';
+      chip.textContent = dlabel;
+      chip.addEventListener('click', function(){
+        activeDateFilters[dlabel] = !activeDateFilters[dlabel];
+        renderDateChips();
+        renderPinList();
+        refreshAllVisibility();
+        zoomToVisible();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  // ---------- Unified pin + track list ----------
+  function buildItemRow(it, idx, allItems){
+    var d = it.data;
+    var v = tagVisualFor(d);
+    var row = document.createElement('div');
+    row.className = 'pin-row';
+    var selMap = it.type === 'pin' ? bulkSelectedPins : bulkSelectedTracks;
+    var cb = null;
+
+    if (bulkMode){
+      cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'bulk-checkbox';
+      cb.checked = !!selMap[d.id];
+      cb.addEventListener('change', function(){
+        if (cb.checked) selMap[d.id] = true; else delete selMap[d.id];
+        updateBulkBar();
+      });
+      row.appendChild(cb);
+    }
+
+    var mark = document.createElement('div');
+    if (it.type === 'track'){
+      mark.className = 'track-mark';
+      mark.style.background = v.color;
+    } else {
+      mark.className = 'pin-dot';
+      mark.style.background = v.color;
+      if (v.icon){
+        mark.style.display = 'flex'; mark.style.alignItems = 'center'; mark.style.justifyContent = 'center'; mark.style.color = '#fff';
+        mark.innerHTML = renderIconGlyph(v.icon, 9);
+      }
+    }
+    row.appendChild(mark);
+
+    var textWrap = document.createElement('div');
+    textWrap.className = 'pin-row-text';
+    var nameDiv = document.createElement('div'); nameDiv.className = 'pin-row-name'; nameDiv.textContent = d.name;
+    var metaDiv = document.createElement('div'); metaDiv.className = 'pin-row-meta';
+    var trackDistLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
+    metaDiv.textContent = tagLabelsFor(d) + trackDistLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
+    textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
+    row.appendChild(textWrap);
+
+    row.addEventListener('click', function(e){
+      if (bulkMode){
+        if (e.target === cb) return;
+        if (e.shiftKey && lastBulkClickedIdx !== -1 && allItems){
+          var lo = Math.min(lastBulkClickedIdx, idx);
+          var hi = Math.max(lastBulkClickedIdx, idx);
+          var targetState = !selMap[d.id];
+          for (var ri = lo; ri <= hi; ri++){
+            var rIt = allItems[ri];
+            if (!rIt) continue;
+            var rMap = rIt.type === 'pin' ? bulkSelectedPins : bulkSelectedTracks;
+            var rId = rIt.data.id;
+            if (targetState) rMap[rId] = true; else delete rMap[rId];
+          }
+          renderPinList();
+          updateBulkBar();
+          return;
+        }
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+        lastBulkClickedIdx = idx;
+        return;
+      }
+      if (it.type === 'pin'){
+        map.flyTo([d.lat, d.lng], Math.max(map.getZoom(), 14));
+        setTimeout(function(){ if (markersById[d.id]) markersById[d.id].openPopup(); }, 350);
+      } else {
+        var poly = trackLayersById[d.id];
+        if (poly){
+          if (!map.hasLayer(poly)) poly.addTo(map);
+          map.flyToBounds(poly.getBounds(), { padding:[40,40] });
+          setTimeout(function(){ poly.openPopup(); }, 350);
+        }
+      }
+    });
+    return row;
+  }
+
+  // mapItemVisible: used for map display. Combines filter-panel state + eye visibility.
+  // The sidebar list uses itemVisible() only — eye state does NOT hide items from the sidebar.
+  function mapItemVisible(item){
+    if (!itemVisible(item, '')) return false;
+    // Check eye-hidden tags: hidden if ALL of the item's tags are eye-hidden
+    var tags = item.tags && item.tags.length ? item.tags : ['uncategorized'];
+    if (tags.every(function(tid){ return eyeHiddenTags[tid]; })) return false;
+    // Check eye-hidden trip
+    var tripKey = item.trip || NO_TRIP_LABEL;
+    if (eyeHiddenTrips[tripKey]) return false;
+    return true;
+  }
+
+  var EYE_ON_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 10C3.5 5.5 7 3.5 10 3.5s6.5 2 8.5 6.5c-2 4.5-5.5 6.5-8.5 6.5S3.5 14.5 1.5 10Z"/><circle cx="10" cy="10" r="2.5"/></svg>';
+  var EYE_OFF_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 10C3.5 5.5 7 3.5 10 3.5s6.5 2 8.5 6.5c-2 4.5-5.5 6.5-8.5 6.5S3.5 14.5 1.5 10Z"/><circle cx="10" cy="10" r="2.5"/><line x1="3" y1="17" x2="17" y2="3"/></svg>';
+
+  function groupIsVisible(groupKey){
+    if (listSortMode === 'category') return !eyeHiddenTags[groupKey];
+    if (listSortMode === 'trip') return !eyeHiddenTrips[groupKey];
+    return true;
+  }
+
+  function setGroupVisible(groupKey, on){
+    if (listSortMode === 'category'){
+      if (on){ delete eyeHiddenTags[groupKey]; delete collapsedGroups[groupKey]; }
+      else { eyeHiddenTags[groupKey] = true; collapsedGroups[groupKey] = true; }
+    } else if (listSortMode === 'trip'){
+      if (on){ delete eyeHiddenTrips[groupKey]; delete collapsedGroups[groupKey]; }
+      else { eyeHiddenTrips[groupKey] = true; collapsedGroups[groupKey] = true; }
+    }
+    state.pins.forEach(applyFilterToMarker);
+    state.tracks.forEach(applyFilterToTrack);
+    renderPinList();
+  }
+
+  function buildGroupHeader(label, count, groupKey){
+    var header = document.createElement('div');
+    header.className = 'group-header';
+    var visible = (listSortMode === 'category' || listSortMode === 'trip') ? groupIsVisible(groupKey) : true;
+    // When eye-hidden: force collapsed in sidebar, dim the header
+    var collapsed = !visible || !!collapsedGroups[groupKey];
+    if (!visible) header.style.opacity = '0.4';
+    var chev = document.createElement('span'); chev.className = 'group-chevron'; chev.textContent = collapsed ? '▸' : '▾';
+    var lab = document.createElement('span'); lab.className = 'group-label'; lab.textContent = label;
+    var cnt = document.createElement('span'); cnt.className = 'group-count'; cnt.textContent = count;
+    header.appendChild(chev); header.appendChild(lab); header.appendChild(cnt);
+
+    if (listSortMode === 'category' || listSortMode === 'trip'){
+      var visBtn = document.createElement('button');
+      visBtn.className = 'group-vis-btn' + (visible ? '' : ' vis-off');
+      visBtn.innerHTML = visible ? EYE_ON_SVG : EYE_OFF_SVG;
+      visBtn.title = visible ? 'Hide this group on map' : 'Show this group on map';
+      visBtn.addEventListener('click', function(e){
+        e.stopPropagation();
+        setGroupVisible(groupKey, !groupIsVisible(groupKey));
+      });
+      header.appendChild(visBtn);
+    }
+
+    header.addEventListener('click', function(){
+      // Allow expanding a hidden group in the sidebar (user can browse items even when hidden on map)
+      collapsedGroups[groupKey] = !collapsed;
+      renderPinList();
+    });
+    return header;
+  }
+
+  function renderPinList(){
+    var listEl = document.getElementById('pin-list');
+    var query = document.getElementById('search-input').value.trim().toLowerCase();
+    var pinItems = state.pins.map(function(p){ return {type:'pin', data:p}; });
+    var trackItems = state.tracks.map(function(t){ return {type:'track', data:t}; });
+    var all = pinItems.concat(trackItems).filter(function(it){ return itemVisible(it.data, query); });
+
+    // Show/hide the group visibility bar
+    var visBar = document.getElementById('group-vis-bar');
+    if (listSortMode === 'category' || listSortMode === 'trip'){
+      visBar.classList.add('show');
+    } else {
+      visBar.classList.remove('show');
+    }
+
+    listEl.innerHTML = '';
+
+    if (all.length === 0){
+      listEl.innerHTML = '<div id="pin-empty">No pins or tracks match yet. Add one, or import from your other apps.</div>';
+    } else if (listSortMode === 'chronological'){
+      all.sort(function(a,b){ return b.data.created - a.data.created; });
+      all.forEach(function(it, idx){ listEl.appendChild(buildItemRow(it, idx, all)); });
+    } else {
+      var groups = {};
+      all.forEach(function(it){
+        var key, label;
+        if (listSortMode === 'category'){
+          var tid = (it.data.tags && it.data.tags[0]) || 'uncategorized';
+          key = tid; label = tagById(tid).label;
+        } else {
+          key = it.data.trip || NO_TRIP_LABEL;
+          label = key;
+        }
+        if (!groups[key]) groups[key] = { label: label, items: [] };
+        groups[key].items.push(it);
+      });
+      var groupKeys = Object.keys(groups).sort(function(a,b){ return groups[a].label.localeCompare(groups[b].label); });
+      var flatIdx = 0;
+      groupKeys.forEach(function(key){
+        var g = groups[key];
+        g.items.sort(function(a,b){ return b.data.created - a.data.created; });
+        listEl.appendChild(buildGroupHeader(g.label, g.items.length, key));
+        if (!collapsedGroups[key]){
+          g.items.forEach(function(it){ listEl.appendChild(buildItemRow(it, flatIdx++, all)); });
+        } else {
+          flatIdx += g.items.length;
+        }
+      });
+    }
+
+    var totalCount = state.pins.length + state.tracks.length;
+    document.getElementById('pin-count').textContent = totalCount + ' item' + (totalCount===1?'':'s') +
+      (all.length !== totalCount ? ' · ' + all.length + ' shown' : '');
+  }
+
+  // ---------- Bulk edit ----------
+  function updateBulkBar(){
+    var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length;
+    document.getElementById('bulk-count').textContent = n + ' selected';
+    document.getElementById('bulk-apply-btn').disabled = (n === 0);
+    document.getElementById('bulk-delete-btn').disabled = (n === 0);
+  }
+
+  function enterBulkMode(){
+    bulkMode = true;
+    lastBulkClickedIdx = -1;
+    bulkSelectedPins = {}; bulkSelectedTracks = {};
+    document.getElementById('bulk-bar').classList.remove('hidden');
+    document.getElementById('bulk-edit-btn').classList.add('active');
+    document.getElementById('sidebar').classList.add('open');
+    updateBulkBar();
+    renderPinList();
+  }
+
+  function exitBulkMode(){
+    bulkMode = false;
+    bulkSelectedPins = {}; bulkSelectedTracks = {};
+    document.getElementById('bulk-bar').classList.add('hidden');
+    document.getElementById('bulk-edit-btn').classList.remove('active');
+    renderPinList();
+  }
+
+  function renderBulkTagChips(){
+    var wrap = document.getElementById('bulk-tags-row');
+    wrap.innerHTML = '';
+    sortedTags().forEach(function(t){
+      var chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.style.background = 'var(--bg)';
+      chip.style.borderColor = 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = t.id;
+      chip.addEventListener('click', function(){
+        var active = chip.classList.toggle('active');
+        chip.style.background = active ? t.color : 'var(--bg)';
+        chip.style.borderColor = active ? t.color : 'var(--border)';
+      });
+      wrap.appendChild(chip);
+    });
+    var addChip = document.createElement('div');
+    addChip.className = 'chip';
+    addChip.style.borderStyle = 'dashed';
+    addChip.textContent = '+ New';
+    addChip.addEventListener('click', function(){
+      var id = quickAddTag(prompt('New tag name:'));
+      if (id) renderBulkTagChips();
+    });
+    wrap.appendChild(addChip);
+  }
+
+  function applyBulkEdit(){
+    var addTagIds = [];
+    document.querySelectorAll('#bulk-tags-row .chip.active').forEach(function(c){ addTagIds.push(c.dataset.tagId); });
+    var trip = document.getElementById('bulk-trip').value.trim();
+    var dateVal = dateInputValueToTs(document.getElementById('bulk-date').value);
+    var pinIds = Object.keys(bulkSelectedPins);
+    var trackIds = Object.keys(bulkSelectedTracks);
+    var total = pinIds.length + trackIds.length;
+
+    function applyToItem(item){
+      if (addTagIds.length){
+        addTagIds.forEach(function(id){ if (item.tags.indexOf(id) === -1) item.tags.push(id); });
+        if (item.tags.length > 1 && item.tags.indexOf('uncategorized') !== -1){
+          item.tags = item.tags.filter(function(id){ return id !== 'uncategorized'; });
+        }
+      }
+      if (trip) item.trip = trip;
+      if (dateVal) item.created = dateVal;
+    }
+
+    pinIds.forEach(function(id){
+      var p = state.pins.find(function(x){ return x.id === id; });
+      if (p){ applyToItem(p); refreshMarkerPopup(p); }
+    });
+    trackIds.forEach(function(id){
+      var t = state.tracks.find(function(x){ return x.id === id; });
+      if (t){ applyToItem(t); refreshTrackPopup(t); }
+    });
+
+    document.getElementById('bulk-modal').classList.add('hidden');
+    exitBulkMode();
+    refreshStateChips();
+    renderTripChips();
+    refreshTripSuggestions();
+    renderDateChips();
+    renderTagChips();
+    renderPinList();
+    scheduleSave();
+    showToast('Updated ' + total + ' item' + (total===1?'':'s'));
+  }
+
+  function confirmBulkDelete(){
+    var pinIds = Object.keys(bulkSelectedPins);
+    var trackIds = Object.keys(bulkSelectedTracks);
+    var total = pinIds.length + trackIds.length;
+    pinIds.forEach(function(id){
+      state.pins = state.pins.filter(function(p){ return p.id !== id; });
+      removeMarkerForPin(id);
+    });
+    trackIds.forEach(function(id){
+      state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+      removeTrackFromMap(id);
+    });
+    document.getElementById('bulk-delete-modal').classList.add('hidden');
+    exitBulkMode();
+    refreshStateChips();
+    renderTripChips();
+    refreshTripSuggestions();
+    renderDateChips();
+    renderTagChips();
+    renderPinList();
+    scheduleSave();
+    showToast('Deleted ' + total + ' item' + (total===1?'':'s'));
+  }
+
+  // ---------- Find duplicates ----------
+  function findAndShowDuplicates(){
+    var COORD_THRESHOLD = 0.0005;
+    var groups = []; // [{items:[{type,data}]}]
+
+    // Group pins by name+coords
+    var usedPinIds = {};
+    state.pins.forEach(function(p){
+      if (usedPinIds[p.id]) return;
+      var matches = state.pins.filter(function(q){
+        return q.id !== p.id && !usedPinIds[q.id] &&
+          q.name.toLowerCase() === p.name.toLowerCase() &&
+          Math.abs(q.lat - p.lat) < COORD_THRESHOLD &&
+          Math.abs(q.lng - p.lng) < COORD_THRESHOLD;
+      });
+      if (matches.length > 0){
+        var group = [{type:'pin',data:p}].concat(matches.map(function(q){ return {type:'pin',data:q}; }));
+        group.forEach(function(g){ usedPinIds[g.data.id] = true; });
+        groups.push(group);
+      }
+    });
+
+    // Group tracks by name
+    var usedTrackIds = {};
+    state.tracks.forEach(function(t){
+      if (usedTrackIds[t.id]) return;
+      var matches = state.tracks.filter(function(u){
+        return u.id !== t.id && !usedTrackIds[u.id] &&
+          u.name.toLowerCase() === t.name.toLowerCase() &&
+          Math.abs(u.points.length - t.points.length) <= Math.max(2, t.points.length * 0.05);
+      });
+      if (matches.length > 0){
+        var group = [{type:'track',data:t}].concat(matches.map(function(u){ return {type:'track',data:u}; }));
+        group.forEach(function(g){ usedTrackIds[g.data.id] = true; });
+        groups.push(group);
+      }
+    });
+
+    var listEl = document.getElementById('find-dupes-list');
+    listEl.innerHTML = '';
+    var sumEl = document.getElementById('find-dupes-summary');
+
+    if (groups.length === 0){
+      sumEl.textContent = 'No duplicates found — your data looks clean.';
+      document.getElementById('find-dupes-delete-btn').disabled = true;
+    } else {
+      sumEl.textContent = groups.length + ' group' + (groups.length===1?'':'s') + ' of possible duplicates found. Check the ones you want to delete — keep at least one per group.';
+      document.getElementById('find-dupes-delete-btn').disabled = false;
+
+      groups.forEach(function(group, gi){
+        var groupEl = document.createElement('div');
+        groupEl.className = 'dupe-group';
+        var header = document.createElement('div');
+        header.className = 'dupe-group-header';
+        header.textContent = 'Group ' + (gi+1) + ': "' + group[0].data.name + '" · ' + group.length + ' items';
+        groupEl.appendChild(header);
+
+        group.forEach(function(it, ii){
+          var d = it.data;
+          var row = document.createElement('div');
+          row.className = 'dupe-group-row';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.dataset.id = d.id;
+          cb.dataset.type = it.type;
+          // Default: check all but the oldest (lowest created ts)
+          var oldestInGroup = group.reduce(function(a,b){ return a.data.created < b.data.created ? a : b; });
+          cb.checked = (d.id !== oldestInGroup.data.id);
+          cb.addEventListener('change', updateDupesDeleteBtn);
+          var v = tagVisualFor(d);
+          var dot = document.createElement('div');
+          dot.className = 'pin-dot'; dot.style.background = v.color; dot.style.flexShrink = '0'; dot.style.marginTop = '0';
+          var lbl = document.createElement('label');
+          var nameSpan = document.createElement('span'); nameSpan.textContent = d.name;
+          var metaSpan = document.createElement('span'); metaSpan.className = 'dupe-row-meta';
+          var dateStr = d.created ? new Date(d.created).toLocaleDateString() : 'no date';
+          if (it.type === 'pin'){
+            metaSpan.textContent = tagLabelsFor(d) + ' · ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5) + ' · ' + dateStr;
+          } else {
+            metaSpan.textContent = tagLabelsFor(d) + ' · ' + formatDist(d.distMiles) + ' · ' + dateStr;
+          }
+          lbl.appendChild(nameSpan); lbl.appendChild(metaSpan);
+          row.appendChild(cb); row.appendChild(dot); row.appendChild(lbl);
+          groupEl.appendChild(row);
+        });
+        listEl.appendChild(groupEl);
+      });
+    }
+
+    document.getElementById('find-dupes-modal').classList.remove('hidden');
+  }
+
+  function updateDupesDeleteBtn(){
+    var checked = document.querySelectorAll('#find-dupes-list input[type=checkbox]:checked');
+    document.getElementById('find-dupes-delete-btn').disabled = (checked.length === 0);
+  }
+
+  function executeDupesDelete(){
+    var toDelete = document.querySelectorAll('#find-dupes-list input[type=checkbox]:checked');
+    var total = toDelete.length;
+    if (total === 0) return;
+    if (!confirm('Delete ' + total + ' item' + (total===1?'':'s') + '? This cannot be undone.')) return;
+    var pinIds = [], trackIds = [];
+    toDelete.forEach(function(cb){
+      if (cb.dataset.type === 'pin') pinIds.push(cb.dataset.id);
+      else trackIds.push(cb.dataset.id);
+    });
+    pinIds.forEach(function(id){
+      state.pins = state.pins.filter(function(p){ return p.id !== id; });
+      removeMarkerForPin(id);
+    });
+    trackIds.forEach(function(id){
+      state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
+      removeTrackFromMap(id);
+    });
+    document.getElementById('find-dupes-modal').classList.add('hidden');
+    refreshStateChips(); renderTripChips(); refreshTripSuggestions(); renderDateChips(); renderTagChips(); renderPinList();
+    scheduleSave();
+    showToast('Deleted ' + (pinIds.length + trackIds.length) + ' duplicate' + (total===1?'':'s'));
+  }
+  function renderTagIconPicker(){
+    var wrap = document.getElementById('tag-icon-picker');
+    wrap.innerHTML = '';
+    Object.keys(SVG_ICONS).forEach(function(key){
+      var btn = document.createElement('div');
+      btn.className = 'icon-pick-btn';
+      btn.innerHTML = renderIconGlyph('svg:' + key, 15);
+      btn.title = key;
+      btn.addEventListener('click', function(){
+        document.getElementById('tag-new-icon').value = 'svg:' + key;
+      });
+      wrap.appendChild(btn);
+    });
+  }
+
+  function renderTagsManageList(){
+    var wrap = document.getElementById('tags-manage-list');
+    wrap.innerHTML = '';
+    sortedTags().forEach(function(t){
+      var row = document.createElement('div');
+      row.className = 'tag-manage-row';
+      var swatch = document.createElement('div');
+      swatch.className = 'tag-swatch';
+      swatch.style.background = t.color;
+      swatch.style.color = '#fff';
+      swatch.innerHTML = renderIconGlyph(t.icon, 13);
+      var label = document.createElement('div');
+      label.className = 'tag-manage-label';
+      label.textContent = t.label;
+      var editBtn = document.createElement('button');
+      editBtn.className = 'btn btn-small'; editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', function(){ startEditTag(t.id); });
+      var delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', function(){ deleteTagConfirmed(t.id); });
+      row.appendChild(swatch); row.appendChild(label); row.appendChild(editBtn); row.appendChild(delBtn);
+      wrap.appendChild(row);
+    });
+  }
+
+  function startEditTag(id){
+    var t = tagById(id);
+    editingTagId = id;
+    document.getElementById('tag-new-label').value = t.label;
+    document.getElementById('tag-new-color').value = t.color;
+    document.getElementById('tag-new-icon').value = t.icon || '';
+    document.getElementById('tag-save-btn').textContent = 'Save changes';
+    document.getElementById('tag-cancel-edit-btn').classList.remove('hidden');
+    document.getElementById('tag-new-label').focus();
+  }
+
+  function cancelTagEdit(){
+    editingTagId = null;
+    document.getElementById('tag-new-label').value = '';
+    document.getElementById('tag-new-color').value = '#6b7d6a';
+    document.getElementById('tag-new-icon').value = '';
+    document.getElementById('tag-save-btn').textContent = 'Add tag';
+    document.getElementById('tag-cancel-edit-btn').classList.add('hidden');
+  }
+
+  function saveTagFromForm(){
+    var label = document.getElementById('tag-new-label').value.trim();
+    if (!label){ showToast('Give the tag a name first'); return; }
+    var color = document.getElementById('tag-new-color').value;
+    var icon = document.getElementById('tag-new-icon').value.trim();
+
+    if (editingTagId){
+      var t = tagById(editingTagId);
+      t.label = label; t.color = color; t.icon = icon;
+      showToast('Tag updated');
+    } else {
+      state.tags.push({ id: slugify(label), label: label, color: color, icon: icon });
+      showToast('Tag added');
+    }
+    cancelTagEdit();
+    renderTagsManageList();
+    renderTagChips();
+    state.pins.forEach(function(p){ refreshMarkerPopup(p); applyFilterToMarker(p); });
+    state.tracks.forEach(function(t){ refreshTrackPopup(t); applyFilterToTrack(t); });
+    renderPinList();
+    scheduleSave();
+  }
+
+  function deleteTagConfirmed(id){
+    if (id === 'uncategorized'){ showToast("Can't delete the Uncategorized tag"); return; }
+    var count = state.pins.filter(function(p){ return (p.tags||[]).indexOf(id) !== -1; }).length +
+      state.tracks.filter(function(t){ return (t.tags||[]).indexOf(id) !== -1; }).length;
+    var msg = count > 0 ?
+      ('Delete this tag? ' + count + ' item' + (count===1?'':'s') + ' using it will be moved to Uncategorized if it was their only tag.') :
+      'Delete this tag?';
+    if (!confirm(msg)) return;
+
+    state.tags = state.tags.filter(function(t){ return t.id !== id; });
+    function fixTags(arr){
+      arr.forEach(function(item){
+        if (!item.tags) return;
+        item.tags = item.tags.filter(function(tid){ return tid !== id; });
+        if (item.tags.length === 0) item.tags = ['uncategorized'];
+      });
+    }
+    fixTags(state.pins); fixTags(state.tracks);
+    if (editingTagId === id) cancelTagEdit();
+    renderTagsManageList();
+    renderTagChips();
+    state.pins.forEach(function(p){ refreshMarkerPopup(p); applyFilterToMarker(p); });
+    state.tracks.forEach(function(t){ refreshTrackPopup(t); applyFilterToTrack(t); });
+    renderPinList();
+    scheduleSave();
+    showToast('Tag deleted');
+  }
+
+  // ---------- Import ----------
+  var pendingImportPins = [];
+  var pendingImportTracks = [];
+
+  function extractNotesAndTag(raw){
+    var text = (raw || '').trim();
+    if (!text) return { notes:'', suggestedTag:null };
+    var lines = text.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+    var isKeyValue = lines.length > 0 && lines.every(function(l){ return /^[a-zA-Z0-9_]+\s*=/.test(l); });
+    if (!isKeyValue) return { notes:text, suggestedTag:null };
+    var map = {};
+    lines.forEach(function(l){
+      var idx = l.indexOf('=');
+      var key = l.slice(0, idx).trim().toLowerCase();
+      var val = l.slice(idx+1).trim();
+      map[key] = val;
+    });
+    return { notes: map.notes || '', suggestedTag: map.icon || null };
+  }
+
+  function parseTimeSafe(str){
+    if (!str) return null;
+    var t = new Date(str).getTime();
+    return isFinite(t) ? t : null;
+  }
+
+  function tsToDateInputValue(ts){
+    if (!ts) return '';
+    var d = new Date(ts);
+    var y = d.getFullYear();
+    var m = String(d.getMonth()+1).padStart(2,'0');
+    var day = String(d.getDate()).padStart(2,'0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function dateInputValueToTs(val){
+    if (!val) return null;
+    var t = new Date(val + 'T12:00:00').getTime();
+    return isFinite(t) ? t : null;
+  }
+
+  function parseGpxWaypoints(doc){
+    var wpts = doc.getElementsByTagName('wpt');
+    var out = [];
+    for (var i=0;i<wpts.length;i++){
+      var w = wpts[i];
+      var lat = parseFloat(w.getAttribute('lat'));
+      var lon = parseFloat(w.getAttribute('lon'));
+      if (isNaN(lat) || isNaN(lon)) continue;
+      var nameEl = w.getElementsByTagName('name')[0];
+      var descEl = w.getElementsByTagName('desc')[0] || w.getElementsByTagName('cmt')[0];
+      var timeEl = w.getElementsByTagName('time')[0];
+      var parsed = extractNotesAndTag(descEl ? descEl.textContent : '');
+      out.push({ lat: lat, lng: lon, name: nameEl ? nameEl.textContent : 'Imported point',
+        notes: parsed.notes, suggestedTag: parsed.suggestedTag,
+        createdAt: timeEl ? parseTimeSafe(timeEl.textContent) : null });
+    }
+    return out;
+  }
+
+  function parseGpxTracksFromDoc(doc){
+    var trks = doc.getElementsByTagName('trk');
+    var out = [];
+    for (var i=0;i<trks.length;i++){
+      var trk = trks[i];
+      var nameEl = trk.getElementsByTagName('name')[0];
+      var descEl = trk.getElementsByTagName('desc')[0] || trk.getElementsByTagName('cmt')[0];
+      var segs = trk.getElementsByTagName('trkseg');
+      var points = [];
+      var createdAt = null;
+      for (var s=0;s<segs.length;s++){
+        var pts = segs[s].getElementsByTagName('trkpt');
+        for (var p=0;p<pts.length;p++){
+          var lat = parseFloat(pts[p].getAttribute('lat'));
+          var lon = parseFloat(pts[p].getAttribute('lon'));
+          if (!isNaN(lat) && !isNaN(lon)) points.push([lat,lon]);
+          if (createdAt === null){
+            var tEl = pts[p].getElementsByTagName('time')[0];
+            if (tEl){ var t = parseTimeSafe(tEl.textContent); if (t) createdAt = t; }
+          }
+        }
+      }
+      if (points.length < 2) continue;
+      var parsed = extractNotesAndTag(descEl ? descEl.textContent : '');
+      out.push({ name: nameEl ? nameEl.textContent : 'Imported track', points: points, notes: parsed.notes, createdAt: createdAt });
+    }
+    return out;
+  }
+
+  function parseGpxRoutesFromDoc(doc){
+    var rtes = doc.getElementsByTagName('rte');
+    var out = [];
+    for (var i=0;i<rtes.length;i++){
+      var rte = rtes[i];
+      var nameEl = rte.getElementsByTagName('name')[0];
+      var descEl = rte.getElementsByTagName('desc')[0] || rte.getElementsByTagName('cmt')[0];
+      var pts = rte.getElementsByTagName('rtept');
+      var points = [];
+      var createdAt = null;
+      for (var p=0;p<pts.length;p++){
+        var lat = parseFloat(pts[p].getAttribute('lat'));
+        var lon = parseFloat(pts[p].getAttribute('lon'));
+        if (!isNaN(lat) && !isNaN(lon)) points.push([lat,lon]);
+        if (createdAt === null){
+          var tEl = pts[p].getElementsByTagName('time')[0];
+          if (tEl){ var t = parseTimeSafe(tEl.textContent); if (t) createdAt = t; }
+        }
+      }
+      if (points.length < 2) continue;
+      var parsed = extractNotesAndTag(descEl ? descEl.textContent : '');
+      out.push({ name: nameEl ? nameEl.textContent : 'Imported route', points: points, notes: parsed.notes, createdAt: createdAt });
+    }
+    return out;
+  }
+
+  function parseGPX(text){
+    var doc = new DOMParser().parseFromString(text, 'application/xml');
+    return {
+      pins: parseGpxWaypoints(doc),
+      tracks: parseGpxTracksFromDoc(doc).concat(parseGpxRoutesFromDoc(doc))
+    };
+  }
+
+  function kmlTimestamp(pm){
+    var tsEl = pm.getElementsByTagName('TimeStamp')[0];
+    if (tsEl){
+      var whenEl = tsEl.getElementsByTagName('when')[0];
+      if (whenEl) return parseTimeSafe(whenEl.textContent);
+    }
+    var spanEl = pm.getElementsByTagName('TimeSpan')[0];
+    if (spanEl){
+      var beginEl = spanEl.getElementsByTagName('begin')[0];
+      if (beginEl) return parseTimeSafe(beginEl.textContent);
+    }
+    return null;
+  }
+
+  function parseKmlPointsFromDoc(doc){
+    var placemarks = doc.getElementsByTagName('Placemark');
+    var out = [];
+    for (var i=0;i<placemarks.length;i++){
+      var pm = placemarks[i];
+      var pointEl = pm.getElementsByTagName('Point')[0];
+      if (!pointEl) continue;
+      var coordEl = pointEl.getElementsByTagName('coordinates')[0];
+      if (!coordEl) continue;
+      var parts = coordEl.textContent.trim().split(',');
+      var lng = parseFloat(parts[0]), lat = parseFloat(parts[1]);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      var nameEl = pm.getElementsByTagName('name')[0];
+      var descEl = pm.getElementsByTagName('description')[0];
+      var notesRaw = descEl ? descEl.textContent : '';
+      var tmp = document.createElement('div'); tmp.innerHTML = notesRaw;
+      var parsed = extractNotesAndTag(tmp.textContent.trim());
+      out.push({ lat: lat, lng: lng, name: nameEl ? nameEl.textContent : 'Imported point',
+        notes: parsed.notes, suggestedTag: parsed.suggestedTag, createdAt: kmlTimestamp(pm) });
+    }
+    return out;
+  }
+
+  function parseKmlTracksFromDoc(doc){
+    var placemarks = doc.getElementsByTagName('Placemark');
+    var out = [];
+    for (var i=0;i<placemarks.length;i++){
+      var pm = placemarks[i];
+      var lineEl = pm.getElementsByTagName('LineString')[0];
+      if (!lineEl) continue;
+      var coordEl = lineEl.getElementsByTagName('coordinates')[0];
+      if (!coordEl) continue;
+      var raw = coordEl.textContent.trim();
+      var points = raw.split(/\s+/).map(function(triplet){
+        var parts = triplet.split(',');
+        var lng = parseFloat(parts[0]), lat = parseFloat(parts[1]);
+        return (isNaN(lat)||isNaN(lng)) ? null : [lat,lng];
+      }).filter(function(p){ return p; });
+      if (points.length < 2) continue;
+      var nameEl = pm.getElementsByTagName('name')[0];
+      var descEl = pm.getElementsByTagName('description')[0];
+      var notesRaw = descEl ? descEl.textContent : '';
+      var tmp = document.createElement('div'); tmp.innerHTML = notesRaw;
+      var parsed = extractNotesAndTag(tmp.textContent.trim());
+      out.push({ name: nameEl ? nameEl.textContent : 'Imported track', points: points, notes: parsed.notes, createdAt: kmlTimestamp(pm) });
+    }
+    return out;
+  }
+
+  function parseKML(text){
+    var doc = new DOMParser().parseFromString(text, 'application/xml');
+    return { pins: parseKmlPointsFromDoc(doc), tracks: parseKmlTracksFromDoc(doc) };
+  }
+
+  function splitCsvLine(line){
+    return line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(function(s){
+      return s.trim().replace(/^"(.*)"$/, '$1');
+    });
+  }
+
+  function parseCSVFile(text){
+    var lines = text.split(/\r?\n/).filter(function(l){ return l.trim().length; });
+    if (lines.length < 2) return { pins: [], tracks: [] };
+    var header = splitCsvLine(lines[0]).map(function(h){ return h.toLowerCase().trim(); });
+    var idx = {
+      name: header.findIndex(function(h){ return ['name','title','label'].indexOf(h)!==-1; }),
+      lat: header.findIndex(function(h){ return ['lat','latitude'].indexOf(h)!==-1; }),
+      lng: header.findIndex(function(h){ return ['lng','lon','long','longitude'].indexOf(h)!==-1; }),
+      notes: header.findIndex(function(h){ return ['notes','description','desc','comment'].indexOf(h)!==-1; })
+    };
+    if (idx.lat === -1 || idx.lng === -1) return { pins: [], tracks: [] };
+    var out = [];
+    for (var i=1;i<lines.length;i++){
+      var cols = splitCsvLine(lines[i]);
+      var lat = parseFloat(cols[idx.lat]), lng = parseFloat(cols[idx.lng]);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      out.push({
+        lat: lat, lng: lng,
+        name: idx.name !== -1 ? cols[idx.name] : 'Imported point',
+        notes: idx.notes !== -1 ? cols[idx.notes] : ''
+      });
+    }
+    return { pins: out, tracks: [] };
+  }
+
+  function extractTimeFromProps(props){
+    var keys = ['created','createdDate','date','time','timestamp','Created','Date','Time','Timestamp'];
+    for (var i=0;i<keys.length;i++){
+      if (props[keys[i]]){ var t = parseTimeSafe(props[keys[i]]); if (t) return t; }
+    }
+    return null;
+  }
+
+  function parseGeoJSON(text){
+    var data = JSON.parse(text);
+    var features = data.type === 'FeatureCollection' ? data.features : (data.type === 'Feature' ? [data] : []);
+    var pins = [], tracks = [];
+    features.forEach(function(f){
+      if (!f.geometry) return;
+      var props = f.properties || {};
+      var name = props.name || props.Title || props.title || props.label || 'Imported item';
+      var notes = props.notes || props.description || props.Notes || props.Description || props.comment || '';
+      var createdAt = extractTimeFromProps(props);
+      if (f.geometry.type === 'Point'){
+        var c = f.geometry.coordinates;
+        if (typeof c[1] === 'number' && typeof c[0] === 'number') pins.push({ lat:c[1], lng:c[0], name:name, notes:notes, createdAt:createdAt });
+      } else if (f.geometry.type === 'LineString'){
+        var pts = f.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
+        if (pts.length >= 2) tracks.push({ name:name, points:pts, notes:notes, createdAt:createdAt });
+      } else if (f.geometry.type === 'MultiLineString'){
+        f.geometry.coordinates.forEach(function(line, idx){
+          var pts2 = line.map(function(c){ return [c[1], c[0]]; });
+          if (pts2.length >= 2) tracks.push({ name: name + (f.geometry.coordinates.length>1?' ('+(idx+1)+')':''), points:pts2, notes:notes, createdAt:createdAt });
+        });
+      }
+    });
+    return { pins: pins, tracks: tracks };
+  }
+
+  function handleImportFile(file){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var text = reader.result;
+      var ext = file.name.split('.').pop().toLowerCase();
+      var result = { pins:[], tracks:[] };
+      try {
+        if (ext === 'gpx') result = parseGPX(text);
+        else if (ext === 'kml') result = parseKML(text);
+        else if (ext === 'csv') result = parseCSVFile(text);
+        else if (ext === 'geojson' || ext === 'json') result = parseGeoJSON(text);
+      } catch(e){ result = { pins:[], tracks:[] }; }
+
+      if (result.pins.length === 0 && result.tracks.length === 0){
+        showToast('Could not find any points or tracks in that file');
+        return;
+      }
+      pendingImportPins = result.pins;
+      pendingImportTracks = result.tracks;
+      var parts = [];
+      if (result.pins.length) parts.push(result.pins.length + ' point' + (result.pins.length===1?'':'s'));
+      if (result.tracks.length) parts.push(result.tracks.length + ' track/route' + (result.tracks.length===1?'':'s'));
+      var dupeCount = result.pins.filter(isDuplicatePin).length + result.tracks.filter(isDuplicateTrack).length;
+      var dupePart = dupeCount > 0 ? ' (' + dupeCount + ' possible duplicate' + (dupeCount===1?'':'s') + ' flagged)' : '';
+      document.getElementById('import-summary').textContent =
+        'Found ' + parts.join(' and ') + ' in ' + file.name + '.' + dupePart + ' Each defaults to Uncategorized.';
+      renderImportItemList();
+      renderImportTrackList();
+      document.getElementById('import-bulk-category').value = '';
+      document.getElementById('import-pins-section').classList.toggle('hidden', result.pins.length === 0);
+      document.getElementById('import-tracks-section').classList.toggle('hidden', result.tracks.length === 0);
+      document.getElementById('import-modal').classList.remove('hidden');
+    };
+    reader.readAsText(file);
+  }
+
+  function guessTagFromText(text){
+    if (!text) return null;
+    var lower = text.toLowerCase();
+    for (var i=0;i<state.tags.length;i++){
+      var t = state.tags[i];
+      if (t.id === 'uncategorized' || t.id === 'other') continue;
+      var words = t.label.toLowerCase().split(/[\s\/]+/).filter(function(w){ return w.length >= 4; });
+      for (var j=0;j<words.length;j++){
+        if (lower.indexOf(words[j]) !== -1) return t.id;
+      }
+    }
+    return null;
+  }
+
+  function isDuplicatePin(candidate){
+    var threshold = 0.0005; // ~55m
+    return state.pins.some(function(p){
+      return p.name.toLowerCase() === (candidate.name||'').toLowerCase() &&
+        Math.abs(p.lat - candidate.lat) < threshold &&
+        Math.abs(p.lng - candidate.lng) < threshold;
+    });
+  }
+
+  function isDuplicateTrack(candidate){
+    return state.tracks.some(function(t){
+      return t.name.toLowerCase() === (candidate.name||'').toLowerCase() &&
+        Math.abs(t.points.length - candidate.points.length) <= Math.max(2, candidate.points.length * 0.05);
+    });
+  }
+
+  var lastImportPinClick = -1, lastImportTrackClick = -1;
+
+  function buildImportRow(item, idx, isTrack, lastClickRef){
+    var isDupe = isTrack ? isDuplicateTrack(item) : isDuplicatePin(item);
+    var row = document.createElement('div');
+    row.className = 'import-item-row' + (isDupe ? ' import-dupe' : '');
+
+    // Include/skip checkbox
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'import-row-include import-row-cb';
+    cb.checked = !isDupe;  // default: skip suspected duplicates
+    cb.title = isDupe ? 'Suspected duplicate — unchecked by default' : 'Include in import';
+    row.appendChild(cb);
+
+    var info = document.createElement('div');
+    info.className = 'import-item-info';
+    var nameEl = document.createElement('div');
+    nameEl.className = 'import-item-name';
+    nameEl.textContent = item.name || (isTrack ? 'Imported track' : 'Imported point');
+    if (isDupe){
+      var badge = document.createElement('span');
+      badge.className = 'dupe-badge';
+      badge.textContent = '⚠ duplicate?';
+      nameEl.appendChild(badge);
+    }
+    var metaEl = document.createElement('div');
+    metaEl.className = 'import-item-coords';
+    if (isTrack){
+      metaEl.textContent = item.points.length + ' points' + (item.points.length > 1 ? ' · ' + formatDist(trackDistanceMiles(item.points)) : '');
+    } else {
+      metaEl.textContent = item.lat.toFixed(5) + ', ' + item.lng.toFixed(5);
+    }
+    info.appendChild(nameEl); info.appendChild(metaEl);
+    var sel = document.createElement('select');
+    populateCategorySelect(sel);
+    sel.value = 'uncategorized';
+    if (!isTrack && item.suggestedTag){
+      var match = state.tags.find(function(t){ return t.label.toLowerCase() === item.suggestedTag.toLowerCase(); });
+      if (match) sel.value = match.id;
+    } else {
+      var guessed = guessTagFromText(item.name);
+      if (guessed) sel.value = guessed;
+    }
+    sel.addEventListener('change', handleImportTagSelectChange);
+    sel.addEventListener('click', function(){ lastClickRef.idx = idx; });
+    row.appendChild(info); row.appendChild(sel);
+    return row;
+  }
+
+  function renderImportItemList(){
+    var wrap = document.getElementById('import-item-list');
+    wrap.innerHTML = '';
+    lastImportPinClick = -1;
+    var ref = { idx: -1 };
+    pendingImportPins.forEach(function(item, idx){
+      wrap.appendChild(buildImportRow(item, idx, false, ref));
+    });
+  }
+
+  function renderImportTrackList(){
+    var wrap = document.getElementById('import-track-list');
+    wrap.innerHTML = '';
+    lastImportTrackClick = -1;
+    var ref = { idx: -1 };
+    pendingImportTracks.forEach(function(item, idx){
+      wrap.appendChild(buildImportRow(item, idx, true, ref));
+    });
+  }
+
+  function confirmImport(){
+    var importTrip = document.getElementById('import-trip').value.trim();
+    var pinRows = document.querySelectorAll('#import-item-list .import-item-row');
+    var trackRows = document.querySelectorAll('#import-track-list .import-item-row');
+    var importedPins = 0, importedTracks = 0, skipped = 0;
+
+    pendingImportPins.forEach(function(p, i){
+      var row = pinRows[i];
+      var cb = row && row.querySelector('.import-row-include');
+      if (cb && !cb.checked){ skipped++; return; }
+      var sel = row && row.querySelector('select');
+      var tagId = (sel && sel.value) || 'uncategorized';
+      var pin = {
+        id: uid(), lat: p.lat, lng: p.lng,
+        name: p.name || 'Imported point', tags: [tagId],
+        notes: p.notes || '', created: p.createdAt || Date.now(), source: 'imported',
+        trip: importTrip, state: stateForPoint(p.lat, p.lng)
+      };
+      state.pins.push(pin);
+      addMarkerForPin(pin);
+      importedPins++;
+    });
+
+    pendingImportTracks.forEach(function(t, i){
+      var row = trackRows[i];
+      var cb = row && row.querySelector('.import-row-include');
+      if (cb && !cb.checked){ skipped++; return; }
+      var sel = row && row.querySelector('select');
+      var tagId = (sel && sel.value) || 'uncategorized';
+      var track = {
+        id: uid(), name: t.name || 'Imported track', points: t.points, tags: [tagId],
+        notes: t.notes || '', created: t.createdAt || Date.now(), source: 'imported',
+        distMiles: trackDistanceMiles(t.points),
+        trip: importTrip, state: stateForPoint(t.points[0][0], t.points[0][1])
+      };
+      state.tracks.push(track);
+      addTrackToMap(track);
+      importedTracks++;
+    });
+
+    document.getElementById('import-trip').value = '';
+    var msg = [];
+    if (importedPins) msg.push(importedPins + ' pin' + (importedPins===1?'':'s'));
+    if (importedTracks) msg.push(importedTracks + ' track' + (importedTracks===1?'':'s'));
+    var skipNote = skipped > 0 ? ' (' + skipped + ' skipped)' : '';
+    showToast(msg.length ? 'Imported ' + msg.join(' and ') + skipNote : 'Nothing imported' + skipNote);
+    pendingImportPins = []; pendingImportTracks = [];
+    document.getElementById('import-modal').classList.add('hidden');
+    refreshStateChips();
+    renderDateChips();
+    renderPinList();
+    scheduleSave();
+  }
+
+  // ---------- Export ----------
+  function downloadBlob(content, filename, mime){
+    var blob = new Blob([content], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function exportGeoJSON(){
+    var features = state.pins.map(function(p){
+      return { type:'Feature', geometry:{ type:'Point', coordinates:[p.lng,p.lat] },
+        properties:{ name:p.name, tags:p.tags, notes:p.notes, created:p.created, state:p.state } };
+    }).concat(state.tracks.map(function(t){
+      return { type:'Feature', geometry:{ type:'LineString', coordinates: t.points.map(function(pt){ return [pt[1],pt[0]]; }) },
+        properties:{ name:t.name, tags:t.tags, notes:t.notes, created:t.created, state:t.state } };
+    }));
+    var fc = { type:'FeatureCollection', features: features };
+    downloadBlob(JSON.stringify(fc, null, 2), 'field-map-export.geojson', 'application/geo+json');
+    showToast('Exported GeoJSON');
+  }
+
+  function exportGPX(){
+    var wpts = state.pins.map(function(p){
+      return '  <wpt lat="' + p.lat + '" lon="' + p.lng + '">\n' +
+        '    <name>' + escapeXml(p.name) + '</name>\n' +
+        '    <desc>' + escapeXml(p.notes || '') + '</desc>\n' +
+        '    <extensions><tags>' + escapeXml((p.tags||[]).join(',')) + '</tags></extensions>\n' +
+        '  </wpt>';
+    }).join('\n');
+    var trks = state.tracks.map(function(t){
+      var trkpts = t.points.map(function(pt){ return '      <trkpt lat="' + pt[0] + '" lon="' + pt[1] + '"></trkpt>'; }).join('\n');
+      return '  <trk>\n    <name>' + escapeXml(t.name) + '</name>\n' +
+        '    <desc>' + escapeXml(t.notes || '') + '</desc>\n' +
+        '    <extensions><tags>' + escapeXml((t.tags||[]).join(',')) + '</tags></extensions>\n' +
+        '    <trkseg>\n' + trkpts + '\n    </trkseg>\n  </trk>';
+    }).join('\n');
+    var body = [wpts, trks].filter(function(s){ return s; }).join('\n');
+    var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="FieldMap">\n' + body + '\n</gpx>';
+    downloadBlob(gpx, 'field-map-export.gpx', 'application/gpx+xml');
+    showToast('Exported GPX');
+  }
+
+  // ---------- Persistence ----------
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persist, 700);
+  }
+
+  function persist(){
+    if (store.type === 'none') return;
+    store.set(STORAGE_KEY, JSON.stringify(state)).then(function(ok){
+      if (!ok) showToast("Couldn't save — storage may be full or unavailable");
+    }).catch(function(){
+      showToast("Couldn't save — storage may be full or unavailable");
+    });
+  }
+
+  function loadState(){
+    if (store.type === 'none'){
+      showToast('No storage available — pins will only last this session', 5000);
+      return Promise.resolve();
+    }
+    return store.get(STORAGE_KEY).then(function(value){
+      if (value){
+        try {
+          var loaded = JSON.parse(value);
+          if (loaded && loaded.pins){
+            state = loaded;
+            if (!state.tags || !state.tags.length) state.tags = SEED_TAGS.slice();
+            var emojiToSvg = { '⛺':'svg:tent', '💧':'svg:water', '🐦':'svg:bird', '🦃':'svg:turkey', '🦌':'svg:deer', '🐟':'svg:fish' };
+            state.tags.forEach(function(t){ if (emojiToSvg[t.icon]) t.icon = emojiToSvg[t.icon]; });
+            var iconRefresh = { camp:'svg:tent', water:'svg:water', quail:'svg:bird', turkey:'svg:turkey', deer:'svg:deer', fish:'svg:fish', trailhead:'svg:hiker' };
+            state.tags.forEach(function(t){ if (iconRefresh[t.id]) t.icon = iconRefresh[t.id]; });
+            var existingTrailhead = state.tags.find(function(t){ return t.id === 'trailhead'; });
+            if (existingTrailhead && existingTrailhead.label === 'Trailhead / parking') existingTrailhead.label = 'Trailhead';
+            SEED_TAGS.forEach(function(seedTag){
+              if (!state.tags.some(function(t){ return t.id === seedTag.id; })){
+                state.tags.push({ id:seedTag.id, label:seedTag.label, color:seedTag.color, icon:seedTag.icon });
+              }
+            });
+            if (!state.tracks) state.tracks = [];
+            if (!state.settings.layers){
+              var oldBase = state.settings.baseLayer || 'topo';
+              state.settings.layers = {
+                aerial: { on: oldBase==='aerial', opacity:1 },
+                street: { on: oldBase==='street', opacity:1 },
+                topo: { on: oldBase==='topo', opacity:1 }
+              };
+              delete state.settings.baseLayer;
+            }
+            if (!state.settings.layers.relief) state.settings.layers.relief = { on:false, opacity:1 };
+            if (!state.settings.layers.imagerytopo) state.settings.layers.imagerytopo = { on:false, opacity:1 };
+            if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
+            if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
+            state.pins.forEach(function(p){
+              if (!p.tags){ p.tags = p.category ? [p.category] : ['uncategorized']; }
+              delete p.category;
+              if (p.state === undefined) p.state = stateForPoint(p.lat, p.lng);
+              if (p.trip === undefined) p.trip = '';
+            });
+            state.tracks.forEach(function(t){
+              if (!t.tags) t.tags = ['uncategorized'];
+              if (t.state === undefined && t.points && t.points[0]) t.state = stateForPoint(t.points[0][0], t.points[0][1]);
+              if (t.trip === undefined) t.trip = '';
+            });
+          }
+        } catch(e){}
+      }
+    }).catch(function(){
+      // No saved state yet — that's fine, we start fresh.
+    });
+  }
+
+  // ---------- Panels ----------
+  function closeAllPanels(){
+    document.getElementById('layers-panel').classList.add('hidden');
+    document.getElementById('filter-panel').classList.add('hidden');
+  }
+
+  // ---------- Wire up UI ----------
+  function bindUI(){
+    renderTagChips();
+    renderStateChips();
+    renderTripChips();
+    refreshTripSuggestions();
+    renderDateChips();
+    renderTagIconPicker();
+
+    document.getElementById('add-pin-btn').addEventListener('click', function(){
+      setAddMode(!addMode);
+    });
+    document.getElementById('cluster-panel-close').addEventListener('click', closeClusterPanel);
+    document.getElementById('group-vis-all-btn').addEventListener('click', function(){
+      if (listSortMode === 'category') eyeHiddenTags = {};
+      else if (listSortMode === 'trip') eyeHiddenTrips = {};
+      state.pins.forEach(applyFilterToMarker);
+      state.tracks.forEach(applyFilterToTrack);
+      renderPinList();
+    });
+    document.getElementById('group-vis-none-btn').addEventListener('click', function(){
+      if (listSortMode === 'category'){
+        state.tags.forEach(function(t){ eyeHiddenTags[t.id] = true; collapsedGroups[t.id] = true; });
+      } else if (listSortMode === 'trip'){
+        computeTripsPresent().forEach(function(tr){ eyeHiddenTrips[tr] = true; collapsedGroups[tr] = true; });
+      }
+      state.pins.forEach(applyFilterToMarker);
+      state.tracks.forEach(applyFilterToTrack);
+      renderPinList();
+    });
+    document.getElementById('center-readout-float').addEventListener('click', function(){
+      var text = this.textContent;
+      function fallbackCopy(){
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); showToast('Copied ' + text); }
+        catch(e){ showToast('Could not copy — coordinates: ' + text, 4000); }
+        document.body.removeChild(ta);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){
+          showToast('Copied ' + text);
+        }).catch(fallbackCopy);
+      } else {
+        fallbackCopy();
+      }
+    });
+    document.getElementById('locate-btn').addEventListener('click', function(){
+      if (!navigator.geolocation){ showToast('Location is not available here'); return; }
+      showToast('Finding your location…');
+      navigator.geolocation.getCurrentPosition(function(pos){
+        var ll = [pos.coords.latitude, pos.coords.longitude];
+        map.setView(ll, 14);
+        L.circleMarker(ll, { radius:8, color:'#3b82c4', fillColor:'#3b82c4', fillOpacity:0.9 }).addTo(map);
+      }, function(){
+        showToast("Couldn't get your location — this often fails in the chat preview; try opening the file directly in your browser");
+      });
+    });
+
+    document.getElementById('layers-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      var panel = document.getElementById('layers-panel');
+      var willOpen = panel.classList.contains('hidden');
+      closeAllPanels();
+      if (willOpen) panel.classList.remove('hidden');
+    });
+    document.getElementById('filter-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      var panel = document.getElementById('filter-panel');
+      var willOpen = panel.classList.contains('hidden');
+      closeAllPanels();
+      if (willOpen) panel.classList.remove('hidden');
+    });
+    document.getElementById('map-search-input').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') searchGoto();
+    });
+    document.getElementById('map-search-clear-btn').addEventListener('click', function(){
+      document.getElementById('map-search-input').value = '';
+      document.getElementById('map-search-results').innerHTML = '';
+      if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+      document.getElementById('map-search-input').focus();
+    });
+    document.getElementById('measure-btn').addEventListener('click', function(){
+      setMeasureMode(!measureMode);
+    });
+    document.getElementById('measure-clear-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      clearMeasure();
+    });
+    document.getElementById('draw-route-btn-sidebar').addEventListener('click', function(){
+      setDrawMode(!drawMode);
+    });
+    document.getElementById('draw-undo-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      undoLastDrawPoint();
+    });
+    document.getElementById('draw-finish-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      if (drawPoints.length < 2) return;
+      var pts = (snappedPoints || drawPoints).slice();
+      setDrawMode(false);
+      openTrackModalForNew(pts);
+    });
+    document.getElementById('draw-snap-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      snapDrawnRouteToTrail();
+    });
+    document.getElementById('draw-cancel-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      setDrawMode(false);
+    });
+    document.addEventListener('click', function(e){
+      var searchBar = document.getElementById('map-search-bar');
+      if (!searchBar.contains(e.target)){
+        document.getElementById('map-search-results').innerHTML = '';
+      }
+      ['layers-panel','filter-panel','sort-menu','export-menu'].forEach(function(id){
+        var panel = document.getElementById(id);
+        if (!panel.classList.contains('hidden') && !panel.contains(e.target)){
+          panel.classList.add('hidden');
+        }
+      });
+    });
+
+    ['aerial','street','topo','relief','imagerytopo'].forEach(function(name){
+      document.getElementById('layer-' + name + '-toggle').addEventListener('change', function(){
+        setBaseLayerOn(name, this.checked);
+      });
+      document.getElementById('layer-' + name + '-opacity').addEventListener('input', function(){
+        setBaseLayerOpacity(name, this.value / 100);
+      });
+    });
+
+    document.getElementById('hydro-toggle').addEventListener('change', function(){
+      if (!hydroLayer){ showToast('Hydrography layer is unavailable right now'); this.checked = false; return; }
+      if (this.checked){ hydroLayer.addTo(map); } else { map.removeLayer(hydroLayer); }
+      document.getElementById('hydro-opacity-row').classList.toggle('show', this.checked);
+      state.settings.hydroOn = this.checked;
+      scheduleSave();
+    });
+    document.getElementById('hydro-opacity').addEventListener('input', function(){
+      var v = this.value / 100;
+      if (hydroLayer) hydroLayer.setOpacity(v);
+      state.settings.hydroOpacity = v;
+      scheduleSave();
+    });
+
+    document.getElementById('mvum-toggle').addEventListener('change', function(){
+      if (!mvumLayer){ showToast('MVUM layer is unavailable right now'); this.checked = false; return; }
+      if (this.checked){ mvumLayer.addTo(map); } else { map.removeLayer(mvumLayer); }
+      document.getElementById('mvum-opacity-row').style.display = this.checked ? 'flex' : 'none';
+      state.settings.mvumOn = this.checked;
+      scheduleSave();
+    });
+    document.getElementById('mvum-opacity').addEventListener('input', function(){
+      var v = this.value / 100;
+      if (mvumLayer) mvumLayer.setOpacity(v);
+      state.settings.mvumOpacity = v;
+      scheduleSave();
+    });
+
+    document.getElementById('publicland-toggle').addEventListener('change', function(){
+      if (!publicLandLayer){ showToast('Public/private land layer is unavailable right now'); this.checked = false; return; }
+      if (this.checked){ publicLandLayer.addTo(map); } else { map.removeLayer(publicLandLayer); }
+      document.getElementById('publicland-opacity-row').classList.toggle('show', this.checked);
+      document.getElementById('publicland-legend').classList.toggle('hidden', !this.checked);
+      if (this.checked) loadPublicLandLegend();
+      state.settings.publicLandOn = this.checked;
+      scheduleSave();
+    });
+    document.getElementById('publicland-opacity').addEventListener('input', function(){
+      var v = this.value / 100;
+      if (publicLandLayer) publicLandLayer.setOpacity(v);
+      state.settings.publicLandOpacity = v;
+      scheduleSave();
+    });
+    document.getElementById('gmu-az-toggle').addEventListener('change', function(){
+      toggleGmuLayer('az', this.checked);
+      state.settings.gmuAzOn = this.checked;
+      scheduleSave();
+    });
+
+    var zoomDebounceTimer = null;
+    document.getElementById('search-input').addEventListener('input', function(){
+      renderPinList();
+      clearTimeout(zoomDebounceTimer);
+      zoomDebounceTimer = setTimeout(zoomToVisible, 500);
+    });
+
+    document.getElementById('tag-filter-all-btn').addEventListener('click', function(){
+      state.tags.forEach(function(t){ activeTagFilters[t.id] = true; });
+      renderTagChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('tag-filter-none-btn').addEventListener('click', function(){
+      state.tags.forEach(function(t){ activeTagFilters[t.id] = false; });
+      renderTagChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('state-filter-all-btn').addEventListener('click', function(){
+      computeStatesPresent().forEach(function(s){ activeStateFilters[s] = true; });
+      renderStateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('state-filter-none-btn').addEventListener('click', function(){
+      computeStatesPresent().forEach(function(s){ activeStateFilters[s] = false; });
+      renderStateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('trip-filter-all-btn').addEventListener('click', function(){
+      computeTripsPresent().forEach(function(tr){ activeTripFilters[tr] = true; });
+      renderTripChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('trip-filter-none-btn').addEventListener('click', function(){
+      computeTripsPresent().forEach(function(tr){ activeTripFilters[tr] = false; });
+      renderTripChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('date-filter-all-btn').addEventListener('click', function(){
+      computeDatesPresent().forEach(function(d){ activeDateFilters[d] = true; });
+      renderDateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+    document.getElementById('date-filter-none-btn').addEventListener('click', function(){
+      computeDatesPresent().forEach(function(d){ activeDateFilters[d] = false; });
+      renderDateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
+    });
+
+    document.getElementById('filters-reset-btn').addEventListener('click', function(){
+      Object.keys(activeTagFilters).forEach(function(k){ activeTagFilters[k] = true; });
+      Object.keys(activeStateFilters).forEach(function(k){ activeStateFilters[k] = true; });
+      Object.keys(activeTripFilters).forEach(function(k){ activeTripFilters[k] = true; });
+      Object.keys(activeDateFilters).forEach(function(k){ activeDateFilters[k] = true; });
+      document.getElementById('search-input').value = '';
+      renderTagChips();
+      renderStateChips();
+      renderTripChips();
+      renderDateChips();
+      renderPinList();
+      refreshAllVisibility();
+      zoomToVisible();
+      showToast('Filters reset');
+    });
+
+    document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
+    document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    document.getElementById('pin-delete-btn').addEventListener('click', deletePinFromModal);
+
+    document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
+    document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
+    document.getElementById('track-delete-btn').addEventListener('click', function(){
+      if (!editingTrackId) return;
+      if (confirm('Delete this track?')){
+        deleteTrackById(editingTrackId);
+        closeTrackModal();
+      }
+    });
+
+    document.getElementById('import-btn').addEventListener('click', function(){
+      document.getElementById('import-file').click();
+    });
+    document.getElementById('import-file').addEventListener('change', function(e){
+      if (e.target.files[0]) handleImportFile(e.target.files[0]);
+      e.target.value = '';
+    });
+    document.getElementById('import-cancel-btn').addEventListener('click', function(){
+      pendingImportPins = []; pendingImportTracks = [];
+      document.getElementById('import-modal').classList.add('hidden');
+    });
+    document.getElementById('import-confirm-btn').addEventListener('click', confirmImport);
+    var bulkSel = document.getElementById('import-bulk-category');
+    bulkSel.innerHTML = '<option value="" disabled selected>Choose a tag…</option>';
+    sortedTags().forEach(function(t){
+      var opt = document.createElement('option');
+      opt.value = t.id; opt.textContent = tagOptionLabel(t);
+      bulkSel.appendChild(opt);
+    });
+    bulkSel.addEventListener('change', function(){
+      var val = this.value;
+      document.querySelectorAll('#import-item-list select, #import-track-list select').forEach(function(s){ s.value = val; });
+    });
+
+    document.getElementById('export-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      document.getElementById('export-menu').classList.toggle('hidden');
+    });
+    document.getElementById('export-geojson-item').addEventListener('click', function(){
+      exportGeoJSON();
+      document.getElementById('export-menu').classList.add('hidden');
+    });
+    document.getElementById('export-gpx-item').addEventListener('click', function(){
+      exportGPX();
+      document.getElementById('export-menu').classList.add('hidden');
+    });
+
+    document.getElementById('sort-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      document.getElementById('sort-menu').classList.toggle('hidden');
+    });
+    document.querySelectorAll('#sort-menu .dropdown-item').forEach(function(item){
+      item.addEventListener('click', function(){
+        listSortMode = item.dataset.sort;
+        document.getElementById('sort-menu').classList.add('hidden');
+        renderPinList();
+      });
+    });
+
+    document.getElementById('bulk-edit-btn').addEventListener('click', function(){
+      if (bulkMode) exitBulkMode(); else enterBulkMode();
+    });
+    document.getElementById('bulk-cancel-btn').addEventListener('click', exitBulkMode);
+    document.getElementById('bulk-apply-btn').addEventListener('click', function(){
+      renderBulkTagChips();
+      document.getElementById('bulk-trip').value = '';
+      document.getElementById('bulk-date').value = '';
+      document.getElementById('bulk-modal-title').textContent = 'Edit ' + (Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length) + ' selected';
+      document.getElementById('bulk-modal').classList.remove('hidden');
+    });
+    document.getElementById('bulk-delete-btn').addEventListener('click', function(){
+      var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length;
+      if (n === 0) return;
+      document.getElementById('bulk-delete-modal-title').textContent = 'Delete ' + n + ' item' + (n===1?'':'s') + '?';
+      document.getElementById('bulk-delete-modal-body').textContent =
+        'This will permanently delete ' + n + ' selected item' + (n===1?'':'s') + '. This cannot be undone.';
+      document.getElementById('bulk-delete-modal').classList.remove('hidden');
+    });
+    document.getElementById('bulk-delete-cancel-btn').addEventListener('click', function(){
+      document.getElementById('bulk-delete-modal').classList.add('hidden');
+    });
+    document.getElementById('bulk-delete-confirm-btn').addEventListener('click', confirmBulkDelete);
+    document.getElementById('bulk-modal-cancel-btn').addEventListener('click', function(){
+      document.getElementById('bulk-modal').classList.add('hidden');
+    });
+    document.getElementById('bulk-modal-apply-btn').addEventListener('click', applyBulkEdit);
+
+    document.getElementById('manage-tags-btn').addEventListener('click', function(){
+      renderTagsManageList();
+      document.getElementById('tags-modal').classList.remove('hidden');
+    });
+    document.getElementById('find-dupes-btn').addEventListener('click', function(){
+      closeAllPanels();
+      findAndShowDuplicates();
+    });
+    document.getElementById('find-dupes-close-btn').addEventListener('click', function(){
+      document.getElementById('find-dupes-modal').classList.add('hidden');
+    });
+    document.getElementById('find-dupes-delete-btn').addEventListener('click', executeDupesDelete);
+    document.getElementById('tags-close-btn').addEventListener('click', function(){
+      cancelTagEdit();
+      document.getElementById('tags-modal').classList.add('hidden');
+    });
+    document.getElementById('tag-save-btn').addEventListener('click', saveTagFromForm);
+    document.getElementById('tag-cancel-edit-btn').addEventListener('click', cancelTagEdit);
+
+    document.getElementById('mobile-handle').addEventListener('click', function(){
+      document.getElementById('sidebar').classList.toggle('open');
+    });
+
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape'){
+        closePinModal();
+        closeTrackModal();
+        document.getElementById('import-modal').classList.add('hidden');
+        document.getElementById('tags-modal').classList.add('hidden');
+        document.getElementById('bulk-modal').classList.add('hidden');
+        document.getElementById('bulk-delete-modal').classList.add('hidden');
+        document.getElementById('find-dupes-modal').classList.add('hidden');
+        closeClusterPanel();
+        if (measureMode) setMeasureMode(false);
+        if (drawMode) setDrawMode(false);
+        document.getElementById('map-search-results').innerHTML = '';
+        if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+        closeAllPanels();
+      }
+    });
+  }
+
+  // ---------- Init ----------
+  window.addEventListener('error', function(){
+    var ov = document.getElementById('loading-overlay');
+    if (ov) ov.classList.add('hidden');
+  });
+
+  loadState().then(function(){
+    createMap();
+    bindUI();
+    state.pins.forEach(addMarkerForPin);
+    state.tracks.forEach(addTrackToMap);
+    renderPinList();
+    document.getElementById('loading-overlay').classList.add('hidden');
+  }).catch(function(){
+    document.getElementById('loading-overlay').classList.add('hidden');
+    showToast('Something went wrong loading the app — check the browser console for details', 6000);
+  });
+
+})();
+</script>
+
+<script>
+  if ('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('service-worker.js').catch(function(err){
+        console.warn('Service worker registration failed:', err);
+      });
+    });
+  }
+</script>
+
+</body>
+</html>
