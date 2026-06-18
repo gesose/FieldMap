@@ -209,6 +209,13 @@
   .dupe-group-row label{flex:1;font-size:13px;cursor:pointer;display:flex;flex-direction:column;gap:2px;}
   .dupe-row-meta{font-size:11px;color:var(--text-muted);}
   .dupe-group-row input[type=checkbox]{accent-color:var(--danger);flex-shrink:0;}
+
+  .offline-area-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+  .offline-area-row:last-child{border-bottom:none;}
+  .offline-area-info{flex:1;min-width:0;}
+  .offline-area-name{font-size:13px;font-weight:500;}
+  .offline-area-meta{font-size:11px;color:var(--text-muted);margin-top:1px;}
+  #offline-areas-empty{padding:10px 0;font-size:12px;color:var(--text-muted);}
   .import-item-info{flex:1;min-width:0;}
   .import-item-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .import-row-cb{accent-color:var(--accent);flex-shrink:0;}
@@ -585,6 +592,12 @@
       <line x1="16" y1="10" x2="19.5" y2="10"/>
     </svg>
   </button>
+  <button class="map-icon-btn" id="offline-btn" aria-label="Offline maps">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 2v10M10 12l-3.5-3.5M10 12l3.5-3.5"/>
+      <path d="M3 14v2.5a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V14"/>
+    </svg>
+  </button>
 </div>
 
 <div id="layers-panel" class="floating-panel hidden">
@@ -596,6 +609,12 @@
     <input type="checkbox" id="layer-street-toggle"> Street (OpenStreetMap)
   </label>
   <div class="opacity-row" id="layer-street-opacity-row"><input type="range" id="layer-street-opacity" min="10" max="100" value="100"></div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-opentopo-toggle"> OpenTopoMap (contours + roads) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-opentopo');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="layer-opentopo-opacity-row"><input type="range" id="layer-opentopo-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-hint-text" id="lh-opentopo">Combines OSM roads/trails with elevation contours and hillshading — works well in both wilderness and urban areas. Not eligible for the offline area downloader (community-funded tile policy), but caches automatically as you browse.</div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="layer-aerial-toggle"> Aerial imagery
@@ -798,6 +817,53 @@
   </div>
 </div>
 
+<!-- Offline maps modal -->
+<div class="modal-overlay hidden" id="offline-modal">
+  <div class="modal modal-wide">
+    <h2>Download offline area</h2>
+    <p class="hint" id="offline-area-summary" style="margin-bottom:12px;"></p>
+
+    <label><span>Zoom range</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <select id="offline-zoom-min"></select>
+        <span style="color:var(--text-muted);font-size:13px;">to</span>
+        <select id="offline-zoom-max"></select>
+      </div>
+    </label>
+    <p class="hint" style="margin:-8px 0 14px;">Higher max zoom = more close-up trail detail, but a much bigger download.</p>
+
+    <div class="filter-label">Layers to include</div>
+    <div id="offline-layer-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:8px;"></div>
+    <p class="hint" style="margin-bottom:14px;">Street and OpenTopoMap aren't available here — their map providers don't allow bulk offline downloads. They'll still work offline for areas you've already viewed normally.</p>
+
+    <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
+    <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
+
+    <div id="offline-progress-wrap" class="hidden" style="margin-bottom:14px;">
+      <div style="background:var(--bg);border-radius:6px;overflow:hidden;height:8px;">
+        <div id="offline-progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width .15s;"></div>
+      </div>
+      <p class="hint" id="offline-progress-text" style="margin-top:6px;"></p>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost hidden" id="offline-cancel-download-btn">Cancel download</button>
+      <button class="btn btn-primary" id="offline-download-btn">Download this area</button>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:14px;">
+      <div class="filter-label-row"><span>Saved offline areas</span>
+        <button class="link-btn" id="offline-clear-all-btn">Clear all offline data</button>
+      </div>
+      <div id="offline-areas-list"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="offline-close-btn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Import confirm modal -->
 <div class="modal-overlay hidden" id="import-modal">
   <div class="modal modal-wide">
@@ -993,6 +1059,7 @@
       layers: {
         aerial: { on:false, opacity:1 },
         street: { on:true, opacity:1 },
+        opentopo: { on:false, opacity:1 },
         topo: { on:false, opacity:1 },
         relief: { on:false, opacity:1 },
         imagerytopo: { on:false, opacity:1 }
@@ -1194,6 +1261,7 @@
     clusterLayerGroup = L.layerGroup().addTo(map);
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
     map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
+    map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
     map.createPane('topoPane'); map.getPane('topoPane').style.zIndex = 200;
     map.createPane('reliefPane'); map.getPane('reliefPane').style.zIndex = 205;
     map.createPane('imagerytopoPane'); map.getPane('imagerytopoPane').style.zIndex = 210;
@@ -1201,6 +1269,10 @@
 
     baseLayers.street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom:19, pane:'streetPane', attribution:'&copy; OpenStreetMap contributors'
+    });
+    baseLayers.opentopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom:19, maxNativeZoom:17, subdomains:'abc', pane:'opentopoPane',
+      attribution:'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)'
     });
     baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
@@ -1228,12 +1300,13 @@
       showToast("Map tiles couldn't load here — try opening this file directly in your browser instead of the chat preview", 7000);
     }
     baseLayers.street.on('tileerror', onTileError);
+    baseLayers.opentopo.on('tileerror', onTileError);
     baseLayers.aerial.on('tileerror', onTileError);
     baseLayers.topo.on('tileerror', onTileError);
     baseLayers.relief.on('tileerror', onTileError);
     baseLayers.imagerytopo.on('tileerror', onTileError);
 
-    ['aerial','street','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
       var cfg = state.settings.layers[name];
       baseLayers[name].setOpacity(cfg.opacity);
       if (cfg.on) baseLayers[name].addTo(map);
@@ -3458,6 +3531,345 @@
     showToast('Exported GPX');
   }
 
+  // ---------- Offline area downloader ----------
+  // IMPORTANT: TILE_CACHE_NAME must exactly match the TILE_CACHE name in service-worker.js
+  // so tiles fetched here are found by the service worker's offline fetch handler.
+  var TILE_CACHE_NAME = 'fieldmap-tiles-v1';
+  var OFFLINE_AREAS_KEY = 'field-map-offline-areas-v1';
+  var offlineCaptureBounds = null;
+  var offlineDownloadCancelled = false;
+  var offlineDownloadInProgress = false;
+
+  // Street and OpenTopoMap are intentionally excluded — both ride on community-funded
+  // OSM tile infrastructure whose usage policies explicitly prohibit bulk/offline prefetching.
+  // USGS/Esri/BLM/USFS sources below are government or Esri-hosted REST services without
+  // that restriction, and are the same kind of source GIS apps commonly cache for offline use.
+  var DOWNLOAD_LAYERS = {
+    aerial:      { label:'Aerial imagery',              urlTemplate:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:19, avgKB:48 },
+    topo:        { label:'USGS topo / contour',         urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:18 },
+    relief:      { label:'Shaded relief',                urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}', minNativeZoom:10, maxNativeZoom:13, avgKB:15 },
+    imagerytopo: { label:'Imagery + topo',               urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:42 },
+    hydro:       { label:'Hydrography',                  urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:8 },
+    mvum:        { label:'USFS roads & trails (MVUM)',  isMvum:true, minNativeZoom:1, maxNativeZoom:16, avgKB:10 },
+    publicland:  { label:'Public / private land',        urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:9 }
+  };
+
+  function lonToTileX(lon, z){ return Math.floor((lon+180)/360 * Math.pow(2,z)); }
+  function latToTileY(lat, z){
+    var rad = Math.max(-85.05, Math.min(85.05, lat)) * Math.PI/180;
+    return Math.floor((1 - Math.log(Math.tan(rad) + 1/Math.cos(rad))/Math.PI) / 2 * Math.pow(2,z));
+  }
+
+  function mvumTileUrl(z,x,y){
+    var n = Math.pow(2, z);
+    var worldSize = 40075016.685578488;
+    var half = 20037508.342789244;
+    var tileSize = worldSize / n;
+    var minX = -half + x * tileSize;
+    var maxX = minX + tileSize;
+    var maxY = half - y * tileSize;
+    var minY = maxY - tileSize;
+    return 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/export?bbox=' + [minX,minY,maxX,maxY].join(',') +
+      '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0,1,2&f=image';
+  }
+
+  function tileUrlForLayer(layerId, z, x, y){
+    var def = DOWNLOAD_LAYERS[layerId];
+    if (!def) return null;
+    if (def.isMvum) return mvumTileUrl(z, x, y);
+    return def.urlTemplate.replace('{z}', z).replace('{y}', y).replace('{x}', x);
+  }
+
+  // Computes the deduplicated list of {layerId, z, x, y, url} for a bounds + zoom range + layer set.
+  // Shared by the estimator, the downloader, and the deleter so all three always agree exactly.
+  function computeTileList(bounds, minZUser, maxZUser, layerIds){
+    var list = [];
+    layerIds.forEach(function(layerId){
+      var def = DOWNLOAD_LAYERS[layerId];
+      if (!def) return;
+      var minNZ = def.minNativeZoom || 1, maxNZ = def.maxNativeZoom || 19;
+      var seenZ = {};
+      for (var zUser = minZUser; zUser <= maxZUser; zUser++){
+        var z = Math.max(minNZ, Math.min(maxNZ, zUser));
+        if (seenZ[z]) continue; // already queued this native zoom for this layer
+        seenZ[z] = true;
+        var xMin = lonToTileX(bounds.getWest(), z), xMax = lonToTileX(bounds.getEast(), z);
+        var yMin = latToTileY(bounds.getNorth(), z), yMax = latToTileY(bounds.getSouth(), z);
+        for (var x = xMin; x <= xMax; x++){
+          for (var y = yMin; y <= yMax; y++){
+            list.push({ layerId:layerId, z:z, x:x, y:y, url: tileUrlForLayer(layerId, z, x, y) });
+          }
+        }
+      }
+    });
+    return list;
+  }
+
+  function estimateSizeMB(tileList){
+    var totalKB = 0;
+    tileList.forEach(function(t){
+      var def = DOWNLOAD_LAYERS[t.layerId];
+      totalKB += (def && def.avgKB) || 20;
+    });
+    return totalKB / 1024;
+  }
+
+  function offlineSupportAvailable(){
+    return (typeof window.caches !== 'undefined');
+  }
+
+  function loadOfflineAreas(){
+    if (store.type === 'none') return Promise.resolve([]);
+    return store.get(OFFLINE_AREAS_KEY).then(function(value){
+      if (!value) return [];
+      try { return JSON.parse(value) || []; } catch(e){ return []; }
+    }).catch(function(){ return []; });
+  }
+
+  function saveOfflineAreas(areas){
+    if (store.type === 'none') return;
+    store.set(OFFLINE_AREAS_KEY, JSON.stringify(areas));
+  }
+
+  function fetchAndCacheTile(cache, url){
+    return cache.match(url).then(function(existing){
+      if (existing) return 'skipped';
+      return fetch(url, { mode:'no-cors' }).then(function(resp){
+        return cache.put(url, resp).then(function(){ return 'downloaded'; });
+      }).catch(function(){ return 'failed'; });
+    });
+  }
+
+  // Concurrency-limited tile downloader with progress callback and cooperative cancellation.
+  function downloadTileList(tileList, onProgress, isCancelled){
+    return caches.open(TILE_CACHE_NAME).then(function(cache){
+      return new Promise(function(resolve){
+        var CONCURRENCY = 4;
+        var idx = 0, completed = 0, failed = 0;
+        var total = tileList.length;
+        var activeWorkers = 0;
+
+        function finishIfDone(){
+          if (activeWorkers === 0){
+            resolve({ completed:completed, failed:failed, cancelled:isCancelled() });
+          }
+        }
+        function worker(){
+          if (isCancelled() || idx >= total){ activeWorkers--; finishIfDone(); return; }
+          var item = tileList[idx++];
+          fetchAndCacheTile(cache, item.url).then(function(status){
+            if (status === 'failed') failed++; else completed++;
+            onProgress(completed + failed, total);
+            worker();
+          });
+        }
+        if (total === 0){ resolve({ completed:0, failed:0, cancelled:false }); return; }
+        for (var i=0; i<CONCURRENCY && i<total; i++){ activeWorkers++; worker(); }
+      });
+    });
+  }
+
+  function deleteTileList(tileList){
+    return caches.open(TILE_CACHE_NAME).then(function(cache){
+      return Promise.all(tileList.map(function(t){ return cache.delete(t.url); }));
+    });
+  }
+
+  function selectedOfflineLayerIds(){
+    var ids = [];
+    document.querySelectorAll('#offline-layer-checks input[type=checkbox]:checked').forEach(function(cb){
+      ids.push(cb.value);
+    });
+    return ids;
+  }
+
+  function renderOfflineLayerChecks(){
+    var wrap = document.getElementById('offline-layer-checks');
+    wrap.innerHTML = '';
+    Object.keys(DOWNLOAD_LAYERS).forEach(function(id){
+      var def = DOWNLOAD_LAYERS[id];
+      var label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = id;
+      cb.addEventListener('change', updateOfflineEstimate);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(def.label));
+      wrap.appendChild(label);
+    });
+  }
+
+  function populateOfflineZoomSelects(){
+    var minSel = document.getElementById('offline-zoom-min');
+    var maxSel = document.getElementById('offline-zoom-max');
+    minSel.innerHTML = ''; maxSel.innerHTML = '';
+    for (var z=1; z<=17; z++){
+      var o1 = document.createElement('option'); o1.value = z; o1.textContent = 'Z' + z; minSel.appendChild(o1);
+      var o2 = document.createElement('option'); o2.value = z; o2.textContent = 'Z' + z; maxSel.appendChild(o2);
+    }
+    var current = map.getZoom();
+    minSel.value = Math.max(1, current);
+    maxSel.value = Math.min(17, current + 3);
+  }
+
+  function updateOfflineEstimate(){
+    if (!offlineCaptureBounds) return;
+    var minZ = parseInt(document.getElementById('offline-zoom-min').value, 10);
+    var maxZ = parseInt(document.getElementById('offline-zoom-max').value, 10);
+    if (maxZ < minZ) maxZ = minZ;
+    var layerIds = selectedOfflineLayerIds();
+    var estEl = document.getElementById('offline-estimate');
+    var warnEl = document.getElementById('offline-warning');
+    if (layerIds.length === 0){
+      estEl.textContent = 'Select at least one layer to see an estimate.';
+      warnEl.classList.add('hidden');
+      document.getElementById('offline-download-btn').disabled = true;
+      return;
+    }
+    var tileList = computeTileList(offlineCaptureBounds, minZ, maxZ, layerIds);
+    var sizeMB = estimateSizeMB(tileList);
+    var sizeLabel = sizeMB >= 1024 ? (sizeMB/1024).toFixed(1) + ' GB' : Math.round(sizeMB) + ' MB';
+    estEl.textContent = tileList.length.toLocaleString() + ' tiles · approximately ' + sizeLabel;
+    document.getElementById('offline-download-btn').disabled = false;
+    if (sizeMB > 600){
+      warnEl.textContent = 'That\'s a large download. Consider a smaller area, fewer layers, or a lower max zoom — this will take a while and use significant storage and data.';
+      warnEl.classList.remove('hidden');
+    } else {
+      warnEl.classList.add('hidden');
+    }
+  }
+
+  function renderOfflineAreasList(){
+    loadOfflineAreas().then(function(areas){
+      var wrap = document.getElementById('offline-areas-list');
+      wrap.innerHTML = '';
+      if (areas.length === 0){
+        wrap.innerHTML = '<div id="offline-areas-empty">No offline areas downloaded yet.</div>';
+        return;
+      }
+      areas.forEach(function(area){
+        var row = document.createElement('div');
+        row.className = 'offline-area-row';
+        var info = document.createElement('div');
+        info.className = 'offline-area-info';
+        var nameEl = document.createElement('div'); nameEl.className = 'offline-area-name'; nameEl.textContent = area.name;
+        var metaEl = document.createElement('div'); metaEl.className = 'offline-area-meta';
+        var layerLabels = area.layerIds.map(function(id){ return DOWNLOAD_LAYERS[id] ? DOWNLOAD_LAYERS[id].label : id; }).join(', ');
+        var sizeLabel = area.sizeMB >= 1024 ? (area.sizeMB/1024).toFixed(1) + ' GB' : Math.round(area.sizeMB) + ' MB';
+        metaEl.textContent = 'Z' + area.minZoom + '–' + area.maxZoom + ' · ' + layerLabels + ' · ' + sizeLabel + ' · ' + new Date(area.createdAt).toLocaleDateString();
+        info.appendChild(nameEl); info.appendChild(metaEl);
+        var delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', function(){
+          if (!confirm('Delete offline area "' + area.name + '"? This cannot be undone.')) return;
+          var bounds = L.latLngBounds(area.boundsSW, area.boundsNE);
+          var tileList = computeTileList(bounds, area.minZoom, area.maxZoom, area.layerIds);
+          deleteTileList(tileList).then(function(){
+            return loadOfflineAreas();
+          }).then(function(current){
+            var updated = current.filter(function(a){ return a.id !== area.id; });
+            saveOfflineAreas(updated);
+            renderOfflineAreasList();
+            showToast('Deleted offline area "' + area.name + '"');
+          });
+        });
+        row.appendChild(info); row.appendChild(delBtn);
+        wrap.appendChild(row);
+      });
+    });
+  }
+
+  function openOfflineModal(){
+    if (!offlineSupportAvailable()){
+      showToast('Offline downloads need a secure connection (HTTPS) — open the deployed app URL, not a local file', 6000);
+      return;
+    }
+    offlineCaptureBounds = map.getBounds();
+    var c = offlineCaptureBounds.getCenter();
+    document.getElementById('offline-area-summary').textContent =
+      'Area centered near ' + c.lat.toFixed(3) + ', ' + c.lng.toFixed(3) + ' — pan and zoom the map before opening this panel to change it.';
+    populateOfflineZoomSelects();
+    renderOfflineLayerChecks();
+    document.getElementById('offline-progress-wrap').classList.add('hidden');
+    document.getElementById('offline-cancel-download-btn').classList.add('hidden');
+    document.getElementById('offline-download-btn').classList.remove('hidden');
+    updateOfflineEstimate();
+    renderOfflineAreasList();
+    document.getElementById('offline-modal').classList.remove('hidden');
+  }
+
+  function startOfflineDownload(){
+    if (offlineDownloadInProgress) return;
+    var minZ = parseInt(document.getElementById('offline-zoom-min').value, 10);
+    var maxZ = parseInt(document.getElementById('offline-zoom-max').value, 10);
+    if (maxZ < minZ) maxZ = minZ;
+    var layerIds = selectedOfflineLayerIds();
+    if (layerIds.length === 0) return;
+
+    var tileList = computeTileList(offlineCaptureBounds, minZ, maxZ, layerIds);
+    var sizeMB = estimateSizeMB(tileList);
+
+    offlineDownloadCancelled = false;
+    offlineDownloadInProgress = true;
+    document.getElementById('offline-download-btn').classList.add('hidden');
+    document.getElementById('offline-cancel-download-btn').classList.remove('hidden');
+    document.getElementById('offline-progress-wrap').classList.remove('hidden');
+    var bar = document.getElementById('offline-progress-bar');
+    var text = document.getElementById('offline-progress-text');
+    bar.style.width = '0%';
+    text.textContent = '0 / ' + tileList.length + ' tiles';
+
+    downloadTileList(tileList, function(done, total){
+      var pct = total ? Math.round(done/total*100) : 100;
+      bar.style.width = pct + '%';
+      text.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles';
+    }, function(){ return offlineDownloadCancelled; }).then(function(result){
+      offlineDownloadInProgress = false;
+      document.getElementById('offline-cancel-download-btn').classList.add('hidden');
+      document.getElementById('offline-download-btn').classList.remove('hidden');
+
+      if (result.cancelled){
+        showToast('Download cancelled — ' + result.completed.toLocaleString() + ' tiles already saved before stopping');
+        document.getElementById('offline-progress-wrap').classList.add('hidden');
+        return;
+      }
+
+      var defaultName = 'Area near ' + offlineCaptureBounds.getCenter().lat.toFixed(3) + ', ' + offlineCaptureBounds.getCenter().lng.toFixed(3);
+      var name = prompt('Name this offline area:', defaultName) || defaultName;
+      var areaEntry = {
+        id: uid(),
+        name: name,
+        boundsSW: [offlineCaptureBounds.getSouth(), offlineCaptureBounds.getWest()],
+        boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
+        minZoom: minZ, maxZoom: maxZ,
+        layerIds: layerIds,
+        sizeMB: sizeMB,
+        createdAt: Date.now()
+      };
+      loadOfflineAreas().then(function(areas){
+        areas.push(areaEntry);
+        saveOfflineAreas(areas);
+        renderOfflineAreasList();
+        document.getElementById('offline-progress-wrap').classList.add('hidden');
+        var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
+        showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
+      });
+    });
+  }
+
+  function cancelOfflineDownload(){
+    offlineDownloadCancelled = true;
+  }
+
+  function clearAllOfflineAreas(){
+    if (!confirm('Clear ALL offline map data? This removes every downloaded area, plus any tiles cached automatically from normal browsing. This cannot be undone.')) return;
+    caches.delete(TILE_CACHE_NAME).then(function(){
+      saveOfflineAreas([]);
+      renderOfflineAreasList();
+      showToast('All offline map data cleared');
+    });
+  }
+
   // ---------- Persistence ----------
   function scheduleSave(){
     clearTimeout(saveTimer);
@@ -3508,6 +3920,7 @@
             }
             if (!state.settings.layers.relief) state.settings.layers.relief = { on:false, opacity:1 };
             if (!state.settings.layers.imagerytopo) state.settings.layers.imagerytopo = { on:false, opacity:1 };
+            if (!state.settings.layers.opentopo) state.settings.layers.opentopo = { on:false, opacity:1 };
             if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
             if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
             state.pins.forEach(function(p){
@@ -3662,7 +4075,7 @@
       });
     });
 
-    ['aerial','street','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
       document.getElementById('layer-' + name + '-toggle').addEventListener('change', function(){
         setBaseLayerOn(name, this.checked);
       });
@@ -3886,6 +4299,23 @@
     document.getElementById('tag-save-btn').addEventListener('click', saveTagFromForm);
     document.getElementById('tag-cancel-edit-btn').addEventListener('click', cancelTagEdit);
 
+    document.getElementById('offline-btn').addEventListener('click', function(){
+      closeAllPanels();
+      openOfflineModal();
+    });
+    document.getElementById('offline-zoom-min').addEventListener('change', updateOfflineEstimate);
+    document.getElementById('offline-zoom-max').addEventListener('change', updateOfflineEstimate);
+    document.getElementById('offline-download-btn').addEventListener('click', startOfflineDownload);
+    document.getElementById('offline-cancel-download-btn').addEventListener('click', cancelOfflineDownload);
+    document.getElementById('offline-clear-all-btn').addEventListener('click', clearAllOfflineAreas);
+    document.getElementById('offline-close-btn').addEventListener('click', function(){
+      if (offlineDownloadInProgress){
+        if (!confirm('A download is still in progress. Close anyway? (It will be cancelled.)')) return;
+        cancelOfflineDownload();
+      }
+      document.getElementById('offline-modal').classList.add('hidden');
+    });
+
     document.getElementById('mobile-handle').addEventListener('click', function(){
       document.getElementById('sidebar').classList.toggle('open');
     });
@@ -3899,6 +4329,7 @@
         document.getElementById('bulk-modal').classList.add('hidden');
         document.getElementById('bulk-delete-modal').classList.add('hidden');
         document.getElementById('find-dupes-modal').classList.add('hidden');
+        if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
         closeClusterPanel();
         if (measureMode) setMeasureMode(false);
         if (drawMode) setDrawMode(false);

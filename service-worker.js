@@ -7,8 +7,8 @@
 //    when online. This means any area you've viewed before stays available
 //    offline, even without an explicit "download this area" step.
 
-var SHELL_CACHE = 'fieldmap-shell-v1';
-var TILE_CACHE = 'fieldmap-tiles-v1';
+var SHELL_CACHE = 'fieldmap-shell-v2';
+var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
   './',
@@ -50,6 +50,7 @@ self.addEventListener('activate', function(event){
 // rather than cache-first, since these can legitimately update over time.
 var TILE_HOSTS = [
   'tile.openstreetmap.org',
+  'tile.opentopomap.org',
   'server.arcgisonline.com',
   'basemap.nationalmap.gov',
   'apps.fs.usda.gov',
