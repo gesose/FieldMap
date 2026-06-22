@@ -435,7 +435,9 @@
   #map-search-bar{
     position:absolute;top:14px;left:50%;transform:translateX(-50%);
     z-index:1300;width:360px;max-width:calc(100% - 28px);
+    display:none; /* hidden by default — toggled by search icon button */
   }
+  #map-search-bar.search-open{ display:block; }
   #map-search-input-wrap{position:relative;}
   #map-search-input{
     width:100%;box-sizing:border-box;
@@ -548,8 +550,8 @@
     }
     #cluster-panel-list{max-height:200px;}
 
-    /* Public land legend: above scale bar, with right clearance for map controls */
-    #publicland-legend{bottom:140px;left:14px;right:60px;}
+    /* Public land legend: hide on mobile (legend is in layers panel) */
+    #publicland-legend{display:none !important;}
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -583,13 +585,11 @@
           </div>
         </div>
         <button class="btn btn-small" id="bulk-edit-btn">Bulk edit</button>
-        <button class="btn btn-small" id="import-btn">Import</button>
-        <div class="dropdown-wrap">
-          <button class="btn btn-small" id="export-btn">Export</button>
-          <div id="export-menu" class="dropdown-menu hidden">
-            <div class="dropdown-item" id="export-geojson-item">GeoJSON</div>
-            <div class="dropdown-item" id="export-gpx-item">GPX</div>
-          </div>
+        <!-- Import moved to +Add sheet · Export moved to Tools sheet -->
+        <!-- export-menu kept here (hidden) — triggered from Tools sheet Export button -->
+        <div id="export-menu" class="dropdown-menu hidden" style="position:fixed;bottom:auto;right:auto;">
+          <div class="dropdown-item" id="export-geojson-item">GeoJSON</div>
+          <div class="dropdown-item" id="export-gpx-item">GPX</div>
         </div>
       </div>
     </div>
@@ -644,6 +644,12 @@
 
 
 <div id="map-controls">
+  <button class="map-icon-btn" id="search-toggle-btn" aria-label="Search">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+      <circle cx="8.5" cy="8.5" r="5"/>
+      <line x1="13" y1="13" x2="18" y2="18"/>
+    </svg>
+  </button>
   <button class="map-icon-btn" id="layers-btn" aria-label="Layers">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
       <path d="M10 2 L18 6.5 L10 11 L2 6.5 Z"/>
@@ -703,15 +709,15 @@
   <div class="layer-overlay-row" style="padding-top:8px;border-top:none;">
     <span style="flex:1;font-size:13px;">Distance</span>
     <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
-      <button id="unit-dist-mi" class="unit-toggle-btn active" onclick="setUnits('distance','imperial')">mi</button>
-      <button id="unit-dist-km" class="unit-toggle-btn" onclick="setUnits('distance','metric')">km</button>
+      <button id="unit-dist-mi" class="unit-toggle-btn active" >mi</button>
+      <button id="unit-dist-km" class="unit-toggle-btn" >km</button>
     </div>
   </div>
   <div class="layer-overlay-row">
     <span style="flex:1;font-size:13px;">Elevation</span>
     <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
-      <button id="unit-elev-ft" class="unit-toggle-btn active" onclick="setUnits('elevation','imperial')">ft</button>
-      <button id="unit-elev-m" class="unit-toggle-btn" onclick="setUnits('elevation','metric')">m</button>
+      <button id="unit-elev-ft" class="unit-toggle-btn active" >ft</button>
+      <button id="unit-elev-m" class="unit-toggle-btn" >m</button>
     </div>
   </div>
 
@@ -843,12 +849,44 @@
         </div>
         <div class="sheet-label">Export</div>
       </button>
+      <button class="sheet-cell" id="sheet-about-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="8.5"/>
+            <line x1="12" y1="11" x2="12" y2="17"/>
+          </svg>
+        </div>
+        <div class="sheet-label">About</div>
+      </button>
     </div>
     <button class="btn btn-ghost btn-block sheet-cancel-btn" id="tools-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
   </div>
 </div>
 
-<!-- Sign-in on open modal (shown once to new/signed-out users) -->
+<!-- About modal -->
+<div class="modal-overlay hidden" id="about-modal">
+  <div class="modal" style="text-align:center;max-width:340px;">
+    <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px;">Field<span style="color:var(--accent);">Map</span></div>
+    <div id="about-version" style="font-size:13px;color:var(--text-muted);margin-bottom:18px;font-family:var(--font-mono);"></div>
+    <div style="text-align:left;font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.6;">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--text-muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase;">What's new</div>
+      <ul style="padding-left:18px;margin:0;color:var(--text-muted);">
+        <li>Polygon / area drawing</li>
+        <li>+Add and Tools sheets</li>
+        <li>Settings panel (units, defaults)</li>
+        <li>Sign in on open</li>
+        <li>Cross-device sync (Firebase)</li>
+        <li>Offline area downloads</li>
+        <li>OpenTopoMap layer</li>
+        <li>Search icon (tap to open)</li>
+      </ul>
+    </div>
+    <button class="btn btn-ghost btn-block" id="about-close-btn">Close</button>
+  </div>
+</div>
+
+<!-- Onboarding modal -->
 <div class="modal-overlay hidden" id="onboarding-modal">
   <div class="modal" style="text-align:center;padding-top:28px;">
     <div style="font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:8px;">Field<span style="color:var(--accent);">Map</span></div>
@@ -1312,6 +1350,8 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
+  var APP_VERSION = '1.1';
+  var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
   var store = (function(){
@@ -2926,8 +2966,11 @@
     showToast('Getting your location…', 3000);
     navigator.geolocation.getCurrentPosition(function(pos){
       var latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      map.flyTo(latlng, Math.max(map.getZoom(), 16));
       pendingLatLng = latlng;
-      openPinModal(null, latlng);
+      setTimeout(function(){
+        openPinModal(null, latlng);
+      }, 350);
     }, function(){
       showToast('Could not get location — check location permissions');
     }, { enableHighAccuracy:true, timeout:15000 });
@@ -3216,8 +3259,9 @@
     var nameDiv = document.createElement('div'); nameDiv.className = 'pin-row-name'; nameDiv.textContent = d.name;
     var metaDiv = document.createElement('div'); metaDiv.className = 'pin-row-meta';
     var distLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
-    var typeLabel = it.type === 'polygon' ? 'Area · ' : '';
-    metaDiv.textContent = typeLabel + tagLabelsFor(d) + distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
+    var areaLabel = it.type === 'polygon' && d.points && d.points.length >= 3 ? ' · ' + polygonAreaDisplay(d.points) : '';
+    var typeLabel = it.type === 'polygon' ? 'Area' : '';
+    metaDiv.textContent = (typeLabel ? typeLabel + areaLabel + ' · ' : '') + tagLabelsFor(d) + distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
 
@@ -4828,6 +4872,14 @@
       document.getElementById('add-sheet').classList.add('hidden');
       document.getElementById('import-file').click();
     });
+    document.getElementById('sheet-about-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      document.getElementById('about-version').textContent = 'v' + APP_VERSION + ' · ' + APP_RELEASE_DATE;
+      document.getElementById('about-modal').classList.remove('hidden');
+    });
+    document.getElementById('about-close-btn').addEventListener('click', function(){
+      document.getElementById('about-modal').classList.add('hidden');
+    });
     document.getElementById('sheet-export-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       // Show the export sub-menu (reuse existing export-menu dropdown)
@@ -4867,6 +4919,27 @@
       renderPinList();
       scheduleSave();
     });
+    // Unit toggles — wired via addEventListener (not inline onclick) so they work inside the IIFE scope
+    document.getElementById('unit-dist-mi').addEventListener('click', function(e){ e.stopPropagation(); setUnits('distance','imperial'); });
+    document.getElementById('unit-dist-km').addEventListener('click', function(e){ e.stopPropagation(); setUnits('distance','metric'); });
+    document.getElementById('unit-elev-ft').addEventListener('click', function(e){ e.stopPropagation(); setUnits('elevation','imperial'); });
+    document.getElementById('unit-elev-m').addEventListener('click', function(e){ e.stopPropagation(); setUnits('elevation','metric'); });
+    // Settings toggles — also need stopPropagation to prevent document handler closing the panel
+    document.getElementById('settings-gps-follow-toggle').addEventListener('click', function(e){ e.stopPropagation(); toggleGpsFollow(); });
+    document.getElementById('settings-cluster-toggle').addEventListener('click', function(e){
+      e.stopPropagation();
+      state.settings.clusterPins = !state.settings.clusterPins;
+      this.classList.toggle('on', state.settings.clusterPins);
+      scheduleClusterRefresh();
+      scheduleSave();
+    });
+    document.getElementById('settings-offline-boundaries-toggle').addEventListener('click', function(e){
+      e.stopPropagation();
+      state.settings.showOfflineBoundaries = !state.settings.showOfflineBoundaries;
+      this.classList.toggle('on', state.settings.showOfflineBoundaries);
+      renderOfflineBoundaries();
+      scheduleSave();
+    });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
       state.settings.defaultBaseLayer = this.value;
       // Switch the default base layer on if it's not already on
@@ -4885,20 +4958,6 @@
       }
       scheduleSave();
     });
-    document.getElementById('settings-gps-follow-toggle').addEventListener('click', toggleGpsFollow);
-    document.getElementById('settings-cluster-toggle').addEventListener('click', function(){
-      state.settings.clusterPins = !state.settings.clusterPins;
-      this.classList.toggle('on', state.settings.clusterPins);
-      scheduleClusterRefresh();
-      scheduleSave();
-    });
-    document.getElementById('settings-offline-boundaries-toggle').addEventListener('click', function(){
-      state.settings.showOfflineBoundaries = !state.settings.showOfflineBoundaries;
-      this.classList.toggle('on', state.settings.showOfflineBoundaries);
-      renderOfflineBoundaries();
-      scheduleSave();
-    });
-
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
@@ -4999,11 +5058,22 @@
     document.getElementById('map-search-input').addEventListener('keydown', function(e){
       if (e.key === 'Enter') searchGoto();
     });
+    document.getElementById('search-toggle-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      var bar = document.getElementById('map-search-bar');
+      var isOpen = bar.classList.toggle('search-open');
+      if (isOpen){ document.getElementById('map-search-input').focus(); }
+      else {
+        document.getElementById('map-search-input').value = '';
+        document.getElementById('map-search-results').innerHTML = '';
+        if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+      }
+    });
     document.getElementById('map-search-clear-btn').addEventListener('click', function(){
       document.getElementById('map-search-input').value = '';
       document.getElementById('map-search-results').innerHTML = '';
       if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
-      document.getElementById('map-search-input').focus();
+      document.getElementById('map-search-bar').classList.remove('search-open');
     });
     document.getElementById('measure-clear-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -5030,7 +5100,8 @@
     });
     document.addEventListener('click', function(e){
       var searchBar = document.getElementById('map-search-bar');
-      if (!searchBar.contains(e.target)){
+      if (searchBar.classList.contains('search-open') && !searchBar.contains(e.target) && e.target.id !== 'search-toggle-btn'){
+        searchBar.classList.remove('search-open');
         document.getElementById('map-search-results').innerHTML = '';
       }
       ['layers-panel','filter-panel','settings-panel','sort-menu','export-menu'].forEach(function(id){
@@ -5297,6 +5368,7 @@
         document.getElementById('find-dupes-modal').classList.add('hidden');
         document.getElementById('polygon-modal').classList.add('hidden');
         document.getElementById('onboarding-modal').classList.add('hidden');
+        document.getElementById('about-modal').classList.add('hidden');
         document.getElementById('add-sheet').classList.add('hidden');
         document.getElementById('tools-sheet').classList.add('hidden');
         if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
@@ -5388,6 +5460,30 @@
   // Combines local + cloud data. Items present on only one side are kept (union).
   // Items present on both sides with the same id use whichever side was edited
   // more recently overall. Anything tombstoned (deleted) on either side is dropped.
+  // Firestore does not support nested arrays (Array<Array>).
+  // Track points are stored as [[lat,lng],...] internally — must be flattened to
+  // [{lat,lng},...] before writing. Polygon points from Leaflet LatLng objects
+  // may carry extra properties — strip to just lat/lng.
+  function serializePoint(pt){
+    if (Array.isArray(pt)) return { lat: pt[0], lng: pt[1] };
+    return { lat: Number(pt.lat), lng: Number(pt.lng) };
+  }
+
+  function serializeForFirestore(data){
+    return {
+      pins: data.pins || [],
+      tracks: (data.tracks || []).map(function(t){
+        return Object.assign({}, t, { points: (t.points || []).map(serializePoint) });
+      }),
+      polygons: (data.polygons || []).map(function(p){
+        return Object.assign({}, p, { points: (p.points || []).map(serializePoint) });
+      }),
+      tags: data.tags || [],
+      tombstones: data.tombstones || {},
+      updatedAtMs: data.lastLocalEditAt || Date.now()
+    };
+  }
+
   function mergeStates(local, cloud){
     var localNewer = (local.lastLocalEditAt || 0) >= (cloud.updatedAtMs || 0);
 
@@ -5424,22 +5520,14 @@
     return getDoc(ref).then(function(snap){
       var local = window.FieldMapApp.getSyncableState();
       if (!snap.exists()){
-        return setDoc(ref, {
-          pins: local.pins, tracks: local.tracks, tags: local.tags,
-          polygons: local.polygons || [],
-          tombstones: local.tombstones, updatedAtMs: local.lastLocalEditAt || Date.now()
-        }).then(function(){
+        return setDoc(ref, serializeForFirestore(local)).then(function(){
           window.FieldMapApp.updateSyncStatusUI('Synced', null);
         });
       }
       var cloud = snap.data();
       var merged = mergeStates(local, cloud);
       applyingRemote = true;
-      return setDoc(ref, {
-        pins: merged.pins, tracks: merged.tracks, tags: merged.tags,
-        polygons: merged.polygons || [],
-        tombstones: merged.tombstones, updatedAtMs: merged.lastLocalEditAt
-      }).then(function(){
+      return setDoc(ref, serializeForFirestore(merged)).then(function(){
         window.FieldMapApp.applyMergedState(merged);
         applyingRemote = false;
         window.FieldMapApp.updateSyncStatusUI('Synced', null);
@@ -5477,11 +5565,7 @@
     window.FieldMapApp.updateSyncStatusUI('Syncing…', 'syncing');
     var ref = doc(db, 'users', currentUid);
     applyingRemote = true;
-    setDoc(ref, {
-      pins: localState.pins, tracks: localState.tracks, tags: localState.tags,
-      polygons: localState.polygons || [],
-      tombstones: localState.tombstones, updatedAtMs: localState.lastLocalEditAt
-    }).then(function(){
+    setDoc(ref, serializeForFirestore(localState)).then(function(){
       applyingRemote = false;
       window.FieldMapApp.updateSyncStatusUI('Synced', null);
     }).catch(function(err){
