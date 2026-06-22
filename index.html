@@ -8,6 +8,7 @@
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#191f1b">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FieldMap">
@@ -5237,7 +5238,7 @@
   // window.FieldMapApp / window.FieldMapSync bridge objects defined there.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
   import {
-    getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+    getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
   import {
     initializeFirestore, doc, getDoc, setDoc, onSnapshot,
@@ -5374,6 +5375,19 @@
     });
   }
 
+  // Check if we're returning from a Google redirect sign-in.
+  // getRedirectResult resolves immediately (null) if there's no pending redirect.
+  getRedirectResult(auth).then(function(result){
+    if (result && result.user){
+      // onAuthStateChanged will fire and handle the rest — nothing extra needed here
+    }
+  }).catch(function(err){
+    if (err && err.code && err.code !== 'auth/no-current-user'){
+      console.error('Redirect result error:', err.code, err.message);
+      window.FieldMapApp && window.FieldMapApp.showToast("Sign-in didn't complete — please try again");
+    }
+  });
+
   onAuthStateChanged(auth, function(user){
     if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
     window.FieldMapApp.whenReady(function(){
@@ -5392,11 +5406,11 @@
 
   window.FieldMapSync = {
     signIn: function(){
-      signInWithPopup(auth, provider).catch(function(err){
-        console.error('Sign-in failed', err);
-        if (err && err.code !== 'auth/popup-closed-by-user'){
-          window.FieldMapApp.showToast("Sign-in didn't go through — try again");
-        }
+      // signInWithRedirect navigates the whole page to Google auth and back —
+      // avoids popup COOP issues on GitHub Pages and strict browser environments.
+      signInWithRedirect(auth, provider).catch(function(err){
+        console.error('Redirect sign-in failed', err);
+        window.FieldMapApp && window.FieldMapApp.showToast("Sign-in failed — please try again");
       });
     },
     signOut: function(){
@@ -5409,7 +5423,13 @@
 <script>
   if ('serviceWorker' in navigator){
     window.addEventListener('load', function(){
-      navigator.serviceWorker.register('service-worker.js').catch(function(err){
+      navigator.serviceWorker.register('service-worker.js').then(function(reg){
+        // When a new service worker takes over, reload the page transparently.
+        // All state is in localStorage/Firestore so this is safe and instant.
+        navigator.serviceWorker.addEventListener('controllerchange', function(){
+          window.location.reload();
+        });
+      }).catch(function(err){
         console.warn('Service worker registration failed:', err);
       });
     });
