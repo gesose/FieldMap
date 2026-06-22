@@ -439,6 +439,11 @@
   #draw-bar-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;}
   #draw-bar-actions .link-btn{white-space:nowrap;flex-shrink:0;}
   #draw-finish-btn:disabled{opacity:0.4;cursor:default;}
+  .route-profile-btn{
+    padding:3px 7px;font-size:13px;border:none;background:transparent;cursor:pointer;
+    transition:background .15s;
+  }
+  .route-profile-btn.active{background:var(--accent);}
 
   #goto-results{margin-top:8px;}
   .goto-result-row{padding:8px 4px;font-size:12px;border-bottom:1px solid var(--border);cursor:pointer;}
@@ -857,6 +862,15 @@
         </div>
         <div class="sheet-label">About</div>
       </button>
+      <button class="sheet-cell" id="sheet-find-dupes-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="9" r="5"/><circle cx="15" cy="15" r="5"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Find dupes</div>
+      </button>
     </div>
     <button class="btn btn-ghost btn-block sheet-cancel-btn" id="tools-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
   </div>
@@ -999,7 +1013,6 @@
 
   <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
     <button class="btn btn-small" id="manage-tags-btn">Manage tags</button>
-    <button class="btn btn-small" id="find-dupes-btn">Find duplicates</button>
     <button class="btn btn-small" id="filters-reset-btn">Reset filters</button>
   </div>
 </div>
@@ -1012,6 +1025,12 @@
 <div id="draw-bar" class="hidden">
   <div id="draw-bar-stats">
     <span id="draw-bar-text">0 points</span>
+    <span style="color:var(--text-muted);font-size:11px;margin-left:8px;">Route via:</span>
+    <div style="display:inline-flex;margin-left:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;overflow:hidden;vertical-align:middle;">
+      <button class="route-profile-btn active" data-profile="driving-car" title="Drive (main roads)">🚗</button>
+      <button class="route-profile-btn" data-profile="foot-walking" title="Walk (roads + trails)">🚶</button>
+      <button class="route-profile-btn" data-profile="foot-hiking" title="Hike (trails only)">🏔️</button>
+    </div>
   </div>
   <div id="draw-bar-actions">
     <button id="draw-undo-btn" class="link-btn">Undo</button>
@@ -1348,7 +1367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.1';
+  var APP_VERSION = '1.1.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1426,6 +1445,7 @@
   var drawMode = false, drawPoints = [], drawMarkers = [], drawLine = null, pendingDrawPoints = null, snappedPoints = null;
   var polygonMode = false, polygonPoints = [], polygonMarkers = [], polygonPreviewLayer = null;
   var editingPolygonId = null, pendingPolygonPoints = null;
+  var drawRouteProfile = 'driving-car'; // default: drive on main roads
   var gpsFollowWatchId = null;
   var POLYGON_COLORS = ['#c2622d','#5fa86b','#5a9bd8','#d9a13f','#9b5fd8','#c2432d','#3da89a','#6b8fa6'];
   var selectedPolygonColor = POLYGON_COLORS[0];
@@ -1952,6 +1972,14 @@
   function addMarkerForPin(pin){
     var marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin) });
     marker.bindPopup(popupHtml(pin));
+    marker.on('click', function(e){
+      if (addMode || drawMode || polygonMode){
+        L.DomEvent.stopPropagation(e);
+        if (drawMode) handleDrawClick(e.latlng);
+        else if (polygonMode) handlePolygonClick(e.latlng);
+        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+      }
+    });
     markersById[pin.id] = marker;
     scheduleClusterRefresh();
   }
@@ -2013,12 +2041,19 @@
           iconSize: [size,size], iconAnchor: [size/2, size/2]
         });
         var clusterMarker = L.marker(center, { icon: icon });
-        clusterMarker.on('click', (function(members){
+        clusterMarker.on('click', (function(members, center){
           return function(e){
+            if (addMode || drawMode || polygonMode){
+              L.DomEvent.stopPropagation(e);
+              if (drawMode) handleDrawClick(center);
+              else if (polygonMode) handlePolygonClick(center);
+              else if (addMode){ pendingLatLng = center; openPinModal(null, center); }
+              return;
+            }
             openClusterPanel(members);
             L.DomEvent.stopPropagation(e);
           };
-        })(group));
+        })(group, center));
         clusterLayerGroup.addLayer(clusterMarker);
       }
     }
@@ -2081,6 +2116,15 @@
     var v = tagVisualFor(track);
     var poly = L.polyline(track.points, { color: v.color, weight: 3, opacity: 0.85 });
     poly.bindPopup(trackPopupHtml(track));
+    poly.on('click', function(e){
+      if (addMode || drawMode || polygonMode){
+        L.DomEvent.stopPropagation(e);
+        if (drawMode) handleDrawClick(e.latlng);
+        else if (polygonMode) handlePolygonClick(e.latlng);
+        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+        return;
+      }
+    });
     trackLayersById[track.id] = poly;
     applyFilterToTrack(track);
   }
@@ -2610,7 +2654,7 @@
     if (drawPoints.length < 2){ showToast('Add at least two points first'); return; }
     showToast('Snapping to trail…');
     var coords = drawPoints.map(function(p){ return [p.lng, p.lat]; });
-    fetch('https://api.openrouteservice.org/v2/directions/foot-walking/geojson', {
+    fetch('https://api.openrouteservice.org/v2/directions/' + drawRouteProfile + '/geojson', {
       method: 'POST',
       headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ coordinates: coords })
@@ -2807,6 +2851,13 @@
 
     layer.bindPopup(polygonPopupHtml(polygon), { maxWidth:280, className:'polygon-popup' });
     layer.on('click', function(e){
+      if (addMode || drawMode || polygonMode){
+        L.DomEvent.stopPropagation(e);
+        if (drawMode) handleDrawClick(e.latlng);
+        else if (polygonMode) handlePolygonClick(e.latlng);
+        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+        return;
+      }
       L.DomEvent.stopPropagation(e);
       layer.openPopup(e.latlng);
     });
@@ -4860,6 +4911,10 @@
       document.getElementById('add-sheet').classList.add('hidden');
       document.getElementById('import-file').click();
     });
+    document.getElementById('sheet-find-dupes-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      findAndShowDuplicates();
+    });
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       document.getElementById('about-version').textContent = 'v' + APP_VERSION + ' · ' + APP_RELEASE_DATE;
@@ -5068,6 +5123,14 @@
     document.getElementById('measure-clear-btn').addEventListener('click', function(e){
       e.stopPropagation();
       setMeasureMode(false); // exits mode AND clears measurement
+    });
+    // Route profile selector buttons in draw bar
+    document.querySelectorAll('.route-profile-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        drawRouteProfile = this.dataset.profile;
+        document.querySelectorAll('.route-profile-btn').forEach(function(b){ b.classList.remove('active'); });
+        this.classList.add('active');
+      });
     });
     document.getElementById('draw-undo-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -5306,10 +5369,6 @@
     document.getElementById('manage-tags-btn').addEventListener('click', function(){
       renderTagsManageList();
       document.getElementById('tags-modal').classList.remove('hidden');
-    });
-    document.getElementById('find-dupes-btn').addEventListener('click', function(){
-      closeAllPanels();
-      findAndShowDuplicates();
     });
     document.getElementById('find-dupes-close-btn').addEventListener('click', function(){
       document.getElementById('find-dupes-modal').classList.add('hidden');
