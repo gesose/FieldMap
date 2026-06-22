@@ -363,12 +363,25 @@
   }
   .color-swatch.selected{border-color:var(--text);transform:scale(1.2);}
 
-  /* Unit toggle buttons in settings */
-  .unit-toggle-btn{
-    padding:5px 11px;font-size:12px;font-weight:500;border:none;
-    background:transparent;color:var(--text-muted);cursor:pointer;transition:all .15s;
+  /* Settings panel checkbox-pill toggles */
+  .settings-check-row{
+    display:flex;align-items:center;gap:10px;
+    padding:9px 0;border-top:1px solid var(--border);
+    cursor:pointer;font-size:13px;color:var(--text);
   }
-  .unit-toggle-btn.active{background:var(--accent);color:#fff;}
+  .settings-check{ display:none; }
+  .settings-check-pill{
+    width:36px;height:20px;border-radius:10px;flex-shrink:0;
+    background:var(--border);position:relative;
+    transition:background .2s;
+  }
+  .settings-check-pill::after{
+    content:'';position:absolute;top:3px;left:3px;
+    width:14px;height:14px;border-radius:50%;background:#fff;
+    transition:transform .2s;
+  }
+  .settings-check:checked + .settings-check-pill{ background:var(--accent); }
+  .settings-check:checked + .settings-check-pill::after{ transform:translateX(16px); }
 
   /* Settings green status dot */
   :root{--green-status:#5fa86b;}
@@ -705,27 +718,9 @@
     <button class="btn btn-ghost btn-block" id="google-signout-btn">Sign out</button>
   </div>
 
-  <div class="layer-section-header" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">UNITS</div>
-  <div class="layer-overlay-row" style="padding-top:8px;border-top:none;">
-    <span style="flex:1;font-size:13px;">Distance</span>
-    <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
-      <button id="unit-dist-mi" class="unit-toggle-btn active" >mi</button>
-      <button id="unit-dist-km" class="unit-toggle-btn" >km</button>
-    </div>
-  </div>
-  <div class="layer-overlay-row">
-    <span style="flex:1;font-size:13px;">Elevation</span>
-    <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
-      <button id="unit-elev-ft" class="unit-toggle-btn active" >ft</button>
-      <button id="unit-elev-m" class="unit-toggle-btn" >m</button>
-    </div>
-  </div>
-
   <div class="layer-section-header" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">MAP</div>
-  <div class="layer-overlay-row" style="padding-top:8px;border-top:none;">
-    <span style="flex:1;font-size:13px;">Default base layer</span>
-  </div>
-  <div style="padding:0 0 10px;">
+  <div style="padding:8px 0 6px;">
+    <div style="font-size:13px;margin-bottom:6px;color:var(--text);">Default base layer</div>
     <select id="settings-default-layer" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
       <option value="street">Street (OpenStreetMap)</option>
       <option value="opentopo">OpenTopoMap</option>
@@ -735,25 +730,28 @@
     </select>
   </div>
   <div style="padding:0 0 10px;">
-    <div style="font-size:13px;margin-bottom:6px;">Default list sort</div>
+    <div style="font-size:13px;margin-bottom:6px;color:var(--text);">Default list sort</div>
     <select id="settings-default-sort" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
       <option value="chronological">Chronological (newest first)</option>
       <option value="category">By category</option>
       <option value="trip">By trip</option>
     </select>
   </div>
-  <div class="layer-overlay-row">
-    <span style="flex:1;font-size:13px;">GPS auto-follow</span>
-    <div class="toggle" id="settings-gps-follow-toggle"></div>
-  </div>
-  <div class="layer-overlay-row">
-    <span style="flex:1;font-size:13px;">Cluster pins</span>
-    <div class="toggle on" id="settings-cluster-toggle"></div>
-  </div>
-  <div class="layer-overlay-row" style="padding-bottom:14px;">
-    <span style="flex:1;font-size:13px;">Offline area outlines</span>
-    <div class="toggle on" id="settings-offline-boundaries-toggle"></div>
-  </div>
+  <label class="settings-check-row">
+    <input type="checkbox" id="settings-gps-follow-toggle" class="settings-check">
+    <span class="settings-check-pill"></span>
+    <span>GPS auto-follow</span>
+  </label>
+  <label class="settings-check-row">
+    <input type="checkbox" id="settings-cluster-toggle" class="settings-check" checked>
+    <span class="settings-check-pill"></span>
+    <span>Cluster pins</span>
+  </label>
+  <label class="settings-check-row" style="padding-bottom:14px;">
+    <input type="checkbox" id="settings-offline-boundaries-toggle" class="settings-check" checked>
+    <span class="settings-check-pill"></span>
+    <span>Offline area outlines</span>
+  </label>
 </div>
 
 <!-- +Add bottom sheet -->
@@ -1097,7 +1095,7 @@
       <div class="chip-row" id="polygon-tags-row"></div>
     </label>
     <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" maxlength="60"></label>
+    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. OR Elk 2026 or type a new trip"></label>
     <label><span>Date</span><input type="date" id="polygon-date"></label>
     <div id="polygon-area-display" class="coord-display" style="min-height:18px;"></div>
     <div class="modal-actions">
@@ -2466,8 +2464,9 @@
     if (on && addMode) setAddMode(false);
     if (on && drawMode) setDrawMode(false);
     document.getElementById('map').classList.toggle('measure-mode', on);
-    document.getElementById('measure-btn').classList.toggle('active', on);
+    // measure-btn was removed from map controls (now in Tools sheet) — no active-state to toggle
     if (!on) clearMeasure();
+    if (!on) document.getElementById('measure-result').classList.add('hidden');
   }
 
   function setDrawMode(on){
@@ -2611,7 +2610,7 @@
     if (drawPoints.length < 2){ showToast('Add at least two points first'); return; }
     showToast('Snapping to trail…');
     var coords = drawPoints.map(function(p){ return [p.lng, p.lat]; });
-    fetch('https://api.openrouteservice.org/v2/directions/foot-hiking/geojson', {
+    fetch('https://api.openrouteservice.org/v2/directions/foot-walking/geojson', {
       method: 'POST',
       headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ coordinates: coords })
@@ -2977,25 +2976,12 @@
   }
 
   // ---------- Settings ----------
-  function setUnits(type, value){
-    state.settings.units[type] = value;
-    document.getElementById('unit-dist-mi').classList.toggle('active', state.settings.units.distance === 'imperial');
-    document.getElementById('unit-dist-km').classList.toggle('active', state.settings.units.distance === 'metric');
-    document.getElementById('unit-elev-ft').classList.toggle('active', state.settings.units.elevation === 'imperial');
-    document.getElementById('unit-elev-m').classList.toggle('active', state.settings.units.elevation === 'metric');
-    scheduleSave();
-  }
-
   function applySettingsUI(){
-    document.getElementById('unit-dist-mi').classList.toggle('active', state.settings.units.distance === 'imperial');
-    document.getElementById('unit-dist-km').classList.toggle('active', state.settings.units.distance === 'metric');
-    document.getElementById('unit-elev-ft').classList.toggle('active', state.settings.units.elevation === 'imperial');
-    document.getElementById('unit-elev-m').classList.toggle('active', state.settings.units.elevation === 'metric');
     document.getElementById('settings-default-layer').value = state.settings.defaultBaseLayer || 'street';
     document.getElementById('settings-default-sort').value = state.settings.defaultSort || 'chronological';
-    document.getElementById('settings-gps-follow-toggle').classList.toggle('on', !!state.settings.gpsFollow);
-    document.getElementById('settings-cluster-toggle').classList.toggle('on', state.settings.clusterPins !== false);
-    document.getElementById('settings-offline-boundaries-toggle').classList.toggle('on', state.settings.showOfflineBoundaries !== false);
+    document.getElementById('settings-gps-follow-toggle').checked = !!state.settings.gpsFollow;
+    document.getElementById('settings-cluster-toggle').checked = state.settings.clusterPins !== false;
+    document.getElementById('settings-offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries !== false;
   }
 
   function toggleGpsFollow(){
@@ -3298,8 +3284,10 @@
         }
       } else if (it.type === 'polygon'){
         var entry = polygonLayersById[d.id];
-        if (entry && entry.poly) map.flyToBounds(entry.poly.getBounds(), { padding:[40,40] });
-        else openPolygonModal(d);
+        if (entry && entry.poly){
+          map.flyToBounds(entry.poly.getBounds(), { padding:[40,40] });
+          setTimeout(function(){ entry.poly.openPopup(entry.poly.getBounds().getCenter()); }, 350);
+        }
       }
     });
     return row;
@@ -4919,24 +4907,26 @@
       renderPinList();
       scheduleSave();
     });
-    // Unit toggles — wired via addEventListener (not inline onclick) so they work inside the IIFE scope
-    document.getElementById('unit-dist-mi').addEventListener('click', function(e){ e.stopPropagation(); setUnits('distance','imperial'); });
-    document.getElementById('unit-dist-km').addEventListener('click', function(e){ e.stopPropagation(); setUnits('distance','metric'); });
-    document.getElementById('unit-elev-ft').addEventListener('click', function(e){ e.stopPropagation(); setUnits('elevation','imperial'); });
-    document.getElementById('unit-elev-m').addEventListener('click', function(e){ e.stopPropagation(); setUnits('elevation','metric'); });
-    // Settings toggles — also need stopPropagation to prevent document handler closing the panel
-    document.getElementById('settings-gps-follow-toggle').addEventListener('click', function(e){ e.stopPropagation(); toggleGpsFollow(); });
-    document.getElementById('settings-cluster-toggle').addEventListener('click', function(e){
-      e.stopPropagation();
-      state.settings.clusterPins = !state.settings.clusterPins;
-      this.classList.toggle('on', state.settings.clusterPins);
+    // Unit toggles removed (units section removed from settings for now)
+    // Settings toggles — input[type=checkbox] for reliable rendering
+    document.getElementById('settings-gps-follow-toggle').addEventListener('change', function(){
+      state.settings.gpsFollow = this.checked;
+      if (this.checked){
+        gpsFollowWatchId = navigator.geolocation && navigator.geolocation.watchPosition(function(pos){
+          map.setView([pos.coords.latitude, pos.coords.longitude]);
+        }, null, { enableHighAccuracy:true });
+      } else {
+        if (gpsFollowWatchId !== null && navigator.geolocation){ navigator.geolocation.clearWatch(gpsFollowWatchId); gpsFollowWatchId = null; }
+      }
+      scheduleSave();
+    });
+    document.getElementById('settings-cluster-toggle').addEventListener('change', function(){
+      state.settings.clusterPins = this.checked;
       scheduleClusterRefresh();
       scheduleSave();
     });
-    document.getElementById('settings-offline-boundaries-toggle').addEventListener('click', function(e){
-      e.stopPropagation();
-      state.settings.showOfflineBoundaries = !state.settings.showOfflineBoundaries;
-      this.classList.toggle('on', state.settings.showOfflineBoundaries);
+    document.getElementById('settings-offline-boundaries-toggle').addEventListener('change', function(){
+      state.settings.showOfflineBoundaries = this.checked;
       renderOfflineBoundaries();
       scheduleSave();
     });
@@ -5077,7 +5067,7 @@
     });
     document.getElementById('measure-clear-btn').addEventListener('click', function(e){
       e.stopPropagation();
-      clearMeasure();
+      setMeasureMode(false); // exits mode AND clears measurement
     });
     document.getElementById('draw-undo-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -5240,9 +5230,7 @@
       }
     });
 
-    document.getElementById('import-btn').addEventListener('click', function(){
-      document.getElementById('import-file').click();
-    });
+    // import-btn removed from sidebar — import is now in the +Add sheet
     document.getElementById('import-file').addEventListener('change', function(e){
       if (e.target.files[0]) handleImportFile(e.target.files[0]);
       e.target.value = '';
@@ -5264,10 +5252,8 @@
       document.querySelectorAll('#import-item-list select, #import-track-list select').forEach(function(s){ s.value = val; });
     });
 
-    document.getElementById('export-btn').addEventListener('click', function(e){
-      e.stopPropagation();
-      document.getElementById('export-menu').classList.toggle('hidden');
-    });
+    // export-btn removed from sidebar — export is now in Tools sheet
+    // export-menu items still work (menu is triggered from sheet-export-btn)
     document.getElementById('export-geojson-item').addEventListener('click', function(){
       exportGeoJSON();
       document.getElementById('export-menu').classList.add('hidden');
