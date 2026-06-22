@@ -1367,7 +1367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.1.2';
+  var APP_VERSION = '1.1.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -5471,7 +5471,7 @@
   // window.FieldMapApp / window.FieldMapSync bridge objects defined there.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
   import {
-    getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged
+    getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
   import {
     initializeFirestore, doc, getDoc, setDoc, onSnapshot,
@@ -5620,16 +5620,15 @@
     });
   }
 
-  // Check if we're returning from a Google redirect sign-in.
-  // getRedirectResult resolves immediately (null) if there's no pending redirect.
+  // On startup, handle the case where a previous signInWithRedirect is pending.
+  // This is the fallback path — popup is the normal path now.
   getRedirectResult(auth).then(function(result){
     if (result && result.user){
-      // onAuthStateChanged will fire and handle the rest — nothing extra needed here
+      console.log('[FieldMap] Redirect sign-in completed:', result.user.email);
     }
   }).catch(function(err){
     if (err && err.code && err.code !== 'auth/no-current-user'){
-      console.error('Redirect result error:', err.code, err.message);
-      window.FieldMapApp && window.FieldMapApp.showToast("Sign-in didn't complete — please try again");
+      console.warn('[FieldMap] Redirect result error:', err.code, err.message);
     }
   });
 
@@ -5651,11 +5650,22 @@
 
   window.FieldMapSync = {
     signIn: function(){
-      // signInWithRedirect navigates the whole page to Google auth and back —
-      // avoids popup COOP issues on GitHub Pages and strict browser environments.
-      signInWithRedirect(auth, provider).catch(function(err){
-        console.error('Redirect sign-in failed', err);
-        window.FieldMapApp && window.FieldMapApp.showToast("Sign-in failed — please try again");
+      // Popup is the primary sign-in path — cleaner UX, no full-page redirect,
+      // and avoids the IndexedDB contention between signInWithRedirect and
+      // Firestore's persistentLocalCache which caused sign-ins to silently fail.
+      // Fall back to redirect if the browser blocks the popup.
+      signInWithPopup(auth, provider).catch(function(err){
+        if (!err) return;
+        if (err.code === 'auth/popup-blocked'){
+          console.log('[FieldMap] Popup blocked — falling back to redirect');
+          signInWithRedirect(auth, provider).catch(function(e){
+            console.error('[FieldMap] Redirect sign-in also failed:', e);
+            window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — check that popups are not blocked');
+          });
+        } else if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request'){
+          console.error('[FieldMap] Sign-in error:', err.code, err.message);
+          window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — ' + (err.message || 'please try again'));
+        }
       });
     },
     signOut: function(){
