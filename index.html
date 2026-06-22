@@ -303,6 +303,75 @@
   .map-icon-btn:hover{background:var(--bg-elevated-2);}
   .map-icon-btn.active{background:var(--accent);border-color:var(--accent);color:#2a1208;}
   #map.measure-mode{cursor:crosshair;}
+  #map.polygon-mode{cursor:crosshair;}
+
+  /* Bottom sheets */
+  .bottom-sheet-overlay{
+    position:fixed;inset:0;z-index:2000;
+    background:rgba(0,0,0,0.5);display:flex;align-items:flex-end;
+  }
+  .bottom-sheet-overlay.hidden{display:none;}
+  .bottom-sheet-panel{
+    background:var(--bg-elevated);border-top:1px solid var(--border);
+    border-radius:16px 16px 0 0;width:100%;padding-bottom:env(safe-area-inset-bottom,0);
+    max-height:80vh;overflow-y:auto;
+  }
+  .bottom-sheet-handle{
+    width:36px;height:4px;background:var(--border);border-radius:2px;
+    margin:10px auto 4px;
+  }
+  .bottom-sheet-section{
+    font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);
+    padding:8px 16px 4px;text-transform:uppercase;
+  }
+  .bottom-sheet-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px 12px 8px;
+  }
+  .sheet-cell{
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+    padding:12px 6px;border-radius:10px;background:none;border:none;cursor:pointer;
+    color:var(--text);transition:background .15s;
+  }
+  .sheet-cell:hover,.sheet-cell:active{background:var(--bg-elevated-2);}
+  .sheet-icon{
+    width:46px;height:46px;border-radius:12px;
+    background:var(--bg-elevated-2);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--text);
+  }
+  .sheet-label{font-size:11px;color:var(--text-muted);text-align:center;line-height:1.3;}
+
+  /* Polygon bar — same structure as draw bar */
+  #polygon-bar{
+    position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+    padding:8px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    font-family:var(--font-mono);font-size:13px;min-width:260px;
+  }
+  #polygon-bar.hidden{display:none;}
+  #polygon-bar-stats{white-space:nowrap;color:var(--text);margin-bottom:6px;}
+  #polygon-bar-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;}
+  #polygon-bar-actions .link-btn{white-space:nowrap;flex-shrink:0;}
+  #polygon-finish-btn:disabled{opacity:0.4;cursor:default;}
+
+  /* Color swatches for polygon modal */
+  .color-swatch{
+    width:28px;height:28px;border-radius:50%;cursor:pointer;
+    border:2px solid transparent;flex-shrink:0;
+    transition:transform .15s,border-color .15s;
+  }
+  .color-swatch.selected{border-color:var(--text);transform:scale(1.2);}
+
+  /* Unit toggle buttons in settings */
+  .unit-toggle-btn{
+    padding:5px 11px;font-size:12px;font-weight:500;border:none;
+    background:transparent;color:var(--text-muted);cursor:pointer;transition:all .15s;
+  }
+  .unit-toggle-btn.active{background:var(--accent);color:#fff;}
+
+  /* Settings green status dot */
+  :root{--green-status:#5fa86b;}
+  #account-sync-indicator{transition:background .3s;}
   #account-sync-dot{
     position:absolute;top:1px;right:1px;width:9px;height:9px;border-radius:50%;
     background:#5fa86b;border:1.5px solid var(--bg-elevated);
@@ -469,7 +538,7 @@
       font-size:12px;
       min-width:0;width:calc(100vw - 28px);max-width:340px;
     }
-    #draw-bar-actions{gap:9px;justify-content:space-between;}
+    #draw-bar-actions,#polygon-bar-actions{gap:9px;justify-content:space-between;}
 
     /* Cluster panel: full-width above bottom sheet */
     #cluster-panel{
@@ -478,8 +547,8 @@
     }
     #cluster-panel-list{max-height:200px;}
 
-    /* Public land legend: tuck above bottom sheet */
-    #publicland-legend{bottom:90px;}
+    /* Public land legend: enough clearance above bottom sheet */
+    #publicland-legend{bottom:105px;}
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -499,8 +568,8 @@
       <div id="sidebar-header-row1">
         <div id="app-title">Field<span>Map</span></div>
         <div style="display:flex;gap:6px;">
-          <button class="btn btn-primary btn-small" id="add-pin-btn">+ Add pin</button>
-          <button class="btn btn-small" id="draw-route-btn-sidebar">+ Route</button>
+          <button class="btn btn-primary btn-small" id="add-sheet-btn">+ Add</button>
+          <button class="btn btn-small" id="tools-sheet-btn">Tools</button>
         </div>
       </div>
       <div id="sidebar-header-row2">
@@ -575,7 +644,7 @@
 
 <div id="map-controls">
   <button class="map-icon-btn" id="layers-btn" aria-label="Layers">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
       <path d="M10 2 L18 6.5 L10 11 L2 6.5 Z"/>
       <path d="M2.5 10.2 L10 14.5 L17.5 10.2"/>
       <path d="M2.5 13.7 L10 18 L17.5 13.7"/>
@@ -584,17 +653,6 @@
   <button class="map-icon-btn" id="filter-btn" aria-label="Search and filter">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
       <path d="M3 4h14l-5 6.5v6L8 18v-7.5Z"/>
-    </svg>
-  </button>
-  <button class="map-icon-btn" id="measure-btn" aria-label="Measure distance and bearing">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-      <g transform="rotate(-45 10 10)">
-        <rect x="2" y="7.5" width="16" height="5" rx="1" stroke-width="1.4"/>
-        <line x1="5" y1="7.5" x2="5" y2="10" stroke-width="1.2"/>
-        <line x1="8" y1="7.5" x2="8" y2="10.5" stroke-width="1.2"/>
-        <line x1="11" y1="7.5" x2="11" y2="10" stroke-width="1.2"/>
-        <line x1="14" y1="7.5" x2="14" y2="10.5" stroke-width="1.2"/>
-      </g>
     </svg>
   </button>
   <button class="map-icon-btn" id="locate-btn" aria-label="Locate me">
@@ -608,35 +666,169 @@
   </button>
   <button class="map-icon-btn" id="offline-btn" aria-label="Offline maps">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M10 2v10M10 12l-3.5-3.5M10 12l3.5-3.5"/>
-      <path d="M3 14v2.5a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V14"/>
+      <line x1="10" y1="3" x2="10" y2="13"/>
+      <polyline points="6,9 10,13 14,9"/>
+      <path d="M4 15.5h12"/>
     </svg>
   </button>
-  <button class="map-icon-btn" id="account-btn" aria-label="Account and sync">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="10" cy="6.5" r="3.2"/>
-      <path d="M3.5 17c1-3.8 4-5.8 6.5-5.8s5.5 2 6.5 5.8"/>
-    </svg>
-    <span id="account-sync-dot" class="hidden"></span>
-  </button>
+  <span id="account-sync-dot" class="hidden" style="position:absolute;bottom:2px;right:2px;"></span>
 </div>
 
-<div id="account-panel" class="floating-panel hidden">
-  <h2>Account &amp; sync</h2>
-  <div id="account-signed-out">
-    <p class="hint" style="margin-bottom:14px;">Sign in with Google to sync your pins, tracks, and tags across all your devices. Your data stays private to your account — nobody else can see it.</p>
+<!-- Settings panel (accessible via Tools → Settings) -->
+<div id="settings-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;">
+  <h2>Settings</h2>
+
+  <div class="layer-section-header" style="margin-top:4px;">ACCOUNT</div>
+  <div id="settings-signed-out" style="padding:12px 0 4px;">
+    <p class="hint" style="margin-bottom:10px;">Sign in with Google to sync your data across devices.</p>
     <button class="btn btn-primary btn-block" id="google-signin-btn">Sign in with Google</button>
   </div>
-  <div id="account-signed-in" class="hidden">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-      <img id="account-avatar" src="" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;" alt="">
+  <div id="settings-signed-in" class="hidden" style="padding:8px 0;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <img id="account-avatar" src="" style="width:34px;height:34px;border-radius:50%;flex-shrink:0;background:var(--bg-elevated-2);" alt="">
       <div style="min-width:0;">
-        <div id="account-name" style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
-        <div id="account-email" style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+        <div id="account-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+        <div id="account-email" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
       </div>
     </div>
-    <div id="account-sync-status" class="hint" style="margin-bottom:14px;">Synced</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <div id="account-sync-indicator" style="width:8px;height:8px;border-radius:50%;background:var(--green-status);flex-shrink:0;"></div>
+      <div id="account-sync-status" class="hint" style="margin:0;font-size:11px;">Synced</div>
+    </div>
     <button class="btn btn-ghost btn-block" id="google-signout-btn">Sign out</button>
+  </div>
+
+  <div class="layer-section-header" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">UNITS</div>
+  <div class="layer-overlay-row" style="padding-top:8px;border-top:none;">
+    <span style="flex:1;font-size:13px;">Distance</span>
+    <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
+      <button id="unit-dist-mi" class="unit-toggle-btn active" onclick="setUnits('distance','imperial')">mi</button>
+      <button id="unit-dist-km" class="unit-toggle-btn" onclick="setUnits('distance','metric')">km</button>
+    </div>
+  </div>
+  <div class="layer-overlay-row">
+    <span style="flex:1;font-size:13px;">Elevation</span>
+    <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;overflow:hidden;">
+      <button id="unit-elev-ft" class="unit-toggle-btn active" onclick="setUnits('elevation','imperial')">ft</button>
+      <button id="unit-elev-m" class="unit-toggle-btn" onclick="setUnits('elevation','metric')">m</button>
+    </div>
+  </div>
+
+  <div class="layer-section-header" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">MAP</div>
+  <div class="layer-overlay-row" style="padding-top:8px;border-top:none;">
+    <span style="flex:1;font-size:13px;">Default base layer</span>
+  </div>
+  <div style="padding:0 0 10px;">
+    <select id="settings-default-layer" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
+      <option value="street">Street (OpenStreetMap)</option>
+      <option value="opentopo">OpenTopoMap</option>
+      <option value="aerial">Aerial imagery</option>
+      <option value="topo">USGS Topo</option>
+      <option value="imagerytopo">Imagery + topo</option>
+    </select>
+  </div>
+  <div class="layer-overlay-row">
+    <span style="flex:1;font-size:13px;">GPS auto-follow</span>
+    <div class="toggle" id="settings-gps-follow-toggle"></div>
+  </div>
+  <div class="layer-overlay-row">
+    <span style="flex:1;font-size:13px;">Cluster pins</span>
+    <div class="toggle on" id="settings-cluster-toggle"></div>
+  </div>
+  <div class="layer-overlay-row" style="padding-bottom:14px;">
+    <span style="flex:1;font-size:13px;">Offline area outlines</span>
+    <div class="toggle on" id="settings-offline-boundaries-toggle"></div>
+  </div>
+</div>
+
+<!-- +Add bottom sheet -->
+<div id="add-sheet" class="bottom-sheet-overlay hidden">
+  <div class="bottom-sheet-panel">
+    <div class="bottom-sheet-handle"></div>
+    <div class="bottom-sheet-section">CREATE</div>
+    <div class="bottom-sheet-grid">
+      <button class="sheet-cell" id="sheet-add-pin-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2C8.68 2 6 4.68 6 8c0 4.5 6 12 6 12s6-7.5 6-12c0-3.32-2.68-6-6-6z"/>
+            <circle cx="12" cy="8" r="2"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Add pin</div>
+      </button>
+      <button class="sheet-cell" id="sheet-mark-location-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <circle cx="12" cy="12" r="3"/>
+            <line x1="12" y1="1" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="1" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="23" y2="12"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Mark my location</div>
+      </button>
+      <button class="sheet-cell" id="sheet-draw-route-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5" cy="18" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="14" r="2"/>
+            <path d="M6.7 16.6 10.4 7.9M13.4 7.1 17.3 12.5"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Draw route</div>
+      </button>
+      <button class="sheet-cell" id="sheet-draw-polygon-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12,3 21,9 18,20 6,20 3,9"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Draw area</div>
+      </button>
+    </div>
+    <button class="btn btn-ghost btn-block sheet-cancel-btn" id="add-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
+  </div>
+</div>
+
+<!-- Tools bottom sheet -->
+<div id="tools-sheet" class="bottom-sheet-overlay hidden">
+  <div class="bottom-sheet-panel">
+    <div class="bottom-sheet-handle"></div>
+    <div class="bottom-sheet-section">TOOLS</div>
+    <div class="bottom-sheet-grid">
+      <button class="sheet-cell" id="sheet-measure-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12 L10 4 L22 16 L14 24 Z" transform="rotate(-45 12 12) translate(0,-2)"/>
+            <line x1="7" y1="7" x2="7" y2="10"/><line x1="10" y1="7" x2="10" y2="11.5"/><line x1="13" y1="7" x2="13" y2="10"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Measure</div>
+      </button>
+      <button class="sheet-cell" id="sheet-settings-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Settings</div>
+      </button>
+    </div>
+    <button class="btn btn-ghost btn-block sheet-cancel-btn" id="tools-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
+  </div>
+</div>
+
+<!-- Sign-in on open modal (shown once to new/signed-out users) -->
+<div class="modal-overlay hidden" id="onboarding-modal">
+  <div class="modal" style="text-align:center;padding-top:28px;">
+    <div style="font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:8px;">Field<span style="color:var(--accent);">Map</span></div>
+    <p class="hint" style="margin-bottom:24px;font-size:13px;line-height:1.6;">Sign in to sync your pins, tracks, and areas across all your devices. Your data stays private to your account.</p>
+    <button class="btn btn-block" id="onboarding-signin-btn" style="background:#fff;color:#3c4043;border-color:#dadce0;margin-bottom:14px;font-size:14px;padding:11px;">
+      <svg viewBox="0 0 18 18" width="18" height="18" style="flex-shrink:0;"><path fill="#4285F4" d="M17.64 9.2a10.34 10.34 0 0 0-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91a8.78 8.78 0 0 0 2.69-6.62z"/><path fill="#34A853" d="M9 18a8.59 8.59 0 0 0 5.96-2.18l-2.91-2.26A5.4 5.4 0 0 1 9 14.83a5.4 5.4 0 0 1-5.08-3.74H.96v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.92 11.09A5.5 5.5 0 0 1 3.63 9c0-.73.13-1.44.29-2.09V4.57H.96A9 9 0 0 0 0 9a9 9 0 0 0 .96 4.43l2.96-2.34z"/><path fill="#EA4335" d="M9 3.58a4.86 4.86 0 0 1 3.44 1.35l2.58-2.58A8.64 8.64 0 0 0 9 0 9 9 0 0 0 .96 4.57l2.96 2.34A5.4 5.4 0 0 1 9 3.58z"/></svg>
+      Sign in with Google
+    </button>
+    <button class="link-btn" id="onboarding-guest-btn" style="font-size:13px;color:var(--text-muted);">Continue as guest →</button>
   </div>
 </div>
 
@@ -699,11 +891,6 @@
   </label>
   <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="offline-boundaries-toggle" checked> Offline area outlines
-  </label>
-  <p class="hint" style="margin:4px 0 0;">Shows a dashed box around each downloaded offline area, even when zoomed out past it — handy for getting your bearings.</p>
 
   <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
@@ -769,6 +956,17 @@
   </div>
 </div>
 
+<div id="polygon-bar" class="hidden">
+  <div id="polygon-bar-stats">
+    <span id="polygon-bar-text">Tap map to place points</span>
+  </div>
+  <div id="polygon-bar-actions">
+    <button id="polygon-undo-btn" class="link-btn">Undo</button>
+    <button id="polygon-finish-btn" class="link-btn" disabled>Finish (3+ pts)</button>
+    <button id="polygon-cancel-btn" class="link-btn">Cancel</button>
+  </div>
+</div>
+
 <!-- Cluster item list panel -->
 <div id="cluster-panel" class="hidden">
   <div id="cluster-panel-header">
@@ -816,6 +1014,28 @@
       <button class="btn btn-danger" id="track-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="track-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="track-save-btn">Save track</button>
+    </div>
+  </div>
+</div>
+
+<!-- Polygon/area edit modal -->
+<div class="modal-overlay hidden" id="polygon-modal">
+  <div class="modal">
+    <h2 id="polygon-modal-title">New area</h2>
+    <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
+    <label><span>Color</span>
+      <div id="polygon-color-swatches" style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 0 2px;"></div>
+    </label>
+    <label><span>Tags</span>
+      <div class="chip-row" id="polygon-tags-row"></div>
+    </label>
+    <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
+    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" maxlength="60"></label>
+    <label><span>Date</span><input type="date" id="polygon-date"></label>
+    <div class="modal-actions">
+      <button class="btn btn-danger hidden" id="polygon-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="polygon-cancel-modal-btn">Cancel</button>
+      <button class="btn btn-primary" id="polygon-save-btn">Save area</button>
     </div>
   </div>
 </div>
@@ -1099,9 +1319,10 @@
   var state = {
     pins: [],
     tracks: [],
+    polygons: [],
     tags: SEED_TAGS.slice(),
-    tombstones: {},      // id -> deletedAt timestamp, prevents deleted items reappearing after sync
-    lastLocalEditAt: 0,  // bumped on every change; used to resolve sync conflicts
+    tombstones: {},
+    lastLocalEditAt: 0,
     settings: {
       layers: {
         aerial: { on:false, opacity:1 },
@@ -1115,11 +1336,15 @@
       hydroOn: false, hydroOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       showOfflineBoundaries: true,
-      center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM
+      center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
+      units: { distance: 'imperial', elevation: 'imperial' },
+      defaultBaseLayer: 'street',
+      gpsFollow: false,
+      clusterPins: true
     }
   };
 
-  var map, baseLayers = {}, mvumLayer, hydroLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
+  var map, baseLayers = {}, mvumLayer, hydroLayer, markersById = {}, trackLayersById = {}, polygonLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var publicLandLayer = null;
   var gmuLayers = { az: null };
@@ -1130,6 +1355,11 @@
   var measureMode = false;
   var measurePoints = [], measureMarkers = [], measureLine = null;
   var drawMode = false, drawPoints = [], drawMarkers = [], drawLine = null, pendingDrawPoints = null, snappedPoints = null;
+  var polygonMode = false, polygonPoints = [], polygonMarkers = [], polygonPreviewLayer = null;
+  var editingPolygonId = null, pendingPolygonPoints = null;
+  var gpsFollowWatchId = null;
+  var POLYGON_COLORS = ['#c2622d','#5fa86b','#5a9bd8','#d9a13f','#9b5fd8','#c2432d','#3da89a','#6b8fa6'];
+  var selectedPolygonColor = POLYGON_COLORS[0];
   var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
   var eyeHiddenTrips = {};  // tripKey → true when hidden via eye icon
   var ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjhhYjgwZjdmYTdmZDQxNDI5YTdmNmExOWIzODAwOTY3IiwiaCI6Im11cm11cjY0In0=';
@@ -1439,13 +1669,13 @@
 
     if (state.settings.gmuAzOn) toggleGmuLayer('az', true);
 
-    document.getElementById('offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries;
     renderOfflineBoundaries();
 
     map.on('click', function(e){
       closeClusterPanel();
       if (measureMode){ handleMeasureClick(e.latlng); return; }
       if (drawMode){ handleDrawClick(e.latlng); return; }
+      if (polygonMode){ handlePolygonClick(e.latlng); return; }
       if (!addMode) return;
       pendingLatLng = e.latlng;
       openPinModal(null, e.latlng);
@@ -2107,9 +2337,10 @@
     addMode = on;
     if (on && measureMode) setMeasureMode(false);
     if (on && drawMode) setDrawMode(false);
+    if (on && polygonMode) setPolygonMode(false);
     document.getElementById('map').classList.toggle('add-mode', on);
-    document.getElementById('add-pin-btn').classList.toggle('active', on);
-    document.getElementById('add-pin-btn').textContent = on ? 'Click the map…' : '+ Add pin';
+    // Visual feedback via cursor
+    document.getElementById('map').style.cursor = on ? 'crosshair' : '';
   }
 
   // ---------- Measure tool ----------
@@ -2162,10 +2393,10 @@
     drawMode = on;
     if (on && addMode) setAddMode(false);
     if (on && measureMode) setMeasureMode(false);
+    if (on && polygonMode) setPolygonMode(false);
     document.getElementById('map').classList.toggle('add-mode', on);
-    document.getElementById('draw-route-btn-sidebar').classList.toggle('active', on);
     document.getElementById('draw-bar').classList.toggle('hidden', !on);
-    if (on) showToast('Click to add points, drag to move, click the line to insert — then Snap to trail if you want it to follow real paths', 6000);
+    if (on) showToast('Click to add points · Right-click or tap point to delete · Snap to trail follows real paths', 5000);
     if (!on) clearDraw();
   }
 
@@ -2345,6 +2576,310 @@
     var legLabel = measurePoints.length > 2 ? ' total · last leg ' : ' · ';
     document.getElementById('measure-result-text').textContent = distText + legLabel + Math.round(brng) + '° ' + compassLabel(brng);
     document.getElementById('measure-result').classList.remove('hidden');
+  }
+
+  // ---------- Polygon drawing ----------
+  function setPolygonMode(on){
+    polygonMode = on;
+    document.getElementById('polygon-bar').classList.toggle('hidden', !on);
+    map.getContainer().classList.toggle('polygon-mode', on);
+    if (!on){ clearPolygonDraft(); }
+  }
+
+  function clearPolygonDraft(){
+    polygonMarkers.forEach(function(m){ map.removeLayer(m); });
+    polygonMarkers = [];
+    polygonPoints = [];
+    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
+    document.getElementById('polygon-finish-btn').disabled = true;
+    document.getElementById('polygon-finish-btn').textContent = 'Finish (3+ pts)';
+    document.getElementById('polygon-bar-text').textContent = 'Tap map to place points';
+  }
+
+  function handlePolygonClick(latlng){
+    // Check if clicking close to the first vertex to auto-close (within 20px)
+    if (polygonPoints.length >= 3){
+      var firstPt = map.latLngToContainerPoint(polygonPoints[0]);
+      var clickPt = map.latLngToContainerPoint(latlng);
+      if (Math.hypot(firstPt.x - clickPt.x, firstPt.y - clickPt.y) < 20){
+        finishPolygon(); return;
+      }
+    }
+    polygonPoints.push(latlng);
+
+    // Vertex marker
+    var vIcon = L.divIcon({
+      className:'polygon-vertex-icon',
+      html:'<div style="width:11px;height:11px;border-radius:50%;background:' + selectedPolygonColor + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>',
+      iconSize:[11,11], iconAnchor:[5,5]
+    });
+    // First vertex gets a larger target ring
+    if (polygonPoints.length === 1){
+      vIcon = L.divIcon({
+        className:'polygon-vertex-icon',
+        html:'<div style="width:11px;height:11px;border-radius:50%;background:' + selectedPolygonColor + ';border:2px solid #fff;box-shadow:0 0 0 6px rgba(194,98,45,0.25),0 1px 3px rgba(0,0,0,0.5);"></div>',
+        iconSize:[11,11], iconAnchor:[5,5]
+      });
+    }
+    var marker = L.marker(latlng, { icon:vIcon, interactive:false }).addTo(map);
+    polygonMarkers.push(marker);
+
+    // Update preview polygon/polyline
+    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
+    if (polygonPoints.length >= 3){
+      polygonPreviewLayer = L.polygon(polygonPoints, {
+        color: selectedPolygonColor, weight:2, dashArray:'6,4',
+        fillColor: selectedPolygonColor, fillOpacity:0.12, interactive:false
+      }).addTo(map);
+    } else if (polygonPoints.length >= 2){
+      polygonPreviewLayer = L.polyline(polygonPoints, {
+        color: selectedPolygonColor, weight:2, dashArray:'6,4', interactive:false
+      }).addTo(map);
+    }
+
+    var n = polygonPoints.length;
+    document.getElementById('polygon-bar-text').textContent = n + ' point' + (n===1?'':'s') + (n >= 3 ? ' · tap first point to close' : '');
+    document.getElementById('polygon-finish-btn').disabled = n < 3;
+    document.getElementById('polygon-finish-btn').textContent = n >= 3 ? 'Finish' : 'Finish (3+ pts)';
+  }
+
+  function undoPolygonPoint(){
+    if (polygonPoints.length === 0) return;
+    polygonPoints.pop();
+    var m = polygonMarkers.pop();
+    if (m) map.removeLayer(m);
+    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
+    if (polygonPoints.length >= 3){
+      polygonPreviewLayer = L.polygon(polygonPoints, {
+        color:selectedPolygonColor, weight:2, dashArray:'6,4',
+        fillColor:selectedPolygonColor, fillOpacity:0.12, interactive:false
+      }).addTo(map);
+    } else if (polygonPoints.length >= 2){
+      polygonPreviewLayer = L.polyline(polygonPoints, {
+        color:selectedPolygonColor, weight:2, dashArray:'6,4', interactive:false
+      }).addTo(map);
+    }
+    var n = polygonPoints.length;
+    document.getElementById('polygon-bar-text').textContent = n > 0 ? n + ' point' + (n===1?'':'s') : 'Tap map to place points';
+    document.getElementById('polygon-finish-btn').disabled = n < 3;
+    document.getElementById('polygon-finish-btn').textContent = n >= 3 ? 'Finish' : 'Finish (3+ pts)';
+  }
+
+  function finishPolygon(){
+    if (polygonPoints.length < 3){ showToast('Need at least 3 points to create an area'); return; }
+    pendingPolygonPoints = polygonPoints.slice();
+    setPolygonMode(false);
+    openPolygonModal(null);
+  }
+
+  // ---------- Polygon map rendering ----------
+  function addPolygonToMap(polygon){
+    var layer = L.polygon(polygon.points, {
+      color: polygon.color || '#c2622d',
+      weight: 2,
+      fillColor: polygon.color || '#c2622d',
+      fillOpacity: polygon.fillOpacity !== undefined ? polygon.fillOpacity : 0.18,
+      interactive: true
+    }).addTo(map);
+
+    layer.on('click', function(e){
+      L.DomEvent.stopPropagation(e);
+      openPolygonModal(polygon);
+    });
+
+    var labelIcon = L.divIcon({
+      className:'polygon-label',
+      html:'<div style="font-size:10px;font-weight:600;color:' + (polygon.color||'#c2622d') + ';text-shadow:0 0 3px rgba(0,0,0,0.6),0 0 6px rgba(0,0,0,0.4);pointer-events:none;white-space:nowrap;">' + escapeHtml(polygon.name) + '</div>',
+      iconSize:[0,0]
+    });
+    var centroid = layer.getBounds().getCenter();
+    var labelMarker = L.marker(centroid, { icon:labelIcon, interactive:false }).addTo(map);
+
+    polygonLayersById[polygon.id] = { poly: layer, label: labelMarker };
+  }
+
+  function removePolygonFromMap(id){
+    var entry = polygonLayersById[id];
+    if (!entry) return;
+    if (entry.poly) map.removeLayer(entry.poly);
+    if (entry.label) map.removeLayer(entry.label);
+    delete polygonLayersById[id];
+  }
+
+  function refreshPolygonMap(polygon){
+    removePolygonFromMap(polygon.id);
+    addPolygonToMap(polygon);
+  }
+
+  // ---------- Polygon modal ----------
+  var selectedPolygonTagIds = [];
+
+  function openPolygonModal(polygon){
+    editingPolygonId = polygon ? polygon.id : null;
+    document.getElementById('polygon-modal-title').textContent = polygon ? 'Edit area' : 'New area';
+    document.getElementById('polygon-name').value = polygon ? polygon.name : '';
+    document.getElementById('polygon-notes').value = polygon ? (polygon.notes || '') : '';
+    document.getElementById('polygon-trip').value = polygon ? (polygon.trip || '') : '';
+    document.getElementById('polygon-date').value = polygon ? (tsToDateInputValue(polygon.created) || '') : '';
+
+    selectedPolygonColor = polygon ? (polygon.color || POLYGON_COLORS[0]) : POLYGON_COLORS[0];
+    renderPolygonColorSwatches();
+    renderPolygonTagChips(polygon ? polygon.tags : []);
+
+    document.getElementById('polygon-delete-btn').classList.toggle('hidden', !polygon);
+    document.getElementById('polygon-modal').classList.remove('hidden');
+    setTimeout(function(){ document.getElementById('polygon-name').focus(); }, 80);
+  }
+
+  function renderPolygonColorSwatches(){
+    var wrap = document.getElementById('polygon-color-swatches');
+    wrap.innerHTML = '';
+    POLYGON_COLORS.forEach(function(color){
+      var sw = document.createElement('div');
+      sw.className = 'color-swatch' + (color === selectedPolygonColor ? ' selected' : '');
+      sw.style.background = color;
+      sw.addEventListener('click', function(){
+        selectedPolygonColor = color;
+        wrap.querySelectorAll('.color-swatch').forEach(function(s){ s.classList.remove('selected'); });
+        sw.classList.add('selected');
+      });
+      wrap.appendChild(sw);
+    });
+  }
+
+  function renderPolygonTagChips(activeTags){
+    var wrap = document.getElementById('polygon-tags-row');
+    wrap.innerHTML = '';
+    selectedPolygonTagIds = activeTags ? activeTags.slice() : ['uncategorized'];
+    state.tags.forEach(function(t){
+      var chip = document.createElement('div');
+      chip.className = 'chip' + (selectedPolygonTagIds.indexOf(t.id) !== -1 ? ' active' : '');
+      chip.style.background = selectedPolygonTagIds.indexOf(t.id) !== -1 ? t.color : 'var(--bg)';
+      chip.style.borderColor = selectedPolygonTagIds.indexOf(t.id) !== -1 ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = t.id;
+      chip.addEventListener('click', function(){
+        var isActive = chip.classList.toggle('active');
+        chip.style.background = isActive ? t.color : 'var(--bg)';
+        chip.style.borderColor = isActive ? t.color : 'var(--border)';
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  function savePolygonFromModal(){
+    var name = document.getElementById('polygon-name').value.trim() || 'Unnamed area';
+    var tags = [];
+    document.querySelectorAll('#polygon-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+    if (!tags.length) tags = ['uncategorized'];
+    var trip = document.getElementById('polygon-trip').value.trim();
+    var dateVal = dateInputValueToTs(document.getElementById('polygon-date').value);
+    var notes = document.getElementById('polygon-notes').value.trim();
+
+    if (editingPolygonId){
+      var poly = state.polygons.find(function(p){ return p.id === editingPolygonId; });
+      if (poly){
+        poly.name = name; poly.color = selectedPolygonColor; poly.tags = tags;
+        poly.trip = trip; poly.notes = notes;
+        if (dateVal) poly.created = dateVal;
+        refreshPolygonMap(poly);
+      }
+    } else {
+      var firstPt = pendingPolygonPoints && pendingPolygonPoints[0];
+      var newPoly = {
+        id: uid(), name: name,
+        points: pendingPolygonPoints || [],
+        color: selectedPolygonColor, fillOpacity: 0.18,
+        tags: tags, trip: trip, notes: notes,
+        created: dateVal || Date.now(),
+        state: firstPt ? stateForPoint(firstPt.lat, firstPt.lng) : ''
+      };
+      state.polygons.push(newPoly);
+      addPolygonToMap(newPoly);
+      pendingPolygonPoints = null;
+    }
+    closePolygonModal();
+    refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
+    renderDateChips(); renderPinList();
+    scheduleSave();
+    showToast(editingPolygonId ? 'Area updated' : 'Area saved');
+  }
+
+  function deletePolygonById(id){
+    state.polygons = state.polygons.filter(function(p){ return p.id !== id; });
+    recordTombstone(id);
+    removePolygonFromMap(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Area deleted');
+  }
+
+  function closePolygonModal(){
+    document.getElementById('polygon-modal').classList.add('hidden');
+    editingPolygonId = null;
+  }
+
+  // ---------- Mark My Location ----------
+  function markMyLocation(){
+    var sheet = document.getElementById('add-sheet');
+    sheet.classList.add('hidden');
+    if (!navigator.geolocation){
+      showToast('Location not available on this device'); return;
+    }
+    showToast('Getting your location…', 3000);
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      pendingLatLng = latlng;
+      openPinModal(null, latlng);
+    }, function(){
+      showToast('Could not get location — check location permissions');
+    }, { enableHighAccuracy:true, timeout:15000 });
+  }
+
+  // ---------- Settings ----------
+  function setUnits(type, value){
+    state.settings.units[type] = value;
+    document.getElementById('unit-dist-mi').classList.toggle('active', state.settings.units.distance === 'imperial');
+    document.getElementById('unit-dist-km').classList.toggle('active', state.settings.units.distance === 'metric');
+    document.getElementById('unit-elev-ft').classList.toggle('active', state.settings.units.elevation === 'imperial');
+    document.getElementById('unit-elev-m').classList.toggle('active', state.settings.units.elevation === 'metric');
+    scheduleSave();
+  }
+
+  function applySettingsUI(){
+    // Units
+    document.getElementById('unit-dist-mi').classList.toggle('active', state.settings.units.distance === 'imperial');
+    document.getElementById('unit-dist-km').classList.toggle('active', state.settings.units.distance === 'metric');
+    document.getElementById('unit-elev-ft').classList.toggle('active', state.settings.units.elevation === 'imperial');
+    document.getElementById('unit-elev-m').classList.toggle('active', state.settings.units.elevation === 'metric');
+    // Default layer
+    document.getElementById('settings-default-layer').value = state.settings.defaultBaseLayer || 'street';
+    // Toggles
+    document.getElementById('settings-gps-follow-toggle').classList.toggle('on', !!state.settings.gpsFollow);
+    document.getElementById('settings-cluster-toggle').classList.toggle('on', state.settings.clusterPins !== false);
+    document.getElementById('settings-offline-boundaries-toggle').classList.toggle('on', state.settings.showOfflineBoundaries !== false);
+  }
+
+  function toggleGpsFollow(){
+    state.settings.gpsFollow = !state.settings.gpsFollow;
+    document.getElementById('settings-gps-follow-toggle').classList.toggle('on', state.settings.gpsFollow);
+    if (state.settings.gpsFollow){
+      gpsFollowWatchId = navigator.geolocation.watchPosition(function(pos){
+        map.setView([pos.coords.latitude, pos.coords.longitude]);
+      }, null, { enableHighAccuracy:true });
+    } else {
+      if (gpsFollowWatchId !== null){ navigator.geolocation.clearWatch(gpsFollowWatchId); gpsFollowWatchId = null; }
+    }
+    scheduleSave();
+  }
+
+  // ---------- Onboarding / sign-in on open ----------
+  function shouldShowOnboarding(){
+    try { return !localStorage.getItem('fieldmap-onboarded'); }
+    catch(e){ return false; }
+  }
+  function markOnboarded(how){
+    try { localStorage.setItem('fieldmap-onboarded', how); } catch(e){}
   }
 
   // ---------- Go to place ----------
@@ -2549,10 +3084,10 @@
     var v = tagVisualFor(d);
     var row = document.createElement('div');
     row.className = 'pin-row';
-    var selMap = it.type === 'pin' ? bulkSelectedPins : bulkSelectedTracks;
+    var selMap = it.type === 'pin' ? bulkSelectedPins : it.type === 'track' ? bulkSelectedTracks : {};
     var cb = null;
 
-    if (bulkMode){
+    if (bulkMode && it.type !== 'polygon'){
       cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'bulk-checkbox';
@@ -2568,6 +3103,9 @@
     if (it.type === 'track'){
       mark.className = 'track-mark';
       mark.style.background = v.color;
+    } else if (it.type === 'polygon'){
+      mark.style.cssText = 'width:12px;height:12px;border-radius:2px;flex-shrink:0;margin-top:2px;';
+      mark.style.background = d.color || v.color;
     } else {
       mark.className = 'pin-dot';
       mark.style.background = v.color;
@@ -2582,13 +3120,14 @@
     textWrap.className = 'pin-row-text';
     var nameDiv = document.createElement('div'); nameDiv.className = 'pin-row-name'; nameDiv.textContent = d.name;
     var metaDiv = document.createElement('div'); metaDiv.className = 'pin-row-meta';
-    var trackDistLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
-    metaDiv.textContent = tagLabelsFor(d) + trackDistLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
+    var distLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
+    var typeLabel = it.type === 'polygon' ? 'Area · ' : '';
+    metaDiv.textContent = typeLabel + tagLabelsFor(d) + distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
 
     row.addEventListener('click', function(e){
-      if (bulkMode){
+      if (bulkMode && it.type !== 'polygon'){
         if (e.target === cb) return;
         if (e.shiftKey && lastBulkClickedIdx !== -1 && allItems){
           var lo = Math.min(lastBulkClickedIdx, idx);
@@ -2596,14 +3135,12 @@
           var targetState = !selMap[d.id];
           for (var ri = lo; ri <= hi; ri++){
             var rIt = allItems[ri];
-            if (!rIt) continue;
+            if (!rIt || rIt.type === 'polygon') continue;
             var rMap = rIt.type === 'pin' ? bulkSelectedPins : bulkSelectedTracks;
             var rId = rIt.data.id;
             if (targetState) rMap[rId] = true; else delete rMap[rId];
           }
-          renderPinList();
-          updateBulkBar();
-          return;
+          renderPinList(); updateBulkBar(); return;
         }
         cb.checked = !cb.checked;
         cb.dispatchEvent(new Event('change'));
@@ -2613,13 +3150,17 @@
       if (it.type === 'pin'){
         map.flyTo([d.lat, d.lng], Math.max(map.getZoom(), 14));
         setTimeout(function(){ if (markersById[d.id]) markersById[d.id].openPopup(); }, 350);
-      } else {
+      } else if (it.type === 'track'){
         var poly = trackLayersById[d.id];
         if (poly){
           if (!map.hasLayer(poly)) poly.addTo(map);
           map.flyToBounds(poly.getBounds(), { padding:[40,40] });
           setTimeout(function(){ poly.openPopup(); }, 350);
         }
+      } else if (it.type === 'polygon'){
+        var entry = polygonLayersById[d.id];
+        if (entry && entry.poly) map.flyToBounds(entry.poly.getBounds(), { padding:[40,40] });
+        else openPolygonModal(d);
       }
     });
     return row;
@@ -2697,7 +3238,8 @@
     var query = document.getElementById('search-input').value.trim().toLowerCase();
     var pinItems = state.pins.map(function(p){ return {type:'pin', data:p}; });
     var trackItems = state.tracks.map(function(t){ return {type:'track', data:t}; });
-    var all = pinItems.concat(trackItems).filter(function(it){ return itemVisible(it.data, query); });
+    var polyItems = (state.polygons||[]).map(function(p){ return {type:'polygon', data:p}; });
+    var all = pinItems.concat(trackItems).concat(polyItems).filter(function(it){ return itemVisible(it.data, query); });
 
     // Show/hide the group visibility bar
     var visBar = document.getElementById('group-vis-bar');
@@ -2742,7 +3284,7 @@
       });
     }
 
-    var totalCount = state.pins.length + state.tracks.length;
+    var totalCount = state.pins.length + state.tracks.length + (state.polygons||[]).length;
     document.getElementById('pin-count').textContent = totalCount + ' item' + (totalCount===1?'':'s') +
       (all.length !== totalCount ? ' · ' + all.length + ' shown' : '');
   }
@@ -3991,11 +4533,10 @@
   }
 
   function getSyncableState(){
-    // Only the data that should travel between devices — map view, layer
-    // toggles, and other per-device display settings intentionally stay local.
     return {
       pins: state.pins,
       tracks: state.tracks,
+      polygons: state.polygons || [],
       tags: state.tags,
       tombstones: state.tombstones,
       lastLocalEditAt: state.lastLocalEditAt
@@ -4003,55 +4544,54 @@
   }
 
   function applyMergedState(merged){
-    state.pins = merged.pins;
-    state.tracks = merged.tracks;
+    state.pins = merged.pins || [];
+    state.tracks = merged.tracks || [];
+    state.polygons = merged.polygons || [];
     state.tags = merged.tags && merged.tags.length ? merged.tags : SEED_TAGS.slice();
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
 
-    // Full re-render: clear and rebuild every map layer + UI list from scratch
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) map.removeLayer(markersById[id]); });
     markersById = {};
     Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
     trackLayersById = {};
+    Object.keys(polygonLayersById).forEach(function(id){ removePolygonFromMap(id); });
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
-    refreshStateChips();
-    renderTagChips();
-    renderTripChips();
-    refreshTripSuggestions();
-    renderDateChips();
-    renderPinList();
-    refreshAllVisibility();
+    state.polygons.forEach(addPolygonToMap);
+    refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
+    renderDateChips(); renderPinList(); refreshAllVisibility();
     persist();
-    showToast('Synced — ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
+    showToast('Synced — ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks, ' + state.polygons.length + ' areas');
   }
 
   function updateAccountUI(user){
     isSignedIn = !!user;
     var dot = document.getElementById('account-sync-dot');
     if (user){
-      document.getElementById('account-signed-out').classList.add('hidden');
-      document.getElementById('account-signed-in').classList.remove('hidden');
+      document.getElementById('settings-signed-out').classList.add('hidden');
+      document.getElementById('settings-signed-in').classList.remove('hidden');
       document.getElementById('account-avatar').src = user.photoURL || '';
       document.getElementById('account-name').textContent = user.displayName || 'Signed in';
       document.getElementById('account-email').textContent = user.email || '';
-      dot.classList.remove('hidden', 'error', 'syncing');
+      if (dot){ dot.classList.remove('hidden', 'error', 'syncing'); }
+      // If onboarding modal is still open, close it
+      document.getElementById('onboarding-modal').classList.add('hidden');
+      markOnboarded('google');
     } else {
-      document.getElementById('account-signed-out').classList.remove('hidden');
-      document.getElementById('account-signed-in').classList.add('hidden');
-      dot.classList.add('hidden');
+      document.getElementById('settings-signed-out').classList.remove('hidden');
+      document.getElementById('settings-signed-in').classList.add('hidden');
+      if (dot){ dot.classList.add('hidden'); }
     }
   }
 
   function updateSyncStatusUI(statusText, kind){
     var statusEl = document.getElementById('account-sync-status');
     if (statusEl) statusEl.textContent = statusText;
-    var dot = document.getElementById('account-sync-dot');
-    if (!dot || dot.classList.contains('hidden')) return;
-    dot.classList.remove('syncing', 'error');
-    if (kind === 'syncing') dot.classList.add('syncing');
-    if (kind === 'error') dot.classList.add('error');
+    var indicator = document.getElementById('account-sync-indicator');
+    if (indicator){
+      indicator.style.background = kind === 'error' ? 'var(--danger)' : kind === 'syncing' ? 'var(--yellow)' : 'var(--green-status)';
+    }
   }
 
   // Exposed for the Firebase module (loaded later in the file) to call into.
@@ -4120,6 +4660,11 @@
             if (state.settings.showOfflineBoundaries === undefined) state.settings.showOfflineBoundaries = true;
             if (!state.tombstones) state.tombstones = {};
             if (state.lastLocalEditAt === undefined) state.lastLocalEditAt = 0;
+            if (!state.polygons) state.polygons = [];
+            if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
+            if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'street';
+            if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
+            if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
             if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
             state.pins.forEach(function(p){
@@ -4145,7 +4690,7 @@
   function closeAllPanels(){
     document.getElementById('layers-panel').classList.add('hidden');
     document.getElementById('filter-panel').classList.add('hidden');
-    document.getElementById('account-panel').classList.add('hidden');
+    document.getElementById('settings-panel').classList.add('hidden');
   }
 
   // ---------- Wire up UI ----------
@@ -4157,8 +4702,113 @@
     renderDateChips();
     renderTagIconPicker();
 
-    document.getElementById('add-pin-btn').addEventListener('click', function(){
-      setAddMode(!addMode);
+    // +Add sheet
+    document.getElementById('add-sheet-btn').addEventListener('click', function(){
+      closeAllPanels();
+      document.getElementById('add-sheet').classList.remove('hidden');
+    });
+    document.getElementById('add-sheet-cancel-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+    });
+    document.getElementById('add-sheet').addEventListener('click', function(e){
+      if (e.target === document.getElementById('add-sheet')) document.getElementById('add-sheet').classList.add('hidden');
+    });
+    document.getElementById('sheet-add-pin-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      setAddMode(true);
+      showToast('Tap the map to place a pin');
+    });
+    document.getElementById('sheet-mark-location-btn').addEventListener('click', markMyLocation);
+    document.getElementById('sheet-draw-route-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      setDrawMode(true);
+    });
+    document.getElementById('sheet-draw-polygon-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      setPolygonMode(true);
+      showToast('Tap the map to place area vertices');
+    });
+
+    // Tools sheet
+    document.getElementById('tools-sheet-btn').addEventListener('click', function(){
+      closeAllPanels();
+      document.getElementById('tools-sheet').classList.remove('hidden');
+    });
+    document.getElementById('tools-sheet-cancel-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+    });
+    document.getElementById('tools-sheet').addEventListener('click', function(e){
+      if (e.target === document.getElementById('tools-sheet')) document.getElementById('tools-sheet').classList.add('hidden');
+    });
+    document.getElementById('sheet-measure-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      setMeasureMode(!measureMode);
+    });
+    document.getElementById('sheet-settings-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      applySettingsUI();
+      var panel = document.getElementById('settings-panel');
+      panel.classList.toggle('hidden');
+    });
+
+    // Settings panel controls
+    document.getElementById('settings-default-layer').addEventListener('change', function(){
+      state.settings.defaultBaseLayer = this.value;
+      // Switch the default base layer on if it's not already on
+      var layerName = this.value;
+      if (baseLayers[layerName] && !map.hasLayer(baseLayers[layerName])){
+        // Turn off all base layers, turn on selected
+        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+          if (baseLayers[n] && map.hasLayer(baseLayers[n])){ map.removeLayer(baseLayers[n]); state.settings.layers[n].on = false; }
+        });
+        baseLayers[layerName].addTo(map);
+        state.settings.layers[layerName].on = true;
+        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+          var tog = document.getElementById('layer-' + n + '-toggle');
+          if (tog) tog.checked = !!state.settings.layers[n].on;
+        });
+      }
+      scheduleSave();
+    });
+    document.getElementById('settings-gps-follow-toggle').addEventListener('click', toggleGpsFollow);
+    document.getElementById('settings-cluster-toggle').addEventListener('click', function(){
+      state.settings.clusterPins = !state.settings.clusterPins;
+      this.classList.toggle('on', state.settings.clusterPins);
+      scheduleClusterRefresh();
+      scheduleSave();
+    });
+    document.getElementById('settings-offline-boundaries-toggle').addEventListener('click', function(){
+      state.settings.showOfflineBoundaries = !state.settings.showOfflineBoundaries;
+      this.classList.toggle('on', state.settings.showOfflineBoundaries);
+      renderOfflineBoundaries();
+      scheduleSave();
+    });
+
+    // Polygon modal
+    document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
+    document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
+    document.getElementById('polygon-delete-btn').addEventListener('click', function(){
+      if (!editingPolygonId) return;
+      if (!confirm('Delete this area? This cannot be undone.')) return;
+      deletePolygonById(editingPolygonId);
+      closePolygonModal();
+    });
+
+    // Polygon bar
+    document.getElementById('polygon-undo-btn').addEventListener('click', undoPolygonPoint);
+    document.getElementById('polygon-finish-btn').addEventListener('click', finishPolygon);
+    document.getElementById('polygon-cancel-btn').addEventListener('click', function(){
+      setPolygonMode(false);
+    });
+
+    // Onboarding modal
+    document.getElementById('onboarding-signin-btn').addEventListener('click', function(){
+      if (window.FieldMapSync) window.FieldMapSync.signIn();
+      else showToast('Sync loading — try again in a moment');
+    });
+    document.getElementById('onboarding-guest-btn').addEventListener('click', function(){
+      markOnboarded('guest');
+      document.getElementById('onboarding-modal').classList.add('hidden');
     });
     document.getElementById('cluster-panel-close').addEventListener('click', closeClusterPanel);
     document.getElementById('group-vis-all-btn').addEventListener('click', function(){
@@ -4224,13 +4874,6 @@
       closeAllPanels();
       if (willOpen) panel.classList.remove('hidden');
     });
-    document.getElementById('account-btn').addEventListener('click', function(e){
-      e.stopPropagation();
-      var panel = document.getElementById('account-panel');
-      var willOpen = panel.classList.contains('hidden');
-      closeAllPanels();
-      if (willOpen) panel.classList.remove('hidden');
-    });
     document.getElementById('google-signin-btn').addEventListener('click', function(){
       if (window.FieldMapSync) window.FieldMapSync.signIn();
       else showToast('Sync is still loading — try again in a moment');
@@ -4247,15 +4890,9 @@
       if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
       document.getElementById('map-search-input').focus();
     });
-    document.getElementById('measure-btn').addEventListener('click', function(){
-      setMeasureMode(!measureMode);
-    });
     document.getElementById('measure-clear-btn').addEventListener('click', function(e){
       e.stopPropagation();
       clearMeasure();
-    });
-    document.getElementById('draw-route-btn-sidebar').addEventListener('click', function(){
-      setDrawMode(!drawMode);
     });
     document.getElementById('draw-undo-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -4281,7 +4918,7 @@
       if (!searchBar.contains(e.target)){
         document.getElementById('map-search-results').innerHTML = '';
       }
-      ['layers-panel','filter-panel','account-panel','sort-menu','export-menu'].forEach(function(id){
+      ['layers-panel','filter-panel','settings-panel','sort-menu','export-menu'].forEach(function(id){
         var panel = document.getElementById(id);
         if (!panel.classList.contains('hidden') && !panel.contains(e.target)){
           panel.classList.add('hidden');
@@ -4517,11 +5154,6 @@
       closeAllPanels();
       openOfflineModal();
     });
-    document.getElementById('offline-boundaries-toggle').addEventListener('change', function(){
-      state.settings.showOfflineBoundaries = this.checked;
-      renderOfflineBoundaries();
-      scheduleSave();
-    });
     document.getElementById('offline-zoom-min').addEventListener('change', updateOfflineEstimate);
     document.getElementById('offline-zoom-max').addEventListener('change', updateOfflineEstimate);
     document.getElementById('offline-download-btn').addEventListener('click', startOfflineDownload);
@@ -4548,7 +5180,12 @@
         document.getElementById('bulk-modal').classList.add('hidden');
         document.getElementById('bulk-delete-modal').classList.add('hidden');
         document.getElementById('find-dupes-modal').classList.add('hidden');
+        document.getElementById('polygon-modal').classList.add('hidden');
+        document.getElementById('onboarding-modal').classList.add('hidden');
+        document.getElementById('add-sheet').classList.add('hidden');
+        document.getElementById('tools-sheet').classList.add('hidden');
         if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
+        if (polygonMode) setPolygonMode(false);
         closeClusterPanel();
         if (measureMode) setMeasureMode(false);
         if (drawMode) setDrawMode(false);
@@ -4575,6 +5212,16 @@
     appIsReady = true;
     appReadyCallbacks.forEach(function(cb){ cb(); });
     appReadyCallbacks = [];
+    // Apply settings to UI
+    applySettingsUI();
+    // Draw polygons
+    (state.polygons || []).forEach(addPolygonToMap);
+    // Show onboarding for first-time or guest users not yet signed in
+    if (shouldShowOnboarding()){
+      setTimeout(function(){
+        document.getElementById('onboarding-modal').classList.remove('hidden');
+      }, 800);
+    }
   }).catch(function(){
     document.getElementById('loading-overlay').classList.add('hidden');
     showToast('Something went wrong loading the app — check the browser console for details', 6000);
@@ -4647,6 +5294,7 @@
     return {
       pins: mergeArray(local.pins, cloud.pins),
       tracks: mergeArray(local.tracks, cloud.tracks),
+      polygons: mergeArray(local.polygons || [], cloud.polygons || []),
       tags: mergeArray(local.tags, cloud.tags),
       tombstones: tombstones,
       lastLocalEditAt: Math.max(local.lastLocalEditAt || 0, cloud.updatedAtMs || 0)
@@ -4661,6 +5309,7 @@
       if (!snap.exists()){
         return setDoc(ref, {
           pins: local.pins, tracks: local.tracks, tags: local.tags,
+          polygons: local.polygons || [],
           tombstones: local.tombstones, updatedAtMs: local.lastLocalEditAt || Date.now()
         }).then(function(){
           window.FieldMapApp.updateSyncStatusUI('Synced', null);
@@ -4671,6 +5320,7 @@
       applyingRemote = true;
       return setDoc(ref, {
         pins: merged.pins, tracks: merged.tracks, tags: merged.tags,
+        polygons: merged.polygons || [],
         tombstones: merged.tombstones, updatedAtMs: merged.lastLocalEditAt
       }).then(function(){
         window.FieldMapApp.applyMergedState(merged);
@@ -4690,13 +5340,12 @@
       if (!snap.exists() || applyingRemote) return;
       var cloud = snap.data();
       var local = window.FieldMapApp.getSyncableState();
-      // Only react to changes that genuinely came from elsewhere — if this cloud
-      // version is no newer than what we already have, it's an echo of our own write.
       if ((cloud.updatedAtMs || 0) <= (local.lastLocalEditAt || 0)) return;
 
       applyingRemote = true;
       window.FieldMapApp.applyMergedState({
         pins: cloud.pins, tracks: cloud.tracks, tags: cloud.tags,
+        polygons: cloud.polygons || [],
         tombstones: cloud.tombstones, lastLocalEditAt: cloud.updatedAtMs
       });
       applyingRemote = false;
@@ -4713,6 +5362,7 @@
     applyingRemote = true;
     setDoc(ref, {
       pins: localState.pins, tracks: localState.tracks, tags: localState.tags,
+      polygons: localState.polygons || [],
       tombstones: localState.tombstones, updatedAtMs: localState.lastLocalEditAt
     }).then(function(){
       applyingRemote = false;
