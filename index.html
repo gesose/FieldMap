@@ -373,6 +373,21 @@
   #map.compass-tap-mode { cursor:crosshair !important; }
   /* Hillshade with multiply blend — shadows composite naturally into basemap (same as ArcGIS Online) */
   .hillshade-multiply-layer { mix-blend-mode: multiply; }
+  /* Layer info panels — replaces simple hint text */
+  .layer-info-panel{
+    display:none;margin:0 0 6px 0;padding:8px 10px;
+    background:var(--bg-elevated-2);border-radius:7px;border:1px solid var(--border);
+    font-size:11px;color:var(--text-muted);line-height:1.5;
+  }
+  .layer-info-panel.show{ display:block; }
+  .layer-info-desc{ margin-bottom:5px; }
+  .layer-info-src{ display:block;color:var(--accent);margin-top:5px;font-size:11px; }
+  .layer-info-src:hover{ text-decoration:underline; }
+  .layer-info-legend{ margin-top:4px; }
+  .legend-swatch{
+    display:inline-block;padding:2px 7px;border-radius:4px;
+    font-size:10px;font-weight:500;
+  }
   .sunrise-time-row {
     display:flex;align-items:center;gap:10px;padding:7px 0;
     border-top:1px solid var(--border);font-size:12px;
@@ -959,7 +974,10 @@
 <div id="sunrise-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;width:300px;">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
     <h2 style="margin:0;">Sunrise &amp; Sunset</h2>
-    <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="sunrise-toggle-times-btn" class="link-btn" style="font-size:12px;color:var(--text-muted);">Hide times</button>
+      <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
+    </div>
   </div>
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;" id="sunrise-location"></div>
   <!-- Day selector -->
@@ -1127,16 +1145,13 @@
   <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
 
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-hydro');h.classList.toggle('show')" title="Info">?</button>
+    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
   </label>
   <div class="opacity-row" id="hydro-opacity-row"><input type="range" id="hydro-opacity" min="10" max="100" value="100"></div>
-  <div class="layer-hint-text" id="lh-hydro">USGS rivers, streams &amp; lakes — clean overlay over imagery where water is hard to pick out.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="hillshade-toggle"> World Hillshade <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-hillshade');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="hillshade-opacity-row"><input type="range" id="hillshade-opacity" min="10" max="100" value="65"></div>
-  <div class="layer-hint-text" id="lh-hillshade">Esri World Hillshade Dark — adds terrain shadow depth to any base map. Use with Forest Service topo or USGS topo at 60–70% for the blended effect shown on usfs.maps.arcgis.com.</div>
+  <div class="layer-info-panel" id="lh-hydro">
+    <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset.</div>
+    <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
+  </div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="mvum-toggle"> USFS roads &amp; trails (MVUM) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
@@ -1154,33 +1169,58 @@
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="wildfire-toggle"> Active wildfires
-    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-wildfire');h.classList.toggle('show')" title="Info">?</button>
+    <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
   </label>
-  <div class="layer-hint-text" id="lh-wildfire">Current fire perimeters from NIFC, updated daily. Season: roughly May–Nov.</div>
+  <div class="layer-info-panel" id="lh-wildfire">
+    <div class="layer-info-desc">Current fire perimeters from NIFC/WFIGS — updated daily during fire season (May–Nov).</div>
+    <a class="layer-info-src" href="https://www.nifc.gov/" target="_blank">Source: NIFC</a>
+  </div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="snowdepth-toggle"> Snow depth
-    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-snow');h.classList.toggle('show')" title="Info">?</button>
+    <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
   </label>
-  <div class="layer-hint-text" id="lh-snow">NOAA daily snow analysis — useful for access planning Nov–Apr.</div>
+  <div class="layer-info-panel" id="lh-snow">
+    <div class="layer-info-desc">NOAA daily snow analysis — Nov–Apr. Shows no data in snow-free areas (correct behavior).</div>
+    <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
+  </div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="lightpollution-toggle"> Light pollution
-    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-lp');h.classList.toggle('show')" title="Info">?</button>
+    <button class="layer-hint-btn" data-layer-id="lh-lp" title="About">?</button>
   </label>
-  <div class="layer-hint-text" id="lh-lp">Bortle scale — dark areas are best for astrophotography. Black/grey=excellent, blue/green=good, yellow/red=poor.</div>
+  <div class="layer-info-panel" id="lh-lp">
+    <div class="layer-info-desc">Bortle scale — only visible at Z9 and below (zoom out to see data).</div>
+    <div class="layer-info-legend">
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+        <span class="legend-swatch" style="background:#111;color:#fff;">1–2 Black/Gray</span>
+        <span class="legend-swatch" style="background:#003366;color:#fff;">3–4 Blue</span>
+        <span class="legend-swatch" style="background:#228822;color:#fff;">5 Green</span>
+        <span class="legend-swatch" style="background:#ddbb00;color:#000;">6–7 Yellow</span>
+        <span class="legend-swatch" style="background:#cc3300;color:#fff;">8–9 Red</span>
+      </div>
+    </div>
+    <a class="layer-info-src" href="https://djlorenz.github.io/astronomy/lp2022/" target="_blank">Source: djlorenz VIIRS 2022</a>
+  </div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
-    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-nlcd');h.classList.toggle('show')" title="Info">?</button>
+    <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
   </label>
-  <div class="layer-hint-text" id="lh-nlcd">USGS National Land Cover Database — habitat types: forests, shrublands, wetlands, croplands.</div>
+  <div class="layer-info-panel" id="lh-nlcd">
+    <div class="layer-info-desc">USGS National Land Cover Database 2021 — habitat types across the contiguous US.</div>
+    <div class="layer-info-legend">
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+        <span class="legend-swatch" style="background:#5CA65C;color:#fff;">Forest</span>
+        <span class="legend-swatch" style="background:#C8A478;color:#000;">Shrubland</span>
+        <span class="legend-swatch" style="background:#A8D08A;color:#000;">Grass</span>
+        <span class="legend-swatch" style="background:#4682B4;color:#fff;">Water</span>
+        <span class="legend-swatch" style="background:#CC3300;color:#fff;">Developed</span>
+      </div>
+    </div>
+    <a class="layer-info-src" href="https://www.mrlc.gov/" target="_blank">Source: USGS MRLC NLCD</a>
+  </div>
 
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="usfsboundaries-toggle"> USFS forest boundaries
-    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="layer-hint-text" id="lh-usfs">National Forest and Grassland administrative boundaries with names.</div>
 
   <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
@@ -1590,7 +1630,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.2';
+  var APP_VERSION = '1.2.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1900,26 +1940,16 @@
     if (state.settings.nlcdOn && nlcdLayer) nlcdLayer.addTo(map);
     if (state.settings.wildfireOn) loadWildfireLayer();
     if (state.settings.usfsBoundariesOn) loadUsfsBoundariesLayer();
-
-    // World Hillshade Dark — positioned above base layers but below overlays/data
-    // Uses CSS mix-blend-mode:multiply to composite shadows into basemap (same effect as ArcGIS Online blending)
-    map.createPane('hillshadePane'); map.getPane('hillshadePane').style.zIndex = 215;
-    hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade_Dark/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:19, maxNativeZoom:13, opacity: 0.65, pane:'hillshadePane',
-      attribution:'Esri',
-      className:'hillshade-multiply-layer' // CSS mix-blend-mode:multiply applied via this class
-    });
-    if (state.settings.hillshadeOn) hillshadeLayer.addTo(map);
-    var hillshadeToggle = document.getElementById('hillshade-toggle');
-    var hillshadeOpacity = document.getElementById('hillshade-opacity');
-    if (hillshadeToggle){ hillshadeToggle.checked = !!state.settings.hillshadeOn; }
-    if (hillshadeOpacity){ hillshadeOpacity.value = Math.round((state.settings.hillshadeOpacity || 0.65) * 100); }
+    // (hillshade overlay removed — shaded relief layer now uses multiply blend mode directly)
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
     map.createPane('fstopoPane'); map.getPane('fstopoPane').style.zIndex = 192; // USFS Forest Service Basemap
     map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
     map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
     map.createPane('topoPane'); map.getPane('topoPane').style.zIndex = 200;
-    map.createPane('reliefPane'); map.getPane('reliefPane').style.zIndex = 205;
+    // Shaded relief pane uses multiply blend mode for natural hillshade compositing
+    map.createPane('reliefPane');
+    map.getPane('reliefPane').style.zIndex = 205;
+    map.getPane('reliefPane').style.mixBlendMode = 'multiply';
     map.createPane('imagerytopoPane'); map.getPane('imagerytopoPane').style.zIndex = 210;
     map.createPane('hydroPane'); map.getPane('hydroPane').style.zIndex = 330;
 
@@ -5021,12 +5051,13 @@
     scheduleSave();
   }
 
-  // ── Wildfire (Esri USA Wildfires public feature service — layer 1 = perimeters) ──
+  // ── Wildfire (NIFC WFIGS — year-to-date fire perimeters, authoritative source) ──
   function loadWildfireLayer(){
     if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
-    // Layer 0 = fire locations (points), Layer 1 = perimeters (polygons) — use layer 1
-    var url = 'https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/USA_Wildfires_v1/FeatureServer/1/query' +
-      '?where=1%3D1&outFields=IncidentName,PercentContained,DailyAcres&f=geojson&resultRecordCount=200';
+    // WFIGS Interagency Perimeters YTD — this is the actual current perimeters layer from NIFC
+    var url = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/WFIGS_Interagency_Perimeters_YTD/FeatureServer/0/query' +
+      '?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained,attr_TotalIncidentPersonnel,attr_UniqueFireIdentifier' +
+      '&returnGeometry=true&f=geojson&resultRecordCount=300';
     fetch(url)
       .then(function(r){
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -5034,26 +5065,47 @@
       })
       .then(function(data){
         if (!data.features || data.features.length === 0){
-          showToast('No active fire perimeters right now');
+          // Fallback: try the older Current_WildlandFire_Perimeters service
+          loadWildfireLayerFallback();
           return;
         }
         wildfireLayer = L.geoJSON(data, {
-          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18, dashArray:null }; },
+          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18 }; },
           onEachFeature:function(feature, layer){
             var p = feature.properties;
-            var name = p.IncidentName || 'Unknown fire';
+            var name = p.poly_IncidentName || 'Fire';
             var detail = [];
-            if (p.PercentContained != null) detail.push(p.PercentContained + '% contained');
-            if (p.DailyAcres) detail.push(Math.round(p.DailyAcres).toLocaleString() + ' ac');
+            if (p.attr_PercentContained != null) detail.push(p.attr_PercentContained + '% contained');
             layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>' + (detail.length ? '<br>' + detail.join(' · ') : ''));
           }
         }).addTo(map);
-        showToast(data.features.length + ' active fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
+        showToast(data.features.length + ' fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
       })
-      .catch(function(err){
-        console.warn('Wildfire load error:', err);
-        showToast('Could not load wildfire perimeters — server may be unavailable');
-      });
+      .catch(function(){ loadWildfireLayerFallback(); });
+  }
+
+  function loadWildfireLayerFallback(){
+    // Older NIFC Current Perimeters service
+    var url = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/Current_WildlandFire_Perimeters/FeatureServer/0/query' +
+      '?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained&returnGeometry=true&f=geojson&resultRecordCount=300';
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (!data.features || data.features.length === 0){
+          showToast('No fire perimeters found — data may be temporarily unavailable');
+          return;
+        }
+        wildfireLayer = L.geoJSON(data, {
+          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18 }; },
+          onEachFeature:function(feature, layer){
+            var p = feature.properties;
+            var name = p.poly_IncidentName || 'Fire';
+            layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>');
+          }
+        }).addTo(map);
+        showToast(data.features.length + ' fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
+      })
+      .catch(function(){ showToast('Could not load wildfire data'); });
   }
 
   // ── USFS NFS Boundaries (feature service) ──
@@ -5783,6 +5835,14 @@
       if (!sunDate) sunDate = new Date();
       openSunrisePanel();
     });
+    document.getElementById('sunrise-toggle-times-btn').addEventListener('click', function(){
+      var timesEl = document.getElementById('sunrise-times-list');
+      var timelineEl = document.getElementById('sunrise-timeline-bar').parentNode;
+      var hidden = timesEl.style.display === 'none';
+      timesEl.style.display = hidden ? '' : 'none';
+      if (timelineEl) timelineEl.style.display = hidden ? '' : 'none';
+      this.textContent = hidden ? 'Hide times' : 'Show times';
+    });
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
       sunPathLayerGroup.clearLayers();
@@ -5871,31 +5931,21 @@
     document.getElementById('nlcd-toggle').addEventListener('change', function(){
       toggleSimpleLayer(nlcdLayer, 'nlcdOn', this.checked);
     });
-    document.getElementById('usfsboundaries-toggle').addEventListener('change', function(){
-      state.settings.usfsBoundariesOn = this.checked;
-      if (this.checked) loadUsfsBoundariesLayer();
-      else if (usfsBoundaryLayerGroup){ map.removeLayer(usfsBoundaryLayerGroup); usfsBoundaryLayerGroup = null; }
-      scheduleSave();
-    });
+    // usfsboundaries-toggle removed from layers panel
 
     // Restore layer toggle states
     document.getElementById('wildfire-toggle').checked = !!state.settings.wildfireOn;
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('lightpollution-toggle').checked = !!state.settings.lightPollutionOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
-    document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
 
-    document.getElementById('hillshade-toggle').addEventListener('change', function(){
-      state.settings.hillshadeOn = this.checked;
-      if (this.checked && hillshadeLayer) hillshadeLayer.addTo(map);
-      else if (hillshadeLayer && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
-      scheduleSave();
-    });
-    document.getElementById('hillshade-opacity').addEventListener('input', function(){
-      var val = Number(this.value) / 100;
-      state.settings.hillshadeOpacity = val;
-      if (hillshadeLayer) hillshadeLayer.setOpacity(val);
-      scheduleSave();
+    // Layer info panel ? buttons — use event delegation
+    document.getElementById('layers-panel').addEventListener('click', function(e){
+      var btn = e.target.closest('.layer-hint-btn[data-layer-id]');
+      if (!btn) return;
+      var panelId = btn.dataset.layerId;
+      var panel = document.getElementById(panelId);
+      if (panel) panel.classList.toggle('show');
     });
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
