@@ -363,7 +363,12 @@
   }
   .color-swatch.selected{border-color:var(--text);transform:scale(1.2);}
 
-  /* P2 tool styles */
+  #elev-bar{
+    position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+    padding:8px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.4);font-family:var(--font-mono);
+  }
+  #elev-bar.hidden{display:none;}
   #map.elev-tap-mode { cursor:crosshair !important; }
   #map.compass-tap-mode { cursor:crosshair !important; }
   .sunrise-time-row {
@@ -564,13 +569,9 @@
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
 
-    /* Map controls: push above bottom sheet, tighter for 5-button stack */
-    #map-controls{bottom:90px;gap:7px;}
-    .map-icon-btn{width:36px;height:36px;}
-    /* Sidebar header: tighten for narrow screens */
-    #sidebar-header-row1{padding:10px 14px 8px;}
-    #app-title{font-size:15px;}
-    .btn-small{padding:5px 10px;font-size:12px;}
+    /* Map controls: push above bottom sheet */
+    #map-controls{bottom:90px;gap:8px;}
+    .map-icon-btn{width:38px;height:38px;}
 
     /* Floating panels: full-width above bottom sheet */
     .floating-panel{
@@ -579,8 +580,8 @@
     }
     #filter-panel,#layers-panel{max-height:48vh;}
 
-    /* Draw bar and measure result: centered above bottom sheet */
-    #draw-bar,#measure-result{
+    /* Draw bar, polygon bar, elev bar: centered above bottom sheet */
+    #draw-bar,#measure-result,#polygon-bar,#elev-bar{
       bottom:90px;
       left:50%;right:auto;
       transform:translateX(-50%);
@@ -981,46 +982,30 @@
   </label>
 </div>
 
-<!-- Compass + Bearing/Range panel -->
-<div id="compass-panel" class="floating-panel hidden" style="width:260px;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-    <h2 style="margin:0;">Compass</h2>
-    <button class="link-btn" id="compass-close-btn" style="font-size:18px;">×</button>
-  </div>
-  <!-- Compass rose SVG -->
-  <div style="display:flex;justify-content:center;margin-bottom:10px;">
-    <svg id="compass-rose-svg" viewBox="0 0 160 160" width="160" height="160">
-      <circle cx="80" cy="80" r="76" fill="var(--bg-elevated-2)" stroke="var(--border)" stroke-width="1.5"/>
-      <!-- Cardinal labels -->
-      <text x="80" y="18" text-anchor="middle" font-size="14" font-weight="700" fill="#e03535">N</text>
-      <text x="148" y="85" text-anchor="middle" font-size="11" fill="var(--text-muted)">E</text>
-      <text x="80" y="152" text-anchor="middle" font-size="11" fill="var(--text-muted)">S</text>
-      <text x="12" y="85" text-anchor="middle" font-size="11" fill="var(--text-muted)">W</text>
-      <!-- Tick marks -->
-      <circle cx="80" cy="80" r="50" fill="none" stroke="var(--border)" stroke-width="0.5"/>
-      <!-- North needle (red) — rotated by heading -->
-      <g id="compass-needle-group" style="transform-origin:80px 80px;">
-        <polygon id="compass-needle-north" points="80,20 76,80 84,80" fill="#e03535" opacity="0.95"/>
-        <polygon id="compass-needle-south" points="80,140 76,80 84,80" fill="var(--bg-el3)" opacity="0.7"/>
-      </g>
-      <!-- Blue facing line dot -->
-      <circle cx="80" cy="80" r="6" fill="var(--bg-elevated)" stroke="var(--border)" stroke-width="1.5"/>
-      <text id="compass-heading-text" x="80" y="180" text-anchor="middle" font-size="14" font-weight="700" fill="var(--text)" dy="-20"></text>
-    </svg>
-  </div>
-  <div id="compass-heading-display" style="text-align:center;font-family:var(--font-mono);font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text);">– – –°</div>
-  <div id="compass-status" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:10px;">Tap the map to get bearing &amp; range</div>
-  <!-- Bearing/range result -->
-  <div id="compass-target-result" class="hidden" style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">TARGET</div>
-    <div style="display:flex;gap:16px;">
-      <div><div style="font-size:11px;color:var(--text-muted);">Bearing</div><div id="compass-target-bearing" style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--text);"></div></div>
-      <div><div style="font-size:11px;color:var(--text-muted);">Distance</div><div id="compass-target-dist" style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--text);"></div></div>
+<!-- Compass HUD (compact — heading text only, lines are on the map) -->
+<div id="compass-panel" class="hidden" style="
+  position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  z-index:1400;background:rgba(25,31,27,0.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid var(--border);border-radius:12px;padding:10px 16px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.5);min-width:200px;text-align:center;
+  font-family:var(--font-mono);">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">FACING</div>
+      <div id="compass-heading-display" style="font-size:22px;font-weight:700;color:var(--text);">– –°</div>
     </div>
-    <button class="btn btn-small" id="compass-save-target-btn" style="margin-top:8px;width:100%;justify-content:center;">Save as pin</button>
+    <div id="compass-target-col" class="hidden">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">TARGET</div>
+      <div id="compass-target-bearing" style="font-size:16px;font-weight:700;color:var(--yellow);"></div>
+      <div id="compass-target-dist" style="font-size:12px;color:var(--text-muted);"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+      <button id="compass-save-target-btn" class="btn btn-small hidden" style="white-space:nowrap;">Save pin</button>
+      <button id="compass-close-btn" class="link-btn" style="font-size:11px;color:var(--text-muted);">✕ Close</button>
+    </div>
   </div>
-  <div id="compass-no-gps-msg" style="font-size:11px;color:var(--text-muted);text-align:center;" class="hidden">
-    Enable location services to see bearing line
+  <div id="compass-status" style="font-size:10px;color:var(--text-muted);margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+    — red line = north · blue line = your facing direction —
   </div>
 </div>
 
@@ -1059,14 +1044,18 @@
     <div style="text-align:left;font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.6;">
       <div style="font-weight:600;margin-bottom:8px;color:var(--text-muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase;">What's new</div>
       <ul style="padding-left:18px;margin:0;color:var(--text-muted);">
-        <li>Polygon / area drawing</li>
-        <li>+Add and Tools sheets</li>
-        <li>Settings panel (units, defaults)</li>
-        <li>Sign in on open</li>
-        <li>Cross-device sync (Firebase)</li>
-        <li>Offline area downloads</li>
-        <li>OpenTopoMap layer</li>
-        <li>Search icon (tap to open)</li>
+        <li>Sunrise/Sunset tool with sun path arc on map</li>
+        <li>Elevation at tap (USGS)</li>
+        <li>Compass with bearing/range tap-to-target</li>
+        <li>Weather panel (NWS)</li>
+        <li>Active wildfires overlay</li>
+        <li>Snow depth overlay (NOAA)</li>
+        <li>Light pollution overlay</li>
+        <li>Land cover / NLCD overlay</li>
+        <li>USFS forest boundaries overlay</li>
+        <li>Bulk edit now includes areas</li>
+        <li>Route profile selector (Drive / Walk / Hike)</li>
+        <li>Find Dupes moved to Tools</li>
       </ul>
     </div>
     <button class="btn btn-ghost btn-block" id="about-close-btn">Close</button>
@@ -1253,6 +1242,13 @@
     <button id="polygon-undo-btn" class="link-btn">Undo</button>
     <button id="polygon-finish-btn" class="link-btn" disabled>Finish (3+ pts)</button>
     <button id="polygon-cancel-btn" class="link-btn">Cancel</button>
+  </div>
+</div>
+
+<div id="elev-bar" class="hidden">
+  <div style="white-space:nowrap;color:var(--text);font-size:13px;">⛰️ Tap map for elevation</div>
+  <div style="display:flex;gap:10px;margin-top:5px;">
+    <button id="elev-done-btn" class="link-btn">Done</button>
   </div>
 </div>
 
@@ -1468,7 +1464,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://unpkg.com/suncalc@1.9.0/suncalc.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js"></script>
 <script>
 (function(){
 
@@ -1573,7 +1569,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2';
+  var APP_VERSION = '1.2.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1857,14 +1853,21 @@
     } catch(e){ snowDepthLayer = null; }
 
     try {
-      lightPollutionLayer = L.tileLayer('https://www.lightpollutionmap.info/tiles/viirs_2022/{z}/{x}/{y}.png', {
-        maxNativeZoom:12, opacity:0.65, attribution:'Light Pollution Map'
+      // Light pollution — DJ Lorenz VIIRS 2022 tiles (MIT-licensed, hosted on GitHub Pages)
+      lightPollutionLayer = L.tileLayer('https://djlorenz.github.io/astronomy/lp2022/overlay/tiles/{z}/{x}/{y}.png', {
+        maxNativeZoom:12, minNativeZoom:2, opacity:0.7, attribution:'© djlorenz / VIIRS'
       });
     } catch(e){ lightPollutionLayer = null; }
 
     try {
-      nlcdLayer = L.tileLayer('https://landscape11.arcgis.com/arcgis/rest/services/USA_NLCD_Land_Cover/ImageServer/tile/{z}/{y}/{x}', {
-        maxNativeZoom:13, opacity:0.55, attribution:'USGS NLCD'
+      // NLCD — USGS MRLC WMS (most reliable public source, no auth required)
+      nlcdLayer = L.tileLayer.wms('https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/ows', {
+        layers: 'NLCD_2021_Land_Cover_L48',
+        format: 'image/png',
+        transparent: true,
+        version: '1.1.1',
+        opacity: 0.55,
+        attribution: 'USGS MRLC NLCD 2021'
       });
     } catch(e){ nlcdLayer = null; }
 
@@ -2218,8 +2221,10 @@
     var marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin) });
     marker.bindPopup(popupHtml(pin));
     marker.on('click', function(e){
-      if (addMode || drawMode || polygonMode){
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
         L.DomEvent.stopPropagation(e);
+        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
+        if (compassActive){ handleCompassMapTap(e.latlng); return; }
         if (drawMode) handleDrawClick(e.latlng);
         else if (polygonMode) handlePolygonClick(e.latlng);
         else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
@@ -2288,8 +2293,10 @@
         var clusterMarker = L.marker(center, { icon: icon });
         clusterMarker.on('click', (function(members, center){
           return function(e){
-            if (addMode || drawMode || polygonMode){
+            if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
               L.DomEvent.stopPropagation(e);
+              if (elevTapMode){ fetchElevationAtPoint(center); return; }
+              if (compassActive){ handleCompassMapTap(center); return; }
               if (drawMode) handleDrawClick(center);
               else if (polygonMode) handlePolygonClick(center);
               else if (addMode){ pendingLatLng = center; openPinModal(null, center); }
@@ -2362,8 +2369,10 @@
     var poly = L.polyline(track.points, { color: v.color, weight: 3, opacity: 0.85 });
     poly.bindPopup(trackPopupHtml(track));
     poly.on('click', function(e){
-      if (addMode || drawMode || polygonMode){
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
         L.DomEvent.stopPropagation(e);
+        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
+        if (compassActive){ handleCompassMapTap(e.latlng); return; }
         if (drawMode) handleDrawClick(e.latlng);
         else if (polygonMode) handlePolygonClick(e.latlng);
         else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
@@ -3096,8 +3105,10 @@
 
     layer.bindPopup(polygonPopupHtml(polygon), { maxWidth:280, className:'polygon-popup' });
     layer.on('click', function(e){
-      if (addMode || drawMode || polygonMode){
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
         L.DomEvent.stopPropagation(e);
+        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
+        if (compassActive){ handleCompassMapTap(e.latlng); return; }
         if (drawMode) handleDrawClick(e.latlng);
         else if (polygonMode) handlePolygonClick(e.latlng);
         else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
@@ -3514,6 +3525,7 @@
       cb.checked = !!selMap[d.id];
       cb.addEventListener('change', function(){
         if (cb.checked) selMap[d.id] = true; else delete selMap[d.id];
+        lastBulkClickedIdx = idx; // anchor for shift-click range
         updateBulkBar();
       });
       row.appendChild(cb);
@@ -4956,23 +4968,39 @@
     scheduleSave();
   }
 
-  // ── Wildfire (NIFC feature service) ──
+  // ── Wildfire (Esri USA Wildfires public feature service) ──
   function loadWildfireLayer(){
     if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
-    fetch('https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/Current_WildlandFire_Perimeters/FeatureServer/0/query?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained,attr_FireCause&returnGeometry=true&f=geojson')
-      .then(function(r){ return r.json(); })
+    // Use Esri's publicly hosted USA Wildfires service (supports CORS)
+    var url = 'https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/USA_Wildfires_v1/FeatureServer/0/query' +
+      '?where=1%3D1&outFields=IncidentName,PercentContained,DailyAcres&f=geojson&resultRecordCount=300';
+    fetch(url)
+      .then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(function(data){
+        if (!data.features || data.features.length === 0){
+          showToast('No active wildfires in the system right now');
+          return;
+        }
         wildfireLayer = L.geoJSON(data, {
           style:function(){ return { color:'#e05f20', weight:1.5, fillColor:'#e05f20', fillOpacity:0.15 }; },
           onEachFeature:function(feature, layer){
             var p = feature.properties;
-            var name = p.poly_IncidentName || 'Unknown fire';
-            var cont = p.attr_PercentContained != null ? p.attr_PercentContained + '% contained' : '';
-            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>' + (cont ? '<br>' + cont : ''));
+            var name = p.IncidentName || 'Unknown fire';
+            var detail = [];
+            if (p.PercentContained != null) detail.push(p.PercentContained + '% contained');
+            if (p.DailyAcres) detail.push(Math.round(p.DailyAcres).toLocaleString() + ' ac');
+            layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>' + (detail.length ? '<br>' + detail.join(' · ') : ''));
           }
         }).addTo(map);
+        showToast(data.features.length + ' active fire perimeters loaded');
       })
-      .catch(function(){ showToast('Could not load wildfire data'); });
+      .catch(function(err){
+        console.warn('Wildfire load error:', err);
+        showToast('Could not load wildfire data — server may be unavailable');
+      });
   }
 
   // ── USFS NFS Boundaries (feature service) ──
@@ -5112,19 +5140,25 @@
   function renderSunArc(center, date){
     sunPathLayerGroup.clearLayers();
     if (!SUNRISE_ARC_ON) return;
+    if (typeof SunCalc === 'undefined'){ showToast('SunCalc library not loaded'); return; }
     var times = SunCalc.getTimes(date, center.lat, center.lng);
-    // Draw arc from dawn to dusk in 10-min intervals
-    var startTime = times.nightEnd || times.dawn;
-    var endTime = times.night || times.dusk;
-    if (!startTime || !endTime) return;
+    var startTime = times.nightEnd || times.nauticalDawn || times.dawn;
+    var endTime   = times.night   || times.nauticalDusk || times.dusk;
+    if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
+
+    // Scale arc radius to ~40% of the current map visible height so it's always on screen
+    var mapBounds  = map.getBounds();
+    var distDeg    = Math.max(0.02, (mapBounds.getNorth() - mapBounds.getSouth()) * 0.4);
 
     var segments = { twilight:[], golden:[], day:[] };
-    for (var t = new Date(startTime.getTime()); t <= endTime; t = new Date(t.getTime() + 10*60*1000)){
+    var step = 15 * 60 * 1000; // 15 minutes
+    for (var ms = startTime.getTime(); ms <= endTime.getTime(); ms += step){
+      var t   = new Date(ms);
       var pos = SunCalc.getPosition(t, center.lat, center.lng);
-      if (pos.altitude < -0.1) continue;
-      // Convert SunCalc azimuth (from south, CW) to standard bearing (from north, CW)
-      var az = pos.azimuth + Math.PI; // now from north
-      var distDeg = 0.25;
+      if (pos.altitude < -0.314) continue; // below ~-18° (deep night), skip
+
+      // SunCalc azimuth: from south, going westward. Convert to bearing from north CW.
+      var az     = pos.azimuth + Math.PI;
       var latOff = distDeg * Math.cos(az);
       var lngOff = distDeg * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
       var pt = [center.lat + latOff, center.lng + lngOff];
@@ -5137,23 +5171,23 @@
 
     var colors = { twilight:'#5a7bb5', golden:'#d9843a', day:'#f0c040' };
     Object.keys(segments).forEach(function(k){
-      if (segments[k].length > 1){
-        L.polyline(segments[k], { color:colors[k], weight:3, opacity:0.75, interactive:false })
+      if (segments[k].length >= 2){
+        L.polyline(segments[k], { color:colors[k], weight:3.5, opacity:0.8, interactive:false })
           .addTo(sunPathLayerGroup);
       }
     });
 
-    // Sunrise and sunset direction markers
+    // Direction labels at sunrise and sunset points
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
-      var az = pos.azimuth + Math.PI;
-      var d = 0.28;
+      var az  = pos.azimuth + Math.PI;
+      var d   = distDeg * 1.15;
       var lat = center.lat + d * Math.cos(az);
       var lng = center.lng + d * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
       var icon = L.divIcon({
-        className:'', iconSize:[0,0],
-        html:'<div style="white-space:nowrap;font-size:10px;font-weight:700;color:' + color + ';text-shadow:0 0 4px rgba(0,0,0,0.7);pointer-events:none;">' + label + '</div>'
+        className:'',iconSize:[0,0],
+        html:'<div style="white-space:nowrap;font-size:11px;font-weight:700;color:' + color + ';text-shadow:0 0 4px rgba(0,0,0,0.8);pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
@@ -5167,35 +5201,44 @@
     });
   }
 
-  // ── Elevation at tap ──
   function setElevTapMode(on){
     elevTapMode = on;
     document.getElementById('map').classList.toggle('elev-tap-mode', on);
-    if (!on) document.getElementById('elevation-tooltip').classList.add('hidden');
-    showToast(on ? 'Tap anywhere on the map to see elevation — tap again to dismiss' : '');
+    document.getElementById('elev-bar').classList.toggle('hidden', !on);
+    if (!on){
+      document.getElementById('elevation-tooltip').classList.add('hidden');
+      document.getElementById('elevation-tooltip').style.pointerEvents = 'none';
+    }
   }
 
   function fetchElevationAtPoint(latlng){
-    var url = 'https://epqs.nationalmap.gov/v1/json?x=' + latlng.lng + '&y=' + latlng.lat + '&wkid=4326&includeDate=false&units=Feet';
+    var url = 'https://epqs.nationalmap.gov/v1/json?x=' + latlng.lng.toFixed(6) + '&y=' + latlng.lat.toFixed(6) + '&wkid=4326&includeDate=false&units=Feet';
     var tooltip = document.getElementById('elevation-tooltip');
     tooltip.textContent = 'Loading…';
     tooltip.classList.remove('hidden');
-    // Position tooltip near click point
+
+    // Clamp position to stay within map container
     var containerPt = map.latLngToContainerPoint(latlng);
-    tooltip.style.left = (containerPt.x + 12) + 'px';
-    tooltip.style.top  = (containerPt.y - 20) + 'px';
+    var mapSize = map.getSize();
+    var left = Math.min(containerPt.x + 14, mapSize.x - 190);
+    var top  = Math.max(10, containerPt.y - 36);
+    tooltip.style.left = left + 'px';
+    tooltip.style.top  = top  + 'px';
 
     fetch(url)
       .then(function(r){ return r.json(); })
       .then(function(data){
         var elev = data.value;
-        if (elev == null || elev === -1000000) { tooltip.textContent = 'No data'; return; }
+        if (elev == null || elev === -1000000){ tooltip.textContent = 'No data at this point'; return; }
         var ft = Math.round(Number(elev));
         var m  = Math.round(ft * 0.3048);
-        tooltip.textContent = ft.toLocaleString() + ' ft  (' + m.toLocaleString() + ' m)';
+        tooltip.innerHTML = '<strong>' + ft.toLocaleString() + ' ft</strong>  (' + m.toLocaleString() + ' m)<br><small style="color:var(--text-muted);font-size:10px;">Tap tooltip to dismiss</small>';
         tooltip.style.pointerEvents = 'auto';
         tooltip.style.cursor = 'pointer';
-        tooltip.onclick = function(){ tooltip.classList.add('hidden'); tooltip.style.pointerEvents = 'none'; };
+        tooltip.onclick = function(){
+          tooltip.classList.add('hidden');
+          tooltip.style.pointerEvents = 'none';
+        };
       })
       .catch(function(){ tooltip.textContent = 'Elevation unavailable'; });
   }
@@ -5206,18 +5249,17 @@
 
   function openCompassPanel(){
     document.getElementById('compass-panel').classList.remove('hidden');
-    closeAllPanels_except('compass-panel');
     compassActive = true;
-    // Get current GPS position
+    // Get GPS position and watch it
     if (navigator.geolocation){
       gpsWatchIdCompass = navigator.geolocation.watchPosition(function(pos){
         currentGpsLatLng = L.latLng(pos.coords.latitude, pos.coords.longitude);
         updateCompassMapLines();
       }, null, { enableHighAccuracy:true });
     } else {
-      document.getElementById('compass-no-gps-msg').classList.remove('hidden');
+      document.getElementById('compass-status').textContent = 'Location not available — tap map for bearing from fixed point';
     }
-    // Start device orientation
+    // Request device orientation permission (iOS 13+)
     if (typeof DeviceOrientationEvent !== 'undefined'){
       if (typeof DeviceOrientationEvent.requestPermission === 'function'){
         DeviceOrientationEvent.requestPermission().then(function(state){
@@ -5226,7 +5268,7 @@
         }).catch(function(){ startGenericOrientation(); });
       } else { startGenericOrientation(); }
     } else {
-      document.getElementById('compass-status').textContent = 'No compass on this device — tap map for bearing';
+      document.getElementById('compass-status').textContent = 'No compass sensor — tap map for bearing & range';
     }
   }
 
@@ -5242,31 +5284,28 @@
                   (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
     if (heading == null) return;
     compassHeading = heading;
-    // Rotate compass needle (needle points N, so rotate by -heading)
-    var needle = document.getElementById('compass-needle-group');
-    if (needle) needle.style.transform = 'rotate(' + (-heading) + 'deg)';
-    // Heading display
     var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     var dirLabel = dirs[Math.round(heading / 22.5) % 16];
     document.getElementById('compass-heading-display').textContent = dirLabel + ' ' + Math.round(heading) + '°';
-    document.getElementById('compass-status').textContent = 'Tap map for bearing & range to target';
     updateCompassMapLines();
   }
 
   function updateCompassMapLines(){
     if (!currentGpsLatLng) return;
-    // Remove old lines
     if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
     if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
 
-    var d = 0.4;
-    // North line (red, fixed)
+    // Scale line length to ~30% of visible map height
+    var mapBounds = map.getBounds();
+    var d = Math.max(0.02, (mapBounds.getNorth() - mapBounds.getSouth()) * 0.3);
+
+    // North line (red, fixed — always points geographic north)
     var northPt = L.latLng(currentGpsLatLng.lat + d, currentGpsLatLng.lng);
     compassNorthLine = L.polyline([currentGpsLatLng, northPt], {
       color:'#e03535', weight:2.5, dashArray:'7,5', opacity:0.9, interactive:false
     }).addTo(map);
 
-    // Facing direction line (blue)
+    // Facing direction line (blue — rotates with device)
     if (compassHeading != null){
       var az = compassHeading * Math.PI / 180;
       var facingPt = L.latLng(
@@ -5281,11 +5320,7 @@
 
   function handleCompassMapTap(latlng){
     compassTargetLatLng = latlng;
-    if (!currentGpsLatLng){
-      showToast('Enable location to get bearing from your position');
-      return;
-    }
-    // Remove old target line
+    if (!currentGpsLatLng){ showToast('Enable location to get bearing from your position'); return; }
     if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
 
     var bearing = bearingBetween(currentGpsLatLng.lat, currentGpsLatLng.lng, latlng.lat, latlng.lng);
@@ -5298,8 +5333,9 @@
     }).addTo(map);
 
     document.getElementById('compass-target-bearing').textContent = dirLabel + ' ' + Math.round(bearing) + '°';
-    document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi (' + (distMi * 1.60934).toFixed(2) + ' km)';
-    document.getElementById('compass-target-result').classList.remove('hidden');
+    document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi · ' + (distMi * 1.60934).toFixed(2) + ' km';
+    document.getElementById('compass-target-col').classList.remove('hidden');
+    document.getElementById('compass-save-target-btn').classList.remove('hidden');
   }
 
   function bearingBetween(lat1, lng1, lat2, lng2){
@@ -5320,7 +5356,9 @@
     if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
     if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
     document.getElementById('compass-panel').classList.add('hidden');
-    document.getElementById('compass-target-result').classList.add('hidden');
+    document.getElementById('compass-target-col').classList.add('hidden');
+    document.getElementById('compass-save-target-btn').classList.add('hidden');
+    document.getElementById('compass-heading-display').textContent = '– –°';
     currentGpsLatLng = null;
   }
 
@@ -5694,10 +5732,12 @@
       else sunPathLayerGroup.clearLayers();
     });
 
+    document.getElementById('elev-done-btn').addEventListener('click', function(){
+      setElevTapMode(false);
+    });
     document.getElementById('sheet-elevation-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       setElevTapMode(!elevTapMode);
-      if (elevTapMode) showToast('Tap anywhere on the map to see elevation');
     });
 
     document.getElementById('sheet-compass-btn').addEventListener('click', function(){
@@ -6259,6 +6299,8 @@
         document.getElementById('tools-sheet').classList.add('hidden');
         if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
         if (polygonMode) setPolygonMode(false);
+        if (elevTapMode) setElevTapMode(false);
+        if (compassActive) closeCompassPanel();
         closeClusterPanel();
         if (measureMode) setMeasureMode(false);
         if (drawMode) setDrawMode(false);
