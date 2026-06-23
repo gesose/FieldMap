@@ -371,6 +371,8 @@
   #elev-bar.hidden{display:none;}
   #map.elev-tap-mode { cursor:crosshair !important; }
   #map.compass-tap-mode { cursor:crosshair !important; }
+  /* Hillshade with multiply blend — shadows composite naturally into basemap (same as ArcGIS Online) */
+  .hillshade-multiply-layer { mix-blend-mode: multiply; }
   .sunrise-time-row {
     display:flex;align-items:center;gap:10px;padding:7px 0;
     border-top:1px solid var(--border);font-size:12px;
@@ -961,10 +963,13 @@
   </div>
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;" id="sunrise-location"></div>
   <!-- Day selector -->
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-    <button class="btn btn-small" id="sunrise-prev-btn">‹</button>
-    <div id="sunrise-date" style="flex:1;text-align:center;font-size:13px;font-weight:600;"></div>
-    <button class="btn btn-small" id="sunrise-next-btn">›</button>
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+    <button class="btn btn-small" id="sunrise-prev-btn" title="Previous day">‹</button>
+    <input type="date" id="sunrise-date-input" style="
+      flex:1;padding:5px 8px;background:var(--bg-elevated-2);
+      border:1px solid var(--border);border-radius:7px;
+      color:var(--text);font-size:12px;cursor:pointer;">
+    <button class="btn btn-small" id="sunrise-next-btn" title="Next day">›</button>
     <button class="btn btn-small" id="sunrise-today-btn">Today</button>
   </div>
   <!-- Timeline bar -->
@@ -1097,6 +1102,12 @@
   <div class="opacity-row" id="layer-aerial-opacity-row"><input type="range" id="layer-aerial-opacity" min="10" max="100" value="100"></div>
 
   <label class="layer-overlay-row">
+    <input type="checkbox" id="layer-fstopo-toggle"> Forest Service (USFS topo) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-fstopo');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="layer-fstopo-opacity-row"><input type="range" id="layer-fstopo-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-hint-text" id="lh-fstopo">USFS Forest Service topo — green tinted, shows section lines, USFS roads, and ranger district detail. Best for NF land navigation. Combine with World Hillshade for the full effect.</div>
+
+  <label class="layer-overlay-row">
     <input type="checkbox" id="layer-topo-toggle"> USGS topo / contour
   </label>
   <div class="opacity-row" id="layer-topo-opacity-row"><input type="range" id="layer-topo-opacity" min="10" max="100" value="100"></div>
@@ -1120,6 +1131,12 @@
   </label>
   <div class="opacity-row" id="hydro-opacity-row"><input type="range" id="hydro-opacity" min="10" max="100" value="100"></div>
   <div class="layer-hint-text" id="lh-hydro">USGS rivers, streams &amp; lakes — clean overlay over imagery where water is hard to pick out.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="hillshade-toggle"> World Hillshade <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-hillshade');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="opacity-row" id="hillshade-opacity-row"><input type="range" id="hillshade-opacity" min="10" max="100" value="65"></div>
+  <div class="layer-hint-text" id="lh-hillshade">Esri World Hillshade Dark — adds terrain shadow depth to any base map. Use with Forest Service topo or USGS topo at 60–70% for the blended effect shown on usfs.maps.arcgis.com.</div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="mvum-toggle"> USFS roads &amp; trails (MVUM) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
@@ -1246,9 +1263,13 @@
 </div>
 
 <div id="elev-bar" class="hidden">
-  <div style="white-space:nowrap;color:var(--text);font-size:13px;">⛰️ Tap map for elevation</div>
-  <div style="display:flex;gap:10px;margin-top:5px;">
-    <button id="elev-done-btn" class="link-btn">Done</button>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.7;">
+      <polyline points="2 20 8 12 13 16 18 8 22 12"/>
+      <line x1="2" y1="20" x2="22" y2="20"/>
+    </svg>
+    <span id="elev-bar-text" style="white-space:nowrap;color:var(--text);font-size:13px;font-family:var(--font-mono);">Tap map for elevation</span>
+    <button id="elev-done-btn" class="link-btn" style="margin-left:4px;">Done</button>
   </div>
 </div>
 
@@ -1569,7 +1590,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.1';
+  var APP_VERSION = '1.2.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1615,6 +1636,7 @@
     settings: {
       layers: {
         aerial: { on:false, opacity:1 },
+        fstopo: { on:false, opacity:1 },
         street: { on:true, opacity:1 },
         opentopo: { on:false, opacity:1 },
         topo: { on:false, opacity:1 },
@@ -1626,7 +1648,7 @@
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       showOfflineBoundaries: true,
       wildfireOn: false, snowDepthOn: false, lightPollutionOn: false,
-      nlcdOn: false, usfsBoundariesOn: false,
+      nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'street',
@@ -1641,7 +1663,7 @@
   var publicLandLayer = null;
   var gmuLayers = { az: null };
   var snowDepthLayer = null, lightPollutionLayer = null, nlcdLayer = null;
-  var wildfireLayer = null, usfsBoundariesLayer = null;
+  var wildfireLayer = null, usfsBoundariesLayer = null, hillshadeLayer = null;
   var sunPathLayerGroup = null;
   var compassNorthLine = null, compassFacingLine = null, compassTargetLine = null;
   var compassActive = false, compassHeading = null, elevTapMode = false;
@@ -1847,20 +1869,21 @@
 
     // ── P2 overlay layers ──
     try {
-      snowDepthLayer = L.tileLayer('https://mapservices.weather.noaa.gov/raster/rest/services/snow_analysis/NOHRSC_snowdepth/MapServer/tile/{z}/{y}/{x}', {
-        minNativeZoom:0, maxNativeZoom:14, opacity:0.7, attribution:'NOAA NOHRSC'
+      // NOAA National Snow Analysis — NationalSnowAnalysis service (has tile cache unlike NOHRSC_snowdepth)
+      snowDepthLayer = L.tileLayer('https://mapservices.weather.noaa.gov/raster/rest/services/snow_analysis/NationalSnowAnalysis/MapServer/tile/{z}/{y}/{x}', {
+        minNativeZoom:0, maxNativeZoom:10, opacity:0.7, attribution:'NOAA NOHRSC'
       });
     } catch(e){ snowDepthLayer = null; }
 
     try {
-      // Light pollution — DJ Lorenz VIIRS 2022 tiles (MIT-licensed, hosted on GitHub Pages)
+      // Light pollution — djlorenz tiles only go to Z9; maxNativeZoom prevents 404s at deeper zooms
       lightPollutionLayer = L.tileLayer('https://djlorenz.github.io/astronomy/lp2022/overlay/tiles/{z}/{x}/{y}.png', {
-        maxNativeZoom:12, minNativeZoom:2, opacity:0.7, attribution:'© djlorenz / VIIRS'
+        maxNativeZoom:9, minNativeZoom:2, opacity:0.7, attribution:'© djlorenz / VIIRS'
       });
     } catch(e){ lightPollutionLayer = null; }
 
     try {
-      // NLCD — USGS MRLC WMS (most reliable public source, no auth required)
+      // NLCD — USGS MRLC WMS
       nlcdLayer = L.tileLayer.wms('https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/ows', {
         layers: 'NLCD_2021_Land_Cover_L48',
         format: 'image/png',
@@ -1877,7 +1900,22 @@
     if (state.settings.nlcdOn && nlcdLayer) nlcdLayer.addTo(map);
     if (state.settings.wildfireOn) loadWildfireLayer();
     if (state.settings.usfsBoundariesOn) loadUsfsBoundariesLayer();
+
+    // World Hillshade Dark — positioned above base layers but below overlays/data
+    // Uses CSS mix-blend-mode:multiply to composite shadows into basemap (same effect as ArcGIS Online blending)
+    map.createPane('hillshadePane'); map.getPane('hillshadePane').style.zIndex = 215;
+    hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade_Dark/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom:19, maxNativeZoom:13, opacity: 0.65, pane:'hillshadePane',
+      attribution:'Esri',
+      className:'hillshade-multiply-layer' // CSS mix-blend-mode:multiply applied via this class
+    });
+    if (state.settings.hillshadeOn) hillshadeLayer.addTo(map);
+    var hillshadeToggle = document.getElementById('hillshade-toggle');
+    var hillshadeOpacity = document.getElementById('hillshade-opacity');
+    if (hillshadeToggle){ hillshadeToggle.checked = !!state.settings.hillshadeOn; }
+    if (hillshadeOpacity){ hillshadeOpacity.value = Math.round((state.settings.hillshadeOpacity || 0.65) * 100); }
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
+    map.createPane('fstopoPane'); map.getPane('fstopoPane').style.zIndex = 192; // USFS Forest Service Basemap
     map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
     map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
     map.createPane('topoPane'); map.getPane('topoPane').style.zIndex = 200;
@@ -1894,6 +1932,12 @@
     });
     baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
+    });
+    // USFS Forest Service Basemap — green topo style designed for USFS land navigation
+    // Tile URL verified from the Forest Service Basemap web map (item 2e1593463c30495e9c802098527e3d1b)
+    baseLayers.fstopo = L.tileLayer('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom:19, maxNativeZoom:15, pane:'fstopoPane',
+      attribution:'USDA Forest Service'
     });
     baseLayers.topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, maxNativeZoom:16, pane:'topoPane', attribution:'USGS The National Map'
@@ -1924,16 +1968,18 @@
     baseLayers.relief.on('tileerror', onTileError);
     baseLayers.imagerytopo.on('tileerror', onTileError);
 
-    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
+      if (!baseLayers[name]) return;
       var cfg = state.settings.layers[name];
+      if (!cfg) return;
       baseLayers[name].setOpacity(cfg.opacity);
       if (cfg.on) baseLayers[name].addTo(map);
       var toggle = document.getElementById('layer-' + name + '-toggle');
       var opacityInput = document.getElementById('layer-' + name + '-opacity');
       var opacityRow = document.getElementById('layer-' + name + '-opacity-row');
-      toggle.checked = cfg.on;
-      opacityInput.value = Math.round(cfg.opacity * 100);
-      opacityRow.classList.toggle('show', cfg.on);
+      if (toggle) toggle.checked = cfg.on;
+      if (opacityInput) opacityInput.value = Math.round(cfg.opacity * 100);
+      if (opacityRow) opacityRow.classList.toggle('show', cfg.on);
     });
 
     if (state.settings.hydroOn && hydroLayer){
@@ -2182,6 +2228,13 @@
   function refreshAllVisibility(){
     state.pins.forEach(applyFilterToMarker);
     state.tracks.forEach(applyFilterToTrack);
+    (state.polygons || []).forEach(function(poly){
+      var entry = polygonLayersById[poly.id];
+      if (!entry) return;
+      var visible = mapItemVisible(poly);
+      if (entry.poly){ if (visible) entry.poly.addTo(map); else if (map.hasLayer(entry.poly)) map.removeLayer(entry.poly); }
+      if (entry.label){ if (visible) entry.label.addTo(map); else if (map.hasLayer(entry.label)) map.removeLayer(entry.label); }
+    });
   }
 
   function zoomToVisible(){
@@ -4968,12 +5021,12 @@
     scheduleSave();
   }
 
-  // ── Wildfire (Esri USA Wildfires public feature service) ──
+  // ── Wildfire (Esri USA Wildfires public feature service — layer 1 = perimeters) ──
   function loadWildfireLayer(){
     if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
-    // Use Esri's publicly hosted USA Wildfires service (supports CORS)
-    var url = 'https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/USA_Wildfires_v1/FeatureServer/0/query' +
-      '?where=1%3D1&outFields=IncidentName,PercentContained,DailyAcres&f=geojson&resultRecordCount=300';
+    // Layer 0 = fire locations (points), Layer 1 = perimeters (polygons) — use layer 1
+    var url = 'https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/USA_Wildfires_v1/FeatureServer/1/query' +
+      '?where=1%3D1&outFields=IncidentName,PercentContained,DailyAcres&f=geojson&resultRecordCount=200';
     fetch(url)
       .then(function(r){
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -4981,11 +5034,11 @@
       })
       .then(function(data){
         if (!data.features || data.features.length === 0){
-          showToast('No active wildfires in the system right now');
+          showToast('No active fire perimeters right now');
           return;
         }
         wildfireLayer = L.geoJSON(data, {
-          style:function(){ return { color:'#e05f20', weight:1.5, fillColor:'#e05f20', fillOpacity:0.15 }; },
+          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18, dashArray:null }; },
           onEachFeature:function(feature, layer){
             var p = feature.properties;
             var name = p.IncidentName || 'Unknown fire';
@@ -4995,11 +5048,11 @@
             layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>' + (detail.length ? '<br>' + detail.join(' · ') : ''));
           }
         }).addTo(map);
-        showToast(data.features.length + ' active fire perimeters loaded');
+        showToast(data.features.length + ' active fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
       })
       .catch(function(err){
         console.warn('Wildfire load error:', err);
-        showToast('Could not load wildfire data — server may be unavailable');
+        showToast('Could not load wildfire perimeters — server may be unavailable');
       });
   }
 
@@ -5034,31 +5087,33 @@
   }
 
   function renderSunriseTimes(center, date){
+    if (typeof SunCalc === 'undefined'){ showToast('SunCalc not loaded'); return; }
     var times = SunCalc.getTimes(date, center.lat, center.lng);
     var moonTimes = SunCalc.getMoonTimes(date, center.lat, center.lng);
     var moonIllum = SunCalc.getMoonIllumination(date);
 
-    // Date display
-    document.getElementById('sunrise-date').textContent = date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+    // Update date picker
+    var y = date.getFullYear(), mo = date.getMonth()+1, dy = date.getDate();
+    var dateInputEl = document.getElementById('sunrise-date-input');
+    if (dateInputEl) dateInputEl.value = y + '-' + (mo<10?'0':'') + mo + '-' + (dy<10?'0':'') + dy;
     document.getElementById('sunrise-location').textContent =
-      center.lat.toFixed(3) + '°' + (center.lat >= 0 ? 'N' : 'S') + ', ' + Math.abs(center.lng).toFixed(3) + '°' + (center.lng >= 0 ? 'E' : 'W');
+      center.lat.toFixed(3) + '\u00b0' + (center.lat >= 0 ? 'N' : 'S') + ', ' +
+      Math.abs(center.lng).toFixed(3) + '\u00b0' + (center.lng >= 0 ? 'E' : 'W');
 
-    // Timeline bar
     renderSunTimelineBar(times, date);
 
-    // Times list
     var phaseDefs = [
-      { key:'nightEnd',    icon:'🌙', label:'First light (astronomical)', highlight:false },
-      { key:'nauticalDawn',icon:'🌫️', label:'Nautical dawn',             highlight:false },
-      { key:'dawn',        icon:'🌄', label:'Civil dawn',                 highlight:false },
-      { key:'sunrise',     icon:'🌅', label:'Sunrise',                    highlight:true },
-      { key:'goldenHourEnd',icon:'✨',label:'Golden hour ends',           highlight:false },
-      { key:'solarNoon',   icon:'☀️', label:'Solar noon',                 highlight:false },
-      { key:'goldenHour',  icon:'✨', label:'Golden hour begins',         highlight:false },
-      { key:'sunset',      icon:'🌇', label:'Sunset',                     highlight:true },
-      { key:'dusk',        icon:'🌆', label:'Civil dusk',                 highlight:false },
-      { key:'nauticalDusk',icon:'🌉', label:'Nautical dusk',             highlight:false },
-      { key:'night',       icon:'🌙', label:'Full dark',                  highlight:false }
+      { key:'nightEnd',      mark:'* ', label:'First light (astronomical)', highlight:false },
+      { key:'nauticalDawn',  mark:'* ', label:'Nautical dawn',              highlight:false },
+      { key:'dawn',          mark:'* ', label:'Civil dawn',                  highlight:false },
+      { key:'sunrise',       mark:'\u2191 ', label:'Sunrise',              highlight:true  },
+      { key:'goldenHourEnd', mark:'\u00b7 ', label:'Golden hour ends',     highlight:false },
+      { key:'solarNoon',     mark:'o ', label:'Solar noon',                  highlight:false },
+      { key:'goldenHour',    mark:'\u00b7 ', label:'Golden hour begins',    highlight:false },
+      { key:'sunset',        mark:'\u2193 ', label:'Sunset',               highlight:true  },
+      { key:'dusk',          mark:'* ', label:'Civil dusk',                  highlight:false },
+      { key:'nauticalDusk',  mark:'* ', label:'Nautical dusk',              highlight:false },
+      { key:'night',         mark:'* ', label:'Full dark',                   highlight:false }
     ];
     var list = document.getElementById('sunrise-times-list');
     list.innerHTML = '';
@@ -5068,22 +5123,23 @@
       var row = document.createElement('div');
       row.className = 'sunrise-time-row' + (ph.highlight ? ' highlight' : '');
       row.innerHTML =
-        '<span class="sunrise-time-icon">' + ph.icon + '</span>' +
+        '<span class="sunrise-time-icon" style="font-family:monospace;letter-spacing:0;">' + ph.mark + '</span>' +
         '<span class="sunrise-time-label">' + ph.label + '</span>' +
         '<span class="sunrise-time-value">' + formatTime12(t) + '</span>';
       list.appendChild(row);
     });
 
-    // Moon
-    var moonPhaseNames = ['🌑 New Moon','🌒 Waxing Crescent','🌓 First Quarter','🌔 Waxing Gibbous','🌕 Full Moon','🌖 Waning Gibbous','🌗 Last Quarter','🌘 Waning Crescent'];
+    var moonPhaseNames = ['New Moon','Waxing Crescent','First Quarter','Waxing Gibbous',
+                          'Full Moon','Waning Gibbous','Last Quarter','Waning Crescent'];
     var phaseIdx = Math.round(moonIllum.phase * 8) % 8;
     var moonRow = document.createElement('div');
     moonRow.className = 'sunrise-time-row';
     var moonRiseStr = moonTimes.rise ? formatTime12(moonTimes.rise) : 'N/A';
     var moonSetStr  = moonTimes.set  ? formatTime12(moonTimes.set)  : 'N/A';
     moonRow.innerHTML =
-      '<span class="sunrise-time-icon">🌙</span>' +
-      '<span class="sunrise-time-label">' + moonPhaseNames[phaseIdx] + '<br><small style="color:var(--text-muted)">Rise ' + moonRiseStr + ' · Set ' + moonSetStr + '</small></span>' +
+      '<span class="sunrise-time-icon" style="font-family:monospace;">)</span>' +
+      '<span class="sunrise-time-label">' + moonPhaseNames[phaseIdx] +
+        '<br><small style="color:var(--text-muted)">Rise ' + moonRiseStr + ' · Set ' + moonSetStr + '</small></span>' +
       '<span class="sunrise-time-value">' + Math.round(moonIllum.fraction * 100) + '%</span>';
     list.appendChild(moonRow);
   }
@@ -5169,13 +5225,39 @@
       segments[key].push(pt);
     }
 
-    var colors = { twilight:'#5a7bb5', golden:'#d9843a', day:'#f0c040' };
+    var colors = { twilight:'#5a7bb5', golden:'#d9843a', day:'#f5d76e' };
     Object.keys(segments).forEach(function(k){
       if (segments[k].length >= 2){
-        L.polyline(segments[k], { color:colors[k], weight:3.5, opacity:0.8, interactive:false })
+        L.polyline(segments[k], { color:colors[k], weight:3.5, opacity:0.9, interactive:false })
           .addTo(sunPathLayerGroup);
       }
     });
+
+    // Thin horizon ring centered on map center — gives context for the arc
+    var ringPoints = [];
+    for (var deg = 0; deg < 360; deg += 3){
+      var rad = deg * Math.PI / 180;
+      ringPoints.push([
+        center.lat + distDeg * Math.cos(rad),
+        center.lng + distDeg * Math.sin(rad) / Math.cos(center.lat * Math.PI / 180)
+      ]);
+    }
+    ringPoints.push(ringPoints[0]); // close
+    L.polyline(ringPoints, { color:'rgba(255,255,255,0.25)', weight:1, interactive:false })
+      .addTo(sunPathLayerGroup);
+
+    // Current sun position dot (only if today)
+    if (date.toDateString() === new Date().toDateString()){
+      var nowPos = SunCalc.getPosition(new Date(), center.lat, center.lng);
+      if (nowPos.altitude > -0.1){
+        var nowAz = nowPos.azimuth + Math.PI;
+        var nowLat = center.lat + distDeg * Math.cos(nowAz);
+        var nowLng = center.lng + distDeg * Math.sin(nowAz) / Math.cos(center.lat * Math.PI / 180);
+        L.circleMarker([nowLat, nowLng], {
+          radius:6, color:'#fff', fillColor:'#f5d76e', fillOpacity:1, weight:2, interactive:false
+        }).addTo(sunPathLayerGroup);
+      }
+    }
 
     // Direction labels at sunrise and sunset points
     function addDirMarker(tTime, label, color){
@@ -5205,42 +5287,30 @@
     elevTapMode = on;
     document.getElementById('map').classList.toggle('elev-tap-mode', on);
     document.getElementById('elev-bar').classList.toggle('hidden', !on);
-    if (!on){
-      document.getElementById('elevation-tooltip').classList.add('hidden');
-      document.getElementById('elevation-tooltip').style.pointerEvents = 'none';
-    }
+    if (!on){ document.getElementById('elevation-tooltip').classList.add('hidden'); }
+    if (on){ document.getElementById('elev-bar-text').textContent = 'Tap map for elevation'; }
   }
 
   function fetchElevationAtPoint(latlng){
     var url = 'https://epqs.nationalmap.gov/v1/json?x=' + latlng.lng.toFixed(6) + '&y=' + latlng.lat.toFixed(6) + '&wkid=4326&includeDate=false&units=Feet';
-    var tooltip = document.getElementById('elevation-tooltip');
-    tooltip.textContent = 'Loading…';
-    tooltip.classList.remove('hidden');
-
-    // Clamp position to stay within map container
-    var containerPt = map.latLngToContainerPoint(latlng);
-    var mapSize = map.getSize();
-    var left = Math.min(containerPt.x + 14, mapSize.x - 190);
-    var top  = Math.max(10, containerPt.y - 36);
-    tooltip.style.left = left + 'px';
-    tooltip.style.top  = top  + 'px';
+    document.getElementById('elev-bar-text').textContent = 'Loading…';
 
     fetch(url)
       .then(function(r){ return r.json(); })
       .then(function(data){
         var elev = data.value;
-        if (elev == null || elev === -1000000){ tooltip.textContent = 'No data at this point'; return; }
+        if (elev == null || elev === -1000000){
+          document.getElementById('elev-bar-text').textContent = 'No data at this point';
+          return;
+        }
         var ft = Math.round(Number(elev));
         var m  = Math.round(ft * 0.3048);
-        tooltip.innerHTML = '<strong>' + ft.toLocaleString() + ' ft</strong>  (' + m.toLocaleString() + ' m)<br><small style="color:var(--text-muted);font-size:10px;">Tap tooltip to dismiss</small>';
-        tooltip.style.pointerEvents = 'auto';
-        tooltip.style.cursor = 'pointer';
-        tooltip.onclick = function(){
-          tooltip.classList.add('hidden');
-          tooltip.style.pointerEvents = 'none';
-        };
+        document.getElementById('elev-bar-text').textContent =
+          ft.toLocaleString() + ' ft  (' + m.toLocaleString() + ' m)';
       })
-      .catch(function(){ tooltip.textContent = 'Elevation unavailable'; });
+      .catch(function(){
+        document.getElementById('elev-bar-text').textContent = 'Elevation unavailable';
+      });
   }
 
   // ── Compass + Bearing/Range ──
@@ -5295,17 +5365,17 @@
     if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
     if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
 
-    // Scale line length to ~30% of visible map height
+    // Lines extend to 3× the visible map height so they always go well off-screen
     var mapBounds = map.getBounds();
-    var d = Math.max(0.02, (mapBounds.getNorth() - mapBounds.getSouth()) * 0.3);
+    var d = Math.max(0.1, (mapBounds.getNorth() - mapBounds.getSouth()) * 3);
 
-    // North line (red, fixed — always points geographic north)
+    // North line (red dashed — fixed geographic north reference)
     var northPt = L.latLng(currentGpsLatLng.lat + d, currentGpsLatLng.lng);
     compassNorthLine = L.polyline([currentGpsLatLng, northPt], {
-      color:'#e03535', weight:2.5, dashArray:'7,5', opacity:0.9, interactive:false
+      color:'#e03535', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
     }).addTo(map);
 
-    // Facing direction line (blue — rotates with device)
+    // Facing direction line (blue dashed — rotates with device)
     if (compassHeading != null){
       var az = compassHeading * Math.PI / 180;
       var facingPt = L.latLng(
@@ -5313,7 +5383,7 @@
         currentGpsLatLng.lng + d * Math.sin(az) / Math.cos(currentGpsLatLng.lat * Math.PI / 180)
       );
       compassFacingLine = L.polyline([currentGpsLatLng, facingPt], {
-        color:'#5a9bd8', weight:2.5, dashArray:'7,5', opacity:0.9, interactive:false
+        color:'#5a9bd8', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
       }).addTo(map);
     }
   }
@@ -5328,14 +5398,23 @@
     var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     var dirLabel = dirs[Math.round(bearing / 22.5) % 16];
 
-    compassTargetLine = L.polyline([currentGpsLatLng, latlng], {
-      color:'#d9a13f', weight:2, dashArray:'8,5', opacity:0.85, interactive:false
+    // Gold target line — extends from GPS position to tapped point
+    var mapBounds = map.getBounds();
+    var d = Math.max(0.1, (mapBounds.getNorth() - mapBounds.getSouth()) * 3);
+    var az = bearing * Math.PI / 180;
+    var farPt = L.latLng(
+      currentGpsLatLng.lat + d * Math.cos(az),
+      currentGpsLatLng.lng + d * Math.sin(az) / Math.cos(currentGpsLatLng.lat * Math.PI / 180)
+    );
+    compassTargetLine = L.polyline([currentGpsLatLng, farPt], {
+      color:'#d9a13f', weight:2, dashArray:'10,6', opacity:0.85, interactive:false
     }).addTo(map);
 
     document.getElementById('compass-target-bearing').textContent = dirLabel + ' ' + Math.round(bearing) + '°';
     document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi · ' + (distMi * 1.60934).toFixed(2) + ' km';
     document.getElementById('compass-target-col').classList.remove('hidden');
     document.getElementById('compass-save-target-btn').classList.remove('hidden');
+    document.getElementById('compass-status').textContent = '— red=north · blue=facing · gold=tap bearing —';
   }
 
   function bearingBetween(lat1, lng1, lat2, lng2){
@@ -5726,6 +5805,15 @@
       renderSunriseTimes(center, sunDate);
       if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     });
+    document.getElementById('sunrise-date-input').addEventListener('change', function(){
+      var parts = this.value.split('-');
+      if (parts.length === 3){
+        sunDate = new Date(Number(parts[0]), Number(parts[1])-1, Number(parts[2]));
+        var center = map.getCenter();
+        renderSunriseTimes(center, sunDate);
+        if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+      }
+    });
     document.getElementById('sunrise-arc-toggle').addEventListener('change', function(){
       SUNRISE_ARC_ON = this.checked;
       if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
@@ -5796,6 +5884,19 @@
     document.getElementById('lightpollution-toggle').checked = !!state.settings.lightPollutionOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
+
+    document.getElementById('hillshade-toggle').addEventListener('change', function(){
+      state.settings.hillshadeOn = this.checked;
+      if (this.checked && hillshadeLayer) hillshadeLayer.addTo(map);
+      else if (hillshadeLayer && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
+      scheduleSave();
+    });
+    document.getElementById('hillshade-opacity').addEventListener('input', function(){
+      var val = Number(this.value) / 100;
+      state.settings.hillshadeOpacity = val;
+      if (hillshadeLayer) hillshadeLayer.setOpacity(val);
+      scheduleSave();
+    });
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       document.getElementById('about-version').textContent = 'v' + APP_VERSION + ' · ' + APP_RELEASE_DATE;
@@ -5872,12 +5973,12 @@
       var layerName = this.value;
       if (baseLayers[layerName] && !map.hasLayer(baseLayers[layerName])){
         // Turn off all base layers, turn on selected
-        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+        ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
           if (baseLayers[n] && map.hasLayer(baseLayers[n])){ map.removeLayer(baseLayers[n]); state.settings.layers[n].on = false; }
         });
         baseLayers[layerName].addTo(map);
         state.settings.layers[layerName].on = true;
-        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+        ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
           var tog = document.getElementById('layer-' + n + '-toggle');
           if (tog) tog.checked = !!state.settings.layers[n].on;
         });
@@ -6046,7 +6147,7 @@
       });
     });
 
-    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
       document.getElementById('layer-' + name + '-toggle').addEventListener('change', function(){
         setBaseLayerOn(name, this.checked);
       });
