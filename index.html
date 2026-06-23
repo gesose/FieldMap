@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>FieldMap — Pin Tracker</title>
+<title>FieldMap</title>
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -363,7 +363,36 @@
   }
   .color-swatch.selected{border-color:var(--text);transform:scale(1.2);}
 
-  /* Settings panel checkbox-pill toggles */
+  /* P2 tool styles */
+  #map.elev-tap-mode { cursor:crosshair !important; }
+  #map.compass-tap-mode { cursor:crosshair !important; }
+  .sunrise-time-row {
+    display:flex;align-items:center;gap:10px;padding:7px 0;
+    border-top:1px solid var(--border);font-size:12px;
+  }
+  .sunrise-time-row:first-child { border-top:none; }
+  .sunrise-time-icon { width:20px;text-align:center;font-size:15px;flex-shrink:0; }
+  .sunrise-time-label { flex:1;color:var(--text); }
+  .sunrise-time-value { font-family:var(--font-mono);font-size:12px;color:var(--text);font-weight:600; }
+  .sunrise-time-row.highlight { background:rgba(194,98,45,0.06);border-radius:6px;padding:7px 6px;margin:0 -6px; }
+  .sunrise-time-row.highlight .sunrise-time-value { color:var(--accent); }
+  .weather-hour-cell {
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    min-width:50px;padding:6px 3px;border-right:1px solid var(--border);
+    font-size:11px;color:var(--text-muted);flex-shrink:0;
+  }
+  .weather-hour-cell:last-child { border-right:none; }
+  .weather-hour-temp { font-size:13px;font-weight:600;color:var(--text); }
+  .weather-forecast-row {
+    display:flex;align-items:center;gap:10px;padding:8px 0;
+    border-top:1px solid var(--border);font-size:12px;
+  }
+  .wf-day { width:34px;color:var(--text-muted);font-weight:500;flex-shrink:0; }
+  .wf-icon { font-size:16px;flex-shrink:0; }
+  .wf-temps { flex:1;font-size:12px; }
+  .wf-hi { color:var(--text);font-weight:600; }
+  .wf-lo { color:var(--text-muted); }
+  .wf-wind { font-size:11px;color:var(--text-muted); }
   .settings-check-row{
     display:flex;align-items:center;gap:10px;
     padding:9px 0;border-top:1px solid var(--border);
@@ -386,13 +415,7 @@
   /* Settings green status dot */
   :root{--green-status:#5fa86b;}
   #account-sync-indicator{transition:background .3s;}
-  #account-sync-dot{
-    position:absolute;top:1px;right:1px;width:9px;height:9px;border-radius:50%;
-    background:#5fa86b;border:1.5px solid var(--bg-elevated);
-  }
-  #account-sync-dot.hidden{display:none;}
-  #account-sync-dot.syncing{background:#d9a13f;}
-  #account-sync-dot.error{background:var(--danger);}
+  /* sync dot removed — status shown in Settings panel only */
 
   #cluster-panel{
     position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
@@ -541,8 +564,13 @@
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
 
-    /* Map controls: push above bottom sheet */
-    #map-controls{bottom:90px;}
+    /* Map controls: push above bottom sheet, tighter for 5-button stack */
+    #map-controls{bottom:90px;gap:7px;}
+    .map-icon-btn{width:36px;height:36px;}
+    /* Sidebar header: tighten for narrow screens */
+    #sidebar-header-row1{padding:10px 14px 8px;}
+    #app-title{font-size:15px;}
+    .btn-small{padding:5px 10px;font-size:12px;}
 
     /* Floating panels: full-width above bottom sheet */
     .floating-panel{
@@ -696,7 +724,6 @@
       <path d="M4 15.5h12"/>
     </svg>
   </button>
-  <span id="account-sync-dot" class="hidden" style="position:absolute;bottom:2px;right:2px;"></span>
 </div>
 
 <!-- Settings panel (accessible via Tools → Settings) -->
@@ -871,9 +898,157 @@
         </div>
         <div class="sheet-label">Find dupes</div>
       </button>
+      <button class="sheet-cell" id="sheet-sunrise-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
+            <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
+            <line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
+            <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Sunrise</div>
+      </button>
+      <button class="sheet-cell" id="sheet-elevation-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2 20 8 12 13 16 18 8 22 12"/>
+            <line x1="2" y1="20" x2="22" y2="20"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Elevation</div>
+      </button>
+      <button class="sheet-cell" id="sheet-compass-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="12 2 14.5 9.5 12 8 9.5 9.5" fill="currentColor" opacity="0.7"/>
+            <polygon points="12 22 9.5 14.5 12 16 14.5 14.5" fill="none"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Compass</div>
+      </button>
+      <button class="sheet-cell" id="sheet-weather-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 18a5 5 0 0 0-10 0"/>
+            <line x1="12" y1="2" x2="12" y2="9"/>
+            <line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/>
+            <line x1="1" y1="18" x2="3" y2="18"/>
+            <line x1="21" y1="18" x2="23" y2="18"/>
+            <line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/>
+            <line x1="23" y1="22" x2="1" y2="22"/>
+            <polyline points="8 6 12 2 16 6"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Weather</div>
+      </button>
     </div>
     <button class="btn btn-ghost btn-block sheet-cancel-btn" id="tools-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
   </div>
+</div>
+
+<!-- Sunrise / Sunset panel -->
+<div id="sunrise-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;width:300px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <h2 style="margin:0;">Sunrise &amp; Sunset</h2>
+    <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;" id="sunrise-location"></div>
+  <!-- Day selector -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <button class="btn btn-small" id="sunrise-prev-btn">‹</button>
+    <div id="sunrise-date" style="flex:1;text-align:center;font-size:13px;font-weight:600;"></div>
+    <button class="btn btn-small" id="sunrise-next-btn">›</button>
+    <button class="btn btn-small" id="sunrise-today-btn">Today</button>
+  </div>
+  <!-- Timeline bar -->
+  <div style="margin-bottom:6px;">
+    <div id="sunrise-timeline-bar" style="height:24px;border-radius:6px;position:relative;overflow:hidden;background:#0d1117;">
+      <div id="sunrise-now-marker" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 4px rgba(255,255,255,0.8);z-index:2;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;" id="sunrise-timeline-labels"></div>
+  </div>
+  <!-- Times list -->
+  <div id="sunrise-times-list" style="margin-bottom:8px;"></div>
+  <!-- Toggle sun arc on map -->
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
+    <input type="checkbox" id="sunrise-arc-toggle" checked> Show sun path on map
+  </label>
+</div>
+
+<!-- Compass + Bearing/Range panel -->
+<div id="compass-panel" class="floating-panel hidden" style="width:260px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <h2 style="margin:0;">Compass</h2>
+    <button class="link-btn" id="compass-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <!-- Compass rose SVG -->
+  <div style="display:flex;justify-content:center;margin-bottom:10px;">
+    <svg id="compass-rose-svg" viewBox="0 0 160 160" width="160" height="160">
+      <circle cx="80" cy="80" r="76" fill="var(--bg-elevated-2)" stroke="var(--border)" stroke-width="1.5"/>
+      <!-- Cardinal labels -->
+      <text x="80" y="18" text-anchor="middle" font-size="14" font-weight="700" fill="#e03535">N</text>
+      <text x="148" y="85" text-anchor="middle" font-size="11" fill="var(--text-muted)">E</text>
+      <text x="80" y="152" text-anchor="middle" font-size="11" fill="var(--text-muted)">S</text>
+      <text x="12" y="85" text-anchor="middle" font-size="11" fill="var(--text-muted)">W</text>
+      <!-- Tick marks -->
+      <circle cx="80" cy="80" r="50" fill="none" stroke="var(--border)" stroke-width="0.5"/>
+      <!-- North needle (red) — rotated by heading -->
+      <g id="compass-needle-group" style="transform-origin:80px 80px;">
+        <polygon id="compass-needle-north" points="80,20 76,80 84,80" fill="#e03535" opacity="0.95"/>
+        <polygon id="compass-needle-south" points="80,140 76,80 84,80" fill="var(--bg-el3)" opacity="0.7"/>
+      </g>
+      <!-- Blue facing line dot -->
+      <circle cx="80" cy="80" r="6" fill="var(--bg-elevated)" stroke="var(--border)" stroke-width="1.5"/>
+      <text id="compass-heading-text" x="80" y="180" text-anchor="middle" font-size="14" font-weight="700" fill="var(--text)" dy="-20"></text>
+    </svg>
+  </div>
+  <div id="compass-heading-display" style="text-align:center;font-family:var(--font-mono);font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text);">– – –°</div>
+  <div id="compass-status" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:10px;">Tap the map to get bearing &amp; range</div>
+  <!-- Bearing/range result -->
+  <div id="compass-target-result" class="hidden" style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">TARGET</div>
+    <div style="display:flex;gap:16px;">
+      <div><div style="font-size:11px;color:var(--text-muted);">Bearing</div><div id="compass-target-bearing" style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--text);"></div></div>
+      <div><div style="font-size:11px;color:var(--text-muted);">Distance</div><div id="compass-target-dist" style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--text);"></div></div>
+    </div>
+    <button class="btn btn-small" id="compass-save-target-btn" style="margin-top:8px;width:100%;justify-content:center;">Save as pin</button>
+  </div>
+  <div id="compass-no-gps-msg" style="font-size:11px;color:var(--text-muted);text-align:center;" class="hidden">
+    Enable location services to see bearing line
+  </div>
+</div>
+
+<!-- Weather panel -->
+<div id="weather-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <h2 style="margin:0;">Weather</h2>
+    <button class="link-btn" id="weather-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <div id="weather-location" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
+  <div id="weather-loading" style="font-size:13px;color:var(--text-muted);text-align:center;padding:20px;">Loading…</div>
+  <div id="weather-content" class="hidden">
+    <!-- Current conditions -->
+    <div id="weather-current" style="display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:10px;"></div>
+    <!-- Hourly strip -->
+    <div id="weather-hourly" style="display:flex;overflow-x:auto;gap:0;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:8px;scrollbar-width:none;"></div>
+    <!-- 7-day forecast -->
+    <div id="weather-forecast"></div>
+  </div>
+  <div id="weather-error" class="hidden" style="font-size:12px;color:var(--text-muted);text-align:center;padding:12px;">Could not load weather. NWS only covers the United States.</div>
+</div>
+
+<!-- Elevation tooltip (appears on map click when elevation mode active) -->
+<div id="elevation-tooltip" class="hidden" style="
+  position:absolute;z-index:1400;background:var(--bg-elevated);
+  border:1px solid var(--border);border-radius:8px;padding:8px 12px;
+  box-shadow:0 3px 12px rgba(0,0,0,0.4);pointer-events:none;
+  font-size:13px;color:var(--text);font-family:var(--font-mono);">
 </div>
 
 <!-- About modal -->
@@ -970,6 +1145,36 @@
   </label>
   <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="wildfire-toggle"> Active wildfires
+    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-wildfire');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text" id="lh-wildfire">Current fire perimeters from NIFC, updated daily. Season: roughly May–Nov.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="snowdepth-toggle"> Snow depth
+    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-snow');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text" id="lh-snow">NOAA daily snow analysis — useful for access planning Nov–Apr.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="lightpollution-toggle"> Light pollution
+    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-lp');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text" id="lh-lp">Bortle scale — dark areas are best for astrophotography. Black/grey=excellent, blue/green=good, yellow/red=poor.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
+    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-nlcd');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text" id="lh-nlcd">USGS National Land Cover Database — habitat types: forests, shrublands, wetlands, croplands.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="usfsboundaries-toggle"> USFS forest boundaries
+    <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text" id="lh-usfs">National Forest and Grassland administrative boundaries with names.</div>
 
   <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
@@ -1263,6 +1468,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/suncalc@1.9.0/suncalc.js"></script>
 <script>
 (function(){
 
@@ -1367,7 +1573,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.1.3';
+  var APP_VERSION = '1.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1423,6 +1629,8 @@
       hydroOn: false, hydroOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       showOfflineBoundaries: true,
+      wildfireOn: false, snowDepthOn: false, lightPollutionOn: false,
+      nlcdOn: false, usfsBoundariesOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'street',
@@ -1436,6 +1644,13 @@
   var clusterRefreshTimer = null;
   var publicLandLayer = null;
   var gmuLayers = { az: null };
+  var snowDepthLayer = null, lightPollutionLayer = null, nlcdLayer = null;
+  var wildfireLayer = null, usfsBoundariesLayer = null;
+  var sunPathLayerGroup = null;
+  var compassNorthLine = null, compassFacingLine = null, compassTargetLine = null;
+  var compassActive = false, compassHeading = null, elevTapMode = false;
+  var compassTargetLatLng = null;
+  var sunDate = null; // date currently shown in sunrise panel
   var GMU_SOURCES = {
     az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' }
   };
@@ -1465,6 +1680,7 @@
   var lastBulkClickedIdx = -1;
   var bulkSelectedPins = {};
   var bulkSelectedTracks = {};
+  var bulkSelectedPolygons = {};
   var saveTimer = null;
   var editingTagId = null;
 
@@ -1631,6 +1847,33 @@
 
     clusterLayerGroup = L.layerGroup().addTo(map);
     offlineBoundaryLayerGroup = L.layerGroup().addTo(map);
+    sunPathLayerGroup = L.layerGroup().addTo(map);
+
+    // ── P2 overlay layers ──
+    try {
+      snowDepthLayer = L.tileLayer('https://mapservices.weather.noaa.gov/raster/rest/services/snow_analysis/NOHRSC_snowdepth/MapServer/tile/{z}/{y}/{x}', {
+        minNativeZoom:0, maxNativeZoom:14, opacity:0.7, attribution:'NOAA NOHRSC'
+      });
+    } catch(e){ snowDepthLayer = null; }
+
+    try {
+      lightPollutionLayer = L.tileLayer('https://www.lightpollutionmap.info/tiles/viirs_2022/{z}/{x}/{y}.png', {
+        maxNativeZoom:12, opacity:0.65, attribution:'Light Pollution Map'
+      });
+    } catch(e){ lightPollutionLayer = null; }
+
+    try {
+      nlcdLayer = L.tileLayer('https://landscape11.arcgis.com/arcgis/rest/services/USA_NLCD_Land_Cover/ImageServer/tile/{z}/{y}/{x}', {
+        maxNativeZoom:13, opacity:0.55, attribution:'USGS NLCD'
+      });
+    } catch(e){ nlcdLayer = null; }
+
+    // USFS boundaries and wildfire loaded dynamically via feature service
+    if (state.settings.snowDepthOn && snowDepthLayer) snowDepthLayer.addTo(map);
+    if (state.settings.lightPollutionOn && lightPollutionLayer) lightPollutionLayer.addTo(map);
+    if (state.settings.nlcdOn && nlcdLayer) nlcdLayer.addTo(map);
+    if (state.settings.wildfireOn) loadWildfireLayer();
+    if (state.settings.usfsBoundariesOn) loadUsfsBoundariesLayer();
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
     map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
     map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
@@ -1762,6 +2005,8 @@
 
     map.on('click', function(e){
       closeClusterPanel();
+      if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
+      if (compassActive){ handleCompassMapTap(e.latlng); return; }
       if (measureMode){ handleMeasureClick(e.latlng); return; }
       if (drawMode){ handleDrawClick(e.latlng); return; }
       if (polygonMode){ handlePolygonClick(e.latlng); return; }
@@ -3259,10 +3504,10 @@
     var v = tagVisualFor(d);
     var row = document.createElement('div');
     row.className = 'pin-row';
-    var selMap = it.type === 'pin' ? bulkSelectedPins : it.type === 'track' ? bulkSelectedTracks : {};
+    var selMap = it.type === 'pin' ? bulkSelectedPins : it.type === 'track' ? bulkSelectedTracks : bulkSelectedPolygons;
     var cb = null;
 
-    if (bulkMode && it.type !== 'polygon'){
+    if (bulkMode){
       cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'bulk-checkbox';
@@ -3311,8 +3556,8 @@
           var targetState = !selMap[d.id];
           for (var ri = lo; ri <= hi; ri++){
             var rIt = allItems[ri];
-            if (!rIt || rIt.type === 'polygon') continue;
-            var rMap = rIt.type === 'pin' ? bulkSelectedPins : bulkSelectedTracks;
+            if (!rIt) continue;
+            var rMap = rIt.type === 'pin' ? bulkSelectedPins : rIt.type === 'track' ? bulkSelectedTracks : bulkSelectedPolygons;
             var rId = rIt.data.id;
             if (targetState) rMap[rId] = true; else delete rMap[rId];
           }
@@ -3469,7 +3714,7 @@
 
   // ---------- Bulk edit ----------
   function updateBulkBar(){
-    var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length;
+    var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length;
     document.getElementById('bulk-count').textContent = n + ' selected';
     document.getElementById('bulk-apply-btn').disabled = (n === 0);
     document.getElementById('bulk-delete-btn').disabled = (n === 0);
@@ -3478,7 +3723,7 @@
   function enterBulkMode(){
     bulkMode = true;
     lastBulkClickedIdx = -1;
-    bulkSelectedPins = {}; bulkSelectedTracks = {};
+    bulkSelectedPins = {}; bulkSelectedTracks = {}; bulkSelectedPolygons = {};
     document.getElementById('bulk-bar').classList.remove('hidden');
     document.getElementById('bulk-edit-btn').classList.add('active');
     document.getElementById('sidebar').classList.add('open');
@@ -3488,7 +3733,7 @@
 
   function exitBulkMode(){
     bulkMode = false;
-    bulkSelectedPins = {}; bulkSelectedTracks = {};
+    bulkSelectedPins = {}; bulkSelectedTracks = {}; bulkSelectedPolygons = {};
     document.getElementById('bulk-bar').classList.add('hidden');
     document.getElementById('bulk-edit-btn').classList.remove('active');
     renderPinList();
@@ -3529,7 +3774,8 @@
     var dateVal = dateInputValueToTs(document.getElementById('bulk-date').value);
     var pinIds = Object.keys(bulkSelectedPins);
     var trackIds = Object.keys(bulkSelectedTracks);
-    var total = pinIds.length + trackIds.length;
+    var polyIds = Object.keys(bulkSelectedPolygons);
+    var total = pinIds.length + trackIds.length + polyIds.length;
 
     function applyToItem(item){
       if (addTagIds.length){
@@ -3550,6 +3796,10 @@
       var t = state.tracks.find(function(x){ return x.id === id; });
       if (t){ applyToItem(t); refreshTrackPopup(t); }
     });
+    polyIds.forEach(function(id){
+      var p = (state.polygons||[]).find(function(x){ return x.id === id; });
+      if (p){ applyToItem(p); refreshPolygonMap(p); }
+    });
 
     document.getElementById('bulk-modal').classList.add('hidden');
     exitBulkMode();
@@ -3566,7 +3816,8 @@
   function confirmBulkDelete(){
     var pinIds = Object.keys(bulkSelectedPins);
     var trackIds = Object.keys(bulkSelectedTracks);
-    var total = pinIds.length + trackIds.length;
+    var polyIds = Object.keys(bulkSelectedPolygons);
+    var total = pinIds.length + trackIds.length + polyIds.length;
     pinIds.forEach(function(id){
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
       recordTombstone(id);
@@ -3576,6 +3827,11 @@
       state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
       recordTombstone(id);
       removeTrackFromMap(id);
+    });
+    polyIds.forEach(function(id){
+      state.polygons = (state.polygons||[]).filter(function(p){ return p.id !== id; });
+      recordTombstone(id);
+      removePolygonFromMap(id);
     });
     document.getElementById('bulk-delete-modal').classList.add('hidden');
     exitBulkMode();
@@ -4688,6 +4944,495 @@
     });
   }
 
+  // ═══════════════════════════════════════════════
+  //  P2 TOOLS
+  // ═══════════════════════════════════════════════
+
+  // ── Snow depth / light pollution / NLCD toggles ──
+  function toggleSimpleLayer(layerVar, stateKey, on){
+    if (!layerVar) return;
+    if (on) layerVar.addTo(map); else if (map.hasLayer(layerVar)) map.removeLayer(layerVar);
+    state.settings[stateKey] = on;
+    scheduleSave();
+  }
+
+  // ── Wildfire (NIFC feature service) ──
+  function loadWildfireLayer(){
+    if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
+    fetch('https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/Current_WildlandFire_Perimeters/FeatureServer/0/query?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained,attr_FireCause&returnGeometry=true&f=geojson')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        wildfireLayer = L.geoJSON(data, {
+          style:function(){ return { color:'#e05f20', weight:1.5, fillColor:'#e05f20', fillOpacity:0.15 }; },
+          onEachFeature:function(feature, layer){
+            var p = feature.properties;
+            var name = p.poly_IncidentName || 'Unknown fire';
+            var cont = p.attr_PercentContained != null ? p.attr_PercentContained + '% contained' : '';
+            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>' + (cont ? '<br>' + cont : ''));
+          }
+        }).addTo(map);
+      })
+      .catch(function(){ showToast('Could not load wildfire data'); });
+  }
+
+  // ── USFS NFS Boundaries (feature service) ──
+  var usfsBoundaryLayerGroup = null;
+  function loadUsfsBoundariesLayer(){
+    if (usfsBoundaryLayerGroup){ map.removeLayer(usfsBoundaryLayerGroup); usfsBoundaryLayerGroup = null; }
+    fetch('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestCommonNames_01/MapServer/0/query?where=1%3D1&outFields=COMMONNAME,REGION&returnGeometry=true&f=geojson')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        usfsBoundaryLayerGroup = L.geoJSON(data, {
+          style:function(){ return { color:'#5fa86b', weight:1.5, fillColor:'#5fa86b', fillOpacity:0.06, dashArray:'6,4' }; },
+          onEachFeature:function(feature, layer){
+            var name = feature.properties.COMMONNAME || 'National Forest';
+            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>');
+          }
+        }).addTo(map);
+      })
+      .catch(function(){ showToast('Could not load USFS boundaries — server may be unavailable'); });
+  }
+
+  // ── Sunrise / Sunset ──
+  var SUNRISE_ARC_ON = true;
+
+  function openSunrisePanel(){
+    if (!sunDate) sunDate = new Date();
+    var center = map.getCenter();
+    renderSunriseTimes(center, sunDate);
+    if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    document.getElementById('sunrise-panel').classList.remove('hidden');
+    closeAllPanels_except('sunrise-panel');
+  }
+
+  function renderSunriseTimes(center, date){
+    var times = SunCalc.getTimes(date, center.lat, center.lng);
+    var moonTimes = SunCalc.getMoonTimes(date, center.lat, center.lng);
+    var moonIllum = SunCalc.getMoonIllumination(date);
+
+    // Date display
+    document.getElementById('sunrise-date').textContent = date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+    document.getElementById('sunrise-location').textContent =
+      center.lat.toFixed(3) + '°' + (center.lat >= 0 ? 'N' : 'S') + ', ' + Math.abs(center.lng).toFixed(3) + '°' + (center.lng >= 0 ? 'E' : 'W');
+
+    // Timeline bar
+    renderSunTimelineBar(times, date);
+
+    // Times list
+    var phaseDefs = [
+      { key:'nightEnd',    icon:'🌙', label:'First light (astronomical)', highlight:false },
+      { key:'nauticalDawn',icon:'🌫️', label:'Nautical dawn',             highlight:false },
+      { key:'dawn',        icon:'🌄', label:'Civil dawn',                 highlight:false },
+      { key:'sunrise',     icon:'🌅', label:'Sunrise',                    highlight:true },
+      { key:'goldenHourEnd',icon:'✨',label:'Golden hour ends',           highlight:false },
+      { key:'solarNoon',   icon:'☀️', label:'Solar noon',                 highlight:false },
+      { key:'goldenHour',  icon:'✨', label:'Golden hour begins',         highlight:false },
+      { key:'sunset',      icon:'🌇', label:'Sunset',                     highlight:true },
+      { key:'dusk',        icon:'🌆', label:'Civil dusk',                 highlight:false },
+      { key:'nauticalDusk',icon:'🌉', label:'Nautical dusk',             highlight:false },
+      { key:'night',       icon:'🌙', label:'Full dark',                  highlight:false }
+    ];
+    var list = document.getElementById('sunrise-times-list');
+    list.innerHTML = '';
+    phaseDefs.forEach(function(ph){
+      var t = times[ph.key];
+      if (!t || isNaN(t.getTime())) return;
+      var row = document.createElement('div');
+      row.className = 'sunrise-time-row' + (ph.highlight ? ' highlight' : '');
+      row.innerHTML =
+        '<span class="sunrise-time-icon">' + ph.icon + '</span>' +
+        '<span class="sunrise-time-label">' + ph.label + '</span>' +
+        '<span class="sunrise-time-value">' + formatTime12(t) + '</span>';
+      list.appendChild(row);
+    });
+
+    // Moon
+    var moonPhaseNames = ['🌑 New Moon','🌒 Waxing Crescent','🌓 First Quarter','🌔 Waxing Gibbous','🌕 Full Moon','🌖 Waning Gibbous','🌗 Last Quarter','🌘 Waning Crescent'];
+    var phaseIdx = Math.round(moonIllum.phase * 8) % 8;
+    var moonRow = document.createElement('div');
+    moonRow.className = 'sunrise-time-row';
+    var moonRiseStr = moonTimes.rise ? formatTime12(moonTimes.rise) : 'N/A';
+    var moonSetStr  = moonTimes.set  ? formatTime12(moonTimes.set)  : 'N/A';
+    moonRow.innerHTML =
+      '<span class="sunrise-time-icon">🌙</span>' +
+      '<span class="sunrise-time-label">' + moonPhaseNames[phaseIdx] + '<br><small style="color:var(--text-muted)">Rise ' + moonRiseStr + ' · Set ' + moonSetStr + '</small></span>' +
+      '<span class="sunrise-time-value">' + Math.round(moonIllum.fraction * 100) + '%</span>';
+    list.appendChild(moonRow);
+  }
+
+  function formatTime12(date){
+    var h = date.getHours(), m = date.getMinutes();
+    var ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+  }
+
+  function renderSunTimelineBar(times, date){
+    var bar = document.getElementById('sunrise-timeline-bar');
+    var startMs = new Date(date); startMs.setHours(0,0,0,0);
+    var endMs = new Date(date); endMs.setHours(24,0,0,0);
+    var totalMs = endMs - startMs;
+
+    function pct(t){ return t ? Math.max(0, Math.min(100, (t - startMs) / totalMs * 100)) : null; }
+
+    var p = {
+      nightEnd: pct(times.nightEnd), dawn: pct(times.dawn),
+      goldenHourEnd: pct(times.goldenHourEnd), solarNoon: pct(times.solarNoon),
+      goldenHour: pct(times.goldenHour), dusk: pct(times.dusk), night: pct(times.night),
+      sunrise: pct(times.sunrise), sunset: pct(times.sunset)
+    };
+
+    bar.style.background =
+      'linear-gradient(to right,' +
+      '#0d1117 0%, #0d1117 ' + (p.nightEnd||8) + '%,' +
+      '#1a2744 ' + (p.nightEnd||8) + '%, #2d4068 ' + (p.dawn||20) + '%,' +
+      '#c47a28 ' + (p.sunrise||26) + '%, #c47a28 ' + (p.goldenHourEnd||30) + '%,' +
+      '#f0e898 ' + (p.goldenHourEnd||30) + '%, #f0e898 ' + (p.goldenHour||70) + '%,' +
+      '#c47a28 ' + (p.goldenHour||70) + '%, #c47a28 ' + (p.sunset||74) + '%,' +
+      '#2d4068 ' + (p.dusk||80) + '%, #1a2744 ' + (p.night||88) + '%,' +
+      '#0d1117 ' + (p.night||88) + '%, #0d1117 100%)';
+
+    // Current time marker (only on today)
+    var today = new Date(); today.setHours(0,0,0,0);
+    var isToday = date.toDateString() === new Date().toDateString();
+    var marker = document.getElementById('sunrise-now-marker');
+    if (isToday){
+      var nowPct = (new Date() - startMs) / totalMs * 100;
+      marker.style.left = Math.max(0, Math.min(100, nowPct)) + '%';
+      marker.style.display = '';
+    } else {
+      marker.style.display = 'none';
+    }
+
+    // Timeline labels
+    var labels = document.getElementById('sunrise-timeline-labels');
+    labels.innerHTML = '<span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span>';
+  }
+
+  function renderSunArc(center, date){
+    sunPathLayerGroup.clearLayers();
+    if (!SUNRISE_ARC_ON) return;
+    var times = SunCalc.getTimes(date, center.lat, center.lng);
+    // Draw arc from dawn to dusk in 10-min intervals
+    var startTime = times.nightEnd || times.dawn;
+    var endTime = times.night || times.dusk;
+    if (!startTime || !endTime) return;
+
+    var segments = { twilight:[], golden:[], day:[] };
+    for (var t = new Date(startTime.getTime()); t <= endTime; t = new Date(t.getTime() + 10*60*1000)){
+      var pos = SunCalc.getPosition(t, center.lat, center.lng);
+      if (pos.altitude < -0.1) continue;
+      // Convert SunCalc azimuth (from south, CW) to standard bearing (from north, CW)
+      var az = pos.azimuth + Math.PI; // now from north
+      var distDeg = 0.25;
+      var latOff = distDeg * Math.cos(az);
+      var lngOff = distDeg * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
+      var pt = [center.lat + latOff, center.lng + lngOff];
+
+      var key = 'day';
+      if (t < times.goldenHourEnd || t > times.goldenHour) key = 'golden';
+      if (t < times.sunrise || t > times.sunset) key = 'twilight';
+      segments[key].push(pt);
+    }
+
+    var colors = { twilight:'#5a7bb5', golden:'#d9843a', day:'#f0c040' };
+    Object.keys(segments).forEach(function(k){
+      if (segments[k].length > 1){
+        L.polyline(segments[k], { color:colors[k], weight:3, opacity:0.75, interactive:false })
+          .addTo(sunPathLayerGroup);
+      }
+    });
+
+    // Sunrise and sunset direction markers
+    function addDirMarker(tTime, label, color){
+      if (!tTime || isNaN(tTime.getTime())) return;
+      var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
+      var az = pos.azimuth + Math.PI;
+      var d = 0.28;
+      var lat = center.lat + d * Math.cos(az);
+      var lng = center.lng + d * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
+      var icon = L.divIcon({
+        className:'', iconSize:[0,0],
+        html:'<div style="white-space:nowrap;font-size:10px;font-weight:700;color:' + color + ';text-shadow:0 0 4px rgba(0,0,0,0.7);pointer-events:none;">' + label + '</div>'
+      });
+      L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
+    }
+    addDirMarker(times.sunrise, '↑ ' + formatTime12(times.sunrise), '#d9843a');
+    addDirMarker(times.sunset,  '↓ ' + formatTime12(times.sunset),  '#d9843a');
+  }
+
+  function closeAllPanels_except(keepId){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
+      if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
+    });
+  }
+
+  // ── Elevation at tap ──
+  function setElevTapMode(on){
+    elevTapMode = on;
+    document.getElementById('map').classList.toggle('elev-tap-mode', on);
+    if (!on) document.getElementById('elevation-tooltip').classList.add('hidden');
+    showToast(on ? 'Tap anywhere on the map to see elevation — tap again to dismiss' : '');
+  }
+
+  function fetchElevationAtPoint(latlng){
+    var url = 'https://epqs.nationalmap.gov/v1/json?x=' + latlng.lng + '&y=' + latlng.lat + '&wkid=4326&includeDate=false&units=Feet';
+    var tooltip = document.getElementById('elevation-tooltip');
+    tooltip.textContent = 'Loading…';
+    tooltip.classList.remove('hidden');
+    // Position tooltip near click point
+    var containerPt = map.latLngToContainerPoint(latlng);
+    tooltip.style.left = (containerPt.x + 12) + 'px';
+    tooltip.style.top  = (containerPt.y - 20) + 'px';
+
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var elev = data.value;
+        if (elev == null || elev === -1000000) { tooltip.textContent = 'No data'; return; }
+        var ft = Math.round(Number(elev));
+        var m  = Math.round(ft * 0.3048);
+        tooltip.textContent = ft.toLocaleString() + ' ft  (' + m.toLocaleString() + ' m)';
+        tooltip.style.pointerEvents = 'auto';
+        tooltip.style.cursor = 'pointer';
+        tooltip.onclick = function(){ tooltip.classList.add('hidden'); tooltip.style.pointerEvents = 'none'; };
+      })
+      .catch(function(){ tooltip.textContent = 'Elevation unavailable'; });
+  }
+
+  // ── Compass + Bearing/Range ──
+  var gpsWatchIdCompass = null;
+  var currentGpsLatLng = null;
+
+  function openCompassPanel(){
+    document.getElementById('compass-panel').classList.remove('hidden');
+    closeAllPanels_except('compass-panel');
+    compassActive = true;
+    // Get current GPS position
+    if (navigator.geolocation){
+      gpsWatchIdCompass = navigator.geolocation.watchPosition(function(pos){
+        currentGpsLatLng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+        updateCompassMapLines();
+      }, null, { enableHighAccuracy:true });
+    } else {
+      document.getElementById('compass-no-gps-msg').classList.remove('hidden');
+    }
+    // Start device orientation
+    if (typeof DeviceOrientationEvent !== 'undefined'){
+      if (typeof DeviceOrientationEvent.requestPermission === 'function'){
+        DeviceOrientationEvent.requestPermission().then(function(state){
+          if (state === 'granted') window.addEventListener('deviceorientation', handleCompassOrientation, true);
+          else document.getElementById('compass-status').textContent = 'Compass permission denied — tap map for bearing';
+        }).catch(function(){ startGenericOrientation(); });
+      } else { startGenericOrientation(); }
+    } else {
+      document.getElementById('compass-status').textContent = 'No compass on this device — tap map for bearing';
+    }
+  }
+
+  function startGenericOrientation(){
+    if ('ondeviceorientationabsolute' in window)
+      window.addEventListener('deviceorientationabsolute', handleCompassOrientation, true);
+    else
+      window.addEventListener('deviceorientation', handleCompassOrientation, true);
+  }
+
+  function handleCompassOrientation(e){
+    var heading = e.webkitCompassHeading != null ? e.webkitCompassHeading :
+                  (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
+    if (heading == null) return;
+    compassHeading = heading;
+    // Rotate compass needle (needle points N, so rotate by -heading)
+    var needle = document.getElementById('compass-needle-group');
+    if (needle) needle.style.transform = 'rotate(' + (-heading) + 'deg)';
+    // Heading display
+    var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    var dirLabel = dirs[Math.round(heading / 22.5) % 16];
+    document.getElementById('compass-heading-display').textContent = dirLabel + ' ' + Math.round(heading) + '°';
+    document.getElementById('compass-status').textContent = 'Tap map for bearing & range to target';
+    updateCompassMapLines();
+  }
+
+  function updateCompassMapLines(){
+    if (!currentGpsLatLng) return;
+    // Remove old lines
+    if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
+    if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
+
+    var d = 0.4;
+    // North line (red, fixed)
+    var northPt = L.latLng(currentGpsLatLng.lat + d, currentGpsLatLng.lng);
+    compassNorthLine = L.polyline([currentGpsLatLng, northPt], {
+      color:'#e03535', weight:2.5, dashArray:'7,5', opacity:0.9, interactive:false
+    }).addTo(map);
+
+    // Facing direction line (blue)
+    if (compassHeading != null){
+      var az = compassHeading * Math.PI / 180;
+      var facingPt = L.latLng(
+        currentGpsLatLng.lat + d * Math.cos(az),
+        currentGpsLatLng.lng + d * Math.sin(az) / Math.cos(currentGpsLatLng.lat * Math.PI / 180)
+      );
+      compassFacingLine = L.polyline([currentGpsLatLng, facingPt], {
+        color:'#5a9bd8', weight:2.5, dashArray:'7,5', opacity:0.9, interactive:false
+      }).addTo(map);
+    }
+  }
+
+  function handleCompassMapTap(latlng){
+    compassTargetLatLng = latlng;
+    if (!currentGpsLatLng){
+      showToast('Enable location to get bearing from your position');
+      return;
+    }
+    // Remove old target line
+    if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
+
+    var bearing = bearingBetween(currentGpsLatLng.lat, currentGpsLatLng.lng, latlng.lat, latlng.lng);
+    var distMi  = haversineMiles(currentGpsLatLng.lat, currentGpsLatLng.lng, latlng.lat, latlng.lng);
+    var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    var dirLabel = dirs[Math.round(bearing / 22.5) % 16];
+
+    compassTargetLine = L.polyline([currentGpsLatLng, latlng], {
+      color:'#d9a13f', weight:2, dashArray:'8,5', opacity:0.85, interactive:false
+    }).addTo(map);
+
+    document.getElementById('compass-target-bearing').textContent = dirLabel + ' ' + Math.round(bearing) + '°';
+    document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi (' + (distMi * 1.60934).toFixed(2) + ' km)';
+    document.getElementById('compass-target-result').classList.remove('hidden');
+  }
+
+  function bearingBetween(lat1, lng1, lat2, lng2){
+    var toRad = function(d){ return d * Math.PI / 180; };
+    var dLng = toRad(lng2 - lng1);
+    var y = Math.sin(dLng) * Math.cos(toRad(lat2));
+    var x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+
+  function closeCompassPanel(){
+    compassActive = false;
+    compassHeading = null;
+    if (gpsWatchIdCompass != null){ navigator.geolocation && navigator.geolocation.clearWatch(gpsWatchIdCompass); gpsWatchIdCompass = null; }
+    window.removeEventListener('deviceorientation', handleCompassOrientation, true);
+    window.removeEventListener('deviceorientationabsolute', handleCompassOrientation, true);
+    if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
+    if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
+    if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
+    document.getElementById('compass-panel').classList.add('hidden');
+    document.getElementById('compass-target-result').classList.add('hidden');
+    currentGpsLatLng = null;
+  }
+
+  // ── Weather (NWS free API) ──
+  var lastWeatherPoint = null;
+
+  function openWeatherPanel(){
+    document.getElementById('weather-panel').classList.remove('hidden');
+    closeAllPanels_except('weather-panel');
+    var center = map.getCenter();
+    var key = Math.round(center.lat * 10) + ',' + Math.round(center.lng * 10);
+    document.getElementById('weather-location').textContent = center.lat.toFixed(3) + '°N, ' + Math.abs(center.lng).toFixed(3) + '°W';
+    document.getElementById('weather-loading').classList.remove('hidden');
+    document.getElementById('weather-content').classList.add('hidden');
+    document.getElementById('weather-error').classList.add('hidden');
+    fetchWeather(center.lat, center.lng);
+  }
+
+  function fetchWeather(lat, lng){
+    // Step 1: get grid point
+    fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lng.toFixed(4))
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var props = data.properties;
+        // Fetch forecast and hourly in parallel
+        return Promise.all([
+          fetch(props.forecast).then(function(r){ return r.json(); }),
+          fetch(props.forecastHourly).then(function(r){ return r.json(); })
+        ]);
+      })
+      .then(function(results){
+        renderWeather(results[0], results[1]);
+      })
+      .catch(function(){
+        document.getElementById('weather-loading').classList.add('hidden');
+        document.getElementById('weather-error').classList.remove('hidden');
+      });
+  }
+
+  function renderWeather(daily, hourly){
+    document.getElementById('weather-loading').classList.add('hidden');
+    document.getElementById('weather-content').classList.remove('hidden');
+
+    var periods = daily.properties && daily.properties.periods || [];
+    var hourlyPeriods = hourly.properties && hourly.properties.periods || [];
+
+    // Current conditions (first hourly period)
+    var cur = hourlyPeriods[0] || {};
+    var curEl = document.getElementById('weather-current');
+    var windDir = cur.windDirection || '';
+    var windSpd = cur.windSpeed || '';
+    curEl.innerHTML =
+      '<div style="font-size:36px;line-height:1;">' + weatherIcon(cur.shortForecast) + '</div>' +
+      '<div>' +
+        '<div style="font-size:28px;font-weight:700;color:var(--text);font-family:var(--font-mono);">' + (cur.temperature||'–') + '°' + (cur.temperatureUnit||'F') + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);">' + (cur.shortForecast||'') + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);">' + windDir + ' ' + windSpd + '</div>' +
+      '</div>';
+
+    // Hourly strip (next 12 hours)
+    var hourlyEl = document.getElementById('weather-hourly');
+    hourlyEl.innerHTML = '';
+    hourlyPeriods.slice(0, 12).forEach(function(p){
+      var t = new Date(p.startTime);
+      var hLabel = t.getHours() === 0 ? '12am' : t.getHours() < 12 ? t.getHours() + 'am' : t.getHours() === 12 ? '12pm' : (t.getHours()-12) + 'pm';
+      var cell = document.createElement('div');
+      cell.className = 'weather-hour-cell';
+      cell.innerHTML = '<div>' + hLabel + '</div><div>' + weatherIcon(p.shortForecast) + '</div><div class="weather-hour-temp">' + (p.temperature||'–') + '°</div><div style="font-size:10px;">' + (p.windSpeed||'') + '</div>';
+      hourlyEl.appendChild(cell);
+    });
+
+    // 7-day (day periods only)
+    var forecastEl = document.getElementById('weather-forecast');
+    forecastEl.innerHTML = '';
+    var dayPeriods = periods.filter(function(p){ return p.isDaytime !== false || !p.name.toLowerCase().includes('night'); }).slice(0, 7);
+    dayPeriods.forEach(function(p, i){
+      var night = periods.find(function(n){ return n.name === p.name + ' Night'; });
+      var row = document.createElement('div');
+      row.className = 'weather-forecast-row';
+      var dayLabel = i === 0 ? 'Today' : new Date(p.startTime).toLocaleDateString('en-US', { weekday:'short' });
+      row.innerHTML =
+        '<div class="wf-day">' + dayLabel + '</div>' +
+        '<div class="wf-icon">' + weatherIcon(p.shortForecast) + '</div>' +
+        '<div class="wf-temps"><span class="wf-hi">' + (p.temperature||'–') + '°</span>' +
+          (night ? ' <span class="wf-lo">/ ' + night.temperature + '°</span>' : '') + '</div>' +
+        '<div class="wf-wind">' + (p.windDirection||'') + ' ' + (p.windSpeed||'') + '</div>';
+      forecastEl.appendChild(row);
+    });
+  }
+
+  function weatherIcon(forecast){
+    if (!forecast) return '🌡️';
+    var f = forecast.toLowerCase();
+    if (f.includes('thunder')) return '⛈️';
+    if (f.includes('snow') || f.includes('blizzard')) return '❄️';
+    if (f.includes('rain') || f.includes('shower') || f.includes('drizzle')) return '🌧️';
+    if (f.includes('fog') || f.includes('mist')) return '🌫️';
+    if (f.includes('clear') || f.includes('sunny')) return '☀️';
+    if (f.includes('partly')) return '⛅';
+    if (f.includes('cloud') || f.includes('overcast')) return '☁️';
+    if (f.includes('wind')) return '💨';
+    return '🌡️';
+  }
+
+  // ── Close all panels helper (updated to include P2 panels) ──
+  function closeAllPanels(){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    });
+  }
+
   // ---------- Cloud sync bridge ----------
   // This app's core logic (above) runs as a classic script and knows nothing about
   // Firebase. The actual Firebase calls live in a separate <script type="module">
@@ -4844,6 +5589,11 @@
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
+            if (state.settings.wildfireOn === undefined) state.settings.wildfireOn = false;
+            if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
+            if (state.settings.lightPollutionOn === undefined) state.settings.lightPollutionOn = false;
+            if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
+            if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
             if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
             state.pins.forEach(function(p){
@@ -4866,12 +5616,6 @@
   }
 
   // ---------- Panels ----------
-  function closeAllPanels(){
-    document.getElementById('layers-panel').classList.add('hidden');
-    document.getElementById('filter-panel').classList.add('hidden');
-    document.getElementById('settings-panel').classList.add('hidden');
-  }
-
   // ---------- Wire up UI ----------
   function bindUI(){
     renderTagChips();
@@ -4915,6 +5659,103 @@
       document.getElementById('tools-sheet').classList.add('hidden');
       findAndShowDuplicates();
     });
+
+    // ── P2 Tools ──
+    document.getElementById('sheet-sunrise-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      if (!sunDate) sunDate = new Date();
+      openSunrisePanel();
+    });
+    document.getElementById('sunrise-close-btn').addEventListener('click', function(){
+      document.getElementById('sunrise-panel').classList.add('hidden');
+      sunPathLayerGroup.clearLayers();
+    });
+    document.getElementById('sunrise-prev-btn').addEventListener('click', function(){
+      sunDate = new Date(sunDate.getTime() - 86400000);
+      var center = map.getCenter();
+      renderSunriseTimes(center, sunDate);
+      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    });
+    document.getElementById('sunrise-next-btn').addEventListener('click', function(){
+      sunDate = new Date(sunDate.getTime() + 86400000);
+      var center = map.getCenter();
+      renderSunriseTimes(center, sunDate);
+      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    });
+    document.getElementById('sunrise-today-btn').addEventListener('click', function(){
+      sunDate = new Date();
+      var center = map.getCenter();
+      renderSunriseTimes(center, sunDate);
+      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    });
+    document.getElementById('sunrise-arc-toggle').addEventListener('change', function(){
+      SUNRISE_ARC_ON = this.checked;
+      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+      else sunPathLayerGroup.clearLayers();
+    });
+
+    document.getElementById('sheet-elevation-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      setElevTapMode(!elevTapMode);
+      if (elevTapMode) showToast('Tap anywhere on the map to see elevation');
+    });
+
+    document.getElementById('sheet-compass-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      if (compassActive) closeCompassPanel();
+      else openCompassPanel();
+    });
+    document.getElementById('compass-close-btn').addEventListener('click', closeCompassPanel);
+    document.getElementById('compass-save-target-btn').addEventListener('click', function(){
+      if (!compassTargetLatLng) return;
+      pendingLatLng = compassTargetLatLng;
+      var bearing = document.getElementById('compass-target-bearing').textContent;
+      var dist = document.getElementById('compass-target-dist').textContent;
+      openPinModal(null, compassTargetLatLng);
+      // Pre-fill notes with bearing/range info
+      setTimeout(function(){
+        var notesEl = document.getElementById('pin-notes');
+        if (notesEl && !notesEl.value) notesEl.value = 'Bearing ' + bearing + ' · ' + dist;
+      }, 100);
+    });
+
+    document.getElementById('sheet-weather-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      openWeatherPanel();
+    });
+    document.getElementById('weather-close-btn').addEventListener('click', function(){
+      document.getElementById('weather-panel').classList.add('hidden');
+    });
+
+    // ── P2 Layer toggles ──
+    document.getElementById('wildfire-toggle').addEventListener('change', function(){
+      state.settings.wildfireOn = this.checked;
+      if (this.checked) loadWildfireLayer();
+      else if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
+      scheduleSave();
+    });
+    document.getElementById('snowdepth-toggle').addEventListener('change', function(){
+      toggleSimpleLayer(snowDepthLayer, 'snowDepthOn', this.checked);
+    });
+    document.getElementById('lightpollution-toggle').addEventListener('change', function(){
+      toggleSimpleLayer(lightPollutionLayer, 'lightPollutionOn', this.checked);
+    });
+    document.getElementById('nlcd-toggle').addEventListener('change', function(){
+      toggleSimpleLayer(nlcdLayer, 'nlcdOn', this.checked);
+    });
+    document.getElementById('usfsboundaries-toggle').addEventListener('change', function(){
+      state.settings.usfsBoundariesOn = this.checked;
+      if (this.checked) loadUsfsBoundariesLayer();
+      else if (usfsBoundaryLayerGroup){ map.removeLayer(usfsBoundaryLayerGroup); usfsBoundaryLayerGroup = null; }
+      scheduleSave();
+    });
+
+    // Restore layer toggle states
+    document.getElementById('wildfire-toggle').checked = !!state.settings.wildfireOn;
+    document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
+    document.getElementById('lightpollution-toggle').checked = !!state.settings.lightPollutionOn;
+    document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
+    document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       document.getElementById('about-version').textContent = 'v' + APP_VERSION + ' · ' + APP_RELEASE_DATE;
@@ -5346,11 +6187,11 @@
       renderBulkTagChips();
       document.getElementById('bulk-trip').value = '';
       document.getElementById('bulk-date').value = '';
-      document.getElementById('bulk-modal-title').textContent = 'Edit ' + (Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length) + ' selected';
+      document.getElementById('bulk-modal-title').textContent = 'Edit ' + (Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length) + ' selected';
       document.getElementById('bulk-modal').classList.remove('hidden');
     });
     document.getElementById('bulk-delete-btn').addEventListener('click', function(){
-      var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length;
+      var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length;
       if (n === 0) return;
       document.getElementById('bulk-delete-modal-title').textContent = 'Delete ' + n + ' item' + (n===1?'':'s') + '?';
       document.getElementById('bulk-delete-modal-body').textContent =
