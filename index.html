@@ -154,10 +154,10 @@
   #pin-list{flex:1;overflow-y:auto;padding:8px 0;}
   .track-mark{border-radius:3px;width:20px;height:5px;margin-top:8px;}
   .pin-row{
-    display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;
+    display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;
   }
   .pin-row:hover{background:var(--bg-elevated-2);}
-  .pin-dot{width:30px;height:30px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;}
+  .pin-dot{width:26px;height:26px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;}
   .pin-row-text{flex:1;min-width:0;}
   .pin-row-name{font-size:13px;font-weight:600;line-height:1.3;}
   .pin-row-meta{font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.3;}
@@ -1027,6 +1027,7 @@
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
       <button id="compass-save-target-btn" class="btn btn-small hidden" style="white-space:nowrap;">Save bearing</button>
+      <button id="compass-center-toggle-btn" class="btn btn-small" style="white-space:nowrap;font-size:10px;" title="Switch origin between GPS location and map center">📍 My Location</button>
       <button id="compass-close-btn" class="link-btn" style="font-size:11px;color:var(--text-muted);">✕ Close</button>
     </div>
   </div>
@@ -1641,7 +1642,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.6';
+  var APP_VERSION = '1.2.7';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1719,6 +1720,7 @@
   var compassNorthLine = null, compassFacingLine = null, compassTargetLine = null;
   var compassActive = false, compassHeading = null, elevTapMode = false;
   var compassTargetLatLng = null;
+  var compassUseCenter = false; // false = GPS location, true = map center
   var sunDate = null; // date currently shown in sunrise panel
   var GMU_SOURCES = {
     az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' }
@@ -3110,6 +3112,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     map.on('move', updateScaleBar);
     map.on('zoomend', updateGmuLabelVisibility);
     map.on('zoomend moveend', scheduleClusterRefresh);
+    map.on('zoomend moveend', function(){
+      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+    });
+    map.on('moveend', function(){
+      if (compassActive && compassUseCenter) updateCompassMapLines();
+    });
     updateCenterReadout();
     updateScaleBar();
 
@@ -4680,7 +4688,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var sc = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
       mark.className = 'pin-dot';
       mark.style.cssText = 'background:' + sc.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-      mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 11);
+      mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 14);
     }
     row.appendChild(mark);
 
@@ -6474,7 +6482,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function updateCompassMapLines(){
-    if (!currentGpsLatLng) return;
+    var origin = compassUseCenter ? map.getCenter() : currentGpsLatLng;
+    if (!origin) return;
     if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
     if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
 
@@ -6483,8 +6492,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var d = Math.max(0.1, (mapBounds.getNorth() - mapBounds.getSouth()) * 3);
 
     // North line (red dashed — fixed geographic north reference)
-    var northPt = L.latLng(currentGpsLatLng.lat + d, currentGpsLatLng.lng);
-    compassNorthLine = L.polyline([currentGpsLatLng, northPt], {
+    var northPt = L.latLng(origin.lat + d, origin.lng);
+    compassNorthLine = L.polyline([origin, northPt], {
       color:'#e03535', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
     }).addTo(map);
 
@@ -6492,18 +6501,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (compassHeading != null){
       var az = compassHeading * Math.PI / 180;
       var facingPt = L.latLng(
-        currentGpsLatLng.lat + d * Math.cos(az),
-        currentGpsLatLng.lng + d * Math.sin(az) / Math.cos(currentGpsLatLng.lat * Math.PI / 180)
+        origin.lat + d * Math.cos(az),
+        origin.lng + d * Math.sin(az) / Math.cos(origin.lat * Math.PI / 180)
       );
-      compassFacingLine = L.polyline([currentGpsLatLng, facingPt], {
+      compassFacingLine = L.polyline([origin, facingPt], {
         color:'#5a9bd8', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
       }).addTo(map);
     }
   }
 
   function handleCompassMapTap(latlng){
-    // Use GPS if available, otherwise map center (enables e-scout bearing from home)
-    var fromPt = currentGpsLatLng || map.getCenter();
+    // Use GPS if available and not in map-center mode, otherwise map center
+    var fromPt = (!compassUseCenter && currentGpsLatLng) ? currentGpsLatLng : map.getCenter();
     compassTargetLatLng = latlng;
     if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
     if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
@@ -6546,6 +6555,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function closeCompassPanel(){
     compassActive = false;
     compassHeading = null;
+    compassUseCenter = false;
     if (gpsWatchIdCompass != null){ navigator.geolocation && navigator.geolocation.clearWatch(gpsWatchIdCompass); gpsWatchIdCompass = null; }
     window.removeEventListener('deviceorientation', handleCompassOrientation, true);
     window.removeEventListener('deviceorientationabsolute', handleCompassOrientation, true);
@@ -6556,6 +6566,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('compass-panel').classList.add('hidden');
     document.getElementById('compass-target-col').classList.add('hidden');
     document.getElementById('compass-save-target-btn').classList.add('hidden');
+    document.getElementById('compass-center-toggle-btn').textContent = '📍 My Location';
     document.getElementById('compass-heading-display').textContent = '– –°';
     currentGpsLatLng = null;
   }
@@ -6976,6 +6987,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       else openCompassPanel();
     });
     document.getElementById('compass-close-btn').addEventListener('click', closeCompassPanel);
+    document.getElementById('compass-center-toggle-btn').addEventListener('click', function(){
+      compassUseCenter = !compassUseCenter;
+      this.textContent = compassUseCenter ? '🗺 Map Center' : '📍 My Location';
+      // Clear target line when switching modes
+      if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
+      if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
+      document.getElementById('compass-target-col').classList.add('hidden');
+      compassTargetLatLng = null;
+      var statusEl = document.getElementById('compass-status');
+      statusEl.textContent = compassUseCenter
+        ? '— origin: map center · pan map to reposition —'
+        : '— red line = north · blue line = your facing direction —';
+      updateCompassMapLines();
+    });
     document.getElementById('compass-save-target-btn').addEventListener('click', function(){
       if (!compassTargetLatLng) return;
       pendingLatLng = compassTargetLatLng;
