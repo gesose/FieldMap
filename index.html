@@ -609,6 +609,28 @@
     }
     #filter-panel,#layers-panel{max-height:48vh;}
 
+    /* Sunrise panel: docked drawer on mobile — sits below map, not over it */
+    #sunrise-panel{
+      position:fixed !important;
+      bottom:0 !important; left:0 !important; right:0 !important;
+      top:auto !important;
+      border-radius:16px 16px 0 0 !important;
+      border-bottom:none !important;
+      max-height:45vh;
+      overflow-y:auto;
+      z-index:1600;
+      padding-bottom:env(safe-area-inset-bottom, 8px);
+    }
+    /* Shrink map when sunrise dock is open */
+    #map.sunrise-docked{
+      position:absolute !important;
+      bottom:var(--sunrise-dock-h, 300px) !important;
+      top:0 !important; left:0 !important; right:0 !important;
+      height:auto !important;
+    }
+    /* Push sidebar and map controls above the dock */
+    #sidebar.sunrise-docked-bar{ bottom:var(--sunrise-dock-h, 300px) !important; }
+
     /* Draw bar, polygon bar, elev bar: centered above bottom sheet */
     #draw-bar,#measure-result,#polygon-bar,#elev-bar{
       bottom:90px;
@@ -1671,7 +1693,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.7';
+  var APP_VERSION = '1.3.8';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6235,35 +6257,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
-  var _sunPanOffset = 0; // px panned up when panel opened on mobile
-
-  function sunPanelPanUp(){
-    if (window.innerWidth > 760 || _sunPanOffset !== 0) return;
-    // Measure the actual panel element height so the arc centers in the space above it
+  function sunriseDockOpen(){
+    // Mobile only: dock the panel below the map by shrinking the map element
+    if (window.innerWidth > 760) return;
     var panel = document.getElementById('sunrise-panel');
-    var panelH = panel ? panel.offsetHeight : 300;
-    var bottomBarH = 88; // collapsed sidebar bar height
-    var panPx = Math.round((panelH + bottomBarH) / 2);
-    _sunPanOffset = panPx;
-    // setView with offset avoids iOS panBy animation quirks
-    var c = map.getCenter();
-    var newC = map.unproject(
-      map.project(c, map.getZoom()).subtract([0, -panPx]),
-      map.getZoom()
-    );
-    map.setView(newC, map.getZoom(), { animate:false });
+    var mapEl  = document.getElementById('map');
+    var sidebarEl = document.getElementById('sidebar');
+    // Let browser render panel first, then measure
+    requestAnimationFrame(function(){
+      var h = panel.offsetHeight;
+      document.documentElement.style.setProperty('--sunrise-dock-h', h + 'px');
+      mapEl.classList.add('sunrise-docked');
+      sidebarEl.classList.add('sunrise-docked-bar');
+      map.invalidateSize({ animate:false });
+      // Redraw arc now that map size is correct
+      var center = map.getCenter();
+      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    });
   }
 
-  function sunPanelPanDown(){
-    if (_sunPanOffset === 0) return;
-    var px = _sunPanOffset;
-    _sunPanOffset = 0;
-    var c = map.getCenter();
-    var newC = map.unproject(
-      map.project(c, map.getZoom()).subtract([0, px]),
-      map.getZoom()
-    );
-    map.setView(newC, map.getZoom(), { animate:false });
+  function sunriseDockClose(){
+    if (window.innerWidth > 760) return;
+    var mapEl = document.getElementById('map');
+    var sidebarEl = document.getElementById('sidebar');
+    mapEl.classList.remove('sunrise-docked');
+    sidebarEl.classList.remove('sunrise-docked-bar');
+    document.documentElement.style.removeProperty('--sunrise-dock-h');
+    map.invalidateSize({ animate:false });
   }
 
   function openSunrisePanel(){
@@ -6271,7 +6291,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sunrise-panel').classList.remove('hidden');
     closeAllPanels_except('sunrise-panel');
     if (window._sunSliderInit) window._sunSliderInit();
-    sunPanelPanUp(); // pan first so arc draws at new center
+    sunriseDockOpen();
     var center = map.getCenter();
     renderSunriseTimes(center, sunDate);
     if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
@@ -6483,9 +6503,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var tx = azDeg < 180 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
-        html:'<div style="white-space:nowrap;font-size:13px;font-weight:700;color:' + color +
-             ';pointer-events:none;transform:translate(' + tx + ',-50%);' +
-             'text-shadow:0 0 3px rgba(0,0,0,0.9),0 0 6px rgba(0,0,0,0.7);">' + label + '</div>'
+        html:'<div style="white-space:nowrap;font-size:14px;font-weight:700;color:' + color +
+             ';pointer-events:none;transform:translate(' + tx + ',-50%);">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
@@ -6499,7 +6518,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
-    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ sunPathLayerGroup && sunPathLayerGroup.clearLayers(); sunPanelPanDown(); }
+    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ sunPathLayerGroup && sunPathLayerGroup.clearLayers(); sunriseDockClose(); }
   }
 
   function setElevTapMode(on){
@@ -6778,7 +6797,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
-    if (wasSunriseOpen){ sunPathLayerGroup.clearLayers(); sunPanelPanDown(); }
+    if (wasSunriseOpen){ sunPathLayerGroup.clearLayers(); sunriseDockClose(); }
   }
 
   // ---------- Cloud sync bridge ----------
@@ -7040,7 +7059,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
       sunPathLayerGroup.clearLayers();
-      sunPanelPanDown();
+      sunriseDockClose();
     });
     document.getElementById('sunrise-prev-btn').addEventListener('click', function(){
       sunDate = new Date(sunDate.getTime() - 86400000);
