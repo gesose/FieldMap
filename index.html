@@ -1671,7 +1671,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.4';
+  var APP_VERSION = '1.3.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6235,14 +6235,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
+  var _sunPanOffset = 0; // px panned up when panel opened on mobile
+
+  function sunPanelPanUp(){
+    if (window.innerWidth > 760 || _sunPanOffset !== 0) return;
+    // Panel is ~320px tall on mobile; pan map up by half that so arc stays centered
+    var panPx = 160;
+    _sunPanOffset = panPx;
+    map.panBy([0, -panPx], { animate:false });
+  }
+
+  function sunPanelPanDown(){
+    if (_sunPanOffset === 0) return;
+    map.panBy([0, _sunPanOffset], { animate:false });
+    _sunPanOffset = 0;
+  }
+
   function openSunrisePanel(){
     if (!sunDate) sunDate = new Date();
-    var center = map.getCenter();
-    renderSunriseTimes(center, sunDate);
-    if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     document.getElementById('sunrise-panel').classList.remove('hidden');
     closeAllPanels_except('sunrise-panel');
     if (window._sunSliderInit) window._sunSliderInit();
+    sunPanelPanUp(); // pan first so arc draws at new center
+    var center = map.getCenter();
+    renderSunriseTimes(center, sunDate);
+    if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
   }
 
   function renderSunriseTimes(center, date){
@@ -6370,22 +6387,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!SUNRISE_ARC_ON) return;
     if (typeof SunCalc === 'undefined'){ showToast('SunCalc library not loaded'); return; }
 
-    // On mobile, when the sunrise panel is open, shift the arc center upward
-    // so the arc fits in the visible map area above the panel.
-    var drawCenter = center;
-    var isMobile = window.innerWidth <= 640;
-    var panelVisible = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    if (isMobile && panelVisible){
-      // Estimate panel height: collapsed header ~88px + panel content ~220px
-      var panelPx = 320;
-      var mapH = map.getSize().y;
-      // Shift center up by half the panel height in pixels -> degrees
-      var shiftPx = panelPx * 0.42;
-      var topLL  = map.containerPointToLatLng([0, 0]);
-      var shiftLL = map.containerPointToLatLng([0, shiftPx]);
-      var shiftDeg = topLL.lat - shiftLL.lat;
-      drawCenter = L.latLng(center.lat - shiftDeg, center.lng);
-    }
+    var drawCenter = center; // arc always draws at map center
     var times = SunCalc.getTimes(date, center.lat, center.lng);
     var startTime = times.nightEnd || times.nauticalDawn || times.dawn;
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
@@ -6456,13 +6458,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
-      var az  = pos.azimuth + Math.PI;
-      var d   = distDeg * 1.22;
+      var az  = pos.azimuth + Math.PI; // bearing from north CW
+      var d   = distDeg * 1.15;
       var lat = drawCenter.lat + d * Math.cos(az);
       var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
+      // In the northern hemisphere sunrise is to the east (az ~45-120°)
+      // and sunset is to the west (az ~240-315°). Anchor text away from arc:
+      // east side -> left edge at point (translateX 0%), west side -> right edge at point (translateX -100%)
+      var azDeg = az * 180 / Math.PI;
+      var isEast = (azDeg > 0 && azDeg < 180);
+      var xform = isEast ? 'translateY(-50%)' : 'translate(-100%,-50%)';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
-        html:'<div style="white-space:nowrap;font-size:12px;font-weight:700;color:' + color + ';pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
+        html:'<div style="white-space:nowrap;font-size:12px;font-weight:700;color:' + color + ';pointer-events:none;transform:' + xform + ';">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
@@ -6472,9 +6480,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
 
   function closeAllPanels_except(keepId){
+    var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
     ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
+    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ sunPathLayerGroup && sunPathLayerGroup.clearLayers(); sunPanelPanDown(); }
   }
 
   function setElevTapMode(on){
@@ -6748,10 +6758,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ── Close all panels helper (updated to include P2 panels) ──
   function closeAllPanels(){
+    var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
     ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
+    if (wasSunriseOpen){ sunPathLayerGroup.clearLayers(); sunPanelPanDown(); }
   }
 
   // ---------- Cloud sync bridge ----------
@@ -7013,6 +7025,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
       sunPathLayerGroup.clearLayers();
+      sunPanelPanDown();
     });
     document.getElementById('sunrise-prev-btn').addEventListener('click', function(){
       sunDate = new Date(sunDate.getTime() - 86400000);
