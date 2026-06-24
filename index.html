@@ -552,25 +552,17 @@
     /* Sidebar bottom sheet */
     #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
     #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
-    /* Mobile sort row lives in the header (order:1.5) so it's above the scroll area and not clipped */
-    #mobile-sort-row{display:flex;gap:6px;padding:4px 14px 8px;order:2;}
-    #sidebar-scroll-area{order:3;}
     #sidebar{
       position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;height:auto;
       border-right:none;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
       display:flex;flex-direction:column;
     }
     #sidebar-header{order:1;padding:10px 14px 8px;}
-    #sidebar-scroll-area{
-      order:2;
-      max-height:0;overflow:hidden;
-      transition:max-height .25s ease;
-    }
-    #sidebar.open #sidebar-scroll-area{
-      max-height:55vh;
-      overflow-y:auto;
-      -webkit-overflow-scrolling:touch;
-    }
+    /* Sort row: hidden by default (collapsed state), only shown when sidebar is open */
+    #mobile-sort-row{display:none;order:2;gap:6px;padding:0 14px 8px;}
+    #sidebar.open #mobile-sort-row{display:flex;}
+    #sidebar-scroll-area{order:3;max-height:0;overflow:hidden;transition:max-height .25s ease;}
+    #sidebar.open #sidebar-scroll-area{max-height:55vh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
     #pin-count{padding:4px 14px 10px;}
 
     /* Desktop-only sidebar buttons hidden on mobile — Sort, Bulk edit, Import, Export
@@ -586,14 +578,14 @@
     .leaflet-control-zoom{display:none !important;}
 
     /* Push Leaflet attribution above the bottom sheet, shrink it on mobile */
-    .leaflet-bottom.leaflet-left{margin-bottom:90px;transition:margin-bottom .25s ease;}
+    .leaflet-bottom.leaflet-left{margin-bottom:88px;transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
     /* Scale bar: stacked above the attribution line, clear of overlap */
     #scale-bar{
       display:flex !important;
       top:auto;right:auto;
-      bottom:112px;left:14px;
+      bottom:108px;left:14px;
       width:130px;
       transition:bottom .25s ease;
     }
@@ -611,7 +603,7 @@
 
     /* Floating panels: full-width above bottom sheet */
     .floating-panel{
-      bottom:100px;right:14px;left:14px;
+      bottom:88px;right:14px;left:14px;
       width:auto;max-width:none;
     }
     #filter-panel,#layers-panel{max-height:48vh;}
@@ -682,7 +674,6 @@
         <div class="dropdown-item" data-mobile-sort="category">By category</div>
         <div class="dropdown-item" data-mobile-sort="trip">By trip</div>
       </div>
-      <button class="btn btn-small" id="mobile-filter-btn">Filter</button>
     </div>
     </div>
 
@@ -1670,7 +1661,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.3.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -7541,19 +7532,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       menu.classList.toggle('hidden');
     });
     document.querySelectorAll('#mobile-sort-menu .dropdown-item').forEach(function(item){
-      item.addEventListener('click', function(){
+      item.addEventListener('click', function(e){
+        e.stopPropagation(); // don't bubble to header toggle or document close handler
         listSortMode = item.dataset['mobileSort'];
         document.getElementById('mobile-sort-menu').classList.add('hidden');
         renderPinList();
+        // Keep sidebar open after sort selection
       });
-    });
-    document.getElementById('mobile-filter-btn').addEventListener('click', function(){
-      document.getElementById('mobile-sort-menu').classList.add('hidden');
-      // Open filter panel as floating overlay — don't close the sidebar
-      var fp = document.getElementById('filter-panel');
-      var wasHidden = fp.classList.contains('hidden');
-      closeAllPanels_except('filter-panel');
-      if (wasHidden) fp.classList.remove('hidden');
     });
 
     document.getElementById('bulk-edit-btn').addEventListener('click', function(){
