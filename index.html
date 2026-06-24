@@ -152,15 +152,15 @@
 
   #sidebar-scroll-area{flex:1;display:flex;flex-direction:column;min-height:0;}
   #pin-list{flex:1;overflow-y:auto;padding:8px 0;}
-  .track-mark{border-radius:3px;width:16px;height:6px;margin-top:7px;}
+  .track-mark{border-radius:3px;width:20px;height:5px;margin-top:8px;}
   .pin-row{
-    display:flex;align-items:flex-start;gap:10px;padding:9px 16px;cursor:pointer;
+    display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;
   }
   .pin-row:hover{background:var(--bg-elevated-2);}
-  .pin-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;margin-top:4px;}
+  .pin-dot{width:30px;height:30px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;}
   .pin-row-text{flex:1;min-width:0;}
-  .pin-row-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pin-row-meta{font-size:11px;color:var(--text-muted);margin-top:1px;}
+  .pin-row-name{font-size:13px;font-weight:600;line-height:1.3;}
+  .pin-row-meta{font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.3;}
   #pin-empty{padding:24px 16px;font-size:12px;color:var(--text-muted);text-align:center;}
 
   #sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
@@ -636,7 +636,7 @@
         <div id="app-title">Field<span>Map</span></div>
         <div style="display:flex;gap:6px;">
           <button class="btn btn-primary btn-small" id="add-sheet-btn">+ Add</button>
-          <button class="btn btn-small" id="tools-sheet-btn">Tools</button>
+          <button class="btn btn-small" id="tools-sheet-btn" style="border:2px solid var(--accent);background:transparent;color:var(--text);">Tools</button>
         </div>
       </div>
       <div id="sidebar-header-row2">
@@ -979,7 +979,10 @@
       <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
     </div>
   </div>
-  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;" id="sunrise-location"></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+    <span id="sunrise-location"></span>
+    <button id="sunrise-my-location-btn" class="link-btn" style="font-size:11px;">My location</button>
+  </div>
   <!-- Day selector -->
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
     <button class="btn btn-small" id="sunrise-prev-btn" title="Previous day">‹</button>
@@ -1023,7 +1026,7 @@
       <div id="compass-target-dist" style="font-size:12px;color:var(--text-muted);"></div>
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
-      <button id="compass-save-target-btn" class="btn btn-small hidden" style="white-space:nowrap;">Save pin</button>
+      <button id="compass-save-target-btn" class="btn btn-small hidden" style="white-space:nowrap;">Save bearing</button>
       <button id="compass-close-btn" class="link-btn" style="font-size:11px;color:var(--text-muted);">✕ Close</button>
     </div>
   </div>
@@ -1535,36 +1538,39 @@
 (function(){
 
   var SEED_TAGS = [
-    {id:'camp', label:'Camp', color:'#c2622d', icon:'svg:tent'},
-    {id:'scout', label:'Scout', color:'#3b8f76', icon:''},
-    {id:'glassing', label:'Glassing point', color:'#6c63b5', icon:''},
-    {id:'water', label:'Water source', color:'#3b82c4', icon:'svg:water'},
-    {id:'trailhead', label:'Trailhead', color:'#8a8d76', icon:'svg:hiker'},
-    {id:'parking', label:'Parking', color:'#5d6b7d', icon:'svg:parking'},
-    {id:'access', label:'Access', color:'#6b7d6a', icon:'svg:access'},
-    {id:'gate', label:'Gate', color:'#7d6b4a', icon:'svg:gate'},
-    {id:'sign', label:'Sign / trail cam', color:'#b5566c', icon:''},
-    {id:'harvest', label:'Harvest', color:'#a23b2e', icon:''},
-    {id:'quail', label:'Quail', color:'#c9923f', icon:'svg:bird'},
-    {id:'chukar', label:'Chukar', color:'#9a8463', icon:'svg:bird'},
-    {id:'pheasant', label:'Pheasant', color:'#b8723f', icon:'svg:bird'},
-    {id:'dove', label:'Dove', color:'#8d97a3', icon:'svg:dove'},
-    {id:'ducks', label:'Ducks', color:'#4d7a8c', icon:'svg:ducks'},
-    {id:'upland', label:'Upland (general)', color:'#a3915f', icon:'svg:upland'},
-    {id:'turkey', label:'Turkey', color:'#8a5a2e', icon:'svg:turkey'},
-    {id:'turkeystrut', label:'Turkey strut zone', color:'#6e4a35', icon:'svg:turkeytrack'},
-    {id:'deer', label:'Deer', color:'#7a6a4e', icon:'svg:deer'},
-    {id:'elk', label:'Elk', color:'#8a6d3f', icon:'svg:elk'},
-    {id:'elkshed', label:'Elk shed', color:'#7a6648', icon:'svg:elkshed'},
-    {id:'antelope', label:'Antelope', color:'#ab8456', icon:'svg:antelope'},
-    {id:'bear', label:'Bear', color:'#4a3c2e', icon:'svg:bear'},
-    {id:'rabbit', label:'Rabbit', color:'#9c8a72', icon:'svg:rabbit'},
-    {id:'fish', label:'Fish', color:'#3b82c4', icon:'svg:fish'},
-    {id:'cabin', label:'Cabin', color:'#a3673f', icon:'svg:cabin'},
-    {id:'lookout', label:'Lookout', color:'#5a4a3a', icon:'svg:lookout'},
-    {id:'truck', label:'Truck', color:'#4a5a6b', icon:'svg:truck'},
-    {id:'other', label:'Other', color:'#6b6b63', icon:''},
-    {id:'uncategorized', label:'Uncategorized', color:'#c9a227', icon:''}
+    // Infrastructure
+    {id:'camp',       label:'Camp',           color:'#c2622d', icon:'camp'},
+    {id:'cabin',      label:'Cabin',          color:'#a3673f', icon:'cabin'},
+    {id:'lookout',    label:'Lookout',        color:'#5a4a3a', icon:'lookout'},
+    {id:'trailhead',  label:'Trailhead',      color:'#8a8d76', icon:'trailhead'},
+    {id:'parking',    label:'Parking',        color:'#5d6b7d', icon:'parking'},
+    {id:'access',     label:'Access',         color:'#6b7d6a', icon:'access'},
+    {id:'gate',       label:'Gate',           color:'#7d6b4a', icon:'gate'},
+    {id:'truck',      label:'Truck',          color:'#4a5a6b', icon:'truck'},
+    {id:'viewpoint',  label:'Viewpoint',      color:'#6c63b5', icon:'viewpoint'},
+    // Resources
+    {id:'water',      label:'Water source',   color:'#3b82c4', icon:'water'},
+    {id:'elkshed',    label:'Elk shed',       color:'#7a6648', icon:'elkshed'},
+    // Species — upland
+    {id:'quail',      label:'Quail',          color:'#c9923f', icon:'quail'},
+    {id:'chukar',     label:'Chukar',         color:'#9a8463', icon:'chukar'},
+    {id:'turkey',     label:'Turkey',         color:'#8a5a2e', icon:'turkey'},
+    {id:'turkeystrut',label:'Turkey strut zone', color:'#6e4a35', icon:'turkey_tracks'},
+    {id:'dove',       label:'Dove',           color:'#8d97a3', icon:'upland'},
+    {id:'pheasant',   label:'Pheasant',       color:'#b8723f', icon:'upland'},
+    {id:'ducks',      label:'Ducks',          color:'#4d7a8c', icon:'duck'},
+    {id:'upland',     label:'Upland (general)', color:'#a3915f', icon:'upland'},
+    // Species — big game
+    {id:'elk',        label:'Elk',            color:'#8a6d3f', icon:'elk'},
+    {id:'deer',       label:'Deer',           color:'#7a6a4e', icon:'deer'},
+    {id:'antelope',   label:'Antelope',       color:'#ab8456', icon:'antelope'},
+    {id:'bear',       label:'Bear',           color:'#4a3c2e', icon:'bear'},
+    // Other species
+    {id:'rabbit',     label:'Rabbit',         color:'#9c8a72', icon:'rabbit'},
+    {id:'fish',       label:'Fish',           color:'#3b82c4', icon:'fish'},
+    {id:'dog',        label:'Dog',            color:'#7a6a4e', icon:'dog'},
+    // Misc
+    {id:'uncategorized', label:'Uncategorized', color:'#8A8F8C', icon:'access'}
   ];
 
   // Approximate bounding boxes for US states — fast client-side grouping only,
@@ -1635,7 +1641,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.5';
+  var APP_VERSION = '1.2.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1765,23 +1771,60 @@
     verify:    { bg:'#F28C28', label:'Needs verification' },
     confirmed: { bg:'#3A8F45', label:'Confirmed' },
     repeat:    { bg:'#1F5E32', label:'Repeat producer' },
-    issue:     { bg:'#D64545', label:'Issue / Avoid' },
-    favorite:  { bg:'#7B61FF', label:'Favorite / Priority' }
+    favorite:  { bg:'#7B61FF', label:'Favorite / Priority' },
+    issue:     { bg:'#D64545', label:'Issue / Avoid' }
   };
 
-  // Tag → icon key mapping (what icon to use for each tag type)
+  // Tag → icon key mapping
   var TAG_ICON_MAP = {
     quail:'quail', chukar:'chukar', dove:'upland', ducks:'duck',
     turkey:'turkey', 'turkey strut zone':'turkey_tracks', pheasant:'upland',
-    upland:'upland', rabbit:'rabbit', elk:'elk', deer:'deer',
-    antelope:'antelope', bear:'bear', fish:'fish', elkshed:'elkshed',
+    upland:'upland', 'upland (general)':'upland',
+    rabbit:'rabbit', elk:'elk', deer:'deer', antelope:'antelope',
+    bear:'bear', fish:'fish', elkshed:'elkshed',
     gate:'gate', parking:'parking', truck:'truck', camp:'camp',
     cabin:'cabin', lookout:'lookout', trailhead:'trailhead', access:'access',
-    water:'water', scout:'access', glassing:'lookout', harvest:'upland',
-    dog:'dog', 'sign / trail cam':'lookout', other:'access', view:'lookout'
+    water:'water', 'water source':'water',
+    dog:'dog',
+    viewpoint:'viewpoint', view:'viewpoint', 'glassing point':'viewpoint',
+    uncategorized:'access'
   };
 
-  var WATER_TAG_IDS = ['water']; // tags that use the water-specific icon variant
+  var WATER_TAGS = ['water', 'water source'];
+
+  function isWaterPin(item){
+    return (item.tags || []).some(function(t){ return WATER_TAGS.indexOf(t) !== -1; });
+  }
+
+  // Get the correct icon key for a water pin based on status
+  function waterIconKeyForStatus(status){
+    // confirmed/repeat/favorite/issue → solid filled drop; escout/verify → outline drop
+    return (status === 'confirmed' || status === 'repeat' || status === 'favorite' || status === 'issue')
+      ? 'water_confirmed' : 'water';
+  }
+
+  // Get icon key for item (uses water-specific logic if water tag present)
+  function iconKeyForItem(item){
+    if (isWaterPin(item)) return waterIconKeyForStatus(item.status || 'escout');
+    var tags = item.tags || [];
+    for (var i = 0; i < tags.length; i++){
+      var t = tagById(tags[i]);
+      var key = t ? (TAG_ICON_MAP[t.id] || TAG_ICON_MAP[(t.label||'').toLowerCase()]) : null;
+      if (key) return key;
+    }
+    return 'access';
+  }
+
+  // Get status color for an item (water pins use blue when verified)
+  function statusColorFor(item){
+    var s = item.status || 'escout';
+    if (isWaterPin(item)){
+      if (s === 'confirmed' || s === 'repeat' || s === 'favorite') return '#1B6BB5';
+      if (s === 'issue') return (STATUS_COLORS.issue || { bg:'#D64545' }).bg;
+      return (STATUS_COLORS[s] || STATUS_COLORS.escout).bg;
+    }
+    return (STATUS_COLORS[s] || STATUS_COLORS.escout).bg;
+  }
 var MARKER_ICONS = {
   'access': { vb:'-61.085 109.13 100 100', g:`<path d="M21.525,126.859c-3.944,0.395-7.896,0.736-11.835,1.204c-5.426,0.643-10.841,1.396-16.005,3.313
  c-3.09,1.146-6.019,2.566-8.246,5.117c-2.08,2.388-2.413,4.856-0.878,7.623c0.562,1.012,1.251,2.005,2.08,2.797
@@ -2675,6 +2718,28 @@ var MARKER_ICONS = {
  />
  <path d="M-7.658,186.822c6.267-0.55,10.154-3.318,12.581-9.415c0.73-1.838,0.48-4.067,0.805-7.412
  C0.52,176.542-3.452,181.532-7.658,186.822z"/>` },
+  'viewpoint': { vb:'0 0 100 100', g:`<path d="M64.575,57.092l12.128-8.124c2.366-1.578,4.086-2.676,5.156-3.295c1.457-0.841,2.814-1.115,4.073-0.825
+c1.257,0.294,2.245,1.063,2.965,2.31c0.872,1.509,0.933,2.822,0.182,3.934s-2.11,2.234-4.077,3.37
+c-1.158,0.669-2.369,1.287-3.634,1.854l-13.64,6.363c-1.615,0.77-2.952,1.188-4.01,1.264c-1.058,0.07-1.857-0.359-2.395-1.287
+c-0.547-0.949-0.527-1.839,0.059-2.666C61.969,59.159,63.032,58.192,64.575,57.092z"/>
+<path d="M53.012,74.82c2.979-1.719,3.999-5.526,2.278-8.504c-1.719-2.979-5.527-4.002-8.506-2.281
+c-2.978,1.722-3.998,5.528-2.278,8.508C46.224,75.521,50.033,76.542,53.012,74.82z"/>
+<path d="M56.411,51.356l6.441-13.102c1.261-2.549,2.199-4.359,2.818-5.429c0.842-1.459,1.881-2.374,3.115-2.752
+c1.235-0.372,2.475-0.202,3.722,0.518c1.51,0.87,2.219,1.979,2.124,3.315c-0.093,1.339-0.709,2.993-1.846,4.958
+c-0.666,1.158-1.408,2.299-2.22,3.422l-8.63,12.33c-1.013,1.476-1.963,2.507-2.841,3.099c-0.88,0.592-1.788,0.618-2.717,0.083
+c-0.95-0.55-1.377-1.328-1.283-2.339C55.188,54.448,55.627,53.08,56.411,51.356z"/>
+<path d="M46.44,50.376L45.467,35.81c-0.183-2.838-0.274-4.875-0.275-6.112c0.001-1.682,0.442-2.995,1.323-3.94
+c0.883-0.941,2.042-1.414,3.481-1.414c1.744,0.002,2.911,0.604,3.499,1.809c0.589,1.208,0.881,2.948,0.881,5.218
+c0,1.337-0.07,2.695-0.211,4.074l-1.309,14.995c-0.142,1.782-0.447,3.15-0.912,4.104c-0.468,0.953-1.237,1.43-2.312,1.428
+c-1.096,0.002-1.856-0.46-2.28-1.382C46.926,53.665,46.621,52.263,46.44,50.376z"/>
+<path d="M37.45,54.576L29.326,42.45c-1.579-2.367-2.677-4.086-3.295-5.156c-0.84-1.459-1.113-2.816-0.824-4.074
+c0.294-1.257,1.063-2.246,2.31-2.966c1.508-0.871,2.822-0.933,3.934-0.181c1.114,0.75,2.233,2.109,3.37,4.074
+c0.67,1.161,1.287,2.372,1.856,3.637l6.363,13.64c0.769,1.615,1.188,2.949,1.262,4.007c0.073,1.061-0.358,1.858-1.287,2.396
+c-0.949,0.548-1.837,0.529-2.666-0.058C39.517,57.185,38.549,56.119,37.45,54.576z"/>
+<path d="M31.874,62.886l-13.1-6.442c-2.549-1.258-4.36-2.198-5.433-2.816c-1.456-0.841-2.371-1.88-2.749-3.115
+c-0.375-1.235-0.202-2.476,0.517-3.722c0.87-1.51,1.979-2.219,3.315-2.125c1.341,0.092,2.991,0.709,4.958,1.843
+c1.161,0.67,2.3,1.409,3.426,2.223l12.33,8.629c1.472,1.015,2.505,1.962,3.096,2.841c0.594,0.884,0.62,1.787,0.084,2.719
+c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/>` },
   'upland': { vb:'-61.085 109.13 100 100', g:`<g>
  <path d="M2.224,173.375c0.871-0.567,1.688-1.256,2.625-1.675c2.396-1.073,4.853-2.004,7.269-3.031
  c2.553-1.086,4.283-3.038,5.364-5.524c1.301-3.002,2.144-6.119,1.815-9.453c-0.045-0.455,0.159-0.925,0.171-1.391
@@ -2741,26 +2806,7 @@ var MARKER_ICONS = {
     return '<svg viewBox="' + icon.vb + '" width="' + s + '" height="' + s + '" style="' + style + 'display:block;">' + icon.g + '</svg>';
   }
 
-  // Get the icon key for a given item (based on its primary tag)
-  function iconKeyForItem(item){
-    var tags = item.tags || [];
-    for (var i = 0; i < tags.length; i++){
-      var t = tagById(tags[i]);
-      var mapped = TAG_ICON_MAP[t.id] || TAG_ICON_MAP[t.label ? t.label.toLowerCase() : ''];
-      if (mapped) return mapped;
-    }
-    return 'access'; // fallback
-  }
-
-  // Get status color for an item
-  function statusColorFor(item){
-    var s = item.status || 'escout';
-    // Water tags get blue when confirmed
-    if ((item.tags||[]).indexOf('water') !== -1 && s === 'confirmed') return '#1B6BB5';
-    return (STATUS_COLORS[s] || STATUS_COLORS.escout).bg;
-  }
-
-  // Legacy helper kept for track/polygon coloring (they still use tag colors)
+  // Legacy helper kept for track/polygon coloring
   function tagVisualFor(item){
     var tag = tagById((item.tags && item.tags[0]) || 'uncategorized');
     return { color: tag.color || '#888' };
@@ -3261,9 +3307,9 @@ var MARKER_ICONS = {
     var sc = STATUS_COLORS[pin.status || 'escout'] || STATUS_COLORS.escout;
     var tag = tagById((pin.tags && pin.tags[0]) || 'uncategorized');
     var notes = pin.notes ? '<div class="pin-popup-notes">' + escapeHtml(pin.notes) + '</div>' : '';
-    var statusBadge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + sc.bg + '22;border:1px solid ' + sc.bg + '55;border-radius:10px;padding:1px 6px 1px 4px;">' +
+    var statusBadge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + sc.bg + '22;border:1px solid ' + sc.bg + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
       '<span style="width:7px;height:7px;border-radius:50%;background:' + sc.bg + ';flex-shrink:0;display:inline-block;"></span>' +
-      '<span style="font-size:10px;font-weight:600;color:' + sc.bg + ';">' + sc.label + '</span></span>';
+      '<span style="font-size:10px;font-weight:700;color:' + (sc.bg === '#1F5E32' ? '#6dbf7e' : sc.bg) + ';">' + sc.label + '</span></span>';
     return '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' +
         statusBadge +
@@ -6456,34 +6502,39 @@ var MARKER_ICONS = {
   }
 
   function handleCompassMapTap(latlng){
+    // Use GPS if available, otherwise map center (enables e-scout bearing from home)
+    var fromPt = currentGpsLatLng || map.getCenter();
     compassTargetLatLng = latlng;
-    if (!currentGpsLatLng){ showToast('Enable location to get bearing from your position'); return; }
     if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
+    if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
 
-    var bearing = bearingBetween(currentGpsLatLng.lat, currentGpsLatLng.lng, latlng.lat, latlng.lng);
-    var distMi  = haversineMiles(currentGpsLatLng.lat, currentGpsLatLng.lng, latlng.lat, latlng.lng);
+    var bearing = bearingBetween(fromPt.lat, fromPt.lng, latlng.lat, latlng.lng);
+    var distMi  = haversineMiles(fromPt.lat, fromPt.lng, latlng.lat, latlng.lng);
     var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     var dirLabel = dirs[Math.round(bearing / 22.5) % 16];
 
-    // Gold target line — extends from GPS position to tapped point
-    var mapBounds = map.getBounds();
-    var d = Math.max(0.1, (mapBounds.getNorth() - mapBounds.getSouth()) * 3);
-    var az = bearing * Math.PI / 180;
-    var farPt = L.latLng(
-      currentGpsLatLng.lat + d * Math.cos(az),
-      currentGpsLatLng.lng + d * Math.sin(az) / Math.cos(currentGpsLatLng.lat * Math.PI / 180)
-    );
-    compassTargetLine = L.polyline([currentGpsLatLng, farPt], {
-      color:'#d9a13f', weight:2, dashArray:'10,6', opacity:0.85, interactive:false
+    // Solid gold line from "from" point to target
+    compassTargetLine = L.polyline([fromPt, latlng], {
+      color:'#d9a13f', weight:2.5, opacity:0.9, interactive:false
     }).addTo(map);
+
+    // Circle dot at target end
+    var arrowIcon = L.divIcon({
+      className:'', iconSize:[0,0],
+      html:'<div style="width:12px;height:12px;background:#d9a13f;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5);transform:translate(-50%,-50%);"></div>'
+    });
+    window._compassArrow = L.marker(latlng, { icon:arrowIcon, interactive:false }).addTo(map);
 
     document.getElementById('compass-target-bearing').textContent = dirLabel + ' ' + Math.round(bearing) + '°';
     document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi · ' + (distMi * 1.60934).toFixed(2) + ' km';
     document.getElementById('compass-target-col').classList.remove('hidden');
     document.getElementById('compass-save-target-btn').classList.remove('hidden');
-    document.getElementById('compass-status').textContent = '— red=north · blue=facing · gold=tap bearing —';
+    document.getElementById('compass-status').textContent = currentGpsLatLng
+      ? '— red=N · blue=facing · gold=bearing —'
+      : '— from map center (no GPS) · gold=bearing —';
   }
 
+  
   function bearingBetween(lat1, lng1, lat2, lng2){
     var toRad = function(d){ return d * Math.PI / 180; };
     var dLng = toRad(lng2 - lng1);
@@ -6501,6 +6552,7 @@ var MARKER_ICONS = {
     if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
     if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
     if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
+    if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
     document.getElementById('compass-panel').classList.add('hidden');
     document.getElementById('compass-target-col').classList.add('hidden');
     document.getElementById('compass-save-target-btn').classList.add('hidden');
@@ -6861,6 +6913,18 @@ var MARKER_ICONS = {
       if (timelineEl) timelineEl.style.display = hidden ? '' : 'none';
       this.textContent = hidden ? 'Hide times' : 'Show times';
     });
+    document.getElementById('sunrise-my-location-btn').addEventListener('click', function(){
+      if (!navigator.geolocation){ showToast('Location not available'); return; }
+      navigator.geolocation.getCurrentPosition(function(pos){
+        var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+        map.setView(ll, Math.max(map.getZoom(), 12));
+        setTimeout(function(){
+          var center = map.getCenter();
+          renderSunriseTimes(center, sunDate);
+          if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+        }, 400);
+      }, function(){ showToast('Could not get location'); });
+    });
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
       sunPathLayerGroup.clearLayers();
@@ -7027,6 +7091,8 @@ var MARKER_ICONS = {
     });
     document.getElementById('settings-cluster-toggle').addEventListener('change', function(){
       state.settings.clusterPins = this.checked;
+      // Force full re-render of all markers with new cluster setting
+      Object.keys(markersById).forEach(function(id){ clusterLayerGroup.removeLayer(markersById[id]); });
       scheduleClusterRefresh();
       scheduleSave();
     });
@@ -7118,15 +7184,20 @@ var MARKER_ICONS = {
       }
     });
     document.getElementById('locate-btn').addEventListener('click', function(){
-      if (!navigator.geolocation){ showToast('Location is not available here'); return; }
+      if (!navigator.geolocation){ showToast('Location not available on this device'); return; }
       showToast('Finding your location…');
       navigator.geolocation.getCurrentPosition(function(pos){
-        var ll = [pos.coords.latitude, pos.coords.longitude];
-        map.setView(ll, 14);
-        L.circleMarker(ll, { radius:8, color:'#3b82c4', fillColor:'#3b82c4', fillOpacity:0.9 }).addTo(map);
+        var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+        map.setView(ll, Math.max(map.getZoom(), 14));
+        var locIcon = L.divIcon({
+          className:'', iconSize:[0,0],
+          html:'<div style="width:14px;height:14px;border-radius:50%;background:#3a8fd4;border:3px solid #fff;box-shadow:0 0 0 3px rgba(58,143,212,0.4);transform:translate(-50%,-50%);"></div>'
+        });
+        var locMarker = L.marker(ll, { icon:locIcon, zIndexOffset:2000 }).addTo(map);
+        setTimeout(function(){ if (map.hasLayer(locMarker)) map.removeLayer(locMarker); }, 6000);
       }, function(){
-        showToast("Couldn't get your location — this often fails in the chat preview; try opening the file directly in your browser");
-      });
+        showToast("Could not get your location");
+      }, { enableHighAccuracy:true });
     });
 
     document.getElementById('layers-btn').addEventListener('click', function(e){
