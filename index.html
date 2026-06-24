@@ -1691,7 +1691,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.5';
+  var APP_VERSION = '1.4.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6265,11 +6265,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var toggleBtn = document.getElementById('sunrise-toggle-times-btn');
     if (toggleBtn) toggleBtn.textContent = 'Show times';
     mapEl.classList.add('sunrise-docked');
-    // Two rAFs so CSS has applied and panel has rendered height
     requestAnimationFrame(function(){ requestAnimationFrame(function(){
       var panelH = panel.offsetHeight || 180;
       mapEl.style.bottom = (88 + panelH) + 'px';
+      // Capture center before invalidate, then re-center after so arc draws in middle of shrunken map
+      var prevCenter = map.getCenter();
       map.invalidateSize({ animate:false });
+      map.setView(prevCenter, map.getZoom(), { animate:false });
       if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
     }); });
   }
@@ -6492,7 +6494,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI;
-      var d   = distDeg * 1.6; // far enough that inner label edge clears the arc
+      var d   = distDeg * 1.22; // inner label edge sits just clear of arc
       var lat = drawCenter.lat + d * Math.cos(az);
       var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
       // Anchor inner label edge at the radial point so text grows outward, never inward.
@@ -7045,7 +7047,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
           var h = panel.offsetHeight || 180;
           document.getElementById('map').style.bottom = (88 + h) + 'px';
+          var prevCenter = map.getCenter();
           map.invalidateSize({ animate:false });
+          map.setView(prevCenter, map.getZoom(), { animate:false });
           if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
         }); });
       }
