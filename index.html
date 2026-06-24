@@ -597,8 +597,8 @@
     }
 
     /* When sidebar is open, push attribution and scale bar up above the list */
-    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 10px); }
-    body.sidebar-open #scale-bar{ bottom:calc(55vh + 30px); }
+    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 100px); }
+    body.sidebar-open #scale-bar{ bottom:calc(55vh + 120px); }
 
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
@@ -676,9 +676,9 @@
     </div>
 
     <div id="sidebar-scroll-area">
-      <div id="mobile-sort-row">
+      <div id="mobile-sort-row" style="position:relative;">
         <button class="btn btn-small" id="mobile-sort-btn">Sort</button>
-        <div id="mobile-sort-menu" class="dropdown-menu hidden" style="position:fixed;bottom:auto;">
+        <div id="mobile-sort-menu" class="dropdown-menu hidden" style="position:absolute;top:auto;bottom:calc(100% + 4px);left:0;z-index:3000;">
           <div class="dropdown-item" data-mobile-sort="chronological">Chronological</div>
           <div class="dropdown-item" data-mobile-sort="category">By category</div>
           <div class="dropdown-item" data-mobile-sort="trip">By trip</div>
@@ -1668,7 +1668,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.9';
+  var APP_VERSION = '1.3.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6362,7 +6362,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var isMobile = window.innerWidth <= 640;
     var mapSizePx  = map.getSize();
     var visibleH   = mapSizePx.y - (isMobile ? 90 : 0);
-    var targetPx   = visibleH * (isMobile ? 0.28 : 0.35);
+    var targetPx   = visibleH * (isMobile ? 0.25 : 0.35);
     var metersPerPx = map.containerPointToLatLng([0, 0]).distanceTo(
                         map.containerPointToLatLng([0, targetPx]));
     var distDeg    = metersPerPx / 111320; // 1° lat ≈ 111,320 m
@@ -7539,11 +7539,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('mobile-filter-btn').addEventListener('click', function(){
       document.getElementById('mobile-sort-menu').classList.add('hidden');
-      // Close sidebar, open filter panel
-      document.getElementById('sidebar').classList.remove('open');
-      document.body.classList.remove('sidebar-open');
-      document.getElementById('filter-panel').classList.remove('hidden');
+      // Open filter panel as floating overlay — don't close the sidebar
+      var fp = document.getElementById('filter-panel');
+      var wasHidden = fp.classList.contains('hidden');
       closeAllPanels_except('filter-panel');
+      if (wasHidden) fp.classList.remove('hidden');
     });
 
     document.getElementById('bulk-edit-btn').addEventListener('click', function(){
