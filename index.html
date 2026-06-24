@@ -550,16 +550,35 @@
   /* Mobile */
   @media (max-width:760px){
     /* Sidebar bottom sheet */
-    #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
-    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
+    #mobile-handle{display:flex;justify-content:center;padding:8px 0 4px;cursor:pointer;order:0;}
+    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.25);}
     #sidebar{
       position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;height:auto;
       border-right:none;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
       display:flex;flex-direction:column;
+      max-height:80vh;
     }
-    #sidebar-header{order:1;}
-    #sidebar-scroll-area{order:2;max-height:0;overflow:hidden;transition:max-height .25s ease;}
-    #sidebar.open #sidebar-scroll-area{max-height:55vh;overflow-y:auto;}
+    #sidebar-header{order:1;padding:10px 14px 8px;}
+    #sidebar-scroll-area{
+      order:2;
+      overflow:hidden;
+      max-height:0;
+      transition:max-height .28s ease;
+      display:flex;flex-direction:column;
+      min-height:0;
+    }
+    #sidebar.open #sidebar-scroll-area{
+      max-height:65vh;
+      overflow-y:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+    /* Peek state: show first ~1.5 rows so user knows list is there */
+    #sidebar:not(.open) #sidebar-scroll-area{
+      max-height:52px;
+      overflow:hidden;
+    }
+    #sidebar:not(.open) #pin-list{pointer-events:none;}
+    #pin-count{padding:4px 14px 10px;}
 
     /* Desktop-only sidebar buttons hidden on mobile — Sort, Bulk edit, Import, Export
        (Export removed in favor of per-pin/per-track Share) */
@@ -1642,7 +1661,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.7';
+  var APP_VERSION = '1.2.8';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3860,6 +3879,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (on && measureMode) setMeasureMode(false);
     if (on && drawMode) setDrawMode(false);
     if (on && polygonMode) setPolygonMode(false);
+    if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('add-mode', on);
     // Visual feedback via cursor
     document.getElementById('map').style.cursor = on ? 'crosshair' : '';
@@ -3906,6 +3926,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     measureMode = on;
     if (on && addMode) setAddMode(false);
     if (on && drawMode) setDrawMode(false);
+    if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('measure-mode', on);
     // measure-btn was removed from map controls (now in Tools sheet) — no active-state to toggle
     if (!on) clearMeasure();
@@ -3917,6 +3938,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (on && addMode) setAddMode(false);
     if (on && measureMode) setMeasureMode(false);
     if (on && polygonMode) setPolygonMode(false);
+    if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('add-mode', on);
     document.getElementById('draw-bar').classList.toggle('hidden', !on);
     if (on) showToast('Click to add points · Right-click or tap point to delete · Snap to trail follows real paths', 5000);
@@ -4147,6 +4169,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ---------- Polygon drawing ----------
   function setPolygonMode(on){
     polygonMode = on;
+    if (on) closeAllPanels();
     document.getElementById('polygon-bar').classList.toggle('hidden', !on);
     map.getContainer().classList.toggle('polygon-mode', on);
     if (!on){ clearPolygonDraft(); }
@@ -4688,7 +4711,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var sc = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
       mark.className = 'pin-dot';
       mark.style.cssText = 'background:' + sc.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-      mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 14);
+      mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 16);
     }
     row.appendChild(mark);
 
@@ -6323,9 +6346,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
     if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
 
-    // Scale arc radius to ~40% of the current map visible height so it's always on screen
-    var mapBounds  = map.getBounds();
-    var distDeg    = Math.max(0.02, (mapBounds.getNorth() - mapBounds.getSouth()) * 0.4);
+    // Scale arc radius to ~38% of the map container's pixel height, converted to degrees.
+    // Using pixels→meters→degrees keeps the arc the same screen size at every zoom level.
+    var mapSizePx  = map.getSize(); // {x: widthPx, y: heightPx}
+    var targetPx   = mapSizePx.y * 0.38;
+    var metersPerPx = map.containerPointToLatLng([0, 0]).distanceTo(
+                        map.containerPointToLatLng([0, targetPx]));
+    var distDeg    = metersPerPx / 111320; // 1° lat ≈ 111,320 m
 
     var segments = { twilight:[], golden:[], day:[] };
     var step = 15 * 60 * 1000; // 15 minutes
@@ -6406,6 +6433,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setElevTapMode(on){
     elevTapMode = on;
+    if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('elev-tap-mode', on);
     document.getElementById('elev-bar').classList.toggle('hidden', !on);
     if (!on){ document.getElementById('elevation-tooltip').classList.add('hidden'); }
@@ -7546,6 +7574,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.getElementById('mobile-handle').addEventListener('click', function(){
       document.getElementById('sidebar').classList.toggle('open');
+    });
+    // Also allow tapping the header title area to expand/collapse
+    document.getElementById('sidebar-header').addEventListener('click', function(e){
+      // Don't toggle if user tapped a button inside the header
+      if (e.target.closest('button')) return;
+      if (window.innerWidth <= 640){
+        document.getElementById('sidebar').classList.toggle('open');
+      }
     });
 
     document.addEventListener('keydown', function(e){
