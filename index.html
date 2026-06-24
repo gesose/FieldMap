@@ -627,8 +627,7 @@
       top:0 !important; left:0 !important; right:0 !important;
       height:auto !important;
     }
-    /* Hide times list in compact docked mode */
-    #sunrise-panel.sunrise-docked-panel #sunrise-times-list{ display:none; }
+    /* Times list visibility in docked mode controlled by JS only */
 
     /* Draw bar, polygon bar, elev bar: centered above bottom sheet */
     #draw-bar,#measure-result,#polygon-bar,#elev-bar{
@@ -1692,7 +1691,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.1';
+  var APP_VERSION = '1.4.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -7037,13 +7036,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('sunrise-toggle-times-btn').addEventListener('click', function(){
       var timesEl = document.getElementById('sunrise-times-list');
-      var hidden = timesEl.style.display === 'none' || timesEl.style.display === '';
-      // In docked mode, "show times" means show the list (it was hidden by dock)
-      // Check actual visibility by offsetHeight
-      var isHidden = timesEl.offsetHeight === 0 || timesEl.style.display === 'none';
+      var isHidden = timesEl.style.display === 'none';
       timesEl.style.display = isHidden ? '' : 'none';
       this.textContent = isHidden ? 'Hide times' : 'Show times';
-      // Re-measure dock height if docked, so map shrinks/grows correctly
+      // Re-measure dock height if docked
       var panel = document.getElementById('sunrise-panel');
       if (panel.classList.contains('sunrise-docked-panel')){
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
