@@ -389,14 +389,15 @@
     font-size:10px;font-weight:500;
   }
   .sunrise-time-row {
-    display:flex;align-items:center;gap:10px;padding:7px 0;
-    border-top:1px solid var(--border);font-size:12px;
+    display:flex;align-items:center;gap:10px;padding:6px 0;
+    border-top:1px solid var(--border);font-size:13px;
   }
   .sunrise-time-row:first-child { border-top:none; }
-  .sunrise-time-icon { width:20px;text-align:center;font-size:15px;flex-shrink:0; }
-  .sunrise-time-label { flex:1;color:var(--text); }
-  .sunrise-time-value { font-family:var(--font-mono);font-size:12px;color:var(--text);font-weight:600; }
-  .sunrise-time-row.highlight { background:rgba(194,98,45,0.06);border-radius:6px;padding:7px 6px;margin:0 -6px; }
+  .sunrise-time-icon { width:22px;text-align:center;font-size:15px;flex-shrink:0;color:var(--text-muted); }
+  .sunrise-time-label { flex:1;color:var(--text);font-size:13px; }
+  .sunrise-time-value { font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:600; }
+  .sunrise-time-row.highlight { background:rgba(194,98,45,0.08);border-radius:6px;padding:7px 6px;margin:0 -6px; }
+  .sunrise-time-row.highlight .sunrise-time-icon { color:var(--accent); }
   .sunrise-time-row.highlight .sunrise-time-value { color:var(--accent); }
   .weather-hour-cell {
     display:flex;flex-direction:column;align-items:center;gap:3px;
@@ -590,9 +591,9 @@
       transition:bottom .25s ease;
     }
 
-    /* When sidebar is open, push attribution and scale bar up above the list */
-    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 100px); }
-    body.sidebar-open #scale-bar{ bottom:calc(55vh + 120px); }
+    /* When sidebar is open, push attribution and scale bar up above sort row + list */
+    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 140px); }
+    body.sidebar-open #scale-bar{ bottom:calc(55vh + 160px); }
 
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
@@ -1004,20 +1005,29 @@
   </div>
   <!-- Day selector -->
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
-    <button class="btn btn-small" id="sunrise-prev-btn" title="Previous day">‹</button>
-    <input type="date" id="sunrise-date-input" style="
-      flex:1;padding:5px 8px;background:var(--bg-elevated-2);
-      border:1px solid var(--border);border-radius:7px;
-      color:var(--text);font-size:12px;cursor:pointer;">
-    <button class="btn btn-small" id="sunrise-next-btn" title="Next day">›</button>
+    <button class="btn btn-small" id="sunrise-prev-btn" title="Previous day">&#8249;</button>
+    <input type="date" id="sunrise-date-input" style="flex:1;padding:5px 8px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;cursor:pointer;">
+    <button class="btn btn-small" id="sunrise-next-btn" title="Next day">&#8250;</button>
     <button class="btn btn-small" id="sunrise-today-btn">Today</button>
   </div>
   <!-- Timeline bar -->
-  <div style="margin-bottom:6px;">
-    <div id="sunrise-timeline-bar" style="height:24px;border-radius:6px;position:relative;overflow:hidden;background:#0d1117;">
-      <div id="sunrise-now-marker" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 4px rgba(255,255,255,0.8);z-index:2;"></div>
+  <div style="margin-bottom:10px;">
+    <div id="sunrise-timeline-bar" style="height:20px;border-radius:5px;position:relative;overflow:hidden;background:#0d1117;">
+      <div id="sunrise-now-marker" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:0.9;z-index:2;"></div>
+      <div id="sunrise-slider-marker" style="position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.45);z-index:1;display:none;"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;" id="sunrise-timeline-labels"></div>
+  </div>
+  <!-- Time slider -->
+  <div style="margin-bottom:12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+      <span style="font-size:11px;color:var(--text-muted);">Sun position</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span id="sunrise-slider-time-label" style="font-size:12px;font-weight:600;color:var(--text);font-family:var(--font-mono);"></span>
+        <button id="sunrise-slider-now-btn" class="btn btn-small" style="font-size:10px;padding:3px 7px;">Now</button>
+      </div>
+    </div>
+    <input type="range" id="sunrise-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
   </div>
   <!-- Times list -->
   <div id="sunrise-times-list" style="margin-bottom:8px;"></div>
@@ -1661,7 +1671,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.2';
+  var APP_VERSION = '1.3.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6232,6 +6242,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     document.getElementById('sunrise-panel').classList.remove('hidden');
     closeAllPanels_except('sunrise-panel');
+    if (window._sunSliderInit) window._sunSliderInit();
   }
 
   function renderSunriseTimes(center, date){
@@ -6251,17 +6262,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderSunTimelineBar(times, date);
 
     var phaseDefs = [
-      { key:'nightEnd',      mark:'* ', label:'First light (astronomical)', highlight:false },
-      { key:'nauticalDawn',  mark:'* ', label:'Nautical dawn',              highlight:false },
-      { key:'dawn',          mark:'* ', label:'Civil dawn',                  highlight:false },
-      { key:'sunrise',       mark:'\u2191 ', label:'Sunrise',              highlight:true  },
-      { key:'goldenHourEnd', mark:'\u00b7 ', label:'Golden hour ends',     highlight:false },
-      { key:'solarNoon',     mark:'o ', label:'Solar noon',                  highlight:false },
-      { key:'goldenHour',    mark:'\u00b7 ', label:'Golden hour begins',    highlight:false },
-      { key:'sunset',        mark:'\u2193 ', label:'Sunset',               highlight:true  },
-      { key:'dusk',          mark:'* ', label:'Civil dusk',                  highlight:false },
-      { key:'nauticalDusk',  mark:'* ', label:'Nautical dusk',              highlight:false },
-      { key:'night',         mark:'* ', label:'Full dark',                   highlight:false }
+      { key:'nightEnd',      icon:'☆', label:'Astronomical dawn',           highlight:false },
+      { key:'nauticalDawn',  icon:'◌', label:'Nautical dawn',               highlight:false },
+      { key:'dawn',          icon:'◐', label:'Civil dawn',                   highlight:false },
+      { key:'sunrise',       icon:'↑', label:'Sunrise',                     highlight:true  },
+      { key:'goldenHourEnd', icon:'◑', label:'Golden hour ends',            highlight:false },
+      { key:'solarNoon',     icon:'◉', label:'Solar noon',                  highlight:false },
+      { key:'goldenHour',    icon:'◑', label:'Golden hour begins',          highlight:false },
+      { key:'sunset',        icon:'↓', label:'Sunset',                      highlight:true  },
+      { key:'dusk',          icon:'◐', label:'Civil dusk',                   highlight:false },
+      { key:'nauticalDusk',  icon:'◌', label:'Nautical dusk',               highlight:false },
+      { key:'night',         icon:'★', label:'Full dark',                    highlight:false }
     ];
     var list = document.getElementById('sunrise-times-list');
     list.innerHTML = '';
@@ -6271,12 +6282,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var row = document.createElement('div');
       row.className = 'sunrise-time-row' + (ph.highlight ? ' highlight' : '');
       row.innerHTML =
-        '<span class="sunrise-time-icon" style="font-family:monospace;letter-spacing:0;">' + ph.mark + '</span>' +
+        '<span class="sunrise-time-icon" style="font-size:14px;color:var(--text-muted);">' + ph.icon + '</span>' +
         '<span class="sunrise-time-label">' + ph.label + '</span>' +
-        '<span class="sunrise-time-value">' + formatTime12(t) + '</span>';
+        '<span class="sunrise-time-value" style="font-size:13px;">' + formatTime12(t) + '</span>';
       list.appendChild(row);
     });
 
+    var moonPhaseIcons = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
     var moonPhaseNames = ['New Moon','Waxing Crescent','First Quarter','Waxing Gibbous',
                           'Full Moon','Waning Gibbous','Last Quarter','Waning Crescent'];
     var phaseIdx = Math.round(moonIllum.phase * 8) % 8;
@@ -6285,10 +6297,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var moonRiseStr = moonTimes.rise ? formatTime12(moonTimes.rise) : 'N/A';
     var moonSetStr  = moonTimes.set  ? formatTime12(moonTimes.set)  : 'N/A';
     moonRow.innerHTML =
-      '<span class="sunrise-time-icon" style="font-family:monospace;">)</span>' +
+      '<span class="sunrise-time-icon" style="font-size:14px;">' + moonPhaseIcons[phaseIdx] + '</span>' +
       '<span class="sunrise-time-label">' + moonPhaseNames[phaseIdx] +
         '<br><small style="color:var(--text-muted)">Rise ' + moonRiseStr + ' · Set ' + moonSetStr + '</small></span>' +
-      '<span class="sunrise-time-value">' + Math.round(moonIllum.fraction * 100) + '%</span>';
+      '<span class="sunrise-time-value" style="font-size:13px;">' + Math.round(moonIllum.fraction * 100) + '%</span>';
     list.appendChild(moonRow);
   }
 
@@ -6341,6 +6353,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     labels.innerHTML = '<span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span>';
   }
 
+  // sunSliderMinutes: null = use real now, 0-1439 = slider override
+  var sunSliderMinutes = null;
+
+  function sunArcDistDeg(){
+    var isMobile = window.innerWidth <= 640;
+    var mapSizePx = map.getSize();
+    var visibleH  = mapSizePx.y - (isMobile ? 90 : 0);
+    var targetPx  = visibleH * (isMobile ? 0.235 : 0.33);
+    var mpp = map.containerPointToLatLng([0,0]).distanceTo(map.containerPointToLatLng([0,targetPx]));
+    return mpp / 111320;
+  }
+
   function renderSunArc(center, date){
     sunPathLayerGroup.clearLayers();
     if (!SUNRISE_ARC_ON) return;
@@ -6350,86 +6374,83 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
     if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
 
-    // Scale arc radius to ~35% of the visible map height, converted to degrees.
-    // On mobile the sidebar covers the bottom ~90px, so subtract that.
-    var isMobile = window.innerWidth <= 640;
-    var mapSizePx  = map.getSize();
-    var visibleH   = mapSizePx.y - (isMobile ? 90 : 0);
-    var targetPx   = visibleH * (isMobile ? 0.25 : 0.35);
-    var metersPerPx = map.containerPointToLatLng([0, 0]).distanceTo(
-                        map.containerPointToLatLng([0, targetPx]));
-    var distDeg    = metersPerPx / 111320; // 1° lat ≈ 111,320 m
+    var distDeg = sunArcDistDeg();
+    var cosLat  = Math.cos(center.lat * Math.PI / 180);
 
-    var segments = { twilight:[], golden:[], day:[] };
-    var step = 15 * 60 * 1000; // 15 minutes
+    // Arc segments — colors match timeline bar
+    // twilight=blue, golden=amber, day=yellow
+    var arcColors = { twilight:'#5a7bb5', golden:'#c47a28', day:'#f0e898' };
+    var segments  = { twilight:[], golden:[], day:[] };
+    var step = 10 * 60 * 1000; // 10-minute resolution
     for (var ms = startTime.getTime(); ms <= endTime.getTime(); ms += step){
       var t   = new Date(ms);
       var pos = SunCalc.getPosition(t, center.lat, center.lng);
-      if (pos.altitude < -0.314) continue; // below ~-18° (deep night), skip
-
-      // SunCalc azimuth: from south, going westward. Convert to bearing from north CW.
-      var az     = pos.azimuth + Math.PI;
-      var latOff = distDeg * Math.cos(az);
-      var lngOff = distDeg * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
-      var pt = [center.lat + latOff, center.lng + lngOff];
-
+      if (pos.altitude < -0.314) continue;
+      var az = pos.azimuth + Math.PI;
+      var pt = [center.lat + distDeg * Math.cos(az), center.lng + distDeg * Math.sin(az) / cosLat];
       var key = 'day';
       if (t < times.goldenHourEnd || t > times.goldenHour) key = 'golden';
       if (t < times.sunrise || t > times.sunset) key = 'twilight';
       segments[key].push(pt);
     }
-
-    var colors = { twilight:'#5a7bb5', golden:'#d9843a', day:'#f5d76e' };
     Object.keys(segments).forEach(function(k){
       if (segments[k].length >= 2){
-        L.polyline(segments[k], { color:colors[k], weight:3.5, opacity:0.9, interactive:false })
+        L.polyline(segments[k], { color:arcColors[k], weight:3.5, opacity:0.92, interactive:false })
           .addTo(sunPathLayerGroup);
       }
     });
 
-    // Thin horizon ring centered on map center — gives context for the arc
-    var ringPoints = [];
-    for (var deg = 0; deg < 360; deg += 3){
-      var rad = deg * Math.PI / 180;
-      ringPoints.push([
-        center.lat + distDeg * Math.cos(rad),
-        center.lng + distDeg * Math.sin(rad) / Math.cos(center.lat * Math.PI / 180)
-      ]);
-    }
-    ringPoints.push(ringPoints[0]); // close
-    L.polyline(ringPoints, { color:'rgba(255,255,255,0.25)', weight:1, interactive:false })
-      .addTo(sunPathLayerGroup);
-
-    // Current sun position dot (only if today)
-    if (date.toDateString() === new Date().toDateString()){
+    // Sun position — use slider time if set, otherwise real now (today only)
+    var sunDot = null, sunDotPos = null;
+    var isToday = date.toDateString() === new Date().toDateString();
+    if (sunSliderMinutes !== null){
+      // Slider mode: show for any date
+      var sliderDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(),
+        Math.floor(sunSliderMinutes/60), sunSliderMinutes % 60, 0);
+      var sPos = SunCalc.getPosition(sliderDate, center.lat, center.lng);
+      if (sPos.altitude > -0.1){
+        var sAz = sPos.azimuth + Math.PI;
+        sunDotPos = [center.lat + distDeg * Math.cos(sAz), center.lng + distDeg * Math.sin(sAz) / cosLat];
+        sunDot = L.circleMarker(sunDotPos, {
+          radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
+        }).addTo(sunPathLayerGroup);
+      }
+    } else if (isToday){
       var nowPos = SunCalc.getPosition(new Date(), center.lat, center.lng);
       if (nowPos.altitude > -0.1){
         var nowAz = nowPos.azimuth + Math.PI;
-        var nowLat = center.lat + distDeg * Math.cos(nowAz);
-        var nowLng = center.lng + distDeg * Math.sin(nowAz) / Math.cos(center.lat * Math.PI / 180);
-        L.circleMarker([nowLat, nowLng], {
-          radius:6, color:'#fff', fillColor:'#f5d76e', fillOpacity:1, weight:2, interactive:false
+        sunDotPos = [center.lat + distDeg * Math.cos(nowAz), center.lng + distDeg * Math.sin(nowAz) / cosLat];
+        sunDot = L.circleMarker(sunDotPos, {
+          radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
         }).addTo(sunPathLayerGroup);
       }
     }
 
-    // Direction labels at sunrise and sunset points
+    // Dashed line from center to sun position
+    if (sunDotPos){
+      L.polyline([center, sunDotPos], {
+        color:'rgba(255,255,255,0.55)', weight:1.5, dashArray:'5,5', interactive:false
+      }).addTo(sunPathLayerGroup);
+    }
+
+    // Rise/set labels — no text-shadow, slightly larger
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI;
-      var d   = distDeg * 1.15;
+      var d   = distDeg * 1.14;
       var lat = center.lat + d * Math.cos(az);
-      var lng = center.lng + d * Math.sin(az) / Math.cos(center.lat * Math.PI / 180);
+      var lng = center.lng + d * Math.sin(az) / cosLat;
       var icon = L.divIcon({
-        className:'',iconSize:[0,0],
-        html:'<div style="white-space:nowrap;font-size:11px;font-weight:700;color:' + color + ';text-shadow:0 0 4px rgba(0,0,0,0.8);pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
+        className:'', iconSize:[0,0],
+        html:'<div style="white-space:nowrap;font-size:12px;font-weight:700;color:' + color + ';pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
-    addDirMarker(times.sunrise, '↑ ' + formatTime12(times.sunrise), '#d9843a');
-    addDirMarker(times.sunset,  '↓ ' + formatTime12(times.sunset),  '#d9843a');
+    addDirMarker(times.sunrise, '↑ ' + formatTime12(times.sunrise), '#c47a28');
+    addDirMarker(times.sunset,  '↓ ' + formatTime12(times.sunset),  '#c47a28');
   }
+
 
   function closeAllPanels_except(keepId){
     ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
@@ -7007,6 +7028,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       else sunPathLayerGroup.clearLayers();
     });
 
+    // Time slider — scrub sun position through the day
+    (function(){
+      var slider = document.getElementById('sunrise-time-slider');
+      var label  = document.getElementById('sunrise-slider-time-label');
+      var sliderMarker = document.getElementById('sunrise-slider-marker');
+
+      function sliderMinutesToTime(mins){
+        var h = Math.floor(mins/60), m = mins % 60;
+        var ampm = h >= 12 ? 'PM' : 'AM';
+        var h12 = h % 12 || 12;
+        return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+      }
+
+      function initSliderToNow(){
+        var now = new Date();
+        var mins = now.getHours() * 60 + now.getMinutes();
+        slider.value = mins;
+        sunSliderMinutes = null; // null = use real now
+        label.textContent = sliderMinutesToTime(mins);
+        // Position slider marker on timeline bar to match
+        var pct = mins / 1440 * 100;
+        if (sliderMarker){ sliderMarker.style.left = pct + '%'; sliderMarker.style.display = ''; }
+      }
+
+      slider.addEventListener('input', function(){
+        var mins = parseInt(this.value);
+        sunSliderMinutes = mins;
+        label.textContent = sliderMinutesToTime(mins);
+        var pct = mins / 1440 * 100;
+        if (sliderMarker){ sliderMarker.style.left = pct + '%'; sliderMarker.style.display = ''; }
+        if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+      });
+
+      document.getElementById('sunrise-slider-now-btn').addEventListener('click', function(){
+        sunSliderMinutes = null;
+        initSliderToNow();
+        if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+      });
+
+      // Init on panel open
+      window._sunSliderInit = initSliderToNow;
+    })();
+
     document.getElementById('elev-done-btn').addEventListener('click', function(){
       setElevTapMode(false);
     });
@@ -7525,9 +7589,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var isHidden = menu.classList.contains('hidden');
       if (isHidden){
         var rect = this.getBoundingClientRect();
-        menu.style.top = (rect.top - 4) + 'px';
+        menu.style.top = (rect.bottom + 4) + 'px';
         menu.style.left = rect.left + 'px';
-        menu.style.transform = 'translateY(-100%)';
+        menu.style.transform = '';
       }
       menu.classList.toggle('hidden');
     });
