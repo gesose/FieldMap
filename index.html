@@ -1691,7 +1691,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.4';
+  var APP_VERSION = '1.4.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6491,17 +6491,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
-      var az  = pos.azimuth + Math.PI; // bearing from north, clockwise
-      var d   = distDeg * 1.38;
+      var az  = pos.azimuth + Math.PI;
+      var d   = distDeg * 1.6; // far enough that inner label edge clears the arc
       var lat = drawCenter.lat + d * Math.cos(az);
       var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
-      // Anchor the label so its edge nearest the arc is at the marker point.
-      // az in screen terms: north=up, east=right.
-      // X: if az points rightward (sin>0, east), anchor left edge at point (tx=0%)
-      //    if az points leftward (sin<0, west), anchor right edge at point (tx=-100%)
-      // Y: always vertically centered on point (ty=-50%)
-      var sinAz = Math.sin(az);
-      var tx = sinAz >= 0 ? '0%' : '-100%';
+      // Anchor inner label edge at the radial point so text grows outward, never inward.
+      // sin(az) > 0 = east (sunrise) → left-anchor (tx=0%, grows right)
+      // sin(az) < 0 = west (sunset)  → right-anchor (tx=-100%, grows left)
+      var tx = Math.sin(az) >= 0 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
         html:'<div style="white-space:nowrap;font-size:14px;font-weight:700;color:' + color +
