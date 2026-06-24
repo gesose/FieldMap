@@ -1635,7 +1635,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.4';
+  var APP_VERSION = '1.2.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3663,6 +3663,12 @@ var MARKER_ICONS = {
     document.getElementById('pin-delete-btn').classList.toggle('hidden', !pin);
     document.getElementById('pin-modal').classList.remove('hidden');
     document.getElementById('pin-name').focus();
+  }
+
+  function closePinModal(){
+    document.getElementById('pin-modal').classList.add('hidden');
+    editingPinId = null; pendingLatLng = null;
+    setAddMode(false);
   }
 
   var _selectedPinStatus = 'escout';
