@@ -1671,7 +1671,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.3';
+  var APP_VERSION = '1.3.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6369,33 +6369,53 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     sunPathLayerGroup.clearLayers();
     if (!SUNRISE_ARC_ON) return;
     if (typeof SunCalc === 'undefined'){ showToast('SunCalc library not loaded'); return; }
+
+    // On mobile, when the sunrise panel is open, shift the arc center upward
+    // so the arc fits in the visible map area above the panel.
+    var drawCenter = center;
+    var isMobile = window.innerWidth <= 640;
+    var panelVisible = !document.getElementById('sunrise-panel').classList.contains('hidden');
+    if (isMobile && panelVisible){
+      // Estimate panel height: collapsed header ~88px + panel content ~220px
+      var panelPx = 320;
+      var mapH = map.getSize().y;
+      // Shift center up by half the panel height in pixels -> degrees
+      var shiftPx = panelPx * 0.42;
+      var topLL  = map.containerPointToLatLng([0, 0]);
+      var shiftLL = map.containerPointToLatLng([0, shiftPx]);
+      var shiftDeg = topLL.lat - shiftLL.lat;
+      drawCenter = L.latLng(center.lat - shiftDeg, center.lng);
+    }
     var times = SunCalc.getTimes(date, center.lat, center.lng);
     var startTime = times.nightEnd || times.nauticalDawn || times.dawn;
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
     if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
 
     var distDeg = sunArcDistDeg();
-    var cosLat  = Math.cos(center.lat * Math.PI / 180);
+    var cosLat  = Math.cos(drawCenter.lat * Math.PI / 180);
 
     // Arc segments — colors match timeline bar
-    // twilight=blue, golden=amber, day=yellow
+    // Build as contiguous runs so there are no straight connector lines
+    // between e.g. pre-sunrise twilight and post-sunset twilight.
     var arcColors = { twilight:'#5a7bb5', golden:'#c47a28', day:'#f0e898' };
-    var segments  = { twilight:[], golden:[], day:[] };
     var step = 10 * 60 * 1000; // 10-minute resolution
+    var runs = []; // [{key, pts:[]}]
+    var curRun = null;
     for (var ms = startTime.getTime(); ms <= endTime.getTime(); ms += step){
       var t   = new Date(ms);
-      var pos = SunCalc.getPosition(t, center.lat, center.lng);
-      if (pos.altitude < -0.314) continue;
+      var pos = SunCalc.getPosition(t, center.lat, center.lng); // SunCalc uses real location
+      if (pos.altitude < -0.314){ curRun = null; continue; }
       var az = pos.azimuth + Math.PI;
-      var pt = [center.lat + distDeg * Math.cos(az), center.lng + distDeg * Math.sin(az) / cosLat];
+      var pt = [drawCenter.lat + distDeg * Math.cos(az), drawCenter.lng + distDeg * Math.sin(az) / cosLat];
       var key = 'day';
       if (t < times.goldenHourEnd || t > times.goldenHour) key = 'golden';
       if (t < times.sunrise || t > times.sunset) key = 'twilight';
-      segments[key].push(pt);
+      if (!curRun || curRun.key !== key){ curRun = { key:key, pts:[] }; runs.push(curRun); }
+      curRun.pts.push(pt);
     }
-    Object.keys(segments).forEach(function(k){
-      if (segments[k].length >= 2){
-        L.polyline(segments[k], { color:arcColors[k], weight:3.5, opacity:0.92, interactive:false })
+    runs.forEach(function(run){
+      if (run.pts.length >= 2){
+        L.polyline(run.pts, { color:arcColors[run.key], weight:3.5, opacity:0.92, interactive:false })
           .addTo(sunPathLayerGroup);
       }
     });
@@ -6404,13 +6424,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var sunDot = null, sunDotPos = null;
     var isToday = date.toDateString() === new Date().toDateString();
     if (sunSliderMinutes !== null){
-      // Slider mode: show for any date
       var sliderDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(),
         Math.floor(sunSliderMinutes/60), sunSliderMinutes % 60, 0);
       var sPos = SunCalc.getPosition(sliderDate, center.lat, center.lng);
       if (sPos.altitude > -0.1){
         var sAz = sPos.azimuth + Math.PI;
-        sunDotPos = [center.lat + distDeg * Math.cos(sAz), center.lng + distDeg * Math.sin(sAz) / cosLat];
+        sunDotPos = [drawCenter.lat + distDeg * Math.cos(sAz), drawCenter.lng + distDeg * Math.sin(sAz) / cosLat];
         sunDot = L.circleMarker(sunDotPos, {
           radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
         }).addTo(sunPathLayerGroup);
@@ -6419,28 +6438,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var nowPos = SunCalc.getPosition(new Date(), center.lat, center.lng);
       if (nowPos.altitude > -0.1){
         var nowAz = nowPos.azimuth + Math.PI;
-        sunDotPos = [center.lat + distDeg * Math.cos(nowAz), center.lng + distDeg * Math.sin(nowAz) / cosLat];
+        sunDotPos = [drawCenter.lat + distDeg * Math.cos(nowAz), drawCenter.lng + distDeg * Math.sin(nowAz) / cosLat];
         sunDot = L.circleMarker(sunDotPos, {
           radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
         }).addTo(sunPathLayerGroup);
       }
     }
 
-    // Dashed line from center to sun position
+    // Dashed yellow line from drawCenter to sun dot
     if (sunDotPos){
-      L.polyline([center, sunDotPos], {
-        color:'rgba(255,255,255,0.55)', weight:1.5, dashArray:'5,5', interactive:false
+      L.polyline([drawCenter, sunDotPos], {
+        color:'#f0c040', weight:1.5, dashArray:'6,5', opacity:0.85, interactive:false
       }).addTo(sunPathLayerGroup);
     }
 
-    // Rise/set labels — no text-shadow, slightly larger
+    // Rise/set labels — outside the arc, no text-shadow
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI;
-      var d   = distDeg * 1.14;
-      var lat = center.lat + d * Math.cos(az);
-      var lng = center.lng + d * Math.sin(az) / cosLat;
+      var d   = distDeg * 1.22;
+      var lat = drawCenter.lat + d * Math.cos(az);
+      var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
         html:'<div style="white-space:nowrap;font-size:12px;font-weight:700;color:' + color + ';pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
