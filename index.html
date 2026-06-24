@@ -550,39 +550,32 @@
   /* Mobile */
   @media (max-width:760px){
     /* Sidebar bottom sheet */
-    #mobile-handle{display:flex;justify-content:center;padding:8px 0 4px;cursor:pointer;order:0;}
-    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.25);}
+    #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
+    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
     #sidebar{
       position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;height:auto;
       border-right:none;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
       display:flex;flex-direction:column;
-      max-height:80vh;
     }
     #sidebar-header{order:1;padding:10px 14px 8px;}
     #sidebar-scroll-area{
       order:2;
-      overflow:hidden;
-      max-height:0;
-      transition:max-height .28s ease;
-      display:flex;flex-direction:column;
-      min-height:0;
+      max-height:0;overflow:hidden;
+      transition:max-height .25s ease;
     }
     #sidebar.open #sidebar-scroll-area{
-      max-height:65vh;
+      max-height:55vh;
       overflow-y:auto;
       -webkit-overflow-scrolling:touch;
     }
-    /* Peek state: show first ~1.5 rows so user knows list is there */
-    #sidebar:not(.open) #sidebar-scroll-area{
-      max-height:52px;
-      overflow:hidden;
-    }
-    #sidebar:not(.open) #pin-list{pointer-events:none;}
     #pin-count{padding:4px 14px 10px;}
 
     /* Desktop-only sidebar buttons hidden on mobile — Sort, Bulk edit, Import, Export
        (Export removed in favor of per-pin/per-track Share) */
     #sidebar-header-row2{display:none;}
+
+    /* Mobile sort row — Sort only, no bulk edit */
+    #mobile-sort-row{display:flex;gap:6px;padding:0 14px 8px;}
 
     /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
@@ -591,7 +584,7 @@
     .leaflet-control-zoom{display:none !important;}
 
     /* Push Leaflet attribution above the bottom sheet, shrink it on mobile */
-    .leaflet-bottom.leaflet-left{margin-bottom:90px;}
+    .leaflet-bottom.leaflet-left{margin-bottom:90px;transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
     /* Scale bar: stacked above the attribution line, clear of overlap */
@@ -600,7 +593,12 @@
       top:auto;right:auto;
       bottom:112px;left:14px;
       width:130px;
+      transition:bottom .25s ease;
     }
+
+    /* When sidebar is open, push attribution and scale bar up above the list */
+    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 10px); }
+    body.sidebar-open #scale-bar{ bottom:calc(55vh + 30px); }
 
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
@@ -678,6 +676,15 @@
     </div>
 
     <div id="sidebar-scroll-area">
+      <div id="mobile-sort-row">
+        <button class="btn btn-small" id="mobile-sort-btn">Sort</button>
+        <div id="mobile-sort-menu" class="dropdown-menu hidden" style="position:fixed;bottom:auto;">
+          <div class="dropdown-item" data-mobile-sort="chronological">Chronological</div>
+          <div class="dropdown-item" data-mobile-sort="category">By category</div>
+          <div class="dropdown-item" data-mobile-sort="trip">By trip</div>
+        </div>
+        <button class="btn btn-small" id="mobile-filter-btn">Filter</button>
+      </div>
       <div id="bulk-bar" class="hidden">
         <span id="bulk-count">0 selected</span>
         <button class="btn btn-small btn-primary" id="bulk-apply-btn">Edit selected</button>
@@ -1661,7 +1668,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.2.8';
+  var APP_VERSION = '1.2.9';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3132,7 +3139,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     map.on('zoomend', updateGmuLabelVisibility);
     map.on('zoomend moveend', scheduleClusterRefresh);
     map.on('zoomend moveend', function(){
-      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+      var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
+      if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
     });
     map.on('moveend', function(){
       if (compassActive && compassUseCenter) updateCompassMapLines();
@@ -3402,14 +3410,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     var used = new Array(points.length).fill(false);
     var RADIUS = 28;
+    var clusteringOn = state.settings.clusterPins !== false;
     for (var i=0;i<points.length;i++){
       if (used[i]) continue;
       var group = [points[i]];
       used[i] = true;
-      for (var j=i+1;j<points.length;j++){
-        if (used[j]) continue;
-        var dx = points[j].pt.x - points[i].pt.x, dy = points[j].pt.y - points[i].pt.y;
-        if (Math.sqrt(dx*dx + dy*dy) <= RADIUS){ group.push(points[j]); used[j] = true; }
+      if (clusteringOn){
+        for (var j=i+1;j<points.length;j++){
+          if (used[j]) continue;
+          var dx = points[j].pt.x - points[i].pt.x, dy = points[j].pt.y - points[i].pt.y;
+          if (Math.sqrt(dx*dx + dy*dy) <= RADIUS){ group.push(points[j]); used[j] = true; }
+        }
       }
       if (group.length === 1){
         clusterLayerGroup.addLayer(group[0].marker);
@@ -6346,10 +6357,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
     if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
 
-    // Scale arc radius to ~38% of the map container's pixel height, converted to degrees.
-    // Using pixels→meters→degrees keeps the arc the same screen size at every zoom level.
-    var mapSizePx  = map.getSize(); // {x: widthPx, y: heightPx}
-    var targetPx   = mapSizePx.y * 0.38;
+    // Scale arc radius to ~35% of the visible map height, converted to degrees.
+    // On mobile the sidebar covers the bottom ~90px, so subtract that.
+    var isMobile = window.innerWidth <= 640;
+    var mapSizePx  = map.getSize();
+    var visibleH   = mapSizePx.y - (isMobile ? 90 : 0);
+    var targetPx   = visibleH * (isMobile ? 0.28 : 0.35);
     var metersPerPx = map.containerPointToLatLng([0, 0]).distanceTo(
                         map.containerPointToLatLng([0, targetPx]));
     var distDeg    = metersPerPx / 111320; // 1° lat ≈ 111,320 m
@@ -7512,6 +7525,27 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     });
 
+    // Mobile sort/filter buttons (mirror desktop sort, open filter panel)
+    document.getElementById('mobile-sort-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      document.getElementById('mobile-sort-menu').classList.toggle('hidden');
+    });
+    document.querySelectorAll('#mobile-sort-menu .dropdown-item').forEach(function(item){
+      item.addEventListener('click', function(){
+        listSortMode = item.dataset['mobileSort'];
+        document.getElementById('mobile-sort-menu').classList.add('hidden');
+        renderPinList();
+      });
+    });
+    document.getElementById('mobile-filter-btn').addEventListener('click', function(){
+      document.getElementById('mobile-sort-menu').classList.add('hidden');
+      // Close sidebar, open filter panel
+      document.getElementById('sidebar').classList.remove('open');
+      document.body.classList.remove('sidebar-open');
+      document.getElementById('filter-panel').classList.remove('hidden');
+      closeAllPanels_except('filter-panel');
+    });
+
     document.getElementById('bulk-edit-btn').addEventListener('click', function(){
       if (bulkMode) exitBulkMode(); else enterBulkMode();
     });
@@ -7573,14 +7607,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     document.getElementById('mobile-handle').addEventListener('click', function(){
-      document.getElementById('sidebar').classList.toggle('open');
+      var isOpen = document.getElementById('sidebar').classList.toggle('open');
+      document.body.classList.toggle('sidebar-open', isOpen);
     });
     // Also allow tapping the header title area to expand/collapse
     document.getElementById('sidebar-header').addEventListener('click', function(e){
       // Don't toggle if user tapped a button inside the header
       if (e.target.closest('button')) return;
       if (window.innerWidth <= 640){
-        document.getElementById('sidebar').classList.toggle('open');
+        var isOpen = document.getElementById('sidebar').classList.toggle('open');
+        document.body.classList.toggle('sidebar-open', isOpen);
       }
     });
 
