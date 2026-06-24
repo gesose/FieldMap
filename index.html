@@ -1691,7 +1691,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.3';
+  var APP_VERSION = '1.4.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6492,14 +6492,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI; // bearing from north, clockwise
-      var d   = distDeg * 1.45; // well outside arc (arc is at 1.0×)
+      var d   = distDeg * 1.38;
       var lat = drawCenter.lat + d * Math.cos(az);
       var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
-      // Center label on its radial point — equidistant from arc on both sides
+      // Anchor the label so its edge nearest the arc is at the marker point.
+      // az in screen terms: north=up, east=right.
+      // X: if az points rightward (sin>0, east), anchor left edge at point (tx=0%)
+      //    if az points leftward (sin<0, west), anchor right edge at point (tx=-100%)
+      // Y: always vertically centered on point (ty=-50%)
+      var sinAz = Math.sin(az);
+      var tx = sinAz >= 0 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
         html:'<div style="white-space:nowrap;font-size:14px;font-weight:700;color:' + color +
-             ';pointer-events:none;transform:translate(-50%,-50%);">' + label + '</div>'
+             ';pointer-events:none;transform:translate(' + tx + ',-50%);">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
