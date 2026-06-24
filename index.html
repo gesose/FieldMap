@@ -1671,7 +1671,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.3.5';
+  var APP_VERSION = '1.3.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6239,16 +6239,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function sunPanelPanUp(){
     if (window.innerWidth > 760 || _sunPanOffset !== 0) return;
-    // Panel is ~320px tall on mobile; pan map up by half that so arc stays centered
-    var panPx = 160;
+    // Panel covers ~320px from bottom; pan up by that amount so visible
+    // map area above panel is centered on the arc.
+    var panPx = Math.round(map.getSize().y * 0.35);
     _sunPanOffset = panPx;
-    map.panBy([0, -panPx], { animate:false });
+    map.panBy([0, -panPx], { animate:false, noMoveStart:true });
   }
 
   function sunPanelPanDown(){
     if (_sunPanOffset === 0) return;
-    map.panBy([0, _sunPanOffset], { animate:false });
+    var px = _sunPanOffset;
     _sunPanOffset = 0;
+    map.panBy([0, px], { animate:false, noMoveStart:true });
   }
 
   function openSunrisePanel(){
@@ -6454,28 +6456,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }).addTo(sunPathLayerGroup);
     }
 
-    // Rise/set labels — outside the arc, no text-shadow
+    // Rise/set labels — anchored radially outward, no arrows, dark bg for legibility
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
-      var az  = pos.azimuth + Math.PI; // bearing from north CW
-      var d   = distDeg * 1.15;
+      var az  = pos.azimuth + Math.PI; // bearing from north, clockwise
+      var d   = distDeg * 1.28;
       var lat = drawCenter.lat + d * Math.cos(az);
       var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
-      // In the northern hemisphere sunrise is to the east (az ~45-120°)
-      // and sunset is to the west (az ~240-315°). Anchor text away from arc:
-      // east side -> left edge at point (translateX 0%), west side -> right edge at point (translateX -100%)
-      var azDeg = az * 180 / Math.PI;
-      var isEast = (azDeg > 0 && azDeg < 180);
-      var xform = isEast ? 'translateY(-50%)' : 'translate(-100%,-50%)';
+      // Anchor text so it grows away from arc center
+      // East (az 0-180°): left-anchored. West (az 180-360°): right-anchored.
+      var azDeg = ((az * 180 / Math.PI) % 360 + 360) % 360;
+      var tx = azDeg < 180 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
-        html:'<div style="white-space:nowrap;font-size:12px;font-weight:700;color:' + color + ';pointer-events:none;transform:' + xform + ';">' + label + '</div>'
+        html:'<div style="white-space:nowrap;font-size:11px;font-weight:700;color:' + color +
+             ';pointer-events:none;transform:translate(' + tx + ',-50%);' +
+             'background:rgba(12,15,12,0.6);padding:1px 4px;border-radius:3px;">' + label + '</div>'
       });
       L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
-    addDirMarker(times.sunrise, '↑ ' + formatTime12(times.sunrise), '#c47a28');
-    addDirMarker(times.sunset,  '↓ ' + formatTime12(times.sunset),  '#c47a28');
+    addDirMarker(times.sunrise, formatTime12(times.sunrise), '#c47a28');
+    addDirMarker(times.sunset,  formatTime12(times.sunset),  '#c47a28');
   }
 
 
