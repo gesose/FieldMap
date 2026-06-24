@@ -609,27 +609,24 @@
     }
     #filter-panel,#layers-panel{max-height:48vh;}
 
-    /* Sunrise panel: docked drawer on mobile — sits below map, not over it */
-    #sunrise-panel{
+    /* Sunrise panel: docked above the sidebar bar on mobile */
+    #sunrise-panel.sunrise-docked-panel{
       position:fixed !important;
-      bottom:0 !important; left:0 !important; right:0 !important;
+      bottom:88px !important; left:0 !important; right:0 !important;
       top:auto !important;
       border-radius:16px 16px 0 0 !important;
       border-bottom:none !important;
       max-height:none !important;
       overflow-y:auto;
-      z-index:1600;
-      padding-bottom:env(safe-area-inset-bottom, 8px);
+      z-index:1400;
+      width:auto !important;
     }
-    /* Shrink map when sunrise dock is open — height set by JS measuring panel */
+    /* Map shrinks — bottom set by JS to panel top edge */
     #map.sunrise-docked{
       position:absolute !important;
-      bottom:0 !important; /* overridden by JS inline style */
       top:0 !important; left:0 !important; right:0 !important;
       height:auto !important;
     }
-    /* Push sidebar bar above dock — overridden by JS inline style */
-    #sidebar.sunrise-docked-bar{ }
     /* Hide times list in compact docked mode */
     #sunrise-panel.sunrise-docked-panel #sunrise-times-list{ display:none; }
 
@@ -1695,7 +1692,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.0';
+  var APP_VERSION = '1.4.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6261,41 +6258,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function sunriseDockOpen(){
     if (window.innerWidth > 760) return;
-    var panel     = document.getElementById('sunrise-panel');
-    var mapEl     = document.getElementById('map');
-    var sidebarEl = document.getElementById('sidebar');
+    var panel = document.getElementById('sunrise-panel');
+    var mapEl = document.getElementById('map');
     panel.classList.add('sunrise-docked-panel');
-    // Hide times list so panel stays compact
     var timesList = document.getElementById('sunrise-times-list');
     if (timesList) timesList.style.display = 'none';
     var toggleBtn = document.getElementById('sunrise-toggle-times-btn');
     if (toggleBtn) toggleBtn.textContent = 'Show times';
     mapEl.classList.add('sunrise-docked');
-    sidebarEl.classList.add('sunrise-docked-bar');
-    // Measure actual panel height after render and apply as CSS var
-    requestAnimationFrame(function(){
-      requestAnimationFrame(function(){
-        var h = panel.offsetHeight || 220;
-        var css = h + 'px';
-        mapEl.style.bottom = css;
-        sidebarEl.style.bottom = css;
-        map.invalidateSize({ animate:false });
-        var center = map.getCenter();
-        if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
-      });
-    });
+    // Two rAFs so CSS has applied and panel has rendered height
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      var panelH = panel.offsetHeight || 180;
+      mapEl.style.bottom = (88 + panelH) + 'px';
+      map.invalidateSize({ animate:false });
+      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+    }); });
   }
 
   function sunriseDockClose(){
     if (window.innerWidth > 760) return;
-    var panel     = document.getElementById('sunrise-panel');
-    var mapEl     = document.getElementById('map');
-    var sidebarEl = document.getElementById('sidebar');
+    var panel = document.getElementById('sunrise-panel');
+    var mapEl = document.getElementById('map');
     panel.classList.remove('sunrise-docked-panel');
     mapEl.classList.remove('sunrise-docked');
-    sidebarEl.classList.remove('sunrise-docked-bar');
     mapEl.style.bottom = '';
-    sidebarEl.style.bottom = '';
     map.invalidateSize({ animate:false });
   }
 
@@ -7060,14 +7046,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Re-measure dock height if docked, so map shrinks/grows correctly
       var panel = document.getElementById('sunrise-panel');
       if (panel.classList.contains('sunrise-docked-panel')){
-        requestAnimationFrame(function(){
-          var h = panel.offsetHeight || 220;
-          var css = h + 'px';
-          document.getElementById('map').style.bottom = css;
-          document.getElementById('sidebar').style.bottom = css;
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){
+          var h = panel.offsetHeight || 180;
+          document.getElementById('map').style.bottom = (88 + h) + 'px';
           map.invalidateSize({ animate:false });
           if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
-        });
+        }); });
       }
     });
     document.getElementById('sunrise-my-location-btn').addEventListener('click', function(){
