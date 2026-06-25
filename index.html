@@ -1691,7 +1691,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.6';
+  var APP_VERSION = '1.4.7';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6490,23 +6490,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
 
     // Rise/set labels — anchored radially outward, no arrows
+    // Place label using your approach: project arc center and arc-edge point to screen pixels,
+    // extend vector by fixed px beyond arc edge, unproject back to latlng.
+    var PAD_PX = 10; // gap between arc edge and inner label edge
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI;
-      var d   = distDeg * 1.22; // inner label edge sits just clear of arc
-      var lat = drawCenter.lat + d * Math.cos(az);
-      var lng = drawCenter.lng + d * Math.sin(az) / cosLat;
-      // Anchor inner label edge at the radial point so text grows outward, never inward.
-      // sin(az) > 0 = east (sunrise) → left-anchor (tx=0%, grows right)
-      // sin(az) < 0 = west (sunset)  → right-anchor (tx=-100%, grows left)
-      var tx = Math.sin(az) >= 0 ? '0%' : '-100%';
+      // Arc-edge point (at distDeg radius)
+      var edgeLat = drawCenter.lat + distDeg * Math.cos(az);
+      var edgeLng = drawCenter.lng + distDeg * Math.sin(az) / cosLat;
+      // Project center and edge to screen pixels
+      var cPx   = map.latLngToContainerPoint([drawCenter.lat, drawCenter.lng]);
+      var ePx   = map.latLngToContainerPoint([edgeLat, edgeLng]);
+      // Unit vector from center → edge
+      var dx = ePx.x - cPx.x, dy = ePx.y - cPx.y;
+      var len = Math.sqrt(dx*dx + dy*dy) || 1;
+      var ux = dx/len, uy = dy/len;
+      // Label anchor point: arc edge + PAD_PX along same vector
+      var lx = ePx.x + ux * PAD_PX;
+      var ly = ePx.y + uy * PAD_PX;
+      var labelLatLng = map.containerPointToLatLng([lx, ly]);
+      // Anchor: if vector points rightward anchor left edge at point; leftward anchor right edge
+      var tx = ux >= 0 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
         html:'<div style="white-space:nowrap;font-size:14px;font-weight:700;color:' + color +
              ';pointer-events:none;transform:translate(' + tx + ',-50%);">' + label + '</div>'
       });
-      L.marker([lat, lng], { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
+      L.marker(labelLatLng, { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
     }
     addDirMarker(times.sunrise, formatTime12(times.sunrise), '#c47a28');
     addDirMarker(times.sunset,  formatTime12(times.sunset),  '#c47a28');
