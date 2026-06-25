@@ -1744,7 +1744,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.6';
+  var APP_VERSION = '1.5.7';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3607,7 +3607,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<div class="pin-popup-actions">' +
       '<button class="btn btn-small" onclick="FieldMap.shareTrack(\'' + track.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editTrack(\'' + track.id + '\')">Edit</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.moveTrack(\'' + track.id + '\')">Move</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.editTrackVertices(\'' + track.id + '\')">Edit shape</button>' +
       '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteTrack(\'' + track.id + '\')">Delete</button>' +
       '</div>';
   }
@@ -3999,87 +3999,86 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         deletePolygonById(id);
       }
     },
-    moveTrack: function(id){
+    editTrackVertices: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
       if (!track) return;
       map.closePopup();
       var poly = trackLayersById[track.id];
       if (!poly) return;
-      var center = poly.getBounds().getCenter();
-      var origPoints = track.points.slice();
-      var anchor = L.marker(center, {
-        draggable: true, zIndexOffset:2000,
-        icon: L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
-          html:'<div style="width:22px;height:22px;border-radius:50%;background:#5a9bd8;border:3px solid #fff;box-sizing:border-box;cursor:grab;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">↔</div>'})
-      }).addTo(map);
-      anchor.on('drag', function(){
-        var ll = anchor.getLatLng();
-        var dlat = ll.lat - center.lat, dlng = ll.lng - center.lng;
-        var newPts = origPoints.map(function(p){ return [p[0]+dlat, p[1]+dlng]; });
-        poly.setLatLngs(newPts);
+      var origPoints = track.points.map(function(p){ return [p[0],p[1]]; });
+      var vertexMarkers = [];
+      var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
+        html:'<div style="width:14px;height:14px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
+      track.points.forEach(function(pt, i){
+        var m = L.marker([pt[0],pt[1]], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
+        m.on('drag', function(){
+          var ll = m.getLatLng();
+          var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+          poly.setLatLngs(newPts);
+        });
+        vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag handle to move route';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices to reshape route';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
       var finish = function(save){
-        map.removeLayer(anchor);
+        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
         barEl.removeChild(doneBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
-          var ll2 = anchor.getLatLng();
-          var dlat2 = ll2.lat - center.lat, dlng2 = ll2.lng - center.lng;
-          track.points = origPoints.map(function(p){ return [p[0]+dlat2, p[1]+dlng2]; });
-          scheduleSave(); showToast('Route moved');
+          track.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
+          track.distMiles = trackDistanceMiles(track.points);
+          refreshTrackPopup(track);
+          scheduleSave(); showToast('Route shape updated');
         } else { poly.setLatLngs(origPoints); }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
       document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
     },
-    movePolygon: function(id){
+    editPolygonVertices: function(id){
       var polygon = (state.polygons||[]).find(function(p){ return p.id === id; });
       if (!polygon) return;
       map.closePopup();
       var entry = polygonLayersById[polygon.id];
       if (!entry || !entry.poly) return;
-      var center = entry.poly.getBounds().getCenter();
-      var origPoints = polygon.points.map(function(p){ return {lat:p.lat||p[0], lng:p.lng||p[1]}; });
-      var anchor = L.marker(center, {
-        draggable: true, zIndexOffset:2000,
-        icon: L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
-          html:'<div style="width:22px;height:22px;border-radius:50%;background:#c2622d;border:3px solid #fff;box-sizing:border-box;cursor:grab;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">↔</div>'})
-      }).addTo(map);
-      anchor.on('drag', function(){
-        var ll = anchor.getLatLng();
-        var dlat = ll.lat - center.lat, dlng = ll.lng - center.lng;
-        var newPts = origPoints.map(function(p){ return [p.lat+dlat, p.lng+dlng]; });
-        entry.poly.setLatLngs(newPts);
+      var origPoints = polygon.points.map(function(p){ return [p[0]||p.lat, p[1]||p.lng]; });
+      var vertexMarkers = [];
+      var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
+        html:'<div style="width:14px;height:14px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
+      polygon.points.forEach(function(pt){
+        var lat = pt[0]||pt.lat, lng = pt[1]||pt.lng;
+        var m = L.marker([lat,lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
+        m.on('drag', function(){
+          var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+          entry.poly.setLatLngs(newPts);
+        });
+        vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag handle to move area';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices to reshape area';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
       var finish = function(save){
-        map.removeLayer(anchor);
+        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
         barEl.removeChild(doneBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
-          var ll2 = anchor.getLatLng();
-          var dlat2 = ll2.lat - center.lat, dlng2 = ll2.lng - center.lng;
-          polygon.points = origPoints.map(function(p){ return [p.lat+dlat2, p.lng+dlng2]; });
+          polygon.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
           refreshPolygonMap(polygon);
-          scheduleSave(); showToast('Area moved');
-        } else { entry.poly.setLatLngs(origPoints.map(function(p){ return [p.lat,p.lng]; })); }
+          scheduleSave(); showToast('Area shape updated');
+        } else { entry.poly.setLatLngs(origPoints); }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
       document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
     },
+    movePin: function(id){
       var pin = state.pins.find(function(p){ return p.id === id; });
       if (!pin) return;
       map.closePopup();
@@ -4118,6 +4117,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       doneBtn.addEventListener('click', function(){ finish(true); });
       document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
     },
+    editBearing: function(id){
       var b = state.bearings.find(function(x){ return x.id === id; });
       if (b){ map.closePopup(); openBearingModal(b); }
     },
@@ -4418,7 +4418,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>' +
       '<div class="pin-popup-actions">' +
       '<button class="btn btn-small" onclick="FieldMap.editPolygon(\'' + polygon.id + '\')">Edit</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.movePolygon(\'' + polygon.id + '\')">Move</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.editPolygonVertices(\'' + polygon.id + '\')">Edit shape</button>' +
       '<button class="btn btn-small btn-danger" onclick="FieldMap.deletePolygon(\'' + polygon.id + '\')">Delete</button>' +
       '</div>';
   }
@@ -7927,8 +7927,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           html:'<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>'
         });
       };
-      var oMark = L.marker([b.originLat, b.originLng], { icon:makeDragIcon('#D64545'), draggable:true, zIndexOffset:1000 }).addTo(map);
-      var tMark = L.marker([b.targetLat, b.targetLng], { icon:makeDragIcon('#3A8F45'), draggable:true, zIndexOffset:1000 }).addTo(map);
+      var oMark = L.marker([b.originLat, b.originLng], { icon:makeDragIcon('#3A8F45'), draggable:true, zIndexOffset:1000 }).addTo(map);
+      var tMark = L.marker([b.targetLat, b.targetLng], { icon:makeDragIcon('#D64545'), draggable:true, zIndexOffset:1000 }).addTo(map);
 
       // Update bearing line live as user drags
       var updateLive = function(){
