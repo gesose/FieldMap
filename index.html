@@ -1471,6 +1471,9 @@
     <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
     <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"></div>
     <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-bottom:8px;"></div>
+    <label><span>Category</span>
+      <div class="chip-row" id="bearing-tags-row"></div>
+    </label>
     <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
     <label><span>Trip (optional)</span><input type="text" id="bearing-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
     <label><span>Date</span><input type="date" id="bearing-date"></label>
@@ -1478,6 +1481,7 @@
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="bearing-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="bearing-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost hidden" id="bearing-remap-btn">Edit endpoints</button>
       <button class="btn btn-primary" id="bearing-save-btn">Save bearing</button>
     </div>
   </div>
@@ -1739,7 +1743,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.2';
+  var APP_VERSION = '1.5.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3364,6 +3368,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function itemVisible(item, query){
+    // Bearings: use tags if present, otherwise always pass tag filter
+    if (item.bearingDeg !== undefined){
+      if (item.tags && item.tags.length && item.tags[0] !== 'uncategorized'){
+        var tagsOk = item.tags.some(function(tid){ return activeTagFilters[tid] !== false; });
+        if (!tagsOk) return false;
+      }
+      var tripLabel = item.trip || NO_TRIP_LABEL;
+      if (activeTripFilters[tripLabel] === false) return false;
+      var dl = dateLabelFor(item.created);
+      if (dl && activeDateFilters[dl] === false) return false;
+      if (query){
+        var hay = (item.name + ' ' + (item.notes||'') + ' ' + (item.trip||'')).toLowerCase();
+        if (hay.indexOf(query) === -1) return false;
+      }
+      return true;
+    }
     var tagsOk = (item.tags||[]).some(function(tid){ return activeTagFilters[tid] !== false; });
     if (!tagsOk) return false;
     if (item.state && activeStateFilters[item.state] === false) return false;
@@ -4537,15 +4557,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       color: color, weight: 2.5, dashArray: '8,5', opacity: 0.92, interactive: true
     }).addTo(map);
 
-    // Arrowhead: 16px triangle divIcon at target, pointing in bearing direction
-    var az = b.bearingDeg * Math.PI / 180;
-    var arrowHtml = '<div style="width:0;height:0;' +
-      'border-left:8px solid transparent;border-right:8px solid transparent;' +
-      'border-bottom:16px solid ' + color + ';' +
-      'transform:rotate(' + b.bearingDeg + 'deg) translate(-50%,-100%);' +
-      'transform-origin:50% 100%;pointer-events:none;position:absolute;top:0;left:0;"></div>';
-    var arrowIcon = L.divIcon({ className:'', iconSize:[0,0], html:arrowHtml });
-    var arrowMarker = L.marker(target, { icon:arrowIcon, interactive:false }).addTo(map);
+    // 16px dot at target
+    var dotIcon = L.divIcon({
+      className:'', iconSize:[16,16], iconAnchor:[8,8],
+      html:'<div style="width:16px;height:16px;border-radius:50%;background:' + color + ';border:2px solid rgba(255,255,255,0.7);box-sizing:border-box;"></div>'
+    });
+    var arrowMarker = L.marker(target, { icon:dotIcon, interactive:false }).addTo(map);
 
     line.on('click', function(e){
       if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode){ return; }
@@ -4569,6 +4586,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     addBearingToMap(b);
   }
 
+  function renderBearingTagChips(activeTags){
+    var wrap = document.getElementById('bearing-tags-row');
+    wrap.innerHTML = '';
+    state.tags.forEach(function(t){
+      var chip = document.createElement('div');
+      var active = (activeTags||[]).indexOf(t.id) !== -1;
+      chip.className = 'chip' + (active ? ' active' : '');
+      chip.style.background = active ? t.color : 'var(--bg)';
+      chip.style.borderColor = active ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = t.id;
+      chip.addEventListener('click', function(){
+        var isActive = chip.classList.toggle('active');
+        chip.style.background = isActive ? t.color : 'var(--bg)';
+        chip.style.borderColor = isActive ? t.color : 'var(--border)';
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
   function openBearingModal(b){
     editingBearingId = b ? b.id : null;
     document.getElementById('bearing-modal-title').textContent = b ? 'Edit bearing' : 'Save bearing';
@@ -4578,11 +4615,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-date').value = b ? (tsToDateInputValue(b.created) || '') : tsToDateInputValue(Date.now());
     selectedBearingStatus = b ? (b.status || 'escout') : 'escout';
     renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
+    renderBearingTagChips(b ? (b.tags || []) : []);
     if (b){
       document.getElementById('bearing-meta-display').textContent =
         bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
     }
     document.getElementById('bearing-delete-btn').classList.toggle('hidden', !b);
+    document.getElementById('bearing-remap-btn').classList.toggle('hidden', !b);
     document.getElementById('bearing-modal').classList.remove('hidden');
     setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
   }
@@ -4599,15 +4638,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-date').value = tsToDateInputValue(Date.now());
     selectedBearingStatus = 'escout';
     renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
+    renderBearingTagChips([]);
     document.getElementById('bearing-meta-display').textContent =
       bearingCardinalLabel(deg) + ' ' + Math.round(deg) + '° · ' + dist.toFixed(2) + ' mi';
-    // Store pending values on the modal for saveBearingFromModal
-    document.getElementById('bearing-modal').dataset.originLat = originLL.lat;
-    document.getElementById('bearing-modal').dataset.originLng = originLL.lng;
-    document.getElementById('bearing-modal').dataset.targetLat = targetLL.lat;
-    document.getElementById('bearing-modal').dataset.targetLng = targetLL.lng;
-    document.getElementById('bearing-modal').dataset.bearingDeg = deg;
-    document.getElementById('bearing-modal').dataset.distMiles = dist;
+    var modal = document.getElementById('bearing-modal');
+    modal.dataset.originLat = originLL.lat;
+    modal.dataset.originLng = originLL.lng;
+    modal.dataset.targetLat = targetLL.lat;
+    modal.dataset.targetLng = targetLL.lng;
+    modal.dataset.bearingDeg = deg;
+    modal.dataset.distMiles = dist;
     document.getElementById('bearing-delete-btn').classList.add('hidden');
     document.getElementById('bearing-modal').classList.remove('hidden');
     setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
@@ -4619,11 +4659,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var trip = document.getElementById('bearing-trip').value.trim();
     var dateVal = dateInputValueToTs(document.getElementById('bearing-date').value);
     var modal = document.getElementById('bearing-modal');
+    var tags = [];
+    document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+    if (!tags.length) tags = ['uncategorized'];
 
     if (editingBearingId){
       var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
       if (b){
-        b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus;
+        b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus; b.tags = tags;
         if (dateVal) b.created = dateVal;
         refreshBearingMap(b);
       }
@@ -4633,7 +4676,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         originLat: +modal.dataset.originLat, originLng: +modal.dataset.originLng,
         targetLat: +modal.dataset.targetLat, targetLng: +modal.dataset.targetLng,
         bearingDeg: +modal.dataset.bearingDeg, distMiles: +modal.dataset.distMiles,
-        status: selectedBearingStatus, notes: notes, trip: trip,
+        status: selectedBearingStatus, tags: tags, notes: notes, trip: trip,
         created: dateVal || Date.now()
       };
       state.bearings.push(newB);
@@ -5007,8 +5050,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var areaLabel = it.type === 'polygon' && d.points && d.points.length >= 3 ? ' · ' + polygonAreaDisplay(d.points) : '';
     var typeLabel = it.type === 'polygon' ? 'Area' : (it.type === 'bearing' ? 'Bearing' : '');
     var bearingMeta = it.type === 'bearing' ? ' · ' + bearingCardinalLabel(d.bearingDeg) + ' ' + Math.round(d.bearingDeg) + '° · ' + d.distMiles.toFixed(2) + ' mi' : '';
+    var bearingTag = it.type === 'bearing' ? (d.tags && d.tags[0] && d.tags[0] !== 'uncategorized' ? ' · ' + tagById(d.tags[0]).label : '') : '';
     var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : (it.type === 'bearing' ? '' : tagLabelsFor(d));
-    metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + (it.type === 'bearing' ? '' : areaLabel) : '') +
+    metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + (it.type === 'bearing' ? bearingTag : areaLabel) : '') +
       (it.type !== 'bearing' ? (pinTag ? (typeLabel ? ' · ' + pinTag : pinTag) : '') : '') +
       distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
@@ -7656,6 +7700,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!confirm('Delete this bearing?')) return;
       deleteBearingById(editingBearingId);
       closeBearingModal();
+    });
+    document.getElementById('bearing-remap-btn').addEventListener('click', function(){
+      // Save current edits to name/status/notes/trip/tags first, then re-enter draw mode
+      var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
+      if (!b) return;
+      var tags = [];
+      document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+      b.name = document.getElementById('bearing-name').value.trim() || b.name;
+      b.notes = document.getElementById('bearing-notes').value.trim();
+      b.trip = document.getElementById('bearing-trip').value.trim();
+      b.status = selectedBearingStatus;
+      b.tags = tags.length ? tags : ['uncategorized'];
+      scheduleSave();
+      closeBearingModal();
+      // Remove old bearing from map, enter draw mode to replace endpoints
+      removeBearingFromMap(b.id);
+      state.bearings = state.bearings.filter(function(x){ return x.id !== b.id; });
+      renderPinList();
+      setBearingMode(true);
+      showToast('Tap new origin point to replace bearing', 4000);
     });
 
     // Bearing draw bar cancel
