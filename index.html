@@ -630,7 +630,7 @@
     /* Times list visibility in docked mode controlled by JS only */
 
     /* Draw bar, polygon bar, elev bar: centered above bottom sheet */
-    #draw-bar,#measure-result,#polygon-bar,#elev-bar{
+    #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar{
       bottom:90px;
       left:50%;right:auto;
       transform:translateX(-50%);
@@ -890,6 +890,15 @@
           </svg>
         </div>
         <div class="sheet-label">Draw area</div>
+      </button>
+      <button class="sheet-cell" id="sheet-draw-bearing-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="19" x2="19" y2="5" stroke-dasharray="4,2"/>
+            <polyline points="13,5 19,5 19,11"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Add bearing</div>
       </button>
       <button class="sheet-cell" id="sheet-import-btn">
         <div class="sheet-icon">
@@ -1412,6 +1421,10 @@
   <div class="modal">
     <h2 id="track-modal-title">Edit track</h2>
     <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
+    <label><span>Status</span>
+      <div id="track-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"></div>
+      <div id="track-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+    </label>
     <label><span>Tags</span>
       <div class="chip-row" id="track-tags-row"></div>
     </label>
@@ -1432,8 +1445,9 @@
   <div class="modal">
     <h2 id="polygon-modal-title">New area</h2>
     <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
-    <label><span>Color</span>
-      <div id="polygon-color-swatches" style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 0 2px;"></div>
+    <label><span>Status</span>
+      <div id="polygon-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"></div>
+      <div id="polygon-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
     </label>
     <label><span>Tags</span>
       <div class="chip-row" id="polygon-tags-row"></div>
@@ -1448,6 +1462,35 @@
       <button class="btn btn-primary" id="polygon-save-btn">Save area</button>
     </div>
   </div>
+</div>
+
+<!-- Bearing modal -->
+<div class="modal-overlay hidden" id="bearing-modal">
+  <div class="modal">
+    <h2 id="bearing-modal-title">Save bearing</h2>
+    <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
+    <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"></div>
+    <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-bottom:8px;"></div>
+    <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
+    <label><span>Trip (optional)</span><input type="text" id="bearing-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Date</span><input type="date" id="bearing-date"></label>
+    <div class="coord-display" id="bearing-meta-display"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger hidden" id="bearing-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="bearing-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="bearing-save-btn">Save bearing</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bearing draw bar (shown during +Add bearing mode) -->
+<div id="bearing-bar" class="hidden" style="
+  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+  padding:8px 14px;display:flex;align-items:center;gap:12px;font-size:13px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+  <span id="bearing-bar-text">Tap origin point</span>
+  <button class="btn btn-small btn-ghost" id="bearing-bar-cancel">Cancel</button>
 </div>
 
 <!-- Bulk edit modal -->
@@ -1696,7 +1739,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.1';
+  var APP_VERSION = '1.5.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1736,6 +1779,7 @@
     pins: [],
     tracks: [],
     polygons: [],
+    bearings: [],
     tags: SEED_TAGS.slice(),
     tombstones: {},
     lastLocalEditAt: 0,
@@ -1787,13 +1831,16 @@
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
   var gpsFollowWatchId = null;
-  var POLYGON_COLORS = ['#c2622d','#5fa86b','#5a9bd8','#d9a13f','#9b5fd8','#c2432d','#3da89a','#6b8fa6'];
-  var selectedPolygonColor = POLYGON_COLORS[0];
+  var selectedTrackStatus = 'escout';
+  var selectedPolygonStatus = 'escout';
   var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
   var eyeHiddenTrips = {};  // tripKey → true when hidden via eye icon
   var ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjhhYjgwZjdmYTdmZDQxNDI5YTdmNmExOWIzODAwOTY3IiwiaCI6Im11cm11cjY0In0=';
   var searchResultMarker = null;
   var editingPinId = null, editingTrackId = null;
+  var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewLine = null;
+  var editingBearingId = null, selectedBearingStatus = 'escout';
+  var bearingLayersById = {}; // {id: {line, arrowMarker}}
   var pendingLatLng = null;
   var activeTagFilters = {};
   var activeStateFilters = {};
@@ -3154,6 +3201,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeClusterPanel();
       if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
       if (compassActive){ handleCompassMapTap(e.latlng); return; }
+      if (bearingMode){ handleBearingMapTap(e.latlng); return; }
       if (measureMode){ handleMeasureClick(e.latlng); return; }
       if (drawMode){ handleDrawClick(e.latlng); return; }
       if (polygonMode){ handlePolygonClick(e.latlng); return; }
@@ -3541,8 +3589,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function addTrackToMap(track){
-    var v = tagVisualFor(track);
-    var poly = L.polyline(track.points, { color: v.color, weight: 3, opacity: 0.85 });
+    var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
+    var poly = L.polyline(track.points, { color: sc.bg, weight: 3, opacity: 0.85 });
     poly.bindPopup(trackPopupHtml(track));
     poly.on('click', function(e){
       if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
@@ -3569,7 +3617,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function refreshTrackPopup(track){
     var poly = trackLayersById[track.id];
     if (poly){
-      poly.setStyle({ color: tagVisualFor(track).color });
+      var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
+      poly.setStyle({ color: sc.bg });
       poly.setPopupContent(trackPopupHtml(track));
     }
   }
@@ -3637,6 +3686,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-date').value = tsToDateInputValue(track.created);
     document.getElementById('track-point-count').textContent = track.points.length + ' points' + (track.state ? ' · ' + track.state : '');
     document.getElementById('track-delete-btn').classList.remove('hidden');
+    selectedTrackStatus = track.status || 'escout';
+    renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips(track.tags.slice());
     document.getElementById('track-modal').classList.remove('hidden');
   }
@@ -3651,6 +3702,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-date').value = tsToDateInputValue(Date.now());
     document.getElementById('track-point-count').textContent = points.length + ' points';
     document.getElementById('track-delete-btn').classList.add('hidden');
+    selectedTrackStatus = 'escout';
+    renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips([]);
     document.getElementById('track-modal').classList.remove('hidden');
     document.getElementById('track-name').focus();
@@ -3675,6 +3728,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (editingTrackId){
       var track = state.tracks.find(function(t){ return t.id === editingTrackId; });
       track.name = name; track.tags = tags; track.notes = notes; track.trip = trip;
+      track.status = selectedTrackStatus;
       if (dateVal) track.created = dateVal;
       if (track.distMiles === undefined) track.distMiles = trackDistanceMiles(track.points);
       refreshTrackPopup(track);
@@ -3682,6 +3736,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var pts = pendingDrawPoints.map(function(p){ return [p.lat, p.lng]; });
       var newTrack = {
         id: uid(), name: name, points: pts, tags: tags, notes: notes, trip: trip,
+        status: selectedTrackStatus,
         created: dateVal || Date.now(), source: 'drawn',
         distMiles: trackDistanceMiles(pts),
         state: stateForPoint(pts[0][0], pts[0][1])
@@ -3784,9 +3839,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   var _selectedPinStatus = 'escout';
-  function renderPinStatusPicker(currentStatus){
-    _selectedPinStatus = currentStatus || 'escout';
-    var row = document.getElementById('pin-status-row');
+  // Shared status picker — used by pins, tracks, polygons, bearings
+  function renderStatusPicker(rowId, labelId, onSelect, currentStatus){
+    var sel = currentStatus || 'escout';
+    var row = document.getElementById(rowId);
+    var lbl = labelId ? document.getElementById(labelId) : null;
     if (!row) return;
     row.innerHTML = '';
     Object.keys(STATUS_COLORS).forEach(function(key){
@@ -3794,15 +3851,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var btn = document.createElement('button');
       btn.title = sc.label;
       btn.style.cssText = 'width:28px;height:28px;border-radius:50%;background:' + sc.bg +
-        ';border:3px solid ' + (key === _selectedPinStatus ? '#fff' : 'transparent') +
-        ';box-shadow:' + (key === _selectedPinStatus ? '0 0 0 2px ' + sc.bg : 'none') +
+        ';border:3px solid ' + (key === sel ? '#fff' : 'transparent') +
+        ';box-shadow:' + (key === sel ? '0 0 0 2px ' + sc.bg : 'none') +
         ';cursor:pointer;transition:all .15s;flex-shrink:0;';
       btn.addEventListener('click', function(){
-        _selectedPinStatus = key;
-        renderPinStatusPicker(key);
+        onSelect(key);
+        renderStatusPicker(rowId, labelId, onSelect, key);
       });
       row.appendChild(btn);
     });
+    if (lbl) lbl.textContent = STATUS_COLORS[sel] ? STATUS_COLORS[sel].label : '';
+  }
+
+  function renderPinStatusPicker(currentStatus){
+    _selectedPinStatus = currentStatus || 'escout';
+    renderStatusPicker('pin-status-row', 'pin-status-label', function(k){ _selectedPinStatus = k; }, _selectedPinStatus);
   }
 
   function savePinFromModal(){
@@ -3918,6 +3981,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (on && measureMode) setMeasureMode(false);
     if (on && drawMode) setDrawMode(false);
     if (on && polygonMode) setPolygonMode(false);
+    if (on && bearingMode) setBearingMode(false);
     if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('add-mode', on);
     // Visual feedback via cursor
@@ -4302,10 +4366,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ---------- Polygon map rendering ----------
   function addPolygonToMap(polygon){
+    var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
+    var color = sc.bg;
     var layer = L.polygon(polygon.points, {
-      color: polygon.color || '#c2622d',
+      color: color,
       weight: 2,
-      fillColor: polygon.color || '#c2622d',
+      fillColor: color,
       fillOpacity: polygon.fillOpacity !== undefined ? polygon.fillOpacity : 0.18,
       interactive: true
     }).addTo(map);
@@ -4327,7 +4393,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     var labelIcon = L.divIcon({
       className:'polygon-label',
-      html:'<div style="font-size:10px;font-weight:600;color:' + (polygon.color||'#c2622d') + ';text-shadow:0 0 3px rgba(0,0,0,0.6),0 0 6px rgba(0,0,0,0.4);pointer-events:none;white-space:nowrap;">' + escapeHtml(polygon.name) + '</div>',
+      html:'<div style="font-size:10px;font-weight:600;color:' + color + ';text-shadow:0 0 3px rgba(0,0,0,0.6),0 0 6px rgba(0,0,0,0.4);pointer-events:none;white-space:nowrap;">' + escapeHtml(polygon.name) + '</div>',
       iconSize:[0,0]
     });
     var centroid = layer.getBounds().getCenter();
@@ -4359,16 +4425,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('polygon-name').value = polygon ? polygon.name : '';
     document.getElementById('polygon-notes').value = polygon ? (polygon.notes || '') : '';
     document.getElementById('polygon-trip').value = polygon ? (polygon.trip || '') : '';
-    // Auto-populate date: existing polygon uses its date, new polygon uses today
     document.getElementById('polygon-date').value = polygon
       ? (tsToDateInputValue(polygon.created) || '')
       : tsToDateInputValue(Date.now());
 
-    selectedPolygonColor = polygon ? (polygon.color || POLYGON_COLORS[0]) : POLYGON_COLORS[0];
-    renderPolygonColorSwatches();
+    selectedPolygonStatus = polygon ? (polygon.status || 'escout') : 'escout';
+    renderStatusPicker('polygon-status-row', 'polygon-status-label', function(k){ selectedPolygonStatus = k; }, selectedPolygonStatus);
     renderPolygonTagChips(polygon ? polygon.tags : []);
 
-    // Show computed area for existing polygons or pending new polygon
     var pts = polygon ? polygon.points : pendingPolygonPoints;
     var areaEl = document.getElementById('polygon-area-display');
     if (areaEl){
@@ -4379,22 +4443,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('polygon-delete-btn').classList.toggle('hidden', !polygon);
     document.getElementById('polygon-modal').classList.remove('hidden');
     setTimeout(function(){ document.getElementById('polygon-name').focus(); }, 80);
-  }
-
-  function renderPolygonColorSwatches(){
-    var wrap = document.getElementById('polygon-color-swatches');
-    wrap.innerHTML = '';
-    POLYGON_COLORS.forEach(function(color){
-      var sw = document.createElement('div');
-      sw.className = 'color-swatch' + (color === selectedPolygonColor ? ' selected' : '');
-      sw.style.background = color;
-      sw.addEventListener('click', function(){
-        selectedPolygonColor = color;
-        wrap.querySelectorAll('.color-swatch').forEach(function(s){ s.classList.remove('selected'); });
-        sw.classList.add('selected');
-      });
-      wrap.appendChild(sw);
-    });
   }
 
   function renderPolygonTagChips(activeTags){
@@ -4429,7 +4477,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (editingPolygonId){
       var poly = state.polygons.find(function(p){ return p.id === editingPolygonId; });
       if (poly){
-        poly.name = name; poly.color = selectedPolygonColor; poly.tags = tags;
+        poly.name = name; poly.status = selectedPolygonStatus; poly.tags = tags;
         poly.trip = trip; poly.notes = notes;
         if (dateVal) poly.created = dateVal;
         refreshPolygonMap(poly);
@@ -4439,7 +4487,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var newPoly = {
         id: uid(), name: name,
         points: pendingPolygonPoints || [],
-        color: selectedPolygonColor, fillOpacity: 0.18,
+        status: selectedPolygonStatus, fillOpacity: 0.18,
         tags: tags, trip: trip, notes: notes,
         created: dateVal || Date.now(),
         state: firstPt ? stateForPoint(firstPt.lat, firstPt.lng) : ''
@@ -4467,6 +4515,192 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function closePolygonModal(){
     document.getElementById('polygon-modal').classList.add('hidden');
     editingPolygonId = null;
+  }
+
+  // ---------- Bearings ----------
+  function bearingCardinalLabel(deg){
+    var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  }
+
+  function bearingAutoName(bearing, dist){
+    return bearingCardinalLabel(bearing) + ' ' + Math.round(bearing) + '° · ' + dist.toFixed(2) + ' mi';
+  }
+
+  function addBearingToMap(b){
+    var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+    var color = sc.bg;
+    var origin = L.latLng(b.originLat, b.originLng);
+    var target = L.latLng(b.targetLat, b.targetLng);
+
+    var line = L.polyline([origin, target], {
+      color: color, weight: 2.5, dashArray: '8,5', opacity: 0.92, interactive: true
+    }).addTo(map);
+
+    // Arrowhead: 16px triangle divIcon at target, pointing in bearing direction
+    var az = b.bearingDeg * Math.PI / 180;
+    var arrowHtml = '<div style="width:0;height:0;' +
+      'border-left:8px solid transparent;border-right:8px solid transparent;' +
+      'border-bottom:16px solid ' + color + ';' +
+      'transform:rotate(' + b.bearingDeg + 'deg) translate(-50%,-100%);' +
+      'transform-origin:50% 100%;pointer-events:none;position:absolute;top:0;left:0;"></div>';
+    var arrowIcon = L.divIcon({ className:'', iconSize:[0,0], html:arrowHtml });
+    var arrowMarker = L.marker(target, { icon:arrowIcon, interactive:false }).addTo(map);
+
+    line.on('click', function(e){
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode){ return; }
+      L.DomEvent.stopPropagation(e);
+      openBearingModal(b);
+    });
+
+    bearingLayersById[b.id] = { line: line, arrow: arrowMarker };
+  }
+
+  function removeBearingFromMap(id){
+    var entry = bearingLayersById[id];
+    if (!entry) return;
+    if (entry.line) map.removeLayer(entry.line);
+    if (entry.arrow) map.removeLayer(entry.arrow);
+    delete bearingLayersById[id];
+  }
+
+  function refreshBearingMap(b){
+    removeBearingFromMap(b.id);
+    addBearingToMap(b);
+  }
+
+  function openBearingModal(b){
+    editingBearingId = b ? b.id : null;
+    document.getElementById('bearing-modal-title').textContent = b ? 'Edit bearing' : 'Save bearing';
+    document.getElementById('bearing-name').value = b ? b.name : '';
+    document.getElementById('bearing-notes').value = b ? (b.notes || '') : '';
+    document.getElementById('bearing-trip').value = b ? (b.trip || '') : '';
+    document.getElementById('bearing-date').value = b ? (tsToDateInputValue(b.created) || '') : tsToDateInputValue(Date.now());
+    selectedBearingStatus = b ? (b.status || 'escout') : 'escout';
+    renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
+    if (b){
+      document.getElementById('bearing-meta-display').textContent =
+        bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
+    }
+    document.getElementById('bearing-delete-btn').classList.toggle('hidden', !b);
+    document.getElementById('bearing-modal').classList.remove('hidden');
+    setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
+  }
+
+  function openBearingModalForNew(originLL, targetLL){
+    var deg  = bearingBetween(originLL.lat, originLL.lng, targetLL.lat, targetLL.lng);
+    var dist = haversineMiles(originLL.lat, originLL.lng, targetLL.lat, targetLL.lng);
+    var autoName = bearingAutoName(deg, dist);
+    editingBearingId = null;
+    document.getElementById('bearing-modal-title').textContent = 'Save bearing';
+    document.getElementById('bearing-name').value = autoName;
+    document.getElementById('bearing-notes').value = '';
+    document.getElementById('bearing-trip').value = '';
+    document.getElementById('bearing-date').value = tsToDateInputValue(Date.now());
+    selectedBearingStatus = 'escout';
+    renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
+    document.getElementById('bearing-meta-display').textContent =
+      bearingCardinalLabel(deg) + ' ' + Math.round(deg) + '° · ' + dist.toFixed(2) + ' mi';
+    // Store pending values on the modal for saveBearingFromModal
+    document.getElementById('bearing-modal').dataset.originLat = originLL.lat;
+    document.getElementById('bearing-modal').dataset.originLng = originLL.lng;
+    document.getElementById('bearing-modal').dataset.targetLat = targetLL.lat;
+    document.getElementById('bearing-modal').dataset.targetLng = targetLL.lng;
+    document.getElementById('bearing-modal').dataset.bearingDeg = deg;
+    document.getElementById('bearing-modal').dataset.distMiles = dist;
+    document.getElementById('bearing-delete-btn').classList.add('hidden');
+    document.getElementById('bearing-modal').classList.remove('hidden');
+    setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
+  }
+
+  function saveBearingFromModal(){
+    var name = document.getElementById('bearing-name').value.trim();
+    var notes = document.getElementById('bearing-notes').value.trim();
+    var trip = document.getElementById('bearing-trip').value.trim();
+    var dateVal = dateInputValueToTs(document.getElementById('bearing-date').value);
+    var modal = document.getElementById('bearing-modal');
+
+    if (editingBearingId){
+      var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
+      if (b){
+        b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus;
+        if (dateVal) b.created = dateVal;
+        refreshBearingMap(b);
+      }
+    } else {
+      var newB = {
+        id: uid(), name: name || bearingAutoName(+modal.dataset.bearingDeg, +modal.dataset.distMiles),
+        originLat: +modal.dataset.originLat, originLng: +modal.dataset.originLng,
+        targetLat: +modal.dataset.targetLat, targetLng: +modal.dataset.targetLng,
+        bearingDeg: +modal.dataset.bearingDeg, distMiles: +modal.dataset.distMiles,
+        status: selectedBearingStatus, notes: notes, trip: trip,
+        created: dateVal || Date.now()
+      };
+      state.bearings.push(newB);
+      addBearingToMap(newB);
+    }
+    closeBearingModal();
+    renderPinList();
+    scheduleSave();
+    showToast(editingBearingId ? 'Bearing updated' : 'Bearing saved');
+  }
+
+  function deleteBearingById(id){
+    state.bearings = state.bearings.filter(function(b){ return b.id !== id; });
+    removeBearingFromMap(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Bearing deleted');
+  }
+
+  function closeBearingModal(){
+    document.getElementById('bearing-modal').classList.add('hidden');
+    editingBearingId = null;
+  }
+
+  // Bearing draw mode (from +Add)
+  function setBearingMode(on){
+    bearingMode = on;
+    if (!on){
+      bearingOrigin = null;
+      if (bearingOriginMarker){ map.removeLayer(bearingOriginMarker); bearingOriginMarker = null; }
+      if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
+      document.getElementById('bearing-bar').classList.add('hidden');
+    } else {
+      closeAllPanels();
+      document.getElementById('bearing-bar').classList.remove('hidden');
+      document.getElementById('bearing-bar-text').textContent = 'Tap origin point';
+      document.getElementById('map').style.cursor = 'crosshair';
+    }
+  }
+
+  function handleBearingMapTap(latlng){
+    if (!bearingOrigin){
+      // First tap — set origin
+      bearingOrigin = latlng;
+      bearingOriginMarker = L.circleMarker(latlng, {
+        radius:6, color:'#fff', fillColor:'#c47a28', fillOpacity:1, weight:2, interactive:false
+      }).addTo(map);
+      document.getElementById('bearing-bar-text').textContent = 'Tap target point';
+      // Live preview line
+      map.on('mousemove', updateBearingPreview);
+    } else {
+      // Second tap — finish
+      map.off('mousemove', updateBearingPreview);
+      if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
+      var origin = bearingOrigin;
+      setBearingMode(false);
+      document.getElementById('map').style.cursor = '';
+      openBearingModalForNew(origin, latlng);
+    }
+  }
+
+  function updateBearingPreview(e){
+    if (!bearingOrigin) return;
+    if (bearingPreviewLine) map.removeLayer(bearingPreviewLine);
+    bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
+      color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
+    }).addTo(map);
   }
 
   // ---------- Mark My Location ----------
@@ -4740,11 +4974,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     var mark = document.createElement('div');
     if (it.type === 'track'){
+      var scTrack = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
       mark.className = 'track-mark';
-      mark.style.background = v.color;
+      mark.style.background = scTrack.bg;
     } else if (it.type === 'polygon'){
+      var scPoly = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
       mark.style.cssText = 'width:12px;height:12px;border-radius:2px;flex-shrink:0;margin-top:2px;';
-      mark.style.background = d.color || v.color;
+      mark.style.background = scPoly.bg;
+    } else if (it.type === 'bearing'){
+      var scBrg = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
+      mark.style.cssText = 'width:20px;height:5px;flex-shrink:0;margin-top:8px;border-radius:2px;position:relative;';
+      mark.style.background = scBrg.bg;
+      // Mini arrowhead
+      var arr = document.createElement('div');
+      arr.style.cssText = 'position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:0;height:0;' +
+        'border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:6px solid ' + scBrg.bg + ';';
+      mark.appendChild(arr);
     } else {
       // Pin: use status color + tiny SVG icon
       var sc = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
@@ -4760,9 +5005,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var metaDiv = document.createElement('div'); metaDiv.className = 'pin-row-meta';
     var distLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
     var areaLabel = it.type === 'polygon' && d.points && d.points.length >= 3 ? ' · ' + polygonAreaDisplay(d.points) : '';
-    var typeLabel = it.type === 'polygon' ? 'Area' : '';
-    var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : tagLabelsFor(d);
-    metaDiv.textContent = (typeLabel ? typeLabel + areaLabel + ' · ' : '') + pinTag + distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
+    var typeLabel = it.type === 'polygon' ? 'Area' : (it.type === 'bearing' ? 'Bearing' : '');
+    var bearingMeta = it.type === 'bearing' ? ' · ' + bearingCardinalLabel(d.bearingDeg) + ' ' + Math.round(d.bearingDeg) + '° · ' + d.distMiles.toFixed(2) + ' mi' : '';
+    var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : (it.type === 'bearing' ? '' : tagLabelsFor(d));
+    metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + (it.type === 'bearing' ? '' : areaLabel) : '') +
+      (it.type !== 'bearing' ? (pinTag ? (typeLabel ? ' · ' + pinTag : pinTag) : '') : '') +
+      distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
 
@@ -4803,6 +5051,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           map.flyToBounds(entry.poly.getBounds(), { padding:[40,40] });
           setTimeout(function(){ entry.poly.openPopup(entry.poly.getBounds().getCenter()); }, 350);
         }
+      } else if (it.type === 'bearing'){
+        var bEntry = bearingLayersById[d.id];
+        if (bEntry && bEntry.line){
+          map.flyToBounds(bEntry.line.getBounds(), { padding:[60,60] });
+        }
+        setTimeout(function(){ openBearingModal(d); }, 350);
       }
     });
     return row;
@@ -4881,7 +5135,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var pinItems = state.pins.map(function(p){ return {type:'pin', data:p}; });
     var trackItems = state.tracks.map(function(t){ return {type:'track', data:t}; });
     var polyItems = (state.polygons||[]).map(function(p){ return {type:'polygon', data:p}; });
-    var all = pinItems.concat(trackItems).concat(polyItems).filter(function(it){ return itemVisible(it.data, query); });
+    var bearingItems = (state.bearings||[]).map(function(b){ return {type:'bearing', data:b}; });
+    var all = pinItems.concat(trackItems).concat(polyItems).concat(bearingItems).filter(function(it){ return itemVisible(it.data, query); });
 
     // Show/hide the group visibility bar
     var visBar = document.getElementById('group-vis-bar');
@@ -4926,7 +5181,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    var totalCount = state.pins.length + state.tracks.length + (state.polygons||[]).length;
+    var totalCount = state.pins.length + state.tracks.length + (state.polygons||[]).length + (state.bearings||[]).length;
     document.getElementById('pin-count').textContent = totalCount + ' item' + (totalCount===1?'':'s') +
       (all.length !== totalCount ? ' · ' + all.length + ' shown' : '');
   }
@@ -6845,6 +7100,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       pins: state.pins,
       tracks: state.tracks,
       polygons: state.polygons || [],
+      bearings: state.bearings || [],
       tags: state.tags,
       tombstones: state.tombstones,
       lastLocalEditAt: state.lastLocalEditAt
@@ -6855,6 +7111,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.pins = merged.pins || [];
     state.tracks = merged.tracks || [];
     state.polygons = merged.polygons || [];
+    state.bearings = merged.bearings || [];
     state.tags = merged.tags && merged.tags.length ? merged.tags : SEED_TAGS.slice();
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
@@ -6864,9 +7121,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
     trackLayersById = {};
     Object.keys(polygonLayersById).forEach(function(id){ removePolygonFromMap(id); });
+    Object.keys(bearingLayersById).forEach(function(id){ removeBearingFromMap(id); });
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
     state.polygons.forEach(addPolygonToMap);
+    (state.bearings||[]).forEach(addBearingToMap);
     refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
     renderDateChips(); renderPinList(); refreshAllVisibility();
     persist();
@@ -6969,6 +7228,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (!state.tombstones) state.tombstones = {};
             if (state.lastLocalEditAt === undefined) state.lastLocalEditAt = 0;
             if (!state.polygons) state.polygons = [];
+            if (!state.bearings) state.bearings = [];
             if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
             if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'street';
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
@@ -7195,15 +7455,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('compass-save-target-btn').addEventListener('click', function(){
       if (!compassTargetLatLng) return;
-      pendingLatLng = compassTargetLatLng;
-      var bearing = document.getElementById('compass-target-bearing').textContent;
-      var dist = document.getElementById('compass-target-dist').textContent;
-      openPinModal(null, compassTargetLatLng);
-      // Pre-fill notes with bearing/range info
-      setTimeout(function(){
-        var notesEl = document.getElementById('pin-notes');
-        if (notesEl && !notesEl.value) notesEl.value = 'Bearing ' + bearing + ' · ' + dist;
-      }, 100);
+      var fromPt = (!compassUseCenter && currentGpsLatLng) ? currentGpsLatLng : map.getCenter();
+      openBearingModalForNew(fromPt, compassTargetLatLng);
     });
 
     document.getElementById('sheet-weather-btn').addEventListener('click', function(){
@@ -7393,6 +7646,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!confirm('Delete this area? This cannot be undone.')) return;
       deletePolygonById(editingPolygonId);
       closePolygonModal();
+    });
+
+    // Bearing modal
+    document.getElementById('bearing-save-btn').addEventListener('click', saveBearingFromModal);
+    document.getElementById('bearing-cancel-btn').addEventListener('click', closeBearingModal);
+    document.getElementById('bearing-delete-btn').addEventListener('click', function(){
+      if (!editingBearingId) return;
+      if (!confirm('Delete this bearing?')) return;
+      deleteBearingById(editingBearingId);
+      closeBearingModal();
+    });
+
+    // Bearing draw bar cancel
+    document.getElementById('bearing-bar-cancel').addEventListener('click', function(){
+      setBearingMode(false);
+      document.getElementById('map').style.cursor = '';
+    });
+
+    // +Add bearing button
+    document.getElementById('sheet-draw-bearing-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      setBearingMode(true);
     });
 
     // Polygon bar
@@ -7861,6 +8136,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     bindUI();
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
+    (state.polygons||[]).forEach(addPolygonToMap);
+    (state.bearings||[]).forEach(addBearingToMap);
     renderPinList();
     document.getElementById('loading-overlay').classList.add('hidden');
     appIsReady = true;
