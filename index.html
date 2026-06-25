@@ -1647,6 +1647,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js"></script>
 <script>
 (function(){
@@ -1755,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.4';
+  var APP_VERSION = '1.6.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3096,13 +3097,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
     });
-    // USFS Forest Service Basemap — uses the cached tile service
-    // Note: 404s in non-NF areas are correct behavior (tiles only exist for National Forest land)
-    baseLayers.fstopo = L.tileLayer('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:16, maxNativeZoom:15, pane:'fstopoPane',
-      attribution:'USDA Forest Service',
-      errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' // transparent 1px for 404s
-    });
+    // USFS Forest Service Basemap — vector tile service via Leaflet.VectorGrid
+    // Vector tiles avoid CORS issues that plague the raster tile endpoint
+    try {
+      baseLayers.fstopo = L.vectorGrid.protobuf(
+        'https://tiles.arcgis.com/tiles/zA2dFaT6YCCN1BGHL/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf',
+        {
+          pane: 'fstopoPane',
+          attribution: 'USDA Forest Service',
+          maxNativeZoom: 15, maxZoom: 19,
+          vectorTileLayerStyles: {
+            // Style all layers with sensible USFS defaults
+            '*': function(prop, zoom) {
+              return { weight:0.5, color:'#666', fill:true, fillColor:'#f0ebe0', fillOpacity:0.4, opacity:0.7 };
+            }
+          }
+        }
+      );
+    } catch(e){
+      // Fallback: raster tiles with transparent error tile
+      baseLayers.fstopo = L.tileLayer(
+        'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom:16, maxNativeZoom:15, pane:'fstopoPane', attribution:'USDA Forest Service',
+          errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }
+      );
+    }
     baseLayers.topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, maxNativeZoom:16, pane:'topoPane', attribution:'USGS The National Map'
     });
@@ -3296,7 +3315,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function setBaseLayerOpacity(name, opacity){
-    baseLayers[name].setOpacity(opacity);
+    var layer = baseLayers[name];
+    if (!layer) return;
+    if (layer.setOpacity) layer.setOpacity(opacity);
     state.settings.layers[name].opacity = opacity;
     scheduleSave();
   }
@@ -4037,36 +4058,76 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var poly = entry && entry.vis ? entry.vis : entry;
       var touchPoly = entry && entry.touch ? entry.touch : null;
       if (!poly) return;
+
       var origPoints = track.points.map(function(p){ return Array.isArray(p) ? [p[0],p[1]] : [p.lat,p.lng]; });
       var vertexMarkers = [];
+      var midMarkers = [];
+
       var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
         html:'<div style="width:14px;height:14px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
-      track.points.forEach(function(pt, i){
+      var midIcon = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
+        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.8;cursor:pointer;"></div>'});
+
+      function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
+      function syncLines(){ var pts=getPts(); poly.setLatLngs(pts); if(touchPoly) touchPoly.setLatLngs(pts); }
+
+      function rebuildMidMarkers(){
+        midMarkers.forEach(function(x){ map.removeLayer(x); });
+        midMarkers.length = 0;
+        for (var i=1; i<vertexMarkers.length; i++){
+          (function(idx){
+            var a=vertexMarkers[idx-1].getLatLng(), b=vertexMarkers[idx].getLatLng();
+            var mm = L.marker(L.latLng((a.lat+b.lat)/2,(a.lng+b.lng)/2),
+              {icon:midIcon, zIndexOffset:1500, interactive:true}).addTo(map);
+            mm.on('click', function(e){
+              L.DomEvent.stopPropagation(e);
+              midMarkers.forEach(function(x){ map.removeLayer(x); }); midMarkers.length=0;
+              var mNew = L.marker(mm.getLatLng(), {icon:vertIcon, draggable:true, zIndexOffset:2000}).addTo(map);
+              mNew.on('drag', function(){ syncLines(); rebuildMidMarkers(); });
+              mNew.on('contextmenu', function(e2){
+                L.DomEvent.stopPropagation(e2);
+                if(vertexMarkers.length<=2){ showToast('Need at least 2 points'); return; }
+                vertexMarkers.splice(vertexMarkers.indexOf(mNew),1); map.removeLayer(mNew);
+                syncLines(); rebuildMidMarkers();
+              });
+              vertexMarkers.splice(idx,0,mNew);
+              syncLines(); rebuildMidMarkers();
+            });
+            midMarkers.push(mm);
+          })(i);
+        }
+      }
+
+      function addVertex(pt){
         var ptLat = Array.isArray(pt) ? pt[0] : pt.lat;
         var ptLng = Array.isArray(pt) ? pt[1] : pt.lng;
-        var m = L.marker([ptLat, ptLng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-        m.on('drag', function(){
-          var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-          poly.setLatLngs(newPts);
-          if (touchPoly) touchPoly.setLatLngs(newPts);
-          rebuildMidMarkers();
-        });
+        var m = L.marker([ptLat,ptLng], {icon:vertIcon, draggable:true, zIndexOffset:2000}).addTo(map);
+        m.on('drag', function(){ syncLines(); rebuildMidMarkers(); });
         m.on('contextmenu', function(e){
           L.DomEvent.stopPropagation(e);
-          if (vertexMarkers.length <= 2){ showToast('Need at least 2 points'); return; }
-          var idx = vertexMarkers.indexOf(m);
-          vertexMarkers.splice(idx, 1);
-          map.removeLayer(m);
-          var pts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-          poly.setLatLngs(pts);
-          if (touchPoly) touchPoly.setLatLngs(pts);
-          rebuildMidMarkers();
+          if(vertexMarkers.length<=2){ showToast('Need at least 2 points'); return; }
+          vertexMarkers.splice(vertexMarkers.indexOf(m),1); map.removeLayer(m);
+          syncLines(); rebuildMidMarkers();
         });
         vertexMarkers.push(m);
-      });
+      }
+
+      function rebuildVertices(pts){
+        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
+        midMarkers.forEach(function(m){ map.removeLayer(m); });
+        vertexMarkers.length=0; midMarkers.length=0;
+        pts.forEach(function(pt){ addVertex(pt); });
+        syncLines(); rebuildMidMarkers();
+      }
+
+      // Build initial vertices then midpoints
+      track.points.forEach(function(pt){ addVertex(pt); });
+      syncLines();
+      rebuildMidMarkers();
+
+      // Bar UI
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · tap ◦ to add · right-click to delete';
-      rebuildMidMarkers(); // now that rebuildMidMarkers is defined
+      document.getElementById('bearing-bar-text').textContent = 'Drag · tap ◦ to add · right-click to delete';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
@@ -4075,131 +4136,61 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       snapBtn.className = 'btn btn-small'; snapBtn.textContent = 'Snap to trail';
       barEl.appendChild(snapBtn);
 
-      var midMarkers = [];
-      var midIcon = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
-        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.7;cursor:pointer;"></div>'});
-
-      function addMidMarker(idxAfter){
-        // idxAfter: insert new vertex between vertexMarkers[idxAfter-1] and vertexMarkers[idxAfter]
-        var a = vertexMarkers[idxAfter-1].getLatLng();
-        var b = vertexMarkers[idxAfter].getLatLng();
-        var mid = L.latLng((a.lat+b.lat)/2, (a.lng+b.lng)/2);
-        var mm = L.marker(mid, { icon:midIcon, zIndexOffset:1500, interactive:true }).addTo(map);
-        mm._insertIdx = idxAfter;
-        mm.on('click', function(e){
-          L.DomEvent.stopPropagation(e);
-          // Remove all mid markers, insert new vertex, rebuild
-          midMarkers.forEach(function(x){ map.removeLayer(x); });
-          midMarkers.length = 0;
-          var ll = mm.getLatLng();
-          var insertAt = mm._insertIdx;
-          // Recalculate insertIdx based on current order
-          insertAt = midMarkers.indexOf ? mm._insertIdx : mm._insertIdx;
-          var newVert = L.marker(ll, { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-          newVert.on('drag', function(){
-            var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-            poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
-          });
-          newVert.on('contextmenu', function(e2){
-            L.DomEvent.stopPropagation(e2);
-            if (vertexMarkers.length <= 2) return;
-            var ix2 = vertexMarkers.indexOf(newVert);
-            vertexMarkers.splice(ix2,1); map.removeLayer(newVert);
-            var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-            poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
-            rebuildMidMarkers();
-          });
-          vertexMarkers.splice(insertAt, 0, newVert);
-          var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-          poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
-          rebuildMidMarkers();
-        });
-        midMarkers.push(mm);
-      }
-
-      function rebuildMidMarkers(){
-        midMarkers.forEach(function(x){ map.removeLayer(x); });
-        midMarkers.length = 0;
-        for (var i=1; i<vertexMarkers.length; i++) addMidMarker(i);
-      }
-
-      function rebuildVertices(pts){
-        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
-        midMarkers.forEach(function(m){ map.removeLayer(m); });
-        vertexMarkers.length = 0; midMarkers.length = 0;
-        pts.forEach(function(pt){
-          var mNew = L.marker([pt.lat, pt.lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-          mNew.on('drag', function(){
-            var pts2 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-            poly.setLatLngs(pts2);
-            if (touchPoly) touchPoly.setLatLngs(pts2);
-            rebuildMidMarkers();
-          });
-          mNew.on('contextmenu', function(e){
-            L.DomEvent.stopPropagation(e);
-            if (vertexMarkers.length <= 2){ showToast('Need at least 2 points'); return; }
-            var ix = vertexMarkers.indexOf(mNew);
-            vertexMarkers.splice(ix, 1);
-            map.removeLayer(mNew);
-            var pts2 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-            poly.setLatLngs(pts2);
-            if (touchPoly) touchPoly.setLatLngs(pts2);
-            rebuildMidMarkers();
-          });
-          vertexMarkers.push(mNew);
-        });
-        poly.setLatLngs(pts);
-        rebuildMidMarkers();
-      }
-
       snapBtn.addEventListener('click', function(){
-        var coords = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lng, l.lat]; });
-        if (coords.length < 2){ showToast('Need at least 2 vertices'); return; }
-        snapBtn.textContent = 'Snapping…'; snapBtn.disabled = true;
-        fetch('https://api.openrouteservice.org/v2/directions/' + drawRouteProfile + '/geojson', {
+        var coords = getPts().map(function(p){ return [p[1],p[0]]; });
+        if(coords.length<2){ showToast('Need at least 2 vertices'); return; }
+        snapBtn.textContent='Snapping…'; snapBtn.disabled=true;
+        fetch('https://api.openrouteservice.org/v2/directions/'+drawRouteProfile+'/geojson',{
           method:'POST',
-          headers:{ 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ coordinates: coords })
-        }).then(function(r){ if (!r.ok) throw new Error('ORS ' + r.status); return r.json(); })
+          headers:{'Authorization':ORS_API_KEY,'Content-Type':'application/json'},
+          body:JSON.stringify({coordinates:coords})
+        }).then(function(r){ if(!r.ok) throw new Error('ORS '+r.status); return r.json(); })
         .then(function(data){
-          var line = data.features && data.features[0] && data.features[0].geometry && data.features[0].geometry.coordinates;
-          if (!line || line.length < 2) throw new Error('no geometry');
-          rebuildVertices(line.map(function(c){ return L.latLng(c[1], c[0]); }));
+          var line=data.features&&data.features[0]&&data.features[0].geometry&&data.features[0].geometry.coordinates;
+          if(!line||line.length<2) throw new Error('no geometry');
+          rebuildVertices(line.map(function(c){ return L.latLng(c[1],c[0]); }));
           showToast('Snapped · right-click dense vertices to remove');
-        }).catch(function(){
-          showToast("Couldn't snap — check connection or trail proximity", 5000);
-        }).then(function(){ snapBtn.textContent = 'Snap to trail'; snapBtn.disabled = false; });
+        }).catch(function(){ showToast("Couldn't snap — check connection or trail proximity",5000); })
+        .then(function(){ snapBtn.textContent='Snap to trail'; snapBtn.disabled=false; });
       });
 
       var finish = function(save){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
         midMarkers.forEach(function(m){ map.removeLayer(m); });
-        barEl.removeChild(doneBtn);
-        if (snapBtn.parentNode) barEl.removeChild(snapBtn);
-        barEl.classList.add('hidden'); barEl.style.display = '';
-        if (save){
-          track.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
+        if(doneBtn.parentNode) barEl.removeChild(doneBtn);
+        if(snapBtn.parentNode) barEl.removeChild(snapBtn);
+        barEl.classList.add('hidden'); barEl.style.display='';
+        if(save){
+          track.points = getPts();
           track.distMiles = trackDistanceMiles(track.points);
           poly.setLatLngs(track.points);
-          if (touchPoly) touchPoly.setLatLngs(track.points);
+          if(touchPoly) touchPoly.setLatLngs(track.points);
           refreshTrackPopup(track);
           scheduleSave(); showToast('Route shape updated');
         } else {
           poly.setLatLngs(origPoints);
-          if (touchPoly) touchPoly.setLatLngs(origPoints);
+          if(touchPoly) touchPoly.setLatLngs(origPoints);
         }
-        document.getElementById('bearing-bar-cancel').onclick = null;
+        document.getElementById('bearing-bar-cancel').onclick=null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
-      document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
+      document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); },{once:true});
     },
-    editPolygonVertices: function(id){
+        editPolygonVertices: function(id){
       var polygon = (state.polygons||[]).find(function(p){ return p.id === id; });
       if (!polygon) return;
       map.closePopup();
       var entry = polygonLayersById[polygon.id];
       if (!entry || !entry.poly) return;
       var origPoints = polygon.points.map(function(p){ return [p[0]||p.lat, p[1]||p.lng]; });
+      // Hide the live polygon layer during edit — we redraw on Done
+      map.removeLayer(entry.poly);
+      if (entry.label) map.removeLayer(entry.label);
+      // Draw a working preview polygon
+      var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
+      var previewPoly = L.polygon(origPoints, {
+        color: sc.bg, weight:2, fillColor:sc.bg, fillOpacity:0.18, interactive:false
+      }).addTo(map);
       var vertexMarkers = [];
       var midMarkers2 = [];
       var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
@@ -4224,15 +4215,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               var insertAt = idx+1;
               var ll = mm.getLatLng();
               var mNew = L.marker(ll,{icon:vertIcon,draggable:true,zIndexOffset:2000}).addTo(map);
-              mNew.on('drag',function(){ entry.poly.setLatLngs(getPts()); rebuildMid2(); });
+              mNew.on('drag',function(){ previewPoly.setLatLngs(getPts()); rebuildMid2(); });
               mNew.on('contextmenu',function(e2){
                 L.DomEvent.stopPropagation(e2);
                 if(vertexMarkers.length<=3){showToast('Need at least 3');return;}
                 var ix=vertexMarkers.indexOf(mNew); vertexMarkers.splice(ix,1); map.removeLayer(mNew);
-                entry.poly.setLatLngs(getPts()); rebuildMid2();
+                previewPoly.setLatLngs(getPts()); rebuildMid2();
               });
               vertexMarkers.splice(insertAt,0,mNew);
-              entry.poly.setLatLngs(getPts()); rebuildMid2();
+              previewPoly.setLatLngs(getPts()); rebuildMid2();
             });
             midMarkers2.push(mm);
           })(i);
@@ -4242,13 +4233,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       polygon.points.forEach(function(pt){
         var lat = pt[0]||pt.lat, lng = pt[1]||pt.lng;
         var m = L.marker([lat,lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-        m.on('drag', function(){ entry.poly.setLatLngs(getPts()); rebuildMid2(); });
+        m.on('drag', function(){ previewPoly.setLatLngs(getPts()); rebuildMid2(); });
         m.on('contextmenu', function(e){
           L.DomEvent.stopPropagation(e);
           if (vertexMarkers.length <= 3){ showToast('Need at least 3 points'); return; }
           var idx = vertexMarkers.indexOf(m);
           vertexMarkers.splice(idx, 1); map.removeLayer(m);
-          entry.poly.setLatLngs(getPts()); rebuildMid2();
+          previewPoly.setLatLngs(getPts()); rebuildMid2();
         });
         vertexMarkers.push(m);
       });
@@ -4263,15 +4254,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var finish = function(save){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
         midMarkers2.forEach(function(m){ map.removeLayer(m); });
-        barEl.removeChild(doneBtn);
+        map.removeLayer(previewPoly);
+        if(doneBtn.parentNode) barEl.removeChild(doneBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
           polygon.points = getPts();
-          // Full refresh to ensure mobile also updates correctly
-          refreshPolygonMap(polygon);
+          addPolygonToMap(polygon);
           scheduleSave(); showToast('Area shape updated');
         } else {
-          entry.poly.setLatLngs(origPoints);
+          // Restore original — re-add the hidden layers
+          addPolygonToMap(polygon);
         }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
