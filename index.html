@@ -1756,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.5';
+  var APP_VERSION = '1.6.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3098,24 +3098,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
     });
     // USFS Forest Service Basemap — vector tile service via Leaflet.VectorGrid
-    // Vector tiles avoid CORS issues that plague the raster tile endpoint
+    // Correct organization ID: gGHDlz6USftL5Pau (verified from Esri community)
     try {
       baseLayers.fstopo = L.vectorGrid.protobuf(
-        'https://tiles.arcgis.com/tiles/zA2dFaT6YCCN1BGHL/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf',
+        'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf',
         {
           pane: 'fstopoPane',
           attribution: 'USDA Forest Service',
           maxNativeZoom: 15, maxZoom: 19,
+          fetchOptions: { mode: 'cors' },
           vectorTileLayerStyles: {
-            // Style all layers with sensible USFS defaults
-            '*': function(prop, zoom) {
-              return { weight:0.5, color:'#666', fill:true, fillColor:'#f0ebe0', fillOpacity:0.4, opacity:0.7 };
-            }
+            // Default style for all layers — USFS green topo feel
+            '*': { weight: 0.5, color: '#5c7a3c', fill: true, fillColor: '#e8f0d8', fillOpacity: 0.5, opacity: 0.8 }
           }
         }
       );
     } catch(e){
-      // Fallback: raster tiles with transparent error tile
+      // Fallback: raster tiles
       baseLayers.fstopo = L.tileLayer(
         'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}',
         { maxZoom:16, maxNativeZoom:15, pane:'fstopoPane', attribution:'USDA Forest Service',
@@ -4063,10 +4062,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var vertexMarkers = [];
       var midMarkers = [];
 
-      var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
-        html:'<div style="width:14px;height:14px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
-      var midIcon = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
-        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.8;cursor:pointer;"></div>'});
+      var vertIcon = L.divIcon({ className:'', iconSize:[28,28], iconAnchor:[14,14],
+        html:'<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;"></div></div>'});
+      var midIcon = L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
+        html:'<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.9;"></div></div>'});
 
       function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
       function syncLines(){ var pts=getPts(); poly.setLatLngs(pts); if(touchPoly) touchPoly.setLatLngs(pts); }
@@ -4193,10 +4192,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }).addTo(map);
       var vertexMarkers = [];
       var midMarkers2 = [];
-      var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
-        html:'<div style="width:14px;height:14px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
-      var midIcon2 = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
-        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #c2622d;box-sizing:border-box;opacity:0.7;cursor:pointer;"></div>'});
+      var vertIcon = L.divIcon({ className:'', iconSize:[28,28], iconAnchor:[14,14],
+        html:'<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;"></div></div>'});
+      var midIcon2 = L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
+        html:'<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #c2622d;box-sizing:border-box;opacity:0.9;"></div></div>'});
 
       function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
 
