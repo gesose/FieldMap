@@ -1744,7 +1744,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.7';
+  var APP_VERSION = '1.5.8';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -4016,10 +4016,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
           poly.setLatLngs(newPts);
         });
+        m.on('contextmenu', function(e){
+          L.DomEvent.stopPropagation(e);
+          if (vertexMarkers.length <= 2){ showToast('Need at least 2 points'); return; }
+          var idx = vertexMarkers.indexOf(m);
+          vertexMarkers.splice(idx, 1);
+          map.removeLayer(m);
+          poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+        });
         vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices to reshape route';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
@@ -4056,10 +4064,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
           entry.poly.setLatLngs(newPts);
         });
+        m.on('contextmenu', function(e){
+          L.DomEvent.stopPropagation(e);
+          if (vertexMarkers.length <= 3){ showToast('Need at least 3 points'); return; }
+          var idx = vertexMarkers.indexOf(m);
+          vertexMarkers.splice(idx, 1);
+          map.removeLayer(m);
+          entry.poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+        });
         vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices to reshape area';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
@@ -4070,9 +4086,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
           polygon.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
-          refreshPolygonMap(polygon);
+          // Update the existing map layer in-place (don't refresh — the live setLatLngs already moved it)
+          var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
+          entry.poly.setLatLngs(polygon.points);
+          entry.poly.setStyle({ color:sc.bg, fillColor:sc.bg });
+          // Move label to new centroid
+          var newCenter = entry.poly.getBounds().getCenter();
+          if (entry.label) entry.label.setLatLng(newCenter);
           scheduleSave(); showToast('Area shape updated');
-        } else { entry.poly.setLatLngs(origPoints); }
+        } else {
+          entry.poly.setLatLngs(origPoints);
+        }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
@@ -4456,14 +4480,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Vertex marker
     var vIcon = L.divIcon({
       className:'polygon-vertex-icon',
-      html:'<div style="width:11px;height:11px;border-radius:50%;background:' + selectedPolygonColor + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>',
+      html:'<div style="width:11px;height:11px;border-radius:50%;background:' + '#c2622d' + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>',
       iconSize:[11,11], iconAnchor:[5,5]
     });
     // First vertex gets a larger target ring
     if (polygonPoints.length === 1){
       vIcon = L.divIcon({
         className:'polygon-vertex-icon',
-        html:'<div style="width:11px;height:11px;border-radius:50%;background:' + selectedPolygonColor + ';border:2px solid #fff;box-shadow:0 0 0 6px rgba(194,98,45,0.25),0 1px 3px rgba(0,0,0,0.5);"></div>',
+        html:'<div style="width:11px;height:11px;border-radius:50%;background:' + '#c2622d' + ';border:2px solid #fff;box-shadow:0 0 0 6px rgba(194,98,45,0.25),0 1px 3px rgba(0,0,0,0.5);"></div>',
         iconSize:[11,11], iconAnchor:[5,5]
       });
     }
@@ -4474,12 +4498,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
     if (polygonPoints.length >= 3){
       polygonPreviewLayer = L.polygon(polygonPoints, {
-        color: selectedPolygonColor, weight:2, dashArray:'6,4',
-        fillColor: selectedPolygonColor, fillOpacity:0.12, interactive:false
+        color: '#c2622d', weight:2, dashArray:'6,4',
+        fillColor: '#c2622d', fillOpacity:0.12, interactive:false
       }).addTo(map);
     } else if (polygonPoints.length >= 2){
       polygonPreviewLayer = L.polyline(polygonPoints, {
-        color: selectedPolygonColor, weight:2, dashArray:'6,4', interactive:false
+        color: '#c2622d', weight:2, dashArray:'6,4', interactive:false
       }).addTo(map);
     }
 
@@ -4497,12 +4521,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
     if (polygonPoints.length >= 3){
       polygonPreviewLayer = L.polygon(polygonPoints, {
-        color:selectedPolygonColor, weight:2, dashArray:'6,4',
-        fillColor:selectedPolygonColor, fillOpacity:0.12, interactive:false
+        color:'#c2622d', weight:2, dashArray:'6,4',
+        fillColor:'#c2622d', fillOpacity:0.12, interactive:false
       }).addTo(map);
     } else if (polygonPoints.length >= 2){
       polygonPreviewLayer = L.polyline(polygonPoints, {
-        color:selectedPolygonColor, weight:2, dashArray:'6,4', interactive:false
+        color:'#c2622d', weight:2, dashArray:'6,4', interactive:false
       }).addTo(map);
     }
     var n = polygonPoints.length;
