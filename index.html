@@ -1261,26 +1261,17 @@
     <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
   </label>
   <div class="layer-info-panel" id="lh-snow">
-    <div class="layer-info-desc">NOAA daily snow analysis — Nov–Apr. Shows no data in snow-free areas (correct behavior).</div>
+    <div class="layer-info-desc">NOAA daily snow depth analysis — Nov–Apr. WMS overlay, updates daily. Shows no data in snow-free areas (correct behavior).</div>
     <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
   </div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="lightpollution-toggle"> Light pollution
+    <input type="checkbox" id="lightpollution-toggle"> Nighttime lights
     <button class="layer-hint-btn" data-layer-id="lh-lp" title="About">?</button>
   </label>
   <div class="layer-info-panel" id="lh-lp">
-    <div class="layer-info-desc">Bortle scale — only visible at Z9 and below (zoom out to see data).</div>
-    <div class="layer-info-legend">
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
-        <span class="legend-swatch" style="background:#111;color:#fff;">1–2 Black/Gray</span>
-        <span class="legend-swatch" style="background:#003366;color:#fff;">3–4 Blue</span>
-        <span class="legend-swatch" style="background:#228822;color:#fff;">5 Green</span>
-        <span class="legend-swatch" style="background:#ddbb00;color:#000;">6–7 Yellow</span>
-        <span class="legend-swatch" style="background:#cc3300;color:#fff;">8–9 Red</span>
-      </div>
-    </div>
-    <a class="layer-info-src" href="https://djlorenz.github.io/astronomy/lp2022/" target="_blank">Source: djlorenz VIIRS 2022</a>
+    <div class="layer-info-desc">NASA VIIRS Black Marble nighttime lights — monthly composite. Visible at Z1–Z8 (zoom out to see data). Bright areas = more light pollution. Good for finding dark sky hunting areas.</div>
+    <a class="layer-info-src" href="https://earthdata.nasa.gov/data/projects/black-marble" target="_blank">Source: NASA GIBS / VIIRS Black Marble</a>
   </div>
 
   <label class="layer-overlay-row">
@@ -1765,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.2';
+  var APP_VERSION = '1.6.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3051,17 +3042,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // ── P2 overlay layers ──
     try {
-      // NOAA National Snow Analysis — NationalSnowAnalysis service (has tile cache unlike NOHRSC_snowdepth)
-      snowDepthLayer = L.tileLayer('https://mapservices.weather.noaa.gov/raster/rest/services/snow_analysis/NationalSnowAnalysis/MapServer/tile/{z}/{y}/{x}', {
-        minNativeZoom:0, maxNativeZoom:10, opacity:0.7, attribution:'NOAA NOHRSC'
+      // NOAA National Snow Analysis — corrected service path
+      snowDepthLayer = L.tileLayer.wms('https://mapservices.weather.noaa.gov/raster/services/snow/NOHRSC_Snow_Analysis/MapServer/WMSServer', {
+        layers: '1', // Snow Depth layer (0=SWE, 1=Snow Depth)
+        format: 'image/png',
+        transparent: true,
+        opacity: 0.75,
+        attribution: 'NOAA NOHRSC',
+        version: '1.3.0'
       });
     } catch(e){ snowDepthLayer = null; }
 
     try {
-      // Light pollution — djlorenz tiles only go to Z9; maxNativeZoom prevents 404s at deeper zooms
-      lightPollutionLayer = L.tileLayer('https://djlorenz.github.io/astronomy/lp2022/overlay/tiles/{z}/{x}/{y}.png', {
-        maxNativeZoom:9, minNativeZoom:2, opacity:0.7, attribution:'© djlorenz / VIIRS'
-      });
+      // NASA GIBS nighttime lights — VIIRS Black Marble via WMTS
+      // Uses a fixed recent date since live daily tiles require date parameter
+      lightPollutionLayer = L.tileLayer(
+        'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble_Nighttime_M1/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg',
+        { maxNativeZoom:8, minNativeZoom:1, opacity:0.85, attribution:'NASA GIBS / VIIRS Black Marble' }
+      );
     } catch(e){ lightPollutionLayer = null; }
 
     try {
@@ -3635,9 +3633,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function addTrackToMap(track){
     var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
-    var poly = L.polyline(track.points, { color: sc.bg, weight: 3, opacity: 0.85 });
-    poly.bindPopup(trackPopupHtml(track));
-    poly.on('click', function(e){
+    // Invisible wide touch target polyline sits on top to make tapping easier on mobile
+    var touchPoly = L.polyline(track.points, { weight:18, opacity:0, interactive:true });
+    var poly = L.polyline(track.points, { color: sc.bg, weight: 3, opacity: 0.85, interactive:false });
+    touchPoly.bindPopup(trackPopupHtml(track));
+    touchPoly.on('click', function(e){
       if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
         if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
         if (compassActive){ handleCompassMapTap(e.latlng); return; }
@@ -3649,32 +3649,42 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return;
       }
     });
-    trackLayersById[track.id] = poly;
+    touchPoly.addTo(map);
+    poly.addTo(map);
+    trackLayersById[track.id] = { vis: poly, touch: touchPoly };
     applyFilterToTrack(track);
   }
 
   function removeTrackFromMap(id){
-    if (trackLayersById[id]){
-      if (map.hasLayer(trackLayersById[id])) map.removeLayer(trackLayersById[id]);
-      delete trackLayersById[id];
-    }
+    var entry = trackLayersById[id];
+    if (!entry) return;
+    // Support both old format (single layer) and new format {vis, touch}
+    var layers = entry.vis ? [entry.vis, entry.touch] : [entry];
+    layers.forEach(function(l){ try { if (l && map.hasLayer(l)) map.removeLayer(l); } catch(e){} });
+    delete trackLayersById[id];
   }
 
   function refreshTrackPopup(track){
-    var poly = trackLayersById[track.id];
-    if (poly){
+    var entry = trackLayersById[track.id];
+    var touch = entry && entry.touch ? entry.touch : entry;
+    var vis = entry && entry.vis ? entry.vis : null;
+    if (touch){
       var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
-      poly.setStyle({ color: sc.bg });
-      poly.setPopupContent(trackPopupHtml(track));
+      if (vis) vis.setStyle({ color: sc.bg });
+      touch.setPopupContent(trackPopupHtml(track));
     }
   }
 
   function applyFilterToTrack(track){
-    var poly = trackLayersById[track.id];
-    if (!poly) return;
+    var entry = trackLayersById[track.id];
+    if (!entry) return;
+    var layers = entry.vis ? [entry.vis, entry.touch] : [entry];
     var visible = mapItemVisible(track);
-    if (visible){ if (!map.hasLayer(poly)) poly.addTo(map); }
-    else { if (map.hasLayer(poly)) map.removeLayer(poly); }
+    layers.forEach(function(l){
+      if (!l) return;
+      if (visible){ if (!map.hasLayer(l)) l.addTo(map); }
+      else { if (map.hasLayer(l)) map.removeLayer(l); }
+    });
   }
 
   function deleteTrackById(id){
@@ -4027,7 +4037,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var track = state.tracks.find(function(t){ return t.id === id; });
       if (!track) return;
       map.closePopup();
-      var poly = trackLayersById[track.id];
+      var entry = trackLayersById[track.id];
+      var poly = entry && entry.vis ? entry.vis : entry;
+      var touchPoly = entry && entry.touch ? entry.touch : null;
       if (!poly) return;
       var origPoints = track.points.map(function(p){ return [p[0],p[1]]; });
       var vertexMarkers = [];
@@ -4036,9 +4048,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       track.points.forEach(function(pt, i){
         var m = L.marker([pt[0],pt[1]], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
         m.on('drag', function(){
-          var ll = m.getLatLng();
           var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
           poly.setLatLngs(newPts);
+          if (touchPoly) touchPoly.setLatLngs(newPts);
+          rebuildMidMarkers();
         });
         m.on('contextmenu', function(e){
           L.DomEvent.stopPropagation(e);
@@ -4046,12 +4059,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var idx = vertexMarkers.indexOf(m);
           vertexMarkers.splice(idx, 1);
           map.removeLayer(m);
-          poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+          var pts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+          poly.setLatLngs(pts);
+          if (touchPoly) touchPoly.setLatLngs(pts);
+          rebuildMidMarkers();
         });
         vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · tap ◦ to add · right-click to delete';
+      rebuildMidMarkers(); // now that rebuildMidMarkers is defined
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
@@ -4060,13 +4077,65 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       snapBtn.className = 'btn btn-small'; snapBtn.textContent = 'Snap to trail';
       barEl.appendChild(snapBtn);
 
+      var midMarkers = [];
+      var midIcon = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
+        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.7;cursor:pointer;"></div>'});
+
+      function addMidMarker(idxAfter){
+        // idxAfter: insert new vertex between vertexMarkers[idxAfter-1] and vertexMarkers[idxAfter]
+        var a = vertexMarkers[idxAfter-1].getLatLng();
+        var b = vertexMarkers[idxAfter].getLatLng();
+        var mid = L.latLng((a.lat+b.lat)/2, (a.lng+b.lng)/2);
+        var mm = L.marker(mid, { icon:midIcon, zIndexOffset:1500, interactive:true }).addTo(map);
+        mm._insertIdx = idxAfter;
+        mm.on('click', function(e){
+          L.DomEvent.stopPropagation(e);
+          // Remove all mid markers, insert new vertex, rebuild
+          midMarkers.forEach(function(x){ map.removeLayer(x); });
+          midMarkers.length = 0;
+          var ll = mm.getLatLng();
+          var insertAt = mm._insertIdx;
+          // Recalculate insertIdx based on current order
+          insertAt = midMarkers.indexOf ? mm._insertIdx : mm._insertIdx;
+          var newVert = L.marker(ll, { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
+          newVert.on('drag', function(){
+            var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+            poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
+          });
+          newVert.on('contextmenu', function(e2){
+            L.DomEvent.stopPropagation(e2);
+            if (vertexMarkers.length <= 2) return;
+            var ix2 = vertexMarkers.indexOf(newVert);
+            vertexMarkers.splice(ix2,1); map.removeLayer(newVert);
+            var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+            poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
+            rebuildMidMarkers();
+          });
+          vertexMarkers.splice(insertAt, 0, newVert);
+          var pts3 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+          poly.setLatLngs(pts3); if (touchPoly) touchPoly.setLatLngs(pts3);
+          rebuildMidMarkers();
+        });
+        midMarkers.push(mm);
+      }
+
+      function rebuildMidMarkers(){
+        midMarkers.forEach(function(x){ map.removeLayer(x); });
+        midMarkers.length = 0;
+        for (var i=1; i<vertexMarkers.length; i++) addMidMarker(i);
+      }
+
       function rebuildVertices(pts){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
-        vertexMarkers.length = 0;
+        midMarkers.forEach(function(m){ map.removeLayer(m); });
+        vertexMarkers.length = 0; midMarkers.length = 0;
         pts.forEach(function(pt){
           var mNew = L.marker([pt.lat, pt.lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
           mNew.on('drag', function(){
-            poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+            var pts2 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+            poly.setLatLngs(pts2);
+            if (touchPoly) touchPoly.setLatLngs(pts2);
+            rebuildMidMarkers();
           });
           mNew.on('contextmenu', function(e){
             L.DomEvent.stopPropagation(e);
@@ -4074,11 +4143,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             var ix = vertexMarkers.indexOf(mNew);
             vertexMarkers.splice(ix, 1);
             map.removeLayer(mNew);
-            poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+            var pts2 = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
+            poly.setLatLngs(pts2);
+            if (touchPoly) touchPoly.setLatLngs(pts2);
+            rebuildMidMarkers();
           });
           vertexMarkers.push(mNew);
         });
         poly.setLatLngs(pts);
+        rebuildMidMarkers();
       }
 
       snapBtn.addEventListener('click', function(){
@@ -4102,15 +4175,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       var finish = function(save){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
+        midMarkers.forEach(function(m){ map.removeLayer(m); });
         barEl.removeChild(doneBtn);
         if (snapBtn.parentNode) barEl.removeChild(snapBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
           track.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
           track.distMiles = trackDistanceMiles(track.points);
+          poly.setLatLngs(track.points);
+          if (touchPoly) touchPoly.setLatLngs(track.points);
           refreshTrackPopup(track);
           scheduleSave(); showToast('Route shape updated');
-        } else { poly.setLatLngs(origPoints); }
+        } else {
+          poly.setLatLngs(origPoints);
+          if (touchPoly) touchPoly.setLatLngs(origPoints);
+        }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
@@ -4144,7 +4223,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         vertexMarkers.push(m);
       });
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete · tap ◦ to add';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
@@ -4654,8 +4733,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function removePolygonFromMap(id){
     var entry = polygonLayersById[id];
     if (!entry) return;
-    if (entry.poly) map.removeLayer(entry.poly);
-    if (entry.label) map.removeLayer(entry.label);
+    try { if (entry.poly && map.hasLayer(entry.poly)) map.removeLayer(entry.poly); } catch(e){}
+    try { if (entry.label && map.hasLayer(entry.label)) map.removeLayer(entry.label); } catch(e){}
     delete polygonLayersById[id];
   }
 
@@ -5374,11 +5453,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         map.flyTo([d.lat, d.lng], Math.max(map.getZoom(), 14));
         setTimeout(function(){ if (markersById[d.id]) markersById[d.id].openPopup(); }, 350);
       } else if (it.type === 'track'){
-        var poly = trackLayersById[d.id];
-        if (poly){
-          if (!map.hasLayer(poly)) poly.addTo(map);
-          map.flyToBounds(poly.getBounds(), { padding:[40,40] });
-          setTimeout(function(){ poly.openPopup(); }, 350);
+        var tEntry = trackLayersById[d.id];
+        var visPoly = tEntry && tEntry.vis ? tEntry.vis : tEntry;
+        var touchPoly2 = tEntry && tEntry.touch ? tEntry.touch : null;
+        if (visPoly){
+          if (!map.hasLayer(visPoly)) visPoly.addTo(map);
+          if (touchPoly2 && !map.hasLayer(touchPoly2)) touchPoly2.addTo(map);
+          map.flyToBounds(visPoly.getBounds(), { padding:[40,40] });
+          setTimeout(function(){ if (touchPoly2) touchPoly2.openPopup(); else visPoly.openPopup(); }, 350);
         }
       } else if (it.type === 'polygon'){
         var entry = polygonLayersById[d.id];
