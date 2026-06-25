@@ -1756,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.8';
+  var APP_VERSION = '1.6.9';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3104,52 +3104,83 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       function fstopoStyle(layerName) {
         if (!_fstopoLayerNames[layerName]){ _fstopoLayerNames[layerName]=true; }
         switch(layerName){
+          // ── Land fill — light green like real USFS map ──
+          case 'USFS Basic Ownership':
+            return { fill:true, fillColor:'#d6e8c8', fillOpacity:0.55, weight:0 };
+          case 'USFS Wilderness':
+            return { fill:true, fillColor:'#b8d4a0', fillOpacity:0.5, color:'#4a7a32', weight:1.2, opacity:0.8, dashArray:'5,5' };
+
           // ── Water bodies ──
           case 'NHDWaterbody':
           case 'CONUS Wetlands USFWS':
-            return { fill:true, fillColor:'#a8cfe0', fillOpacity:0.85, weight:0.5, color:'#6eb5cf', opacity:0.7 };
+            return { fill:true, fillColor:'#7ab8d4', fillOpacity:0.85, weight:0.8, color:'#5a9ab8', opacity:0.7 };
+
           // ── Water lines ──
           case 'NHD Flowline GTAC':
-            return { fill:false, color:'#6eb5cf', weight:1.0, opacity:0.85 };
-          // ── Contours ──
+            return { fill:false, color:'#5a9ab8', weight:1.2, opacity:0.85 };
+
+          // ── Contours — brown, index is notably heavier ──
           case 'Contour USGS':
-            return { fill:false, color:'#c8895a', weight:0.6, opacity:0.75 };
-          // ── Boundaries ──
-          case 'AdministrativeForest':
-            return { fill:false, color:'#2d7a1f', weight:2.0, opacity:0.9, dashArray:'6,4' };
-          case 'USFS Ranger District':
-            return { fill:false, color:'#4a9a38', weight:1.2, opacity:0.75, dashArray:'4,4' };
-          case 'USFS Common Unit Name Line':
-            return { fill:false, color:'#5aaa48', weight:0.8, opacity:0.6, dashArray:'3,5' };
-          case 'USFS Wilderness':
-            return { fill:true, fillColor:'#b5d4a0', fillOpacity:0.25, color:'#4a7a32', weight:1.2, opacity:0.7, dashArray:'4,4' };
-          case 'USFS Basic Ownership':
-            return { fill:false, color:'#6b9a52', weight:0.6, opacity:0.5 };
-          // ── Roads ──
-          case 'Gap Roads GTAC':
-            return { fill:false, color:'#b87030', weight:1.0, opacity:0.75 };
+            // This layer contains both major and minor — VectorGrid passes properties
+            return function(props) {
+              // USGS contour properties: typically ContourElevation or index field
+              var isMajor = props && (props.ContourType === 1 || props.Index === 1 || props.index === 1 ||
+                props.CONTOURTYP === 1 || (props.ELEVATION && props.ELEVATION % 200 === 0));
+              return isMajor
+                ? { fill:false, color:'#9e6030', weight:1.6, opacity:0.9 }
+                : { fill:false, color:'#c8895a', weight:0.55, opacity:0.7 };
+            };
+
+          // ── Landform terrain lines (same treatment as minor contour) ──
+          case 'Landform Lines GTAC':
+            return { fill:false, color:'#c8895a', weight:0.4, opacity:0.45 };
+
+          // ── Roads — darker and bolder ──
           case 'MVUM Plus GTAC':
-            return { fill:false, color:'#8a5a28', weight:1.2, opacity:0.8 };
-          // ── Trails ──
+            // Primary USFS roads — show like real map (dark gray/brown, solid)
+            return function(props) {
+              var oper = props && (props.OPERATIONALMAINTLEVEL || props.OperationalMaintenanceLevel || 0);
+              if (oper >= 3) return { fill:false, color:'#5a4030', weight:2.0, opacity:0.95 }; // main roads
+              if (oper === 2) return { fill:false, color:'#7a6050', weight:1.2, opacity:0.85 }; // high clearance
+              return { fill:false, color:'#9a8070', weight:0.8, opacity:0.7 }; // primitive
+            };
+          case 'Gap Roads GTAC':
+            return { fill:false, color:'#6a5040', weight:1.0, opacity:0.75 };
+
+          // ── Trails — dashed brown ──
           case 'Trails Plus GTAC':
-            return { fill:false, color:'#8B4513', weight:1.0, opacity:0.8, dashArray:'5,4' };
+            return { fill:false, color:'#7a4a20', weight:1.1, opacity:0.85, dashArray:'6,4' };
+
+          // ── NF / Admin Boundaries ──
+          case 'AdministrativeForest':
+            return { fill:false, color:'#2a6a18', weight:2.2, opacity:0.95, dashArray:'7,4' };
+          case 'USFS Ranger District':
+            return { fill:false, color:'#3a8a28', weight:1.3, opacity:0.8, dashArray:'4,5' };
+          case 'USFS Common Unit Name Line':
+            return { fill:false, color:'#5aaa48', weight:0.7, opacity:0.55, dashArray:'3,6' };
+
           // ── PLSS / Survey grid ──
           case 'PLSS Township BLM':
-            return { fill:false, color:'#888', weight:0.5, opacity:0.4 };
+            return { fill:false, color:'#999', weight:0.6, opacity:0.45 };
           case 'PLSSFirstDivision_BLM':
-            return { fill:false, color:'#aaa', weight:0.3, opacity:0.35 };
-          // ── Landform / terrain ──
-          case 'Landform Lines GTAC':
-            return { fill:false, color:'#c8895a', weight:0.4, opacity:0.5 };
+            return { fill:false, color:'#bbb', weight:0.35, opacity:0.35 };
+
+          // ── Recreation sites — campground/trailhead symbols ──
+          case 'USFS Recreation Site':
+            return function(props) {
+              return { fill:true, fillColor:'#e8a020', fillOpacity:0.9,
+                color:'#a06010', weight:1.2, opacity:0.9, radius:4 };
+            };
+
           // ── Structures ──
           case 'structures_poly_fema':
-            return { fill:true, fillColor:'#d4b896', fillOpacity:0.7, weight:0.5, color:'#999', opacity:0.6 };
-          case 'USFS Recreation Site':
-            return { fill:true, fillColor:'#e8c87a', fillOpacity:0.8, weight:0.5, color:'#c8a040', opacity:0.8 };
-          // ── Census/admin (hide) ──
+            return { fill:true, fillColor:'#c8a87a', fillOpacity:0.7, weight:0.5, color:'#888', opacity:0.6 };
+
+          // ── Census (hide) ──
           case 'State Generalized Census':
-            return { fill:false, color:'#999', weight:0.3, opacity:0.25 };
-          // ── Labels and points (invisible — no text in VectorGrid) ──
+            return { fill:false, color:'#aaa', weight:0.4, opacity:0.2 };
+
+          // ── All label and point layers ──
           case 'Contour USGS/label':
           case 'NHD Flowline GTAC/label':
           case 'NHDWaterbody/label':
@@ -3159,10 +3190,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           case 'Trails Plus GTAC/label':
           case 'PLSSFirstDivision_BLM/label':
           case 'NHD Point USGS':
-            return { fill:false, weight:0, opacity:0 };
-          // ── Default ──
+            return { fill:false, weight:0, opacity:0, fillOpacity:0 };
+
           default:
-            return { fill:false, color:'#999', weight:0.3, opacity:0.3 };
+            return { fill:false, color:'#aaa', weight:0.3, opacity:0.25 };
         }
       }
 
