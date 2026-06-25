@@ -1756,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.7';
+  var APP_VERSION = '1.6.8';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3102,59 +3102,68 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     try {
       var _fstopoLayerNames = {};
       function fstopoStyle(layerName) {
-        // Log unique layer names for debugging
-        if (!_fstopoLayerNames[layerName]){
-          _fstopoLayerNames[layerName] = true;
-          console.log('[FSTopo layer]', layerName);
+        if (!_fstopoLayerNames[layerName]){ _fstopoLayerNames[layerName]=true; }
+        switch(layerName){
+          // ── Water bodies ──
+          case 'NHDWaterbody':
+          case 'CONUS Wetlands USFWS':
+            return { fill:true, fillColor:'#a8cfe0', fillOpacity:0.85, weight:0.5, color:'#6eb5cf', opacity:0.7 };
+          // ── Water lines ──
+          case 'NHD Flowline GTAC':
+            return { fill:false, color:'#6eb5cf', weight:1.0, opacity:0.85 };
+          // ── Contours ──
+          case 'Contour USGS':
+            return { fill:false, color:'#c8895a', weight:0.6, opacity:0.75 };
+          // ── Boundaries ──
+          case 'AdministrativeForest':
+            return { fill:false, color:'#2d7a1f', weight:2.0, opacity:0.9, dashArray:'6,4' };
+          case 'USFS Ranger District':
+            return { fill:false, color:'#4a9a38', weight:1.2, opacity:0.75, dashArray:'4,4' };
+          case 'USFS Common Unit Name Line':
+            return { fill:false, color:'#5aaa48', weight:0.8, opacity:0.6, dashArray:'3,5' };
+          case 'USFS Wilderness':
+            return { fill:true, fillColor:'#b5d4a0', fillOpacity:0.25, color:'#4a7a32', weight:1.2, opacity:0.7, dashArray:'4,4' };
+          case 'USFS Basic Ownership':
+            return { fill:false, color:'#6b9a52', weight:0.6, opacity:0.5 };
+          // ── Roads ──
+          case 'Gap Roads GTAC':
+            return { fill:false, color:'#b87030', weight:1.0, opacity:0.75 };
+          case 'MVUM Plus GTAC':
+            return { fill:false, color:'#8a5a28', weight:1.2, opacity:0.8 };
+          // ── Trails ──
+          case 'Trails Plus GTAC':
+            return { fill:false, color:'#8B4513', weight:1.0, opacity:0.8, dashArray:'5,4' };
+          // ── PLSS / Survey grid ──
+          case 'PLSS Township BLM':
+            return { fill:false, color:'#888', weight:0.5, opacity:0.4 };
+          case 'PLSSFirstDivision_BLM':
+            return { fill:false, color:'#aaa', weight:0.3, opacity:0.35 };
+          // ── Landform / terrain ──
+          case 'Landform Lines GTAC':
+            return { fill:false, color:'#c8895a', weight:0.4, opacity:0.5 };
+          // ── Structures ──
+          case 'structures_poly_fema':
+            return { fill:true, fillColor:'#d4b896', fillOpacity:0.7, weight:0.5, color:'#999', opacity:0.6 };
+          case 'USFS Recreation Site':
+            return { fill:true, fillColor:'#e8c87a', fillOpacity:0.8, weight:0.5, color:'#c8a040', opacity:0.8 };
+          // ── Census/admin (hide) ──
+          case 'State Generalized Census':
+            return { fill:false, color:'#999', weight:0.3, opacity:0.25 };
+          // ── Labels and points (invisible — no text in VectorGrid) ──
+          case 'Contour USGS/label':
+          case 'NHD Flowline GTAC/label':
+          case 'NHDWaterbody/label':
+          case 'Landform Lines GTAC/label':
+          case 'MVUM Plus GTAC/label':
+          case 'Gap Roads GTAC/label':
+          case 'Trails Plus GTAC/label':
+          case 'PLSSFirstDivision_BLM/label':
+          case 'NHD Point USGS':
+            return { fill:false, weight:0, opacity:0 };
+          // ── Default ──
+          default:
+            return { fill:false, color:'#999', weight:0.3, opacity:0.3 };
         }
-        var n = (layerName || '').toLowerCase();
-        // Land fills
-        if (n.indexOf('water') !== -1 && n.indexOf('line') === -1 && n.indexOf('body') !== -1)
-          return { fill:true, fillColor:'#aad3df', fillOpacity:1, weight:0 };
-        if (n.indexOf('water') !== -1 && n.indexOf('area') !== -1)
-          return { fill:true, fillColor:'#aad3df', fillOpacity:1, weight:0 };
-        if (n.indexOf('lake') !== -1 || n.indexOf('reservoir') !== -1 || n.indexOf('pond') !== -1)
-          return { fill:true, fillColor:'#aad3df', fillOpacity:1, weight:0 };
-        // Water lines
-        if (n.indexOf('stream') !== -1 || n.indexOf('river') !== -1 || n.indexOf('creek') !== -1)
-          return { fill:false, color:'#6eb5cf', weight:0.8, opacity:0.8 };
-        if (n.indexOf('water') !== -1 && (n.indexOf('line') !== -1 || n.indexOf('course') !== -1))
-          return { fill:false, color:'#6eb5cf', weight:0.8, opacity:0.8 };
-        // Contours
-        if (n.indexOf('index') !== -1 && n.indexOf('contour') !== -1)
-          return { fill:false, color:'#8B6340', weight:1.1, opacity:0.85 };
-        if (n.indexOf('contour') !== -1)
-          return { fill:false, color:'#b88a5a', weight:0.5, opacity:0.7 };
-        // Roads
-        if (n.indexOf('highway') !== -1 || n.indexOf('freeway') !== -1)
-          return { fill:false, color:'#cc8800', weight:2.5, opacity:0.9 };
-        if (n.indexOf('road') !== -1 || n.indexOf('route') !== -1)
-          return { fill:false, color:'#888', weight:1, opacity:0.75 };
-        if (n.indexOf('trail') !== -1 || n.indexOf('path') !== -1)
-          return { fill:false, color:'#8B4513', weight:0.8, opacity:0.7, dashArray:'3,3' };
-        // Boundaries
-        if (n.indexOf('national forest') !== -1 || n.indexOf('nf ') !== -1)
-          return { fill:false, color:'#2d6a1f', weight:2, opacity:0.9, dashArray:'6,3' };
-        if (n.indexOf('wilderness') !== -1)
-          return { fill:false, color:'#4a7a32', weight:1.5, opacity:0.8, dashArray:'4,4' };
-        if (n.indexOf('admin') !== -1 || n.indexOf('boundary') !== -1 || n.indexOf('district') !== -1)
-          return { fill:false, color:'#5a7a3c', weight:1, opacity:0.7 };
-        // Land fills
-        if (n.indexOf('forest') !== -1 || n.indexOf('wood') !== -1)
-          return { fill:true, fillColor:'#c8dcaa', fillOpacity:0.5, weight:0 };
-        if (n.indexOf('land') !== -1 || n.indexOf('terrain') !== -1 || n.indexOf('ground') !== -1)
-          return { fill:true, fillColor:'#e8e0d0', fillOpacity:0.4, weight:0 };
-        // Buildings/structures
-        if (n.indexOf('building') !== -1 || n.indexOf('structure') !== -1)
-          return { fill:true, fillColor:'#d4b896', fillOpacity:0.8, weight:0.5, color:'#999' };
-        // Section lines / grid
-        if (n.indexOf('section') !== -1 || n.indexOf('plss') !== -1 || n.indexOf('grid') !== -1)
-          return { fill:false, color:'#ccc', weight:0.3, opacity:0.5 };
-        // Labels — hide (no text rendering in VectorGrid raster mode)
-        if (n.indexOf('label') !== -1 || n.indexOf('text') !== -1 || n.indexOf('name') !== -1)
-          return { fill:false, weight:0, opacity:0 };
-        // Default: subtle
-        return { fill:false, color:'#999', weight:0.3, opacity:0.4 };
       }
 
       baseLayers.fstopo = L.vectorGrid.protobuf(
@@ -3165,7 +3174,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           maxNativeZoom: 15, maxZoom: 19,
           fetchOptions: { mode: 'cors' },
           vectorTileLayerStyles: new Proxy({}, {
-            get: function(target, prop){ return fstopoStyle(prop); },
+            get: function(target, prop){ return typeof prop === 'string' ? fstopoStyle(prop) : undefined; },
             has: function(){ return true; }
           })
         }
