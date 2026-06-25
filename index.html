@@ -177,11 +177,15 @@
   .modal-overlay{
     position:fixed;inset:0;background:rgba(10,12,10,0.6);z-index:2000;
     display:flex;align-items:center;justify-content:center;padding:20px;
+    overflow-y:auto;
   }
   .modal-overlay.hidden{display:none;}
   .modal{
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;
     width:100%;max-width:380px;padding:20px;
+    max-height:calc(100dvh - 40px);overflow-y:auto;
+    display:flex;flex-direction:column;
+    position:relative;
   }
   .modal h2{font-size:16px;margin:0 0 14px;font-weight:600;}
   .modal label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:14px;}
@@ -192,7 +196,12 @@
   }
   .modal textarea{resize:vertical;min-height:60px;}
   .coord-display{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-bottom:14px;}
-  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;}
+  .modal-actions{
+    display:flex;justify-content:flex-end;gap:8px;margin-top:12px;
+    position:sticky;bottom:0;background:var(--bg-elevated);
+    padding:10px 0 2px;border-top:1px solid var(--border);
+    margin-left:-20px;margin-right:-20px;padding-left:20px;padding-right:20px;
+  }
   .modal-actions .btn-danger{margin-right:auto;}
 
   .modal-wide{max-width:540px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;}
@@ -551,6 +560,9 @@
 
   /* Mobile */
   @media (max-width:760px){
+    /* Modal: start from top on mobile so content isn't hidden above fold */
+    .modal-overlay{ align-items:flex-start; padding:12px; }
+    .modal{ max-height:calc(100dvh - 24px); }
     /* Sidebar bottom sheet */
     #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
     #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
@@ -1744,7 +1756,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.9';
+  var APP_VERSION = '1.6.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3874,11 +3886,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     Object.keys(STATUS_COLORS).forEach(function(key){
       var sc = STATUS_COLORS[key];
       var btn = document.createElement('button');
+      btn.type = 'button';
       btn.title = sc.label;
-      btn.style.cssText = 'width:28px;height:28px;border-radius:50%;background:' + sc.bg +
+      btn.style.cssText = 'width:34px;height:34px;border-radius:50%;background:' + sc.bg +
         ';border:3px solid ' + (key === sel ? '#fff' : 'transparent') +
         ';box-shadow:' + (key === sel ? '0 0 0 2px ' + sc.bg : 'none') +
-        ';cursor:pointer;transition:all .15s;flex-shrink:0;';
+        ';cursor:pointer;transition:all .15s;flex-shrink:0;touch-action:manipulation;';
       btn.addEventListener('click', function(){
         onSelect(key);
         renderStatusPicker(rowId, labelId, onSelect, key);
