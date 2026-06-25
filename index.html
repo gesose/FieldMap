@@ -1744,7 +1744,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.8';
+  var APP_VERSION = '1.5.9';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -4032,9 +4032,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
+      var snapBtn = document.createElement('button');
+      snapBtn.className = 'btn btn-small'; snapBtn.textContent = 'Snap to trail';
+      barEl.appendChild(snapBtn);
+
+      function rebuildVertices(pts){
+        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
+        vertexMarkers.length = 0;
+        pts.forEach(function(pt){
+          var mNew = L.marker([pt.lat, pt.lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
+          mNew.on('drag', function(){
+            poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+          });
+          mNew.on('contextmenu', function(e){
+            L.DomEvent.stopPropagation(e);
+            if (vertexMarkers.length <= 2){ showToast('Need at least 2 points'); return; }
+            var ix = vertexMarkers.indexOf(mNew);
+            vertexMarkers.splice(ix, 1);
+            map.removeLayer(mNew);
+            poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+          });
+          vertexMarkers.push(mNew);
+        });
+        poly.setLatLngs(pts);
+      }
+
+      snapBtn.addEventListener('click', function(){
+        var coords = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lng, l.lat]; });
+        if (coords.length < 2){ showToast('Need at least 2 vertices'); return; }
+        snapBtn.textContent = 'Snapping…'; snapBtn.disabled = true;
+        fetch('https://api.openrouteservice.org/v2/directions/' + drawRouteProfile + '/geojson', {
+          method:'POST',
+          headers:{ 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ coordinates: coords })
+        }).then(function(r){ if (!r.ok) throw new Error('ORS ' + r.status); return r.json(); })
+        .then(function(data){
+          var line = data.features && data.features[0] && data.features[0].geometry && data.features[0].geometry.coordinates;
+          if (!line || line.length < 2) throw new Error('no geometry');
+          rebuildVertices(line.map(function(c){ return L.latLng(c[1], c[0]); }));
+          showToast('Snapped · right-click dense vertices to remove');
+        }).catch(function(){
+          showToast("Couldn't snap — check connection or trail proximity", 5000);
+        }).then(function(){ snapBtn.textContent = 'Snap to trail'; snapBtn.disabled = false; });
+      });
+
       var finish = function(save){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
         barEl.removeChild(doneBtn);
+        if (snapBtn.parentNode) barEl.removeChild(snapBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
           track.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
