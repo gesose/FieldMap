@@ -152,7 +152,8 @@
 
   #sidebar-scroll-area{flex:1;display:flex;flex-direction:column;min-height:0;}
   #pin-list{flex:1;overflow-y:auto;padding:8px 0;}
-  .track-mark{border-radius:3px;width:20px;height:5px;margin-top:8px;}
+  .track-mark-wrap{width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+  .track-mark{border-radius:3px;width:18px;height:4px;position:relative;}
   .pin-row{
     display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;
   }
@@ -1491,7 +1492,7 @@
 <div id="bearing-bar" class="hidden" style="
   position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
   background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
-  padding:8px 14px;display:flex;align-items:center;gap:12px;font-size:13px;
+  padding:8px 14px;align-items:center;gap:12px;font-size:13px;
   box-shadow:0 4px 16px rgba(0,0,0,0.4);">
   <span id="bearing-bar-text">Tap origin point</span>
   <button class="btn btn-small btn-ghost" id="bearing-bar-cancel">Cancel</button>
@@ -1743,7 +1744,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.3';
+  var APP_VERSION = '1.5.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1845,6 +1846,7 @@
   var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewLine = null;
   var editingBearingId = null, selectedBearingStatus = 'escout';
   var bearingLayersById = {}; // {id: {line, arrowMarker}}
+  var _remapBearingId = null; // when set, draw mode updates this bearing instead of creating new
   var pendingLatLng = null;
   var activeTagFilters = {};
   var activeStateFilters = {};
@@ -4705,13 +4707,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function setBearingMode(on){
     bearingMode = on;
     if (!on){
+      _remapBearingId = null;
       bearingOrigin = null;
       if (bearingOriginMarker){ map.removeLayer(bearingOriginMarker); bearingOriginMarker = null; }
       if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
       document.getElementById('bearing-bar').classList.add('hidden');
+      document.getElementById('bearing-bar').style.display = '';
     } else {
       closeAllPanels();
       document.getElementById('bearing-bar').classList.remove('hidden');
+      document.getElementById('bearing-bar').style.display = 'flex';
       document.getElementById('bearing-bar-text').textContent = 'Tap origin point';
       document.getElementById('map').style.cursor = 'crosshair';
     }
@@ -4719,22 +4724,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function handleBearingMapTap(latlng){
     if (!bearingOrigin){
-      // First tap — set origin
+      // First tap — set origin, show temp marker
       bearingOrigin = latlng;
       bearingOriginMarker = L.circleMarker(latlng, {
         radius:6, color:'#fff', fillColor:'#c47a28', fillOpacity:1, weight:2, interactive:false
       }).addTo(map);
       document.getElementById('bearing-bar-text').textContent = 'Tap target point';
-      // Live preview line
       map.on('mousemove', updateBearingPreview);
     } else {
       // Second tap — finish
       map.off('mousemove', updateBearingPreview);
       if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
       var origin = bearingOrigin;
+      var remapId = _remapBearingId;
+      _remapBearingId = null;
       setBearingMode(false);
       document.getElementById('map').style.cursor = '';
-      openBearingModalForNew(origin, latlng);
+      if (remapId){
+        // Update existing bearing endpoints
+        var b = state.bearings.find(function(x){ return x.id === remapId; });
+        if (b){
+          b.originLat = origin.lat; b.originLng = origin.lng;
+          b.targetLat = latlng.lat; b.targetLng = latlng.lng;
+          b.bearingDeg = bearingBetween(origin.lat, origin.lng, latlng.lat, latlng.lng);
+          b.distMiles = haversineMiles(origin.lat, origin.lng, latlng.lat, latlng.lng);
+          refreshBearingMap(b);
+          renderPinList();
+          scheduleSave();
+          showToast('Bearing endpoints updated');
+        }
+      } else {
+        openBearingModalForNew(origin, latlng);
+      }
     }
   }
 
@@ -5018,21 +5039,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var mark = document.createElement('div');
     if (it.type === 'track'){
       var scTrack = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.className = 'track-mark';
-      mark.style.background = scTrack.bg;
+      mark.className = 'track-mark-wrap';
+      var bar = document.createElement('div');
+      bar.className = 'track-mark';
+      bar.style.background = scTrack.bg;
+      mark.appendChild(bar);
     } else if (it.type === 'polygon'){
       var scPoly = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.style.cssText = 'width:12px;height:12px;border-radius:2px;flex-shrink:0;margin-top:2px;';
-      mark.style.background = scPoly.bg;
+      mark.style.cssText = 'width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+      var sq = document.createElement('div');
+      sq.style.cssText = 'width:12px;height:12px;border-radius:2px;background:' + scPoly.bg + ';';
+      mark.appendChild(sq);
     } else if (it.type === 'bearing'){
       var scBrg = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.style.cssText = 'width:20px;height:5px;flex-shrink:0;margin-top:8px;border-radius:2px;position:relative;';
-      mark.style.background = scBrg.bg;
-      // Mini arrowhead
-      var arr = document.createElement('div');
-      arr.style.cssText = 'position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:0;height:0;' +
-        'border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:6px solid ' + scBrg.bg + ';';
-      mark.appendChild(arr);
+      mark.style.cssText = 'width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+      var bLine = document.createElement('div');
+      bLine.style.cssText = 'width:16px;height:2px;border-radius:1px;background:' + scBrg.bg + ';position:relative;';
+      var bDot = document.createElement('div');
+      bDot.style.cssText = 'position:absolute;right:-3px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:' + scBrg.bg + ';';
+      bLine.appendChild(bDot);
+      mark.appendChild(bLine);
     } else {
       // Pin: use status color + tiny SVG icon
       var sc = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
@@ -7702,24 +7728,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeBearingModal();
     });
     document.getElementById('bearing-remap-btn').addEventListener('click', function(){
-      // Save current edits to name/status/notes/trip/tags first, then re-enter draw mode
+      if (!editingBearingId) return;
       var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
       if (!b) return;
+      // Save current modal state back to bearing first
       var tags = [];
       document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
       b.name = document.getElementById('bearing-name').value.trim() || b.name;
       b.notes = document.getElementById('bearing-notes').value.trim();
       b.trip = document.getElementById('bearing-trip').value.trim();
       b.status = selectedBearingStatus;
-      b.tags = tags.length ? tags : ['uncategorized'];
+      b.tags = tags.length ? tags : (b.tags || ['uncategorized']);
       scheduleSave();
       closeBearingModal();
-      // Remove old bearing from map, enter draw mode to replace endpoints
-      removeBearingFromMap(b.id);
-      state.bearings = state.bearings.filter(function(x){ return x.id !== b.id; });
-      renderPinList();
+      // Show existing endpoints as markers so user sees what they're replacing
+      var oMark = L.circleMarker([b.originLat, b.originLng], {
+        radius:6, color:'#fff', fillColor:'#8A8F8C', fillOpacity:1, weight:2, interactive:false
+      }).addTo(map);
+      var tMark = L.circleMarker([b.targetLat, b.targetLng], {
+        radius:6, color:'#fff', fillColor:'#8A8F8C', fillOpacity:1, weight:2, interactive:false
+      }).addTo(map);
+      // Set remap id so tap handler updates in-place
+      _remapBearingId = b.id;
       setBearingMode(true);
-      showToast('Tap new origin point to replace bearing', 4000);
+      showToast('Tap new origin point', 4000);
+      // Clean up preview markers when done
+      var cleanUp = function(){
+        map.removeLayer(oMark); map.removeLayer(tMark);
+      };
+      map.once('click', function(){ setTimeout(cleanUp, 2000); });
     });
 
     // Bearing draw bar cancel
