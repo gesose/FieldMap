@@ -1744,7 +1744,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.5.4';
+  var APP_VERSION = '1.5.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3615,13 +3615,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var poly = L.polyline(track.points, { color: sc.bg, weight: 3, opacity: 0.85 });
     poly.bindPopup(trackPopupHtml(track));
     poly.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
-        L.DomEvent.stopPropagation(e);
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
         if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
         if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (drawMode) handleDrawClick(e.latlng);
-        else if (polygonMode) handlePolygonClick(e.latlng);
-        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
+        if (measureMode){ handleMeasureClick(e.latlng); return; }
+        if (drawMode){ handleDrawClick(e.latlng); return; }
+        if (polygonMode){ handlePolygonClick(e.latlng); return; }
+        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
         return;
       }
     });
@@ -3994,6 +3995,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (confirm('Delete this area? This cannot be undone.')){
         map.closePopup();
         deletePolygonById(id);
+      }
+    },
+    editBearing: function(id){
+      var b = state.bearings.find(function(x){ return x.id === id; });
+      if (b){ map.closePopup(); openBearingModal(b); }
+    },
+    deleteBearing: function(id){
+      if (confirm('Delete this bearing? This cannot be undone.')){
+        map.closePopup();
+        deleteBearingById(id);
       }
     }
   };
@@ -4400,13 +4411,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     layer.bindPopup(polygonPopupHtml(polygon), { maxWidth:280, className:'polygon-popup' });
     layer.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
-        L.DomEvent.stopPropagation(e);
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        // Pass click through to the map handler — don't stopPropagation
         if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
         if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (drawMode) handleDrawClick(e.latlng);
-        else if (polygonMode) handlePolygonClick(e.latlng);
-        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
+        if (measureMode){ handleMeasureClick(e.latlng); return; }
+        if (drawMode){ handleDrawClick(e.latlng); return; }
+        if (polygonMode){ handlePolygonClick(e.latlng); return; }
+        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
         return;
       }
       L.DomEvent.stopPropagation(e);
@@ -4549,6 +4562,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return bearingCardinalLabel(bearing) + ' ' + Math.round(bearing) + '° · ' + dist.toFixed(2) + ' mi';
   }
 
+  function bearingPopupHtml(b){
+    var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+    var catLabel = b.tags && b.tags[0] && b.tags[0] !== 'uncategorized' ? tagById(b.tags[0]).label : '';
+    var notes = b.notes ? '<div class="pin-popup-notes">' + escapeHtml(b.notes) + '</div>' : '';
+    var meta = bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
+    if (catLabel) meta += ' · ' + catLabel;
+    if (b.trip) meta += ' · ' + escapeHtml(b.trip);
+    return '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
+      '<div class="pin-popup-cat">' + meta + '</div>' +
+      notes +
+      '<div class="pin-popup-coords">' +
+        'Origin: ' + b.originLat.toFixed(5) + ', ' + b.originLng.toFixed(5) + '<br>' +
+        'Target: ' + b.targetLat.toFixed(5) + ', ' + b.targetLng.toFixed(5) +
+      '</div>' +
+      '<div class="pin-popup-actions">' +
+      '<button class="btn btn-small" onclick="FieldMap.editBearing(\'' + b.id + '\')">Edit</button>' +
+      '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteBearing(\'' + b.id + '\')">Delete</button>' +
+      '</div>';
+  }
+
   function addBearingToMap(b){
     var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
     var color = sc.bg;
@@ -4557,22 +4590,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     var line = L.polyline([origin, target], {
       color: color, weight: 2.5, dashArray: '8,5', opacity: 0.92, interactive: true
-    }).addTo(map);
+    });
 
-    // 16px dot at target
     var dotIcon = L.divIcon({
       className:'', iconSize:[16,16], iconAnchor:[8,8],
       html:'<div style="width:16px;height:16px;border-radius:50%;background:' + color + ';border:2px solid rgba(255,255,255,0.7);box-sizing:border-box;"></div>'
     });
-    var arrowMarker = L.marker(target, { icon:dotIcon, interactive:false }).addTo(map);
+    var dotMarker = L.marker(target, { icon:dotIcon, interactive:true });
+
+    var popup = L.popup({ maxWidth:280 }).setContent(bearingPopupHtml(b));
 
     line.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode){ return; }
+      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
+        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
+        if (compassActive){ handleCompassMapTap(e.latlng); return; }
+        if (measureMode){ handleMeasureClick(e.latlng); return; }
+        if (drawMode){ handleDrawClick(e.latlng); return; }
+        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
+        return;
+      }
       L.DomEvent.stopPropagation(e);
-      openBearingModal(b);
+      popup.setLatLng(e.latlng).openOn(map);
     });
 
-    bearingLayersById[b.id] = { line: line, arrow: arrowMarker };
+    dotMarker.on('click', function(e){
+      L.DomEvent.stopPropagation(e);
+      popup.setLatLng(target).openOn(map);
+    });
+
+    line.addTo(map);
+    dotMarker.addTo(map);
+    bearingLayersById[b.id] = { line: line, arrow: dotMarker, popup: popup };
   }
 
   function removeBearingFromMap(id){
@@ -5126,7 +5175,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (bEntry && bEntry.line){
           map.flyToBounds(bEntry.line.getBounds(), { padding:[60,60] });
         }
-        setTimeout(function(){ openBearingModal(d); }, 350);
+        setTimeout(function(){
+          var bEntry2 = bearingLayersById[d.id];
+          if (bEntry2 && bEntry2.popup){
+            var midLat = (d.originLat + d.targetLat) / 2;
+            var midLng = (d.originLng + d.targetLng) / 2;
+            bEntry2.popup.setLatLng([midLat, midLng]).openOn(map);
+          }
+        }, 350);
       }
     });
     return row;
@@ -7731,7 +7787,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!editingBearingId) return;
       var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
       if (!b) return;
-      // Save current modal state back to bearing first
+      // Save current modal state back first
       var tags = [];
       document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
       b.name = document.getElementById('bearing-name').value.trim() || b.name;
@@ -7741,22 +7797,65 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       b.tags = tags.length ? tags : (b.tags || ['uncategorized']);
       scheduleSave();
       closeBearingModal();
-      // Show existing endpoints as markers so user sees what they're replacing
-      var oMark = L.circleMarker([b.originLat, b.originLng], {
-        radius:6, color:'#fff', fillColor:'#8A8F8C', fillOpacity:1, weight:2, interactive:false
-      }).addTo(map);
-      var tMark = L.circleMarker([b.targetLat, b.targetLng], {
-        radius:6, color:'#fff', fillColor:'#8A8F8C', fillOpacity:1, weight:2, interactive:false
-      }).addTo(map);
-      // Set remap id so tap handler updates in-place
-      _remapBearingId = b.id;
-      setBearingMode(true);
-      showToast('Tap new origin point', 4000);
-      // Clean up preview markers when done
-      var cleanUp = function(){
-        map.removeLayer(oMark); map.removeLayer(tMark);
+
+      // Place draggable markers at current origin and target
+      var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+      var makeDragIcon = function(color){
+        return L.divIcon({
+          className:'', iconSize:[18,18], iconAnchor:[9,9],
+          html:'<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>'
+        });
       };
-      map.once('click', function(){ setTimeout(cleanUp, 2000); });
+      var oMark = L.marker([b.originLat, b.originLng], { icon:makeDragIcon(sc.bg), draggable:true, zIndexOffset:1000 }).addTo(map);
+      var tMark = L.marker([b.targetLat, b.targetLng], { icon:makeDragIcon(sc.bg), draggable:true, zIndexOffset:1000 }).addTo(map);
+
+      // Update bearing line live as user drags
+      var updateLive = function(){
+        var oLL = oMark.getLatLng(), tLL = tMark.getLatLng();
+        var entry = bearingLayersById[b.id];
+        if (entry && entry.line) entry.line.setLatLngs([oLL, tLL]);
+        if (entry && entry.arrow) entry.arrow.setLatLng(tLL);
+      };
+      oMark.on('drag', updateLive);
+      tMark.on('drag', updateLive);
+
+      // Confirm bar — reuse bearing bar
+      document.getElementById('bearing-bar-text').textContent = 'Drag endpoints · tap Done to save';
+      document.getElementById('bearing-bar').classList.remove('hidden');
+      document.getElementById('bearing-bar').style.display = 'flex';
+      // Replace cancel button with Done/Cancel pair temporarily
+      var barEl = document.getElementById('bearing-bar');
+      var doneBtn = document.createElement('button');
+      doneBtn.className = 'btn btn-small btn-primary';
+      doneBtn.textContent = 'Done';
+      barEl.appendChild(doneBtn);
+
+      var finish = function(save){
+        oMark.off('drag', updateLive); tMark.off('drag', updateLive);
+        map.removeLayer(oMark); map.removeLayer(tMark);
+        barEl.removeChild(doneBtn);
+        document.getElementById('bearing-bar').classList.add('hidden');
+        document.getElementById('bearing-bar').style.display = '';
+        if (save){
+          var oLL = oMark.getLatLng(), tLL = tMark.getLatLng();
+          b.originLat = oLL.lat; b.originLng = oLL.lng;
+          b.targetLat = tLL.lat; b.targetLng = tLL.lng;
+          b.bearingDeg = bearingBetween(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
+          b.distMiles = haversineMiles(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
+          refreshBearingMap(b);
+          renderPinList();
+          scheduleSave();
+          showToast('Bearing endpoints updated');
+        } else {
+          // Revert live preview
+          refreshBearingMap(b);
+        }
+        // Restore cancel button behavior
+        document.getElementById('bearing-bar-cancel').onclick = null;
+      };
+
+      doneBtn.addEventListener('click', function(){ finish(true); });
+      document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
     });
 
     // Bearing draw bar cancel
