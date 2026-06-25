@@ -1418,7 +1418,7 @@
       <div id="pin-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
     </div>
     <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="pin-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><input type="text" id="pin-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
     <label><span>Date</span><input type="date" id="pin-date"></label>
     <div class="coord-display">Lat <span id="pin-lat">—</span> · Lng <span id="pin-lng">—</span></div>
     <div class="modal-actions">
@@ -1432,23 +1432,25 @@
 <!-- Track/route edit modal -->
 <div class="modal-overlay hidden" id="track-modal">
   <div class="modal">
-    <h2 id="track-modal-title">Edit track</h2>
+    <h2 id="track-modal-title">Save route</h2>
     <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
-    <label><span>Status</span>
-      <div id="track-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"></div>
-      <div id="track-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
-    </label>
-    <label><span>Tags</span>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div id="track-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="track-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
       <div class="chip-row" id="track-tags-row"></div>
-    </label>
+    </div>
     <label><span>Notes</span><textarea id="track-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="track-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><input type="text" id="track-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
     <label><span>Date</span><input type="date" id="track-date"></label>
     <div class="coord-display" id="track-point-count"></div>
     <div class="modal-actions">
       <button class="btn btn-danger" id="track-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="track-cancel-btn">Cancel</button>
-      <button class="btn btn-primary" id="track-save-btn">Save track</button>
+      <button class="btn btn-primary" id="track-save-btn">Save route</button>
     </div>
   </div>
 </div>
@@ -1458,15 +1460,17 @@
   <div class="modal">
     <h2 id="polygon-modal-title">New area</h2>
     <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
-    <label><span>Status</span>
-      <div id="polygon-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"></div>
-      <div id="polygon-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
-    </label>
-    <label><span>Tags</span>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div id="polygon-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="polygon-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
       <div class="chip-row" id="polygon-tags-row"></div>
-    </label>
+    </div>
     <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. OR Elk 2026 or type a new trip"></label>
+    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
     <label><span>Date</span><input type="date" id="polygon-date"></label>
     <div id="polygon-area-display" class="coord-display" style="min-height:18px;"></div>
     <div class="modal-actions">
@@ -1482,13 +1486,17 @@
   <div class="modal">
     <h2 id="bearing-modal-title">Save bearing</h2>
     <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
-    <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"></div>
-    <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-bottom:8px;"></div>
-    <label><span>Category</span>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
       <div class="chip-row" id="bearing-tags-row"></div>
-    </label>
+    </div>
     <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="bearing-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><input type="text" id="bearing-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
     <label><span>Date</span><input type="date" id="bearing-date"></label>
     <div class="coord-display" id="bearing-meta-display"></div>
     <div class="modal-actions">
@@ -1756,7 +1764,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.0';
+  var APP_VERSION = '1.6.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3714,6 +3722,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openTrackModal(track){
+    refreshTripSuggestions();
     editingTrackId = track.id;
     pendingDrawPoints = null;
     document.getElementById('track-modal-title').textContent = 'Edit track';
@@ -3730,6 +3739,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openTrackModalForNew(points){
+    refreshTripSuggestions();
     editingTrackId = null;
     pendingDrawPoints = points;
     document.getElementById('track-modal-title').textContent = 'Save route';
@@ -4658,6 +4668,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var selectedPolygonTagIds = [];
 
   function openPolygonModal(polygon){
+    refreshTripSuggestions();
     editingPolygonId = polygon ? polygon.id : null;
     document.getElementById('polygon-modal-title').textContent = polygon ? 'Edit area' : 'New area';
     document.getElementById('polygon-name').value = polygon ? polygon.name : '';
@@ -4861,6 +4872,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openBearingModal(b){
+    refreshTripSuggestions();
     editingBearingId = b ? b.id : null;
     document.getElementById('bearing-modal-title').textContent = b ? 'Edit bearing' : 'Save bearing';
     document.getElementById('bearing-name').value = b ? b.name : '';
