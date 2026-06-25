@@ -665,7 +665,10 @@
     <div id="mobile-handle"></div>
     <div id="sidebar-header">
       <div id="sidebar-header-row1">
-        <div id="app-title">Field<span>Map</span></div>
+        <div style="display:flex;align-items:baseline;gap:6px;">
+          <div id="app-title">Field<span>Map</span></div>
+          <div id="app-title-version" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);letter-spacing:0.2px;opacity:0.7;"></div>
+        </div>
         <div style="display:flex;gap:6px;">
           <button class="btn btn-primary btn-small" id="add-sheet-btn">+ Add</button>
           <button class="btn btn-small" id="tools-sheet-btn" style="border:2px solid var(--accent);background:transparent;color:var(--text);">Tools</button>
@@ -1134,6 +1137,8 @@
         <li>Find Dupes moved to Tools</li>
       </ul>
     </div>
+    <button class="btn btn-ghost btn-block" id="check-update-btn" style="margin-bottom:8px;">Check for updates</button>
+    <div id="check-update-status" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;min-height:16px;"></div>
     <button class="btn btn-ghost btn-block" id="about-close-btn">Close</button>
   </div>
 </div>
@@ -1691,7 +1696,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.4.7';
+  var APP_VERSION = '1.4.9';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -6492,7 +6497,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Rise/set labels — anchored radially outward, no arrows
     // Place label using your approach: project arc center and arc-edge point to screen pixels,
     // extend vector by fixed px beyond arc edge, unproject back to latlng.
-    var PAD_PX = 10; // gap between arc edge and inner label edge
+    var PAD_PX = 12; // gap between arc edge and inner label edge
     function addDirMarker(tTime, label, color){
       if (!tTime || isNaN(tTime.getTime())) return;
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
@@ -6500,19 +6505,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Arc-edge point (at distDeg radius)
       var edgeLat = drawCenter.lat + distDeg * Math.cos(az);
       var edgeLng = drawCenter.lng + distDeg * Math.sin(az) / cosLat;
-      // Project center and edge to screen pixels
-      var cPx   = map.latLngToContainerPoint([drawCenter.lat, drawCenter.lng]);
-      var ePx   = map.latLngToContainerPoint([edgeLat, edgeLng]);
-      // Unit vector from center → edge
+      // Project center and edge to screen pixels using explicit L.latLng
+      var cPx = map.latLngToContainerPoint(L.latLng(drawCenter.lat, drawCenter.lng));
+      var ePx = map.latLngToContainerPoint(L.latLng(edgeLat, edgeLng));
+      // Unit vector from center → edge in screen pixels
       var dx = ePx.x - cPx.x, dy = ePx.y - cPx.y;
       var len = Math.sqrt(dx*dx + dy*dy) || 1;
-      var ux = dx/len, uy = dy/len;
-      // Label anchor point: arc edge + PAD_PX along same vector
+      var ux = dx / len;
+      // Label anchor: PAD_PX beyond arc edge along same vector
       var lx = ePx.x + ux * PAD_PX;
-      var ly = ePx.y + uy * PAD_PX;
-      var labelLatLng = map.containerPointToLatLng([lx, ly]);
-      // Anchor: if vector points rightward anchor left edge at point; leftward anchor right edge
-      var tx = ux >= 0 ? '0%' : '-100%';
+      var ly = ePx.y + (dy/len) * PAD_PX;
+      var labelLatLng = map.containerPointToLatLng(L.point(lx, ly));
+      // Anchor text so inner edge is at the label point, growing outward
+      // ux > 0 = vector points right (east/sunrise) → left-anchor
+      // ux < 0 = vector points left (west/sunset)  → right-anchor
+      var tx = ux > 0 ? '0%' : '-100%';
       var icon = L.divIcon({
         className:'', iconSize:[0,0],
         html:'<div style="white-space:nowrap;font-size:14px;font-weight:700;color:' + color +
@@ -7243,10 +7250,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');
       document.getElementById('about-version').textContent = 'v' + APP_VERSION + ' · ' + APP_RELEASE_DATE;
+      document.getElementById('check-update-status').textContent = '';
+      document.getElementById('check-update-btn').textContent = 'Check for updates';
       document.getElementById('about-modal').classList.remove('hidden');
     });
     document.getElementById('about-close-btn').addEventListener('click', function(){
       document.getElementById('about-modal').classList.add('hidden');
+    });
+
+    // Set version badge next to logo
+    document.getElementById('app-title-version').textContent = 'v' + APP_VERSION;
+
+    // Check for updates — triggers service worker update check
+    document.getElementById('check-update-btn').addEventListener('click', function(){
+      var btn = this;
+      var statusEl = document.getElementById('check-update-status');
+      btn.textContent = 'Checking…';
+      btn.disabled = true;
+      statusEl.textContent = '';
+      if (!('serviceWorker' in navigator)){
+        statusEl.textContent = 'Service worker not available.';
+        btn.textContent = 'Check for updates';
+        btn.disabled = false;
+        return;
+      }
+      navigator.serviceWorker.getRegistration().then(function(reg){
+        if (!reg){
+          statusEl.textContent = 'Not installed as PWA — open in browser to update.';
+          btn.textContent = 'Check for updates';
+          btn.disabled = false;
+          return;
+        }
+        reg.update().then(function(){
+          if (reg.waiting){
+            // New version already waiting — activate it now
+            statusEl.textContent = 'Update found — reloading…';
+            reg.waiting.postMessage({ type:'SKIP_WAITING' });
+            setTimeout(function(){ window.location.reload(); }, 800);
+          } else if (reg.installing){
+            // Installing now — wait for it
+            statusEl.textContent = 'Downloading update…';
+            reg.installing.addEventListener('statechange', function(e){
+              if (e.target.state === 'installed'){
+                statusEl.textContent = 'Update ready — reloading…';
+                setTimeout(function(){ window.location.reload(); }, 800);
+              }
+            });
+          } else {
+            statusEl.textContent = 'Already up to date (v' + APP_VERSION + ')';
+            btn.textContent = 'Check for updates';
+            btn.disabled = false;
+          }
+        });
+      });
     });
     document.getElementById('sheet-export-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');

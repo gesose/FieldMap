@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v37';
+var SHELL_CACHE = 'fieldmap-shell-v39';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -139,4 +139,11 @@ self.addEventListener('fetch', function(event){
       });
     })
   );
+});
+
+// Allow the page to force-activate a waiting service worker via "Check for updates"
+self.addEventListener('message', function(event){
+  if (event.data && event.data.type === 'SKIP_WAITING'){
+    self.skipWaiting();
+  }
 });
