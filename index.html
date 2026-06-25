@@ -1266,12 +1266,11 @@
   </div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="lightpollution-toggle"> Nighttime lights
+    <input type="checkbox" id="lightpollution-toggle" disabled> Nighttime lights <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
     <button class="layer-hint-btn" data-layer-id="lh-lp" title="About">?</button>
   </label>
   <div class="layer-info-panel" id="lh-lp">
-    <div class="layer-info-desc">NASA VIIRS Black Marble nighttime lights — monthly composite. Visible at Z1–Z8 (zoom out to see data). Bright areas = more light pollution. Good for finding dark sky hunting areas.</div>
-    <a class="layer-info-src" href="https://earthdata.nasa.gov/data/projects/black-marble" target="_blank">Source: NASA GIBS / VIIRS Black Marble</a>
+    <div class="layer-info-desc">NASA VIIRS Black Marble nighttime lights — temporarily unavailable. Will return in a future update.</div>
   </div>
 
   <label class="layer-overlay-row">
@@ -1756,7 +1755,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.3';
+  var APP_VERSION = '1.6.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3053,14 +3052,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     } catch(e){ snowDepthLayer = null; }
 
-    try {
-      // NASA GIBS nighttime lights — VIIRS Black Marble via WMTS
-      // Uses a fixed recent date since live daily tiles require date parameter
-      lightPollutionLayer = L.tileLayer(
-        'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble_Nighttime_M1/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg',
-        { maxNativeZoom:8, minNativeZoom:1, opacity:0.85, attribution:'NASA GIBS / VIIRS Black Marble' }
-      );
-    } catch(e){ lightPollutionLayer = null; }
+    // Nighttime lights — temporarily disabled pending working tile source
+    lightPollutionLayer = null;
 
     try {
       // NLCD — USGS MRLC WMS
@@ -3103,11 +3096,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
     });
-    // USFS Forest Service Basemap — green topo style designed for USFS land navigation
-    // Tile URL verified from the Forest Service Basemap web map (item 2e1593463c30495e9c802098527e3d1b)
+    // USFS Forest Service Basemap — uses the cached tile service
+    // Note: 404s in non-NF areas are correct behavior (tiles only exist for National Forest land)
     baseLayers.fstopo = L.tileLayer('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:19, maxNativeZoom:15, pane:'fstopoPane',
-      attribution:'USDA Forest Service'
+      maxZoom:16, maxNativeZoom:15, pane:'fstopoPane',
+      attribution:'USDA Forest Service',
+      errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' // transparent 1px for 404s
     });
     baseLayers.topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
       maxZoom:19, maxNativeZoom:16, pane:'topoPane', attribution:'USGS The National Map'
@@ -3292,8 +3286,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setBaseLayerOn(name, on){
     var layer = baseLayers[name];
+    if (!layer){ showToast('Layer not available'); return; }
     if (on){ if (!map.hasLayer(layer)) layer.addTo(map); }
     else { if (map.hasLayer(layer)) map.removeLayer(layer); }
+    if (!state.settings.layers[name]) state.settings.layers[name] = { on:false, opacity:1 };
     state.settings.layers[name].on = on;
     document.getElementById('layer-' + name + '-opacity-row').classList.toggle('show', on);
     scheduleSave();
@@ -4041,12 +4037,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var poly = entry && entry.vis ? entry.vis : entry;
       var touchPoly = entry && entry.touch ? entry.touch : null;
       if (!poly) return;
-      var origPoints = track.points.map(function(p){ return [p[0],p[1]]; });
+      var origPoints = track.points.map(function(p){ return Array.isArray(p) ? [p[0],p[1]] : [p.lat,p.lng]; });
       var vertexMarkers = [];
       var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
         html:'<div style="width:14px;height:14px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
       track.points.forEach(function(pt, i){
-        var m = L.marker([pt[0],pt[1]], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
+        var ptLat = Array.isArray(pt) ? pt[0] : pt.lat;
+        var ptLng = Array.isArray(pt) ? pt[1] : pt.lng;
+        var m = L.marker([ptLat, ptLng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
         m.on('drag', function(){
           var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
           poly.setLatLngs(newPts);
@@ -4203,44 +4201,74 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!entry || !entry.poly) return;
       var origPoints = polygon.points.map(function(p){ return [p[0]||p.lat, p[1]||p.lng]; });
       var vertexMarkers = [];
+      var midMarkers2 = [];
       var vertIcon = L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7],
         html:'<div style="width:14px;height:14px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;cursor:grab;"></div>'});
+      var midIcon2 = L.divIcon({ className:'', iconSize:[10,10], iconAnchor:[5,5],
+        html:'<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #c2622d;box-sizing:border-box;opacity:0.7;cursor:pointer;"></div>'});
+
+      function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
+
+      function rebuildMid2(){
+        midMarkers2.forEach(function(x){ map.removeLayer(x); });
+        midMarkers2.length = 0;
+        for (var i=0; i<vertexMarkers.length; i++){
+          (function(idx){
+            var a = vertexMarkers[idx].getLatLng();
+            var b = vertexMarkers[(idx+1) % vertexMarkers.length].getLatLng();
+            var mid = L.latLng((a.lat+b.lat)/2,(a.lng+b.lng)/2);
+            var mm = L.marker(mid,{icon:midIcon2,zIndexOffset:1500,interactive:true}).addTo(map);
+            mm.on('click',function(e){
+              L.DomEvent.stopPropagation(e);
+              midMarkers2.forEach(function(x){ map.removeLayer(x); }); midMarkers2.length=0;
+              var insertAt = idx+1;
+              var ll = mm.getLatLng();
+              var mNew = L.marker(ll,{icon:vertIcon,draggable:true,zIndexOffset:2000}).addTo(map);
+              mNew.on('drag',function(){ entry.poly.setLatLngs(getPts()); rebuildMid2(); });
+              mNew.on('contextmenu',function(e2){
+                L.DomEvent.stopPropagation(e2);
+                if(vertexMarkers.length<=3){showToast('Need at least 3');return;}
+                var ix=vertexMarkers.indexOf(mNew); vertexMarkers.splice(ix,1); map.removeLayer(mNew);
+                entry.poly.setLatLngs(getPts()); rebuildMid2();
+              });
+              vertexMarkers.splice(insertAt,0,mNew);
+              entry.poly.setLatLngs(getPts()); rebuildMid2();
+            });
+            midMarkers2.push(mm);
+          })(i);
+        }
+      }
+
       polygon.points.forEach(function(pt){
         var lat = pt[0]||pt.lat, lng = pt[1]||pt.lng;
         var m = L.marker([lat,lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-        m.on('drag', function(){
-          var newPts = vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; });
-          entry.poly.setLatLngs(newPts);
-        });
+        m.on('drag', function(){ entry.poly.setLatLngs(getPts()); rebuildMid2(); });
         m.on('contextmenu', function(e){
           L.DomEvent.stopPropagation(e);
           if (vertexMarkers.length <= 3){ showToast('Need at least 3 points'); return; }
           var idx = vertexMarkers.indexOf(m);
-          vertexMarkers.splice(idx, 1);
-          map.removeLayer(m);
-          entry.poly.setLatLngs(vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }));
+          vertexMarkers.splice(idx, 1); map.removeLayer(m);
+          entry.poly.setLatLngs(getPts()); rebuildMid2();
         });
         vertexMarkers.push(m);
       });
+      rebuildMid2();
+
       var barEl = document.getElementById('bearing-bar');
-      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · right-click to delete · tap ◦ to add';
+      document.getElementById('bearing-bar-text').textContent = 'Drag vertices · tap ◦ to add · right-click to delete';
       barEl.classList.remove('hidden'); barEl.style.display = 'flex';
       var doneBtn = document.createElement('button');
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
       var finish = function(save){
         vertexMarkers.forEach(function(m){ map.removeLayer(m); });
+        midMarkers2.forEach(function(m){ map.removeLayer(m); });
         barEl.removeChild(doneBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
-          polygon.points = vertexMarkers.map(function(m){ var l=m.getLatLng(); return [l.lat,l.lng]; });
-          // Update the existing map layer in-place (don't refresh — the live setLatLngs already moved it)
-          var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
-          entry.poly.setLatLngs(polygon.points);
-          entry.poly.setStyle({ color:sc.bg, fillColor:sc.bg });
-          // Move label to new centroid
-          var newCenter = entry.poly.getBounds().getCenter();
-          if (entry.label) entry.label.setLatLng(newCenter);
+          polygon.points = getPts();
+          // Full refresh to ensure mobile also updates correctly
+          refreshPolygonMap(polygon);
           scheduleSave(); showToast('Area shape updated');
         } else {
           entry.poly.setLatLngs(origPoints);
