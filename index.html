@@ -1409,13 +1409,14 @@
   <div class="modal">
     <h2 id="pin-modal-title">Add pin</h2>
     <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
-    <label><span>Category</span>
-      <div class="chip-row" id="pin-tags-row"></div>
-    </label>
-    <div style="margin-bottom:10px;">
+    <div style="margin-bottom:14px;">
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
       <div id="pin-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
-      <div id="pin-status-label" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+      <div id="pin-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div class="chip-row" id="pin-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
     <label><span>Trip (optional)</span><input type="text" id="pin-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
@@ -1764,7 +1765,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.1';
+  var APP_VERSION = '1.6.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
