@@ -1245,6 +1245,16 @@
   <div class="layer-hint-text" id="lh-mvum">Loads live from a federal server; may lag. Only covers National Forest land.</div>
 
   <label class="layer-overlay-row">
+    <input type="checkbox" id="usfs-rec-toggle"> USFS Recreation Sites <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs-rec');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text hidden" id="lh-usfs-rec">Campgrounds, trailheads, and developed recreation sites on National Forest land. Loads for current map view — zoom in for detail.</div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="usfs-trails-toggle"> USFS Trails (NFS) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs-trails');h.classList.toggle('show')" title="Info">?</button>
+  </label>
+  <div class="layer-hint-text hidden" id="lh-usfs-trails">National Forest System trails — more complete than MVUM for foot and equestrian routes. Loads for current map view.</div>
+
+  <label class="layer-overlay-row">
     <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
   </label>
   <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
@@ -1759,7 +1769,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.1';
+  var APP_VERSION = '1.7.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3345,6 +3355,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     map.on('moveend', function(){
       if (compassActive && compassUseCenter) updateCompassMapLines();
+    });
+    map.on('moveend zoomend', function(){
+      if (usfsRecOn) loadUsfsRecLayer();
+      if (usfsTrailsOn) loadUsfsTrailsLayer();
     });
     updateCenterReadout();
     updateScaleBar();
@@ -7043,6 +7057,69 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .catch(function(){ showToast('Could not load USFS boundaries — server may be unavailable'); });
   }
 
+  // ── USFS Recreation Sites ──
+  var usfsRecLayer = null, usfsRecOn = false;
+
+  function loadUsfsRecLayer(){
+    if (!usfsRecOn) return;
+    var b = map.getBounds();
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query' +
+      '?where=1%3D1&geometry=' + encodeURIComponent(bbox) +
+      '&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&returnGeometry=true&f=geojson';
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (usfsRecLayer) map.removeLayer(usfsRecLayer);
+        usfsRecLayer = L.geoJSON(data, {
+          pointToLayer: function(feat, latlng){
+            var type = (feat.properties.RECAREATYPE || '').toLowerCase();
+            var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
+            return L.circleMarker(latlng, { radius:5, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
+          },
+          onEachFeature: function(feat, layer){
+            var name = feat.properties.RECAREANAME || 'Recreation Site';
+            var type = feat.properties.RECAREATYPE || '';
+            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>' + (type ? '<br>' + escapeHtml(type) : ''));
+          }
+        }).addTo(map);
+      })
+      .catch(function(){ });
+  }
+
+  // ── USFS NFS Trails ──
+  var usfsTrailsLayer = null, usfsTrailsOn = false;
+
+  function loadUsfsTrailsLayer(){
+    if (!usfsTrailsOn) return;
+    var b = map.getBounds();
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query' +
+      '?where=1%3D1&geometry=' + encodeURIComponent(bbox) +
+      '&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&returnGeometry=true&f=geojson';
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (usfsTrailsLayer) map.removeLayer(usfsTrailsLayer);
+        usfsTrailsLayer = L.geoJSON(data, {
+          style: function(feat){
+            var surface = (feat.properties.SURFACE_TYPE || '').toLowerCase();
+            var color = surface.indexOf('paved') !== -1 ? '#aaa' : '#d4882a';
+            return { color:color, weight:1.8, opacity:0.85, dashArray:'5,4' };
+          },
+          onEachFeature: function(feat, layer){
+            var name = feat.properties.TRAIL_NAME || 'Trail';
+            var no   = feat.properties.TRAIL_NO ? ' #' + feat.properties.TRAIL_NO : '';
+            var surf = feat.properties.SURFACE_TYPE || '';
+            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + (surf ? '<br>' + escapeHtml(surf) : ''));
+          }
+        }).addTo(map);
+      })
+      .catch(function(){ });
+  }
+
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
@@ -8466,6 +8543,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (hydroLayer) hydroLayer.setOpacity(v);
       state.settings.hydroOpacity = v;
       scheduleSave();
+    });
+
+    document.getElementById('usfs-rec-toggle').addEventListener('change', function(){
+      usfsRecOn = this.checked;
+      if (!usfsRecOn){
+        if (usfsRecLayer){ map.removeLayer(usfsRecLayer); usfsRecLayer = null; }
+      } else {
+        if (map.getZoom() < 10){ showToast('Zoom in for recreation sites (Z10+)'); this.checked = false; usfsRecOn = false; return; }
+        loadUsfsRecLayer();
+      }
+    });
+    document.getElementById('usfs-trails-toggle').addEventListener('change', function(){
+      usfsTrailsOn = this.checked;
+      if (!usfsTrailsOn){
+        if (usfsTrailsLayer){ map.removeLayer(usfsTrailsLayer); usfsTrailsLayer = null; }
+      } else {
+        if (map.getZoom() < 9){ showToast('Zoom in for NFS trails (Z9+)'); this.checked = false; usfsTrailsOn = false; return; }
+        loadUsfsTrailsLayer();
+      }
     });
 
     document.getElementById('mvum-toggle').addEventListener('change', function(){
