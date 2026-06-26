@@ -858,6 +858,11 @@
     <span class="settings-check-pill"></span>
     <span>Offline area outlines</span>
   </label>
+  <label class="settings-check-row" style="padding-bottom:14px;">
+    <input type="checkbox" id="settings-area-labels-toggle" class="settings-check" checked>
+    <span class="settings-check-pill"></span>
+    <span>Area name labels on map</span>
+  </label>
 </div>
 
 <!-- +Add bottom sheet -->
@@ -1769,7 +1774,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.2';
+  var APP_VERSION = '1.7.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1827,6 +1832,7 @@
       hydroOn: false, hydroOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       showOfflineBoundaries: true,
+      showAreaLabels: true,
       wildfireOn: false, snowDepthOn: false, lightPollutionOn: false,
       nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
@@ -4842,11 +4848,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     var labelIcon = L.divIcon({
       className:'polygon-label',
-      html:'<div style="font-size:10px;font-weight:600;color:' + color + ';text-shadow:0 0 3px rgba(0,0,0,0.6),0 0 6px rgba(0,0,0,0.4);pointer-events:none;white-space:nowrap;">' + escapeHtml(polygon.name) + '</div>',
+      html:'<div style="font-size:14px;font-weight:700;color:' + color + ';pointer-events:none;white-space:nowrap;line-height:1.2;">' + escapeHtml(polygon.name) + '</div>',
       iconSize:[0,0]
     });
     var centroid = layer.getBounds().getCenter();
-    var labelMarker = L.marker(centroid, { icon:labelIcon, interactive:false }).addTo(map);
+    var labelMarker = L.marker(centroid, { icon:labelIcon, interactive:false });
+    if (state.settings.showAreaLabels !== false) labelMarker.addTo(map);
 
     polygonLayersById[polygon.id] = { poly: layer, label: labelMarker };
   }
@@ -5259,6 +5266,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-gps-follow-toggle').checked = !!state.settings.gpsFollow;
     document.getElementById('settings-cluster-toggle').checked = state.settings.clusterPins !== false;
     document.getElementById('settings-offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries !== false;
+    document.getElementById('settings-area-labels-toggle').checked = state.settings.showAreaLabels !== false;
   }
 
   function toggleGpsFollow(){
@@ -8226,6 +8234,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-offline-boundaries-toggle').addEventListener('change', function(){
       state.settings.showOfflineBoundaries = this.checked;
       renderOfflineBoundaries();
+      scheduleSave();
+    });
+    document.getElementById('settings-area-labels-toggle').addEventListener('change', function(){
+      state.settings.showAreaLabels = this.checked;
+      // Show or hide all existing polygon labels
+      Object.keys(polygonLayersById).forEach(function(id){
+        var entry = polygonLayersById[id];
+        if (!entry || !entry.label) return;
+        if (state.settings.showAreaLabels){
+          if (!map.hasLayer(entry.label)) entry.label.addTo(map);
+        } else {
+          if (map.hasLayer(entry.label)) map.removeLayer(entry.label);
+        }
+      });
       scheduleSave();
     });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
