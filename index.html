@@ -1200,12 +1200,6 @@
   <div class="opacity-row" id="layer-aerial-opacity-row"><input type="range" id="layer-aerial-opacity" min="10" max="100" value="100"></div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-fstopo-toggle"> Forest Service (USFS topo) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-fstopo');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="layer-fstopo-opacity-row"><input type="range" id="layer-fstopo-opacity" min="10" max="100" value="100"></div>
-  <div class="layer-hint-text" id="lh-fstopo">USFS Forest Service topo — green tinted, shows section lines, USFS roads, and ranger district detail. Best for NF land navigation. Combine with World Hillshade for the full effect.</div>
-
-  <label class="layer-overlay-row">
     <input type="checkbox" id="layer-topo-toggle"> USGS topo / contour
   </label>
   <div class="opacity-row" id="layer-topo-opacity-row"><input type="range" id="layer-topo-opacity" min="10" max="100" value="100"></div>
@@ -1223,6 +1217,15 @@
   <div class="layer-hint-text" id="lh-imgtopo">USGS aerial + topo labels baked in as one layer.</div>
 
   <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
+
+  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
+    <input type="checkbox" id="fstopo-overlay-toggle"> Forest Service (USFS topo) <button class="layer-hint-btn" data-layer-id="lh-fstopo" title="About">?</button>
+  </label>
+  <div class="opacity-row" id="fstopo-overlay-opacity-row" style="display:none;"><input type="range" id="fstopo-overlay-opacity" min="10" max="100" value="85"></div>
+  <div class="layer-info-panel" id="lh-fstopo">
+    <div class="layer-info-desc">USFS vector tile overlay — contours, roads, trails, streams, NF boundaries, wilderness, recreation sites. Overlays on any base map. Layer names logged to console.</div>
+    <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service</a>
+  </div>
 
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
@@ -1756,7 +1759,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.6.9';
+  var APP_VERSION = '1.7.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1825,7 +1828,7 @@
     }
   };
 
-  var map, baseLayers = {}, mvumLayer, hydroLayer, markersById = {}, trackLayersById = {}, polygonLayersById = {}, clusterLayerGroup;
+  var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, polygonLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var publicLandLayer = null;
   var gmuLayers = { az: null };
@@ -3102,85 +3105,73 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     try {
       var _fstopoLayerNames = {};
       function fstopoStyle(layerName) {
-        if (!_fstopoLayerNames[layerName]){ _fstopoLayerNames[layerName]=true; }
+        if (!_fstopoLayerNames[layerName]){
+          _fstopoLayerNames[layerName] = true;
+          console.log('[FSTopo layer]', layerName);
+        }
         switch(layerName){
-          // ── Land fill — light green like real USFS map ──
-          case 'USFS Basic Ownership':
-            return { fill:true, fillColor:'#d6e8c8', fillOpacity:0.55, weight:0 };
-          case 'USFS Wilderness':
-            return { fill:true, fillColor:'#b8d4a0', fillOpacity:0.5, color:'#4a7a32', weight:1.2, opacity:0.8, dashArray:'5,5' };
-
-          // ── Water bodies ──
+          // ── Water bodies (light blue outline, no fill) ──
           case 'NHDWaterbody':
+            return { fill:false, color:'#5a9ab8', weight:1.0, opacity:0.85 };
           case 'CONUS Wetlands USFWS':
-            return { fill:true, fillColor:'#7ab8d4', fillOpacity:0.85, weight:0.8, color:'#5a9ab8', opacity:0.7 };
-
+            return { fill:false, color:'#5a9ab8', weight:0.6, opacity:0.6 };
           // ── Water lines ──
           case 'NHD Flowline GTAC':
             return { fill:false, color:'#5a9ab8', weight:1.2, opacity:0.85 };
-
-          // ── Contours — brown, index is notably heavier ──
+          // ── Contours — brown, minor thin, index heavier ──
           case 'Contour USGS':
-            // This layer contains both major and minor — VectorGrid passes properties
             return function(props) {
-              // USGS contour properties: typically ContourElevation or index field
-              var isMajor = props && (props.ContourType === 1 || props.Index === 1 || props.index === 1 ||
-                props.CONTOURTYP === 1 || (props.ELEVATION && props.ELEVATION % 200 === 0));
+              var isMajor = props && (props.ContourType===1 || props.Index===1 ||
+                props.CONTOURTYPE===1 || props.isIndex===true || props.IsIndex===true);
               return isMajor
-                ? { fill:false, color:'#9e6030', weight:1.6, opacity:0.9 }
-                : { fill:false, color:'#c8895a', weight:0.55, opacity:0.7 };
+                ? { fill:false, color:'#c8895a', weight:1.5, opacity:0.9 }
+                : { fill:false, color:'#c8895a', weight:0.5, opacity:0.65 };
             };
-
-          // ── Landform terrain lines (same treatment as minor contour) ──
           case 'Landform Lines GTAC':
-            return { fill:false, color:'#c8895a', weight:0.4, opacity:0.45 };
-
-          // ── Roads — darker and bolder ──
+            return { fill:false, color:'#c8895a', weight:0.35, opacity:0.4 };
+          // ── Roads ──
           case 'MVUM Plus GTAC':
-            // Primary USFS roads — show like real map (dark gray/brown, solid)
             return function(props) {
-              var oper = props && (props.OPERATIONALMAINTLEVEL || props.OperationalMaintenanceLevel || 0);
-              if (oper >= 3) return { fill:false, color:'#5a4030', weight:2.0, opacity:0.95 }; // main roads
-              if (oper === 2) return { fill:false, color:'#7a6050', weight:1.2, opacity:0.85 }; // high clearance
-              return { fill:false, color:'#9a8070', weight:0.8, opacity:0.7 }; // primitive
+              var oml = props && (props.OPERATIONALMAINTLEVEL || props.OperationalMaintenanceLevel || 0);
+              if (oml >= 3) return { fill:false, color:'#ffffff', weight:1.8, opacity:0.9 };
+              if (oml === 2) return { fill:false, color:'#cccccc', weight:1.2, opacity:0.8 };
+              return { fill:false, color:'#aaaaaa', weight:0.8, opacity:0.65 };
             };
           case 'Gap Roads GTAC':
-            return { fill:false, color:'#6a5040', weight:1.0, opacity:0.75 };
-
-          // ── Trails — dashed brown ──
+            return { fill:false, color:'#bbbbbb', weight:1.0, opacity:0.7 };
+          // ── Trails ──
           case 'Trails Plus GTAC':
-            return { fill:false, color:'#7a4a20', weight:1.1, opacity:0.85, dashArray:'6,4' };
-
-          // ── NF / Admin Boundaries ──
+            return { fill:false, color:'#e8c87a', weight:1.0, opacity:0.85, dashArray:'5,4' };
+          // ── NF / Admin boundaries ──
           case 'AdministrativeForest':
-            return { fill:false, color:'#2a6a18', weight:2.2, opacity:0.95, dashArray:'7,4' };
+            return { fill:false, color:'#6abf50', weight:2.2, opacity:0.95, dashArray:'7,4' };
           case 'USFS Ranger District':
-            return { fill:false, color:'#3a8a28', weight:1.3, opacity:0.8, dashArray:'4,5' };
+            return { fill:false, color:'#5aaf40', weight:1.2, opacity:0.8, dashArray:'4,5' };
           case 'USFS Common Unit Name Line':
-            return { fill:false, color:'#5aaa48', weight:0.7, opacity:0.55, dashArray:'3,6' };
-
+            return { fill:false, color:'#4a9f30', weight:0.7, opacity:0.55, dashArray:'3,6' };
+          case 'USFS Wilderness':
+            return { fill:false, color:'#5abf40', weight:1.2, opacity:0.75, dashArray:'4,4' };
+          case 'USFS Basic Ownership':
+            return { fill:false, color:'#4a9f30', weight:0.5, opacity:0.4 };
           // ── PLSS / Survey grid ──
           case 'PLSS Township BLM':
-            return { fill:false, color:'#999', weight:0.6, opacity:0.45 };
+            return { fill:false, color:'#888888', weight:0.6, opacity:0.4 };
           case 'PLSSFirstDivision_BLM':
-            return { fill:false, color:'#bbb', weight:0.35, opacity:0.35 };
-
-          // ── Recreation sites — campground/trailhead symbols ──
+            return { fill:false, color:'#aaaaaa', weight:0.3, opacity:0.3 };
+          // ── Recreation sites ──
           case 'USFS Recreation Site':
-            return function(props) {
-              return { fill:true, fillColor:'#e8a020', fillOpacity:0.9,
-                color:'#a06010', weight:1.2, opacity:0.9, radius:4 };
-            };
-
+            return { fill:true, fillColor:'#e8a020', fillOpacity:0.9,
+              color:'#a06010', weight:1.2, opacity:0.9 };
           // ── Structures ──
           case 'structures_poly_fema':
-            return { fill:true, fillColor:'#c8a87a', fillOpacity:0.7, weight:0.5, color:'#888', opacity:0.6 };
-
-          // ── Census (hide) ──
+            return { fill:false, color:'#aaaaaa', weight:0.5, opacity:0.5 };
+          // ── Census (very faint) ──
           case 'State Generalized Census':
-            return { fill:false, color:'#aaa', weight:0.4, opacity:0.2 };
-
-          // ── All label and point layers ──
+            return { fill:false, color:'#888', weight:0.3, opacity:0.2 };
+          // ── Points ──
+          case 'NHD Point USGS':
+            return { fill:true, fillColor:'#5a9ab8', fillOpacity:0.8, color:'none', weight:0 };
+          // ── All label layers — invisible ──
           case 'Contour USGS/label':
           case 'NHD Flowline GTAC/label':
           case 'NHDWaterbody/label':
@@ -3189,18 +3180,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           case 'Gap Roads GTAC/label':
           case 'Trails Plus GTAC/label':
           case 'PLSSFirstDivision_BLM/label':
-          case 'NHD Point USGS':
+          case 'PLSSFirstDivision_BLM/label':
             return { fill:false, weight:0, opacity:0, fillOpacity:0 };
-
+          // ── Default: very faint so unknown layers don't clutter ──
           default:
-            return { fill:false, color:'#aaa', weight:0.3, opacity:0.25 };
+            return { fill:false, color:'#888', weight:0.3, opacity:0.25 };
         }
       }
 
-      baseLayers.fstopo = L.vectorGrid.protobuf(
+      var fstopoLayer = L.vectorGrid.protobuf(
         'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf',
         {
-          pane: 'fstopoPane',
+          pane: 'overlayPane',
           attribution: 'USDA Forest Service',
           maxNativeZoom: 15, maxZoom: 19,
           fetchOptions: { mode: 'cors' },
@@ -3212,9 +3203,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       );
     } catch(e){
       // Fallback: raster tiles
-      baseLayers.fstopo = L.tileLayer(
+      fstopoLayer = L.tileLayer(
         'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}',
-        { maxZoom:16, maxNativeZoom:15, pane:'fstopoPane', attribution:'USDA Forest Service',
+        { maxZoom:16, maxNativeZoom:15, attribution:'USDA Forest Service',
           errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }
       );
     }
@@ -3247,7 +3238,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     baseLayers.relief.on('tileerror', onTileError);
     baseLayers.imagerytopo.on('tileerror', onTileError);
 
-    ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
       if (!baseLayers[name]) return;
       var cfg = state.settings.layers[name];
       if (!cfg) return;
@@ -8166,12 +8157,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var layerName = this.value;
       if (baseLayers[layerName] && !map.hasLayer(baseLayers[layerName])){
         // Turn off all base layers, turn on selected
-        ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
           if (baseLayers[n] && map.hasLayer(baseLayers[n])){ map.removeLayer(baseLayers[n]); state.settings.layers[n].on = false; }
         });
         baseLayers[layerName].addTo(map);
         state.settings.layers[layerName].on = true;
-        ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
+        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
           var tog = document.getElementById('layer-' + n + '-toggle');
           if (tog) tog.checked = !!state.settings.layers[n].on;
         });
@@ -8441,13 +8432,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     });
 
-    ['aerial','fstopo','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
+    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
       document.getElementById('layer-' + name + '-toggle').addEventListener('change', function(){
         setBaseLayerOn(name, this.checked);
       });
       document.getElementById('layer-' + name + '-opacity').addEventListener('input', function(){
         setBaseLayerOpacity(name, this.value / 100);
       });
+    });
+
+    document.getElementById('fstopo-overlay-toggle').addEventListener('change', function(){
+      if (!fstopoLayer){ showToast('FSTopo layer unavailable'); this.checked = false; return; }
+      if (this.checked){ fstopoLayer.addTo(map); }
+      else { if (map.hasLayer(fstopoLayer)) map.removeLayer(fstopoLayer); }
+      var opRow = document.getElementById('fstopo-overlay-opacity-row');
+      if (opRow) opRow.style.display = this.checked ? '' : 'none';
+      state.settings.fstopoOn = this.checked;
+      scheduleSave();
+    });
+    document.getElementById('fstopo-overlay-opacity').addEventListener('input', function(){
+      if (fstopoLayer && fstopoLayer.setOpacity) fstopoLayer.setOpacity(this.value/100);
     });
 
     document.getElementById('hydro-toggle').addEventListener('change', function(){
