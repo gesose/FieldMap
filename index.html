@@ -782,6 +782,13 @@
       <path d="M3 4h14l-5 6.5v6L8 18v-7.5Z"/>
     </svg>
   </button>
+  <button class="map-icon-btn" id="identify-btn" aria-label="Identify feature" title="Query/identify — tap any layer feature for its data" style="position:relative;">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+      <circle cx="10" cy="10" r="8"/>
+      <line x1="10" y1="9" x2="10" y2="14"/>
+      <circle cx="10" cy="6.5" r="0.8" fill="currentColor" stroke="none"/>
+    </svg>
+  </button>
   <button class="map-icon-btn" id="locate-btn" aria-label="Locate me">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <circle cx="10" cy="10" r="3"/>
@@ -1774,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.3';
+  var APP_VERSION = '1.7.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1875,6 +1882,7 @@
   var searchResultMarker = null;
   var editingPinId = null, editingTrackId = null;
   var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewLine = null;
+  var identifyMode = false;
   var editingBearingId = null, selectedBearingStatus = 'escout';
   var bearingLayersById = {}; // {id: {line, arrowMarker}}
   var _remapBearingId = null; // when set, draw mode updates this bearing instead of creating new
@@ -3343,6 +3351,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
       if (compassActive){ handleCompassMapTap(e.latlng); return; }
       if (bearingMode){ handleBearingMapTap(e.latlng); return; }
+      if (identifyMode){ handleIdentifyTap(e.latlng); return; }
       if (measureMode){ handleMeasureClick(e.latlng); return; }
       if (drawMode){ handleDrawClick(e.latlng); return; }
       if (polygonMode){ handlePolygonClick(e.latlng); return; }
@@ -4257,8 +4266,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           if(!line||line.length<2) throw new Error('no geometry');
           rebuildVertices(line.map(function(c){ return L.latLng(c[1],c[0]); }));
           showToast('Snapped · right-click dense vertices to remove');
-        }).catch(function(){ showToast("Couldn't snap — check connection or trail proximity",5000); })
-        .then(function(){ snapBtn.textContent='Snap to trail'; snapBtn.disabled=false; });
+        }).catch(function(){ showToast("Couldn't snap — check connection or trail proximity",5000); });
+        // Reset button after either success or failure
+        setTimeout(function(){ snapBtn.textContent='Snap to trail'; snapBtn.disabled=false; }, 100);
       });
 
       var finish = function(save){
@@ -5231,8 +5241,89 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
+  function setIdentifyMode(on){
+    identifyMode = on;
+    var btn = document.getElementById('identify-btn');
+    if (btn) btn.classList.toggle('active', on);
+    document.getElementById('map').style.cursor = on ? 'crosshair' : '';
+    if (on) showToast('Tap any feature to identify it', 3000);
+  }
+
+  function handleIdentifyTap(latlng){
+    // Query all active queryable layers at this point
+    var results = [];
+    var queries = [];
+    var tolerance = 0.0005; // ~50m at mid-latitudes
+    var bbox = {
+      xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
+      xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance,
+      spatialReference: { wkid: 4326 }
+    };
+    var geom = encodeURIComponent(JSON.stringify(bbox));
+    var baseQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
+
+    // Build query list for active layers
+    var layerQueries = [];
+    if (usfsRecOn) layerQueries.push({
+      label: 'Recreation Site',
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'
+    });
+    if (usfsTrailsOn) layerQueries.push({
+      label: 'NFS Trail',
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'
+    });
+    if (state.settings.mvumOn) layerQueries.push({
+      label: 'MVUM Road/Trail',
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE'
+    });
+
+    if (!layerQueries.length){
+      showToast('Enable an overlay first (USFS, MVUM, Trails) to identify features');
+      setIdentifyMode(false);
+      document.getElementById('map').style.cursor = '';
+      return;
+    }
+
+    // Run all queries, collect results, show popup
+    Promise.all(layerQueries.map(function(q){
+      return fetch(q.url)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.features && data.features.length){
+            data.features.forEach(function(f){
+              results.push({ layer: q.label, props: f.attributes || f.properties || {} });
+            });
+          }
+        })
+        .catch(function(){});
+    })).then(function(){
+      setIdentifyMode(false);
+      document.getElementById('map').style.cursor = '';
+      if (!results.length){
+        showToast('No features found at that point');
+        return;
+      }
+      var html = '<div style="max-width:280px;max-height:300px;overflow-y:auto;">';
+      results.forEach(function(r){
+        html += '<div style="border-bottom:1px solid var(--border);padding:6px 0;margin-bottom:4px;">';
+        html += '<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">' + escapeHtml(r.layer) + '</div>';
+        Object.keys(r.props).forEach(function(k){
+          var v = r.props[k];
+          if (v === null || v === undefined || v === '') return;
+          html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' +
+            escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(v)) + '</strong></div>';
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+      L.popup({ maxWidth:300, className:'identify-popup' })
+        .setLatLng(latlng)
+        .setContent(html)
+        .openOn(map);
+    });
+  }
+
   function updateBearingPreview(e){
-    if (!bearingOrigin) return;
     if (bearingPreviewLine) map.removeLayer(bearingPreviewLine);
     bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
       color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
@@ -7069,31 +7160,44 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var usfsRecLayer = null, usfsRecOn = false;
 
   function loadUsfsRecLayer(){
+  function loadUsfsRecLayer(){
     if (!usfsRecOn) return;
     var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var geom = JSON.stringify({
+      xmin: b.getWest(), ymin: b.getSouth(),
+      xmax: b.getEast(), ymax: b.getNorth(),
+      spatialReference: { wkid: 4326 }
+    });
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query' +
-      '?where=1%3D1&geometry=' + encodeURIComponent(bbox) +
-      '&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects' +
-      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&returnGeometry=true&f=geojson';
+      '?where=1%3D1' +
+      '&geometry=' + encodeURIComponent(geom) +
+      '&geometryType=esriGeometryEnvelope' +
+      '&inSR=4326&outSR=4326' +
+      '&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS,RECAREATYPE' +
+      '&returnGeometry=true&f=geojson';
     fetch(url)
-      .then(function(r){ return r.json(); })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function(data){
-        if (usfsRecLayer) map.removeLayer(usfsRecLayer);
+        if (usfsRecLayer){ map.removeLayer(usfsRecLayer); usfsRecLayer = null; }
+        if (!data.features || !data.features.length) return;
         usfsRecLayer = L.geoJSON(data, {
           pointToLayer: function(feat, latlng){
-            var type = (feat.properties.RECAREATYPE || '').toLowerCase();
+            var type = ((feat.properties.RECAREATYPE || feat.properties.RECAREATYPE || '')).toLowerCase();
             var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
-            return L.circleMarker(latlng, { radius:5, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
+            return L.circleMarker(latlng, { radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
           },
           onEachFeature: function(feat, layer){
-            var name = feat.properties.RECAREANAME || 'Recreation Site';
-            var type = feat.properties.RECAREATYPE || '';
-            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>' + (type ? '<br>' + escapeHtml(type) : ''));
+            var p = feat.properties;
+            var name = p.RECAREANAME || 'Recreation Site';
+            var type = p.RECAREATYPE || p.RECAREATYPE || '';
+            var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
+            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml(type + status));
           }
         }).addTo(map);
+        console.log('[USFS Rec] loaded', data.features.length, 'sites');
       })
-      .catch(function(){ });
+      .catch(function(e){ console.warn('[USFS Rec] fetch error:', e); });
   }
 
   // ── USFS NFS Trails ──
@@ -7102,30 +7206,40 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsTrailsLayer(){
     if (!usfsTrailsOn) return;
     var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var geom = JSON.stringify({
+      xmin: b.getWest(), ymin: b.getSouth(),
+      xmax: b.getEast(), ymax: b.getNorth(),
+      spatialReference: { wkid: 4326 }
+    });
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query' +
-      '?where=1%3D1&geometry=' + encodeURIComponent(bbox) +
-      '&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects' +
-      '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&returnGeometry=true&f=geojson';
+      '?where=1%3D1' +
+      '&geometry=' + encodeURIComponent(geom) +
+      '&geometryType=esriGeometryEnvelope' +
+      '&inSR=4326&outSR=4326' +
+      '&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
+      '&returnGeometry=true&f=geojson';
     fetch(url)
-      .then(function(r){ return r.json(); })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function(data){
-        if (usfsTrailsLayer) map.removeLayer(usfsTrailsLayer);
+        if (usfsTrailsLayer){ map.removeLayer(usfsTrailsLayer); usfsTrailsLayer = null; }
+        if (!data.features || !data.features.length) return;
         usfsTrailsLayer = L.geoJSON(data, {
-          style: function(feat){
-            var surface = (feat.properties.SURFACE_TYPE || '').toLowerCase();
-            var color = surface.indexOf('paved') !== -1 ? '#aaa' : '#d4882a';
-            return { color:color, weight:1.8, opacity:0.85, dashArray:'5,4' };
+          style: function(){
+            return { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' };
           },
           onEachFeature: function(feat, layer){
-            var name = feat.properties.TRAIL_NAME || 'Trail';
-            var no   = feat.properties.TRAIL_NO ? ' #' + feat.properties.TRAIL_NO : '';
-            var surf = feat.properties.SURFACE_TYPE || '';
-            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + (surf ? '<br>' + escapeHtml(surf) : ''));
+            var p = feat.properties;
+            var name = p.TRAIL_NAME || 'Trail';
+            var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
+            var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
+            var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
+            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
           }
         }).addTo(map);
+        console.log('[USFS Trails] loaded', data.features.length, 'trails');
       })
-      .catch(function(){ });
+      .catch(function(e){ console.warn('[USFS Trails] fetch error:', e); });
   }
 
   // ── Sunrise / Sunset ──
@@ -8452,6 +8566,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeAllPanels();
       if (willOpen) panel.classList.remove('hidden');
     });
+    document.getElementById('identify-btn').addEventListener('click', function(){
+      setIdentifyMode(!identifyMode);
+    });
+
     document.getElementById('filter-btn').addEventListener('click', function(e){
       e.stopPropagation();
       var panel = document.getElementById('filter-panel');
