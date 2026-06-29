@@ -782,13 +782,6 @@
       <path d="M3 4h14l-5 6.5v6L8 18v-7.5Z"/>
     </svg>
   </button>
-  <button class="map-icon-btn" id="identify-btn" aria-label="Identify feature" title="Query/identify — tap any layer feature for its data" style="position:relative;">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-      <circle cx="10" cy="10" r="8"/>
-      <line x1="10" y1="9" x2="10" y2="14"/>
-      <circle cx="10" cy="6.5" r="0.8" fill="currentColor" stroke="none"/>
-    </svg>
-  </button>
   <button class="map-icon-btn" id="locate-btn" aria-label="Locate me">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <circle cx="10" cy="10" r="3"/>
@@ -1161,7 +1154,6 @@
         <li>Elevation at tap (USGS)</li>
         <li>Compass with bearing/range tap-to-target</li>
         <li>Weather panel (NWS)</li>
-        <li>Active wildfires overlay</li>
         <li>Snow depth overlay (NOAA)</li>
         <li>Light pollution overlay</li>
         <li>Land cover / NLCD overlay</li>
@@ -1257,29 +1249,10 @@
   <div class="layer-hint-text" id="lh-mvum">Loads live from a federal server; may lag. Only covers National Forest land.</div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="usfs-rec-toggle"> USFS Recreation Sites <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs-rec');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="layer-hint-text hidden" id="lh-usfs-rec">Campgrounds, trailheads, and developed recreation sites on National Forest land. Loads for current map view — zoom in for detail.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="usfs-trails-toggle"> USFS Trails (NFS) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-usfs-trails');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="layer-hint-text hidden" id="lh-usfs-trails">National Forest System trails — more complete than MVUM for foot and equestrian routes. Loads for current map view.</div>
-
-  <label class="layer-overlay-row">
     <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
   </label>
   <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="wildfire-toggle"> Active wildfires
-    <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
-  </label>
-  <div class="layer-info-panel" id="lh-wildfire">
-    <div class="layer-info-desc">Current fire perimeters from NIFC/WFIGS — updated daily during fire season (May–Nov).</div>
-    <a class="layer-info-src" href="https://www.nifc.gov/" target="_blank">Source: NIFC</a>
-  </div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="snowdepth-toggle"> Snow depth
@@ -1288,14 +1261,6 @@
   <div class="layer-info-panel" id="lh-snow">
     <div class="layer-info-desc">NOAA daily snow depth analysis — Nov–Apr. WMS overlay, updates daily. Shows no data in snow-free areas (correct behavior).</div>
     <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
-  </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="lightpollution-toggle" disabled> Nighttime lights <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
-    <button class="layer-hint-btn" data-layer-id="lh-lp" title="About">?</button>
-  </label>
-  <div class="layer-info-panel" id="lh-lp">
-    <div class="layer-info-desc">NASA VIIRS Black Marble nighttime lights — temporarily unavailable. Will return in a future update.</div>
   </div>
 
   <label class="layer-overlay-row">
@@ -1781,7 +1746,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.5';
+  var APP_VERSION = '1.8.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1840,7 +1805,7 @@
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       showOfflineBoundaries: true,
       showAreaLabels: true,
-      wildfireOn: false, snowDepthOn: false, lightPollutionOn: false,
+      snowDepthOn: false,
       nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
@@ -1855,8 +1820,8 @@
   var clusterRefreshTimer = null;
   var publicLandLayer = null;
   var gmuLayers = { az: null };
-  var snowDepthLayer = null, lightPollutionLayer = null, nlcdLayer = null;
-  var wildfireLayer = null, usfsBoundariesLayer = null, hillshadeLayer = null;
+  var snowDepthLayer = null, nlcdLayer = null;
+  var usfsBoundariesLayer = null, hillshadeLayer = null;
   var sunPathLayerGroup = null;
   var compassNorthLine = null, compassFacingLine = null, compassTargetLine = null;
   var compassActive = false, compassHeading = null, elevTapMode = false;
@@ -1882,7 +1847,7 @@
   var searchResultMarker = null;
   var editingPinId = null, editingTrackId = null;
   var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewLine = null;
-  var identifyMode = false;
+
   var editingBearingId = null, selectedBearingStatus = 'escout';
   var bearingLayersById = {}; // {id: {line, arrowMarker}}
   var _remapBearingId = null; // when set, draw mode updates this bearing instead of creating new
@@ -3080,8 +3045,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     } catch(e){ snowDepthLayer = null; }
 
-    // Nighttime lights — temporarily disabled pending working tile source
-    lightPollutionLayer = null;
 
     try {
       // NLCD — USGS MRLC WMS
@@ -3095,11 +3058,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     } catch(e){ nlcdLayer = null; }
 
-    // USFS boundaries and wildfire loaded dynamically via feature service
+    // USFS boundaries loaded dynamically
     if (state.settings.snowDepthOn && snowDepthLayer) snowDepthLayer.addTo(map);
-    if (state.settings.lightPollutionOn && lightPollutionLayer) lightPollutionLayer.addTo(map);
     if (state.settings.nlcdOn && nlcdLayer) nlcdLayer.addTo(map);
-    if (state.settings.wildfireOn) loadWildfireLayer();
     if (state.settings.usfsBoundariesOn) loadUsfsBoundariesLayer();
     // (hillshade overlay removed — shaded relief layer now uses multiply blend mode directly)
     map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
@@ -3228,7 +3189,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       );
       // VectorGrid 1.3.0 crashes in Leaflet internals when firing click events on
       // features with undefined geometry — identify for FSTopo is handled via the
-      // map-level click + FSTopo MapServer REST identify (see handleIdentifyTap)
     } catch(e){
       // Fallback: raster tiles
       fstopoLayer = L.tileLayer(
@@ -3356,7 +3316,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
       if (compassActive){ handleCompassMapTap(e.latlng); return; }
       if (bearingMode){ handleBearingMapTap(e.latlng); return; }
-      if (identifyMode){ handleIdentifyTap(e.latlng); return; }
       if (measureMode){ handleMeasureClick(e.latlng); return; }
       if (drawMode){ handleDrawClick(e.latlng); return; }
       if (polygonMode){ handlePolygonClick(e.latlng); return; }
@@ -3377,8 +3336,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (compassActive && compassUseCenter) updateCompassMapLines();
     });
     map.on('moveend zoomend', function(){
-      if (usfsRecOn) loadUsfsRecLayer();
-      if (usfsTrailsOn) loadUsfsTrailsLayer();
     });
     updateCenterReadout();
     updateScaleBar();
@@ -5246,102 +5203,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
-  function setIdentifyMode(on){
-    identifyMode = on;
-    var btn = document.getElementById('identify-btn');
-    if (btn) btn.classList.toggle('active', on);
-    document.getElementById('map').style.cursor = on ? 'crosshair' : '';
-    if (on) showToast('Tap any feature to identify it', 3000);
-  }
-
-  function handleIdentifyTap(latlng){
-    var results = [];
-    // Flat bbox string — works with ArcGIS Online FeatureServer and apps.fs.usda.gov MapServer
-    var tol = 0.003;
-    var bbox = (latlng.lng-tol)+','+(latlng.lat-tol)+','+(latlng.lng+tol)+','+(latlng.lat+tol);
-    var geom = encodeURIComponent(bbox);
-    var qparams = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&resultRecordCount=10&f=json';
-
-    console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5),
-      'layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
-
-    var layerQueries = [];
-
-    // ArcGIS Online FeatureServer endpoints (CORS-open)
-    if (usfsRecOn) layerQueries.push({
-      label: 'Recreation Site',
-      url: 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_RecreationSite/FeatureServer/0/query?where=1%3D1&geometry='+geom+'&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'+qparams
-    });
-    if (usfsTrailsOn) layerQueries.push({
-      label: 'NFS Trail',
-      url: 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_TrailNFS_Publish/FeatureServer/0/query?where=1%3D1&geometry='+geom+'&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'+qparams
-    });
-    // apps.fs.usda.gov MapServer — tile-only CORS, but query endpoint may work server-side
-    if (state.settings.mvumOn) layerQueries.push({
-      label: 'MVUM Road/Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE'+qparams
-    });
-    // FSTopo: use MapServer identify endpoint (works from HTTPS, no VectorGrid needed)
-    if (state.settings.fstopoOn){
-      var mapPt = encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}}));
-      var px = map.latLngToContainerPoint(latlng);
-      var mapExtent = map.getBounds();
-      var extentStr = encodeURIComponent(JSON.stringify({
-        xmin:mapExtent.getWest(),ymin:mapExtent.getSouth(),xmax:mapExtent.getEast(),ymax:mapExtent.getNorth(),
-        spatialReference:{wkid:4326}
-      }));
-      layerQueries.push({
-        label: 'USFS Topo',
-        isFSTopo: true,
-        url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/identify' +
-          '?f=json&tolerance=5&returnGeometry=false&imageDisplay='+map.getSize().x+','+map.getSize().y+',96' +
-          '&geometry='+mapPt+'&geometryType=esriGeometryPoint&sr=4326' +
-          '&mapExtent='+extentStr+'&layers=all'
-      });
-    }
-
-    if (!layerQueries.length){
-      showToast('Enable an overlay layer to identify features', 3000);
-      setIdentifyMode(false);
-      return;
-    }
-
-    Promise.all(layerQueries.map(function(q){
-      return fetch(q.url)
-        .then(function(r){ return r.json(); })
-        .then(function(data){
-          if (q.isFSTopo){
-            // MapServer identify returns {results:[{layerName,attributes}]}
-            var res = data.results || [];
-            res.forEach(function(r){
-              if (r.attributes && Object.keys(r.attributes).length){
-                results.push({ layer: r.layerName || 'USFS Topo', props: r.attributes });
-              }
-            });
-          } else if (data.features && data.features.length){
-            data.features.forEach(function(f){
-              results.push({ layer: q.label, props: f.attributes || {} });
-            });
-          }
-        })
-        .catch(function(){});
-    })).then(function(){
-      setIdentifyMode(false);
-      if (!results.length){ showToast('No features found at that point'); return; }
-      var html = '<div style="max-width:280px;max-height:300px;overflow-y:auto;">';
-      results.forEach(function(r){
-        html += '<div style="border-bottom:1px solid var(--border);padding:6px 0;margin-bottom:4px;">';
-        html += '<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">' + escapeHtml(r.layer) + '</div>';
-        Object.keys(r.props).filter(function(k){ return r.props[k] !== null && r.props[k] !== undefined && r.props[k] !== ''; }).forEach(function(k){
-          html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' + escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(r.props[k])) + '</strong></div>';
-        });
-        html += '</div>';
-      });
-      html += '</div>';
-      L.popup({ maxWidth:300 }).setLatLng(latlng).setContent(html).openOn(map);
-    });
-  }
-
     function updateBearingPreview(e){
     if (bearingPreviewLine) map.removeLayer(bearingPreviewLine);
     bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
@@ -7100,180 +6961,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     scheduleSave();
   }
 
-  // ── Wildfire (NIFC WFIGS — year-to-date fire perimeters, authoritative source) ──
-  function loadWildfireLayer(){
-    if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
-    // WFIGS Interagency Perimeters YTD — this is the actual current perimeters layer from NIFC
-    var url = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/WFIGS_Interagency_Perimeters_YTD/FeatureServer/0/query' +
-      '?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained,attr_TotalIncidentPersonnel,attr_UniqueFireIdentifier' +
-      '&returnGeometry=true&f=geojson&resultRecordCount=300';
-    fetch(url)
-      .then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function(data){
-        if (!data.features || data.features.length === 0){
-          // Fallback: try the older Current_WildlandFire_Perimeters service
-          loadWildfireLayerFallback();
-          return;
-        }
-        wildfireLayer = L.geoJSON(data, {
-          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18 }; },
-          onEachFeature:function(feature, layer){
-            var p = feature.properties;
-            var name = p.poly_IncidentName || 'Fire';
-            var detail = [];
-            if (p.attr_PercentContained != null) detail.push(p.attr_PercentContained + '% contained');
-            layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>' + (detail.length ? '<br>' + detail.join(' · ') : ''));
-          }
-        }).addTo(map);
-        showToast(data.features.length + ' fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
-      })
-      .catch(function(){ loadWildfireLayerFallback(); });
-  }
-
-  function loadWildfireLayerFallback(){
-    // Older NIFC Current Perimeters service
-    var url = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/Current_WildlandFire_Perimeters/FeatureServer/0/query' +
-      '?where=1%3D1&outFields=poly_IncidentName,attr_PercentContained&returnGeometry=true&f=geojson&resultRecordCount=300';
-    fetch(url)
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        if (!data.features || data.features.length === 0){
-          showToast('No fire perimeters found — data may be temporarily unavailable');
-          return;
-        }
-        wildfireLayer = L.geoJSON(data, {
-          style:function(){ return { color:'#e05f20', weight:2, fillColor:'#e05f20', fillOpacity:0.18 }; },
-          onEachFeature:function(feature, layer){
-            var p = feature.properties;
-            var name = p.poly_IncidentName || 'Fire';
-            layer.bindPopup('<strong>🔥 ' + escapeHtml(name) + '</strong>');
-          }
-        }).addTo(map);
-        showToast(data.features.length + ' fire perimeter' + (data.features.length===1?'':'s') + ' loaded');
-      })
-      .catch(function(){ showToast('Could not load wildfire data'); });
-  }
-
-  // ── USFS NFS Boundaries (feature service) ──
-  var usfsBoundaryLayerGroup = null;
-  function loadUsfsBoundariesLayer(){
-    if (usfsBoundaryLayerGroup){ map.removeLayer(usfsBoundaryLayerGroup); usfsBoundaryLayerGroup = null; }
-    fetch('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestCommonNames_01/MapServer/0/query?where=1%3D1&outFields=COMMONNAME,REGION&returnGeometry=true&f=geojson')
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        usfsBoundaryLayerGroup = L.geoJSON(data, {
-          style:function(){ return { color:'#5fa86b', weight:1.5, fillColor:'#5fa86b', fillOpacity:0.06, dashArray:'6,4' }; },
-          onEachFeature:function(feature, layer){
-            var name = feature.properties.COMMONNAME || 'National Forest';
-            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong>');
-          }
-        }).addTo(map);
-      })
-      .catch(function(){ showToast('Could not load USFS boundaries — server may be unavailable'); });
-  }
-
-  // ── USFS Recreation Sites ──
-  var usfsRecLayer = null, usfsRecOn = false;
-
-  function loadUsfsRecLayer(){
-    if (!usfsRecOn) return;
-    var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
-    // Use ArcGIS Online hosted FeatureServer — CORS-open unlike apps.fs.usda.gov/arcx query endpoints
-    var url = 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_RecreationSite/FeatureServer/0/query' +
-      '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(bbox) +
-      '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4326&outSR=4326' +
-      '&spatialRel=esriSpatialRelIntersects' +
-      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
-      '&returnGeometry=true' +
-      '&resultRecordCount=500' +
-      '&f=geojson';
-    console.log('[USFS Rec] fetching:', url);
-    fetch(url)
-      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function(data){
-        console.log('[USFS Rec] response:', JSON.stringify(data).substring(0, 300));
-        if (usfsRecLayer){ map.removeLayer(usfsRecLayer); usfsRecLayer = null; }
-        if (!data.features || !data.features.length){
-          showToast('USFS Rec: no features in this area (zoom in closer)', 3000);
-          return;
-        }
-        // GeoJSON format
-        usfsRecLayer = L.geoJSON(data, {
-          pointToLayer: function(feat, latlng){
-            var type = (feat.properties.RECAREATYPE || '').toLowerCase();
-            var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
-            return L.circleMarker(latlng, { radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
-          },
-          onEachFeature: function(feat, layer){
-            var p = feat.properties;
-            var name = p.RECAREANAME || 'Recreation Site';
-            var type = p.RECAREATYPE || '';
-            var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
-            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml(type + status));
-          }
-        }).addTo(map);
-        console.log('[USFS Rec] loaded', data.features.length, 'sites');
-      })
-      .catch(function(e){
-        console.warn('[USFS Rec] fetch error:', e);
-        showToast('USFS Rec Sites: ' + (e.message || 'fetch failed'), 5000);
-      });
-  }
-
-  // ── USFS NFS Trails ──
-  var usfsTrailsLayer = null, usfsTrailsOn = false;
-
-  function loadUsfsTrailsLayer(){
-    if (!usfsTrailsOn) return;
-    var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
-    // Use ArcGIS Online hosted FeatureServer — CORS-open unlike apps.fs.usda.gov/arcx query endpoints
-    var url = 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_TrailNFS_Publish/FeatureServer/0/query' +
-      '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(bbox) +
-      '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4326&outSR=4326' +
-      '&spatialRel=esriSpatialRelIntersects' +
-      '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
-      '&returnGeometry=true' +
-      '&resultRecordCount=500' +
-      '&f=geojson';
-    console.log('[USFS Trails] fetching:', url);
-    fetch(url)
-      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function(data){
-        console.log('[USFS Trails] response:', JSON.stringify(data).substring(0, 300));
-        if (usfsTrailsLayer){ map.removeLayer(usfsTrailsLayer); usfsTrailsLayer = null; }
-        if (!data.features || !data.features.length){
-          showToast('USFS Trails: no trails in this area', 3000);
-          return;
-        }
-        // GeoJSON format
-        usfsTrailsLayer = L.geoJSON(data, {
-          style: function(){ return { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' }; },
-          onEachFeature: function(feat, layer){
-            var p = feat.properties;
-            var name = p.TRAIL_NAME || 'Trail';
-            var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
-            var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
-            var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
-            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
-          }
-        }).addTo(map);
-        console.log('[USFS Trails] loaded', data.features.length, 'trails');
-      })
-      .catch(function(e){
-        console.warn('[USFS Trails] fetch error:', e);
-        showToast('USFS Trails: ' + (e.message || 'fetch failed'), 5000);
-      });
-  }
-
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
@@ -7996,9 +7683,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
-            if (state.settings.wildfireOn === undefined) state.settings.wildfireOn = false;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
-            if (state.settings.lightPollutionOn === undefined) state.settings.lightPollutionOn = false;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             // Migrate existing pins to add status field
@@ -8230,17 +7915,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     // ── P2 Layer toggles ──
-    document.getElementById('wildfire-toggle').addEventListener('change', function(){
-      state.settings.wildfireOn = this.checked;
-      if (this.checked) loadWildfireLayer();
-      else if (wildfireLayer){ map.removeLayer(wildfireLayer); wildfireLayer = null; }
-      scheduleSave();
-    });
+;
     document.getElementById('snowdepth-toggle').addEventListener('change', function(){
       toggleSimpleLayer(snowDepthLayer, 'snowDepthOn', this.checked);
-    });
-    document.getElementById('lightpollution-toggle').addEventListener('change', function(){
-      toggleSimpleLayer(lightPollutionLayer, 'lightPollutionOn', this.checked);
     });
     document.getElementById('nlcd-toggle').addEventListener('change', function(){
       toggleSimpleLayer(nlcdLayer, 'nlcdOn', this.checked);
@@ -8248,9 +7925,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // usfsboundaries-toggle removed from layers panel
 
     // Restore layer toggle states
-    document.getElementById('wildfire-toggle').checked = !!state.settings.wildfireOn;
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
-    document.getElementById('lightpollution-toggle').checked = !!state.settings.lightPollutionOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
 
     // Layer info panel ? buttons — use event delegation
@@ -8598,9 +8273,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeAllPanels();
       if (willOpen) panel.classList.remove('hidden');
     });
-    document.getElementById('identify-btn').addEventListener('click', function(){
-      setIdentifyMode(!identifyMode);
-    });
+;
 
     document.getElementById('filter-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -8717,129 +8390,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
-    document.getElementById('usfs-rec-toggle').addEventListener('change', function(){
-      usfsRecOn = this.checked;
-      if (!usfsRecOn){
-        if (usfsRecLayer){ map.removeLayer(usfsRecLayer); usfsRecLayer = null; }
-      } else {
-        if (map.getZoom() < 10){ showToast('Zoom in for recreation sites (Z10+)'); this.checked = false; usfsRecOn = false; return; }
-        loadUsfsRecLayer();
-      }
-    });
-    document.getElementById('usfs-trails-toggle').addEventListener('change', function(){
-      usfsTrailsOn = this.checked;
-      if (!usfsTrailsOn){
-        if (usfsTrailsLayer){ map.removeLayer(usfsTrailsLayer); usfsTrailsLayer = null; }
-      } else {
-        if (map.getZoom() < 9){ showToast('Zoom in for NFS trails (Z9+)'); this.checked = false; usfsTrailsOn = false; return; }
-        loadUsfsTrailsLayer();
-      }
-    });
 
-    document.getElementById('mvum-toggle').addEventListener('change', function(){
-      if (!mvumLayer){ showToast('MVUM layer is unavailable right now'); this.checked = false; return; }
-      if (this.checked){ mvumLayer.addTo(map); } else { map.removeLayer(mvumLayer); }
-      document.getElementById('mvum-opacity-row').style.display = this.checked ? 'flex' : 'none';
-      state.settings.mvumOn = this.checked;
-      scheduleSave();
-    });
-    document.getElementById('mvum-opacity').addEventListener('input', function(){
-      var v = this.value / 100;
-      if (mvumLayer) mvumLayer.setOpacity(v);
-      state.settings.mvumOpacity = v;
-      scheduleSave();
-    });
-
-    document.getElementById('publicland-toggle').addEventListener('change', function(){
-      if (!publicLandLayer){ showToast('Public/private land layer is unavailable right now'); this.checked = false; return; }
-      if (this.checked){ publicLandLayer.addTo(map); } else { map.removeLayer(publicLandLayer); }
-      document.getElementById('publicland-opacity-row').classList.toggle('show', this.checked);
-      document.getElementById('publicland-legend').classList.toggle('hidden', !this.checked);
-      if (this.checked) loadPublicLandLegend();
-      state.settings.publicLandOn = this.checked;
-      scheduleSave();
-    });
-    document.getElementById('publicland-opacity').addEventListener('input', function(){
-      var v = this.value / 100;
-      if (publicLandLayer) publicLandLayer.setOpacity(v);
-      state.settings.publicLandOpacity = v;
-      scheduleSave();
-    });
-    document.getElementById('gmu-az-toggle').addEventListener('change', function(){
-      toggleGmuLayer('az', this.checked);
-      state.settings.gmuAzOn = this.checked;
-      scheduleSave();
-    });
-
-    var zoomDebounceTimer = null;
-    document.getElementById('search-input').addEventListener('input', function(){
-      renderPinList();
-      clearTimeout(zoomDebounceTimer);
-      zoomDebounceTimer = setTimeout(zoomToVisible, 500);
-    });
-
-    document.getElementById('tag-filter-all-btn').addEventListener('click', function(){
-      state.tags.forEach(function(t){ activeTagFilters[t.id] = true; });
-      renderTagChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('tag-filter-none-btn').addEventListener('click', function(){
-      state.tags.forEach(function(t){ activeTagFilters[t.id] = false; });
-      renderTagChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('state-filter-all-btn').addEventListener('click', function(){
-      computeStatesPresent().forEach(function(s){ activeStateFilters[s] = true; });
-      renderStateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('state-filter-none-btn').addEventListener('click', function(){
-      computeStatesPresent().forEach(function(s){ activeStateFilters[s] = false; });
-      renderStateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('trip-filter-all-btn').addEventListener('click', function(){
-      computeTripsPresent().forEach(function(tr){ activeTripFilters[tr] = true; });
-      renderTripChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('trip-filter-none-btn').addEventListener('click', function(){
-      computeTripsPresent().forEach(function(tr){ activeTripFilters[tr] = false; });
-      renderTripChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('date-filter-all-btn').addEventListener('click', function(){
-      computeDatesPresent().forEach(function(d){ activeDateFilters[d] = true; });
-      renderDateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-    document.getElementById('date-filter-none-btn').addEventListener('click', function(){
-      computeDatesPresent().forEach(function(d){ activeDateFilters[d] = false; });
-      renderDateChips(); renderPinList(); refreshAllVisibility(); zoomToVisible();
-    });
-
-    document.getElementById('filters-reset-btn').addEventListener('click', function(){
-      Object.keys(activeTagFilters).forEach(function(k){ activeTagFilters[k] = true; });
-      Object.keys(activeStateFilters).forEach(function(k){ activeStateFilters[k] = true; });
-      Object.keys(activeTripFilters).forEach(function(k){ activeTripFilters[k] = true; });
-      Object.keys(activeDateFilters).forEach(function(k){ activeDateFilters[k] = true; });
-      document.getElementById('search-input').value = '';
-      renderTagChips();
-      renderStateChips();
-      renderTripChips();
-      renderDateChips();
-      renderPinList();
-      refreshAllVisibility();
-      zoomToVisible();
-      showToast('Filters reset');
-    });
-
-    document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
-    document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
-    document.getElementById('pin-delete-btn').addEventListener('click', deletePinFromModal);
-
-    document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
-    document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
-    document.getElementById('track-delete-btn').addEventListener('click', function(){
-      if (!editingTrackId) return;
-      if (confirm('Delete this track?')){
-        deleteTrackById(editingTrackId);
-        closeTrackModal();
-      }
-    });
 
     // import-btn removed from sidebar — import is now in the +Add sheet
     document.getElementById('import-file').addEventListener('change', function(e){
