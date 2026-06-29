@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.2';
+  var APP_VERSION = '1.8.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -7188,11 +7188,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '?where=1%3D1' +
       '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4326&outSR=4326' +
+      '&inSR=4269&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
       '&returnGeometry=true' +
-      '&f=json';
+      '&f=geojson';
     console.log('[USFS Rec] fetching:', url);
     fetch(url)
       .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -7203,24 +7203,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           showToast('USFS Rec: no features in this area (zoom in closer)', 3000);
           return;
         }
-        // ESRI JSON format - convert to Leaflet markers
-        var markers = [];
-        data.features.forEach(function(feat){
-          var geom = feat.geometry;
-          if (!geom) return;
-          var lat = geom.y, lng = geom.x;
-          var p = feat.attributes || {};
-          var type = (p.RECAREATYPE || '').toLowerCase();
-          var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
-          var name = p.RECAREANAME || 'Recreation Site';
-          var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
-          var m = L.circleMarker([lat, lng], {
-            radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9
-          }).bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml((p.RECAREATYPE||'') + status));
-          markers.push(m);
-        });
-        usfsRecLayer = L.layerGroup(markers).addTo(map);
-        console.log('[USFS Rec] loaded', markers.length, 'sites');
+        // GeoJSON format
+        usfsRecLayer = L.geoJSON(data, {
+          pointToLayer: function(feat, latlng){
+            var type = (feat.properties.RECAREATYPE || '').toLowerCase();
+            var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
+            return L.circleMarker(latlng, { radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
+          },
+          onEachFeature: function(feat, layer){
+            var p = feat.properties;
+            var name = p.RECAREANAME || 'Recreation Site';
+            var type = p.RECAREATYPE || '';
+            var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
+            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml(type + status));
+          }
+        }).addTo(map);
+        console.log('[USFS Rec] loaded', data.features.length, 'sites');
       })
       .catch(function(e){
         console.warn('[USFS Rec] fetch error:', e);
@@ -7239,11 +7237,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '?where=1%3D1' +
       '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4326&outSR=4326' +
+      '&inSR=4269&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
       '&returnGeometry=true' +
-      '&f=json';
+      '&f=geojson';
     console.log('[USFS Trails] fetching:', url);
     fetch(url)
       .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -7254,25 +7252,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           showToast('USFS Trails: no trails in this area', 3000);
           return;
         }
-        // ESRI JSON format - convert polylines to Leaflet
-        var layers2 = [];
-        data.features.forEach(function(feat){
-          var geom = feat.geometry;
-          if (!geom || !geom.paths) return;
-          var p = feat.attributes || {};
-          var name = p.TRAIL_NAME || 'Trail';
-          var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
-          var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
-          var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
-          geom.paths.forEach(function(path){
-            var latlngs = path.map(function(pt){ return [pt[1], pt[0]]; });
-            var line = L.polyline(latlngs, { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' })
-              .bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
-            layers2.push(line);
-          });
-        });
-        usfsTrailsLayer = L.layerGroup(layers2).addTo(map);
-        console.log('[USFS Trails] loaded', layers2.length, 'trail segments');
+        // GeoJSON format
+        usfsTrailsLayer = L.geoJSON(data, {
+          style: function(){ return { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' }; },
+          onEachFeature: function(feat, layer){
+            var p = feat.properties;
+            var name = p.TRAIL_NAME || 'Trail';
+            var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
+            var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
+            var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
+            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
+          }
+        }).addTo(map);
+        console.log('[USFS Trails] loaded', data.features.length, 'trails');
       })
       .catch(function(e){
         console.warn('[USFS Trails] fetch error:', e);
