@@ -313,6 +313,7 @@
   }
   .map-icon-btn:hover{background:var(--bg-elevated-2);}
   .map-icon-btn.active{background:var(--accent);border-color:var(--accent);color:#2a1208;}
+  @keyframes gps-pulse{0%{box-shadow:0 0 0 3px rgba(58,143,212,0.4);}70%{box-shadow:0 0 0 10px rgba(58,143,212,0);}100%{box-shadow:0 0 0 3px rgba(58,143,212,0);}}
   #map.measure-mode{cursor:crosshair;}
   #map.polygon-mode{cursor:crosshair;}
 
@@ -564,8 +565,9 @@
     .modal-overlay{ align-items:flex-start; padding:12px; }
     .modal{ max-height:calc(100dvh - 24px); }
     /* Sidebar bottom sheet */
-    #mobile-handle{display:flex;justify-content:center;padding:8px 0 0;cursor:pointer;order:0;}
-    #mobile-handle::after{content:'';width:36px;height:4px;border-radius:2px;background:var(--border);}
+    #mobile-handle{display:flex;justify-content:center;padding:6px 0 0;cursor:pointer;order:0;}
+    #mobile-handle svg{opacity:0.4;transition:opacity 0.15s;}
+    #mobile-handle:hover svg{opacity:0.7;}
     #sidebar{
       position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;height:auto;
       border-right:none;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
@@ -675,7 +677,11 @@
 
 <div id="app">
   <aside id="sidebar">
-    <div id="mobile-handle"></div>
+    <div id="mobile-handle">
+      <svg width="24" height="12" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4,10 12,3 20,10"/>
+      </svg>
+    </div>
     <div id="sidebar-header">
       <div id="sidebar-header-row1">
         <div style="display:flex;align-items:baseline;gap:6px;">
@@ -806,8 +812,23 @@
 
   <div class="layer-section-header" style="margin-top:4px;">ACCOUNT</div>
   <div id="settings-signed-out" style="padding:12px 0 4px;">
-    <p class="hint" style="margin-bottom:10px;">Sign in with Google to sync your data across devices.</p>
-    <button class="btn btn-primary btn-block" id="google-signin-btn">Sign in with Google</button>
+    <p class="hint" style="margin-bottom:10px;">Sign in to sync your data across devices.</p>
+    <button class="btn btn-primary btn-block" id="google-signin-btn" style="margin-bottom:8px;">Sign in with Google</button>
+    <div id="email-auth-section">
+      <button class="btn btn-ghost btn-block" id="email-auth-toggle-btn" style="font-size:12px;">Sign in with email instead</button>
+      <div id="email-auth-form" class="hidden" style="margin-top:10px;">
+        <input id="email-auth-input" type="email" placeholder="Email" autocomplete="email"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:6px;">
+        <input id="email-pw-input" type="password" placeholder="Password" autocomplete="current-password"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:8px;">
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-primary" id="email-signin-btn" style="flex:1;font-size:12px;">Sign in</button>
+          <button class="btn btn-ghost" id="email-register-btn" style="flex:1;font-size:12px;">Create account</button>
+        </div>
+        <button class="btn btn-ghost btn-block" id="email-forgot-btn" style="font-size:11px;margin-top:4px;opacity:0.7;">Forgot password</button>
+        <div id="email-auth-error" class="hidden" style="font-size:11px;color:#e05a3a;margin-top:6px;text-align:center;"></div>
+      </div>
+    </div>
   </div>
   <div id="settings-signed-in" class="hidden" style="padding:8px 0;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -1746,7 +1767,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.6';
+  var APP_VERSION = '1.9.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1839,6 +1860,8 @@
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
   var gpsFollowWatchId = null;
+  // GPS location dot
+  var gpsDotWatchId = null, gpsDotMarker = null, gpsAccCircle = null, gpsDotActive = false;
   var selectedTrackStatus = 'escout';
   var selectedPolygonStatus = 'escout';
   var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
@@ -5230,6 +5253,84 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }, { enableHighAccuracy:true, timeout:15000 });
   }
 
+
+  // ── GPS Location Dot ──────────────────────────────────────────────────────
+  // Pulsing blue dot + heading cone that stays on map while active.
+  // locate-btn: first tap → start watching, pan to location, button turns blue.
+  //             tap again → stop watching, dot disappears.
+
+  function buildGpsDotIcon(heading){
+    // heading: degrees true north, or null if unavailable
+    var coneHtml = '';
+    if (heading !== null && heading !== undefined && !isNaN(heading)){
+      // Heading cone: 40° wide, pointing in direction of travel
+      var rad = heading * Math.PI / 180;
+      var r = 28, cx = 36, cy = 36;
+      var spread = 20 * Math.PI / 180;
+      var x1 = cx + r * Math.sin(rad - spread);
+      var y1 = cy - r * Math.cos(rad - spread);
+      var x2 = cx + r * Math.sin(rad + spread);
+      var y2 = cy - r * Math.cos(rad + spread);
+      coneHtml = '<svg style="position:absolute;top:0;left:0;pointer-events:none;" width="72" height="72" viewBox="0 0 72 72">' +
+        '<path d="M'+cx+' '+cy+' L'+x1.toFixed(1)+' '+y1.toFixed(1)+' A'+r+' '+r+' 0 0 1 '+x2.toFixed(1)+' '+y2.toFixed(1)+' Z"' +
+        ' fill="rgba(58,143,212,0.25)" stroke="rgba(58,143,212,0.5)" stroke-width="1"/></svg>';
+    }
+    var dot = '<div style="position:absolute;top:50%;left:50%;width:14px;height:14px;' +
+      'background:#3a8fd4;border:2.5px solid #fff;border-radius:50%;' +
+      'transform:translate(-50%,-50%);box-shadow:0 0 0 3px rgba(58,143,212,0.3);' +
+      'animation:gps-pulse 2s ease-out infinite;"></div>';
+    return L.divIcon({
+      className: '',
+      iconSize: [72, 72],
+      iconAnchor: [36, 36],
+      html: '<div style="position:relative;width:72px;height:72px;">' + coneHtml + dot + '</div>'
+    });
+  }
+
+  function startGpsDot(){
+    if (!navigator.geolocation){ showToast('Location not available on this device'); return; }
+    gpsDotActive = true;
+    document.getElementById('locate-btn').classList.add('active');
+    showToast('Finding your location…', 2000);
+    gpsDotWatchId = navigator.geolocation.watchPosition(function(pos){
+      var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      var heading = pos.coords.heading; // degrees, null on desktop
+      var acc = pos.coords.accuracy;    // metres
+
+      // Create or update dot marker
+      if (!gpsDotMarker){
+        gpsDotMarker = L.marker(ll, { icon: buildGpsDotIcon(heading), zIndexOffset:3000, interactive:false }).addTo(map);
+        // Accuracy circle
+        if (acc && acc < 5000){
+          gpsAccCircle = L.circle(ll, { radius:acc, color:'#3a8fd4', fillColor:'#3a8fd4',
+            fillOpacity:0.06, weight:1, opacity:0.3, interactive:false }).addTo(map);
+        }
+        // Pan to location on first fix
+        map.setView(ll, Math.max(map.getZoom(), 14));
+      } else {
+        gpsDotMarker.setLatLng(ll);
+        gpsDotMarker.setIcon(buildGpsDotIcon(heading));
+        if (gpsAccCircle){
+          gpsAccCircle.setLatLng(ll);
+          if (acc && acc < 5000) gpsAccCircle.setRadius(acc);
+        }
+      }
+      // Follow mode — keep map centered if enabled
+      if (state.settings.gpsFollow) map.setView(ll);
+    }, function(err){
+      showToast('Location error: ' + (err.message || 'check permissions'));
+      stopGpsDot();
+    }, { enableHighAccuracy:true, maximumAge:3000 });
+  }
+
+  function stopGpsDot(){
+    gpsDotActive = false;
+    document.getElementById('locate-btn').classList.remove('active');
+    if (gpsDotWatchId !== null){ navigator.geolocation.clearWatch(gpsDotWatchId); gpsDotWatchId = null; }
+    if (gpsDotMarker){ map.removeLayer(gpsDotMarker); gpsDotMarker = null; }
+    if (gpsAccCircle){ map.removeLayer(gpsAccCircle); gpsAccCircle = null; }
+  }
+
   // ---------- Settings ----------
   function applySettingsUI(){
     document.getElementById('settings-default-layer').value = state.settings.defaultBaseLayer || 'street';
@@ -8036,13 +8137,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Settings toggles — input[type=checkbox] for reliable rendering
     document.getElementById('settings-gps-follow-toggle').addEventListener('change', function(){
       state.settings.gpsFollow = this.checked;
-      if (this.checked){
-        gpsFollowWatchId = navigator.geolocation && navigator.geolocation.watchPosition(function(pos){
-          map.setView([pos.coords.latitude, pos.coords.longitude]);
-        }, null, { enableHighAccuracy:true });
-      } else {
-        if (gpsFollowWatchId !== null && navigator.geolocation){ navigator.geolocation.clearWatch(gpsFollowWatchId); gpsFollowWatchId = null; }
-      }
+      if (this.checked && !gpsDotActive) startGpsDot(); // dot provides the position feed
       scheduleSave();
     });
     document.getElementById('settings-cluster-toggle').addEventListener('change', function(){
@@ -8251,19 +8346,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('locate-btn').addEventListener('click', function(){
       if (!navigator.geolocation){ showToast('Location not available on this device'); return; }
-      showToast('Finding your location…');
-      navigator.geolocation.getCurrentPosition(function(pos){
-        var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-        map.setView(ll, Math.max(map.getZoom(), 14));
-        var locIcon = L.divIcon({
-          className:'', iconSize:[0,0],
-          html:'<div style="width:14px;height:14px;border-radius:50%;background:#3a8fd4;border:3px solid #fff;box-shadow:0 0 0 3px rgba(58,143,212,0.4);transform:translate(-50%,-50%);"></div>'
-        });
-        var locMarker = L.marker(ll, { icon:locIcon, zIndexOffset:2000 }).addTo(map);
-        setTimeout(function(){ if (map.hasLayer(locMarker)) map.removeLayer(locMarker); }, 6000);
-      }, function(){
-        showToast("Could not get your location");
-      }, { enableHighAccuracy:true });
+      if (gpsDotActive) stopGpsDot();
+      else startGpsDot();
     });
 
     document.getElementById('layers-btn').addEventListener('click', function(e){
@@ -8289,6 +8373,68 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('google-signout-btn').addEventListener('click', function(){
       if (window.FieldMapSync) window.FieldMapSync.signOut();
     });
+
+    // Email/password auth
+    document.getElementById('email-auth-toggle-btn').addEventListener('click', function(){
+      var form = document.getElementById('email-auth-form');
+      var isHidden = form.classList.contains('hidden');
+      form.classList.toggle('hidden', !isHidden);
+      this.textContent = isHidden ? 'Cancel' : 'Sign in with email instead';
+    });
+
+    function getEmailAuthFields(){
+      var email = document.getElementById('email-auth-input').value.trim();
+      var pw = document.getElementById('email-pw-input').value;
+      var err = document.getElementById('email-auth-error');
+      err.classList.add('hidden'); err.textContent = '';
+      if (!email){ err.textContent = 'Enter your email address.'; err.classList.remove('hidden'); return null; }
+      if (!pw || pw.length < 6){ err.textContent = 'Password must be at least 6 characters.'; err.classList.remove('hidden'); return null; }
+      return { email:email, pw:pw, err:err };
+    }
+
+    document.getElementById('email-signin-btn').addEventListener('click', function(){
+      var f = getEmailAuthFields(); if (!f) return;
+      this.disabled = true; this.textContent = 'Signing in\u2026';
+      var self = this;
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); self.disabled=false; self.textContent='Sign in'; return; }
+      window.FieldMapSync.signInWithEmail(f.email, f.pw)
+        .catch(function(err){
+          var msg = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'Incorrect email or password.' :
+                    err.code === 'auth/user-not-found' ? 'No account found — use Create account.' :
+                    err.code === 'auth/too-many-requests' ? 'Too many attempts — try again later.' :
+                    (err.message || 'Sign-in failed.');
+          f.err.textContent = msg; f.err.classList.remove('hidden');
+        })
+        .finally(function(){ self.disabled=false; self.textContent='Sign in'; });
+    });
+
+    document.getElementById('email-register-btn').addEventListener('click', function(){
+      var f = getEmailAuthFields(); if (!f) return;
+      this.disabled = true; this.textContent = 'Creating\u2026';
+      var self = this;
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); self.disabled=false; self.textContent='Create account'; return; }
+      window.FieldMapSync.registerWithEmail(f.email, f.pw)
+        .catch(function(err){
+          var msg = err.code === 'auth/email-already-in-use' ? 'An account already exists — use Sign in.' :
+                    err.code === 'auth/weak-password' ? 'Password too weak — use 6+ characters.' :
+                    err.code === 'auth/invalid-email' ? 'Invalid email address.' :
+                    (err.message || 'Could not create account.');
+          f.err.textContent = msg; f.err.classList.remove('hidden');
+        })
+        .finally(function(){ self.disabled=false; self.textContent='Create account'; });
+    });
+
+    document.getElementById('email-forgot-btn').addEventListener('click', function(){
+      var email = document.getElementById('email-auth-input').value.trim();
+      var err = document.getElementById('email-auth-error');
+      err.classList.add('hidden');
+      if (!email){ err.textContent = 'Enter your email above first.'; err.classList.remove('hidden'); return; }
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); return; }
+      window.FieldMapSync.sendPasswordReset(email)
+        .then(function(){ showToast('Password reset email sent'); })
+        .catch(function(e){ err.textContent = e.message || 'Could not send reset email.'; err.classList.remove('hidden'); });
+    });
+
     document.getElementById('map-search-input').addEventListener('keydown', function(e){
       if (e.key === 'Enter') searchGoto();
     });
@@ -8607,7 +8753,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // window.FieldMapApp / window.FieldMapSync bridge objects defined there.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
   import {
-    getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged
+    getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged,
+    createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
   import {
     initializeFirestore, doc, getDoc, setDoc, onSnapshot,
@@ -8809,6 +8956,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     },
     signOut: function(){
       signOut(auth);
+    },
+    signInWithEmail: function(email, password){
+      return signInWithEmailAndPassword(auth, email, password);
+    },
+    registerWithEmail: function(email, password){
+      return createUserWithEmailAndPassword(auth, email, password);
+    },
+    sendPasswordReset: function(email){
+      return sendPasswordResetEmail(auth, email);
     },
     pushNow: pushNow
   };
