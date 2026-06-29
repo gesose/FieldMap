@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.5';
+  var APP_VERSION = '1.7.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -5277,15 +5277,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE'
     });
 
-    if (!layerQueries.length){
-      showToast('Enable an overlay first (USFS, MVUM, Trails) to identify features');
+    // For FSTopo vector layer — use ESRI identify endpoint which returns layer + attributes
+    var fstopoPending = null;
+    if (state.settings.fstopoOn && fstopoLayer){
+      var identUrl = 'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/identify?' +
+        'f=json&geometry=' + encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}})) +
+        '&geometryType=esriGeometryPoint&tolerance=5&mapExtent=' +
+        encodeURIComponent(JSON.stringify({xmin:latlng.lng-0.001,ymin:latlng.lat-0.001,xmax:latlng.lng+0.001,ymax:latlng.lat+0.001,spatialReference:{wkid:4326}})) +
+        '&imageDisplay=800,600,96&returnGeometry=false';
+      fstopoPending = fetch(identUrl)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.results) data.results.forEach(function(r){
+            results.push({ layer: 'FSTopo: ' + (r.layerName||r.layerId||'feature'), props: r.attributes||{} });
+          });
+        }).catch(function(){});
+    }
+
+    if (!layerQueries.length && !fstopoPending){
+      showToast('Enable USFS overlay, MVUM, Rec Sites, or Trails first');
       setIdentifyMode(false);
       document.getElementById('map').style.cursor = '';
       return;
     }
 
     // Run all queries, collect results, show popup
-    Promise.all(layerQueries.map(function(q){
+    var allPromises = layerQueries.map(function(q){
       return fetch(q.url)
         .then(function(r){ return r.json(); })
         .then(function(data){
@@ -5296,7 +5313,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           }
         })
         .catch(function(){});
-    })).then(function(){
+    });
+    if (fstopoPending) allPromises.push(fstopoPending);
+
+    Promise.all(allPromises).then(function(){
       setIdentifyMode(false);
       document.getElementById('map').style.cursor = '';
       if (!results.length){
@@ -7196,7 +7216,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }).addTo(map);
         console.log('[USFS Rec] loaded', data.features.length, 'sites');
       })
-      .catch(function(e){ console.warn('[USFS Rec] fetch error:', e); });
+      .catch(function(e){
+        console.warn('[USFS Rec] fetch error:', e);
+        showToast('USFS Rec Sites: ' + (e.message || 'fetch failed'), 5000);
+      });
   }
 
   // ── USFS NFS Trails ──
@@ -7238,7 +7261,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }).addTo(map);
         console.log('[USFS Trails] loaded', data.features.length, 'trails');
       })
-      .catch(function(e){ console.warn('[USFS Trails] fetch error:', e); });
+      .catch(function(e){
+        console.warn('[USFS Trails] fetch error:', e);
+        showToast('USFS Trails: ' + (e.message || 'fetch failed'), 5000);
+      });
   }
 
   // ── Sunrise / Sunset ──
