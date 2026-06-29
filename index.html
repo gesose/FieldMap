@@ -1171,17 +1171,18 @@
     <div style="text-align:left;font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.6;">
       <div style="font-weight:600;margin-bottom:8px;color:var(--text-muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase;">What's new</div>
       <ul style="padding-left:18px;margin:0;color:var(--text-muted);">
-        <li>Sunrise/Sunset tool with sun path arc on map</li>
+        <li>GPS location dot with heading cone</li>
+        <li>Email / password sign-in</li>
+        <li>Vertex editing for routes and areas</li>
+        <li>Bearings item type</li>
+        <li>Forest Service topo overlay (USFS)</li>
+        <li>Sunrise/Sunset tool with sun path arc</li>
         <li>Elevation at tap (USGS)</li>
         <li>Compass with bearing/range tap-to-target</li>
         <li>Weather panel (NWS)</li>
         <li>Snow depth overlay (NOAA)</li>
-        <li>Light pollution overlay</li>
         <li>Land cover / NLCD overlay</li>
-        <li>USFS forest boundaries overlay</li>
-        <li>Bulk edit now includes areas</li>
         <li>Route profile selector (Drive / Walk / Hike)</li>
-        <li>Find Dupes moved to Tools</li>
       </ul>
     </div>
     <button class="btn btn-ghost btn-block" id="check-update-btn" style="margin-bottom:8px;">Check for updates</button>
@@ -1767,7 +1768,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.0';
+  var APP_VERSION = '1.9.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1862,6 +1863,7 @@
   var gpsFollowWatchId = null;
   // GPS location dot
   var gpsDotWatchId = null, gpsDotMarker = null, gpsAccCircle = null, gpsDotActive = false;
+  var compassHeadingDeg = null; // from DeviceOrientationEvent when GPS heading unavailable
   var selectedTrackStatus = 'escout';
   var selectedPolygonStatus = 'escout';
   var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
@@ -5292,9 +5294,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     gpsDotActive = true;
     document.getElementById('locate-btn').classList.add('active');
     showToast('Finding your location…', 2000);
+
+    // Request DeviceOrientation permission on iOS 13+ for compass heading
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      DeviceOrientationEvent.requestPermission().catch(function(){}); // fire-and-forget, user may deny
+    }
+    // Listen for compass heading as fallback when GPS heading is null (stationary)
+    function onDeviceOrientation(e){
+      // webkitCompassHeading is iOS (0=N, clockwise), alpha is standard (0=N, counter-CW)
+      if (e.webkitCompassHeading != null){
+        compassHeadingDeg = e.webkitCompassHeading;
+      } else if (e.alpha != null){
+        compassHeadingDeg = (360 - e.alpha) % 360; // convert to CW from N
+      }
+    }
+    window.addEventListener('deviceorientation', onDeviceOrientation, true);
+    // Store cleanup ref on the watch function
+    startGpsDot._removeOrientation = function(){ window.removeEventListener('deviceorientation', onDeviceOrientation, true); };
+
     gpsDotWatchId = navigator.geolocation.watchPosition(function(pos){
       var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-      var heading = pos.coords.heading; // degrees, null on desktop
+      // GPS heading only valid when moving (>0.5 m/s); fall back to compass
+      var heading = (pos.coords.heading != null && !isNaN(pos.coords.heading) && pos.coords.speed > 0.5)
+        ? pos.coords.heading : compassHeadingDeg; // degrees, null on desktop
       var acc = pos.coords.accuracy;    // metres
 
       // Create or update dot marker
@@ -5325,8 +5347,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function stopGpsDot(){
     gpsDotActive = false;
+    compassHeadingDeg = null;
     document.getElementById('locate-btn').classList.remove('active');
     if (gpsDotWatchId !== null){ navigator.geolocation.clearWatch(gpsDotWatchId); gpsDotWatchId = null; }
+    if (startGpsDot._removeOrientation){ startGpsDot._removeOrientation(); startGpsDot._removeOrientation = null; }
     if (gpsDotMarker){ map.removeLayer(gpsDotMarker); gpsDotMarker = null; }
     if (gpsAccCircle){ map.removeLayer(gpsAccCircle); gpsAccCircle = null; }
   }
@@ -8016,7 +8040,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     // ── P2 Layer toggles ──
-;
+    document.getElementById('publicland-toggle').addEventListener('change', function(){
+      state.settings.publicLandOn = this.checked;
+      if (this.checked && publicLandLayer){
+        publicLandLayer.addTo(map);
+        document.getElementById('publicland-opacity-row').classList.add('show');
+        document.getElementById('publicland-legend').classList.remove('hidden');
+      } else {
+        if (publicLandLayer) map.removeLayer(publicLandLayer);
+        document.getElementById('publicland-opacity-row').classList.remove('show');
+        document.getElementById('publicland-legend').classList.add('hidden');
+      }
+      saveState();
+    });
+    document.getElementById('publicland-opacity').addEventListener('input', function(){
+      state.settings.publicLandOpacity = this.value / 100;
+      if (publicLandLayer) publicLandLayer.setOpacity(state.settings.publicLandOpacity);
+      saveState();
+    });
     document.getElementById('snowdepth-toggle').addEventListener('change', function(){
       toggleSimpleLayer(snowDepthLayer, 'snowDepthOn', this.checked);
     });
@@ -8026,6 +8067,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // usfsboundaries-toggle removed from layers panel
 
     // Restore layer toggle states
+    document.getElementById('publicland-toggle').checked = !!state.settings.publicLandOn;
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
 
@@ -8071,26 +8113,39 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           btn.disabled = false;
           return;
         }
+        // Listen for updatefound BEFORE calling update() — iOS Safari fires it synchronously
+        reg.addEventListener('updatefound', function(){
+          var newWorker = reg.installing;
+          if (!newWorker) return;
+          statusEl.textContent = 'Downloading update…';
+          newWorker.addEventListener('statechange', function(){
+            if (newWorker.state === 'installed'){
+              statusEl.textContent = 'Update ready — reloading…';
+              newWorker.postMessage({ type:'SKIP_WAITING' });
+              setTimeout(function(){ window.location.reload(); }, 800);
+            }
+          });
+        });
         reg.update().then(function(){
+          // If a worker was already waiting before update() resolved
           if (reg.waiting){
-            // New version already waiting — activate it now
             statusEl.textContent = 'Update found — reloading…';
             reg.waiting.postMessage({ type:'SKIP_WAITING' });
             setTimeout(function(){ window.location.reload(); }, 800);
-          } else if (reg.installing){
-            // Installing now — wait for it
-            statusEl.textContent = 'Downloading update…';
-            reg.installing.addEventListener('statechange', function(e){
-              if (e.target.state === 'installed'){
-                statusEl.textContent = 'Update ready — reloading…';
-                setTimeout(function(){ window.location.reload(); }, 800);
-              }
-            });
-          } else {
-            statusEl.textContent = 'Already up to date (v' + APP_VERSION + ')';
-            btn.textContent = 'Check for updates';
-            btn.disabled = false;
+            return;
           }
+          // If not installing or waiting after a short delay, we're current
+          setTimeout(function(){
+            if (!reg.installing && !reg.waiting){
+              statusEl.textContent = 'Already up to date (v' + APP_VERSION + ')';
+              btn.textContent = 'Check for updates';
+              btn.disabled = false;
+            }
+          }, 3000);
+        }).catch(function(){
+          statusEl.textContent = 'Could not check — make sure you have a network connection.';
+          btn.textContent = 'Check for updates';
+          btn.disabled = false;
         });
       });
     });
