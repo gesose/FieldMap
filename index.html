@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.6';
+  var APP_VERSION = '1.7.7';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3315,6 +3315,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     map.createPane('publicLandPane');
     map.getPane('publicLandPane').style.zIndex = 340;
     map.getPane('publicLandPane').style.pointerEvents = 'none';
+    map.getPane('publicLandPane').style.mixBlendMode = 'multiply';
     map.createPane('gmuPane');
     map.getPane('gmuPane').style.zIndex = 360;
 
@@ -5260,38 +5261,50 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       spatialReference: { wkid: 4326 }
     };
     var geom = encodeURIComponent(JSON.stringify(bbox));
+    // For identify: no geometry needed, JSON format
     var baseQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
+    // For layer loads: needs geometry, GeoJSON format
+    var layerQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&f=geojson';
 
     // Build query list for active layers
     var layerQueries = [];
     if (usfsRecOn) layerQueries.push({
       label: 'Recreation Site',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + layerQuery + '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'
     });
     if (usfsTrailsOn) layerQueries.push({
       label: 'NFS Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + layerQuery + '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'
     });
     if (state.settings.mvumOn) layerQueries.push({
       label: 'MVUM Road/Trail',
       url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE'
     });
 
-    // For FSTopo vector layer — use ESRI identify endpoint which returns layer + attributes
+    // For FSTopo vector layer — use the FSBasemap MapServer identify (not VectorTileServer)
     var fstopoPending = null;
     if (state.settings.fstopoOn && fstopoLayer){
-      var identUrl = 'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/identify?' +
-        'f=json&geometry=' + encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}})) +
-        '&geometryType=esriGeometryPoint&tolerance=5&mapExtent=' +
-        encodeURIComponent(JSON.stringify({xmin:latlng.lng-0.001,ymin:latlng.lat-0.001,xmax:latlng.lng+0.001,ymax:latlng.lat+0.001,spatialReference:{wkid:4326}})) +
-        '&imageDisplay=800,600,96&returnGeometry=false';
+      var identUrl = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSBasemap_01/MapServer/identify?' +
+        'f=json' +
+        '&geometry=' + encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}})) +
+        '&geometryType=esriGeometryPoint' +
+        '&sr=4326' +
+        '&layers=all' +
+        '&tolerance=3' +
+        '&mapExtent=' + encodeURIComponent([latlng.lng-0.01,latlng.lat-0.01,latlng.lng+0.01,latlng.lat+0.01].join(',')) +
+        '&imageDisplay=400,400,96' +
+        '&returnGeometry=false';
       fstopoPending = fetch(identUrl)
         .then(function(r){ return r.json(); })
         .then(function(data){
-          if (data.results) data.results.forEach(function(r){
-            results.push({ layer: 'FSTopo: ' + (r.layerName||r.layerId||'feature'), props: r.attributes||{} });
-          });
-        }).catch(function(){});
+          if (data.results && data.results.length){
+            data.results.forEach(function(r){
+              if (r.attributes && Object.keys(r.attributes).length > 0){
+                results.push({ layer: 'USFS: ' + (r.layerName || r.layerId), props: r.attributes });
+              }
+            });
+          }
+        }).catch(function(e){ console.warn('[Identify FSTopo]', e); });
     }
 
     if (!layerQueries.length && !fstopoPending){
