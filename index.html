@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.1';
+  var APP_VERSION = '1.8.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3219,12 +3219,37 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           attribution: 'USDA Forest Service',
           maxNativeZoom: 15, maxZoom: 19,
           fetchOptions: { mode: 'cors' },
+          interactive: true,
           vectorTileLayerStyles: new Proxy({}, {
             get: function(target, prop){ return typeof prop === 'string' ? fstopoStyle(prop) : undefined; },
             has: function(){ return true; }
           })
         }
       );
+      // VectorGrid click — show layer name + all properties
+      fstopoLayer.on('click', function(e){
+        if (!identifyMode) return;
+        L.DomEvent.stopPropagation(e);
+        var lname = e.layer && e.layer.properties && e.layer.layerName ? e.layer.layerName : (e.layer && e.layer.layerName) || 'Unknown layer';
+        var props = (e.layer && e.layer.properties) || {};
+        // Filter out null/empty props
+        var keys = Object.keys(props).filter(function(k){ return props[k] !== null && props[k] !== undefined && props[k] !== ''; });
+        var html = '<div style="max-width:260px;">';
+        html += '<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px;">' + escapeHtml(lname) + '</div>';
+        if (keys.length){
+          keys.forEach(function(k){
+            html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' + escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(props[k])) + '</strong></div>';
+          });
+        } else {
+          html += '<div style="font-size:12px;color:var(--text-muted);">No attributes available for this feature.</div>';
+        }
+        html += '</div>';
+        L.popup({ maxWidth:300 })
+          .setLatLng(e.latlng)
+          .setContent(html)
+          .openOn(map);
+        setIdentifyMode(false);
+      });
     } catch(e){
       // Fallback: raster tiles
       fstopoLayer = L.tileLayer(
@@ -5251,106 +5276,75 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function handleIdentifyTap(latlng){
-    // Query all active queryable layers at this point
+    // FSTopo: handled by VectorGrid click event (user taps directly on a feature)
+    // For other overlays, query their services
     var results = [];
-    var queries = [];
-    var tolerance = 0.002; // ~200m buffer for easier tapping
+    var tolerance = 0.002;
     var bbox = {
       xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
       xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance
     };
     var geom = encodeURIComponent(bbox.xmin+','+bbox.ymin+','+bbox.xmax+','+bbox.ymax);
-    // For identify: no geometry needed, JSON format
-    var baseQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
-    // For layer loads: needs geometry, GeoJSON format
-    var layerQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&f=geojson';
+    var qparams = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
 
-    // Build query list for active layers
+    console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5),
+      'layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
+
+    // If only FSTopo is on, guide the user to tap directly on a rendered feature
+    if (state.settings.fstopoOn && !usfsRecOn && !usfsTrailsOn && !state.settings.mvumOn){
+      showToast('Tap directly on a trail, road, or site on the USFS topo layer', 3000);
+      return; // stay in identify mode so VectorGrid click can fire
+    }
+
     var layerQueries = [];
     if (usfsRecOn) layerQueries.push({
       label: 'Recreation Site',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&f=json'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'+qparams
     });
     if (usfsTrailsOn) layerQueries.push({
       label: 'NFS Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&f=json'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'+qparams
     });
     if (state.settings.mvumOn) layerQueries.push({
       label: 'MVUM Road/Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE&f=json'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE'+qparams
     });
 
-    // For FSTopo vector layer — query the underlying USFS feature services
-    var fstopoPending = null;
-    if (state.settings.fstopoOn && fstopoLayer){
-      // Query trails and recreation sites at the clicked point
-      var fsQueries = [
-        { label:'NFS Trail', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&f=json' },
-        { label:'USFS Road', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RoadCore_FS_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=NAME,OPER_MAINT_LEVEL,SURFACE_TYPE&f=json' },
-        { label:'Recreation Site', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&f=json' }
-      ];
-      fstopoPending = Promise.all(fsQueries.map(function(q){
-        return fetch(q.url).then(function(r){ return r.json(); }).then(function(data){
-          if (data.features && data.features.length){
-            data.features.forEach(function(f){
-              results.push({ layer: q.label, props: f.attributes || {} });
-            });
-          }
-        }).catch(function(){});
-      }));
-    }
-
-    console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5), 'active layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
-    if (!layerQueries.length && !fstopoPending){
-      showToast('Enable USFS overlay, MVUM, Rec Sites, or Trails first');
+    if (!layerQueries.length){
+      showToast('Enable an overlay to identify features, or tap directly on the USFS topo layer', 3000);
       setIdentifyMode(false);
-      document.getElementById('map').style.cursor = '';
       return;
     }
 
-    // Run all queries, collect results, show popup
-    var allPromises = layerQueries.map(function(q){
+    Promise.all(layerQueries.map(function(q){
       return fetch(q.url)
         .then(function(r){ return r.json(); })
         .then(function(data){
           if (data.features && data.features.length){
             data.features.forEach(function(f){
-              results.push({ layer: q.label, props: f.attributes || f.properties || {} });
+              results.push({ layer: q.label, props: f.attributes || {} });
             });
           }
         })
         .catch(function(){});
-    });
-    if (fstopoPending) allPromises.push(fstopoPending);
-
-    Promise.all(allPromises).then(function(){
+    })).then(function(){
       setIdentifyMode(false);
-      document.getElementById('map').style.cursor = '';
-      if (!results.length){
-        showToast('No features found at that point');
-        return;
-      }
+      if (!results.length){ showToast('No features found at that point'); return; }
       var html = '<div style="max-width:280px;max-height:300px;overflow-y:auto;">';
       results.forEach(function(r){
         html += '<div style="border-bottom:1px solid var(--border);padding:6px 0;margin-bottom:4px;">';
         html += '<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">' + escapeHtml(r.layer) + '</div>';
-        Object.keys(r.props).forEach(function(k){
-          var v = r.props[k];
-          if (v === null || v === undefined || v === '') return;
-          html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' +
-            escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(v)) + '</strong></div>';
+        Object.keys(r.props).filter(function(k){ return r.props[k] !== null && r.props[k] !== undefined && r.props[k] !== ''; }).forEach(function(k){
+          html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' + escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(r.props[k])) + '</strong></div>';
         });
         html += '</div>';
       });
       html += '</div>';
-      L.popup({ maxWidth:300, className:'identify-popup' })
-        .setLatLng(latlng)
-        .setContent(html)
-        .openOn(map);
+      L.popup({ maxWidth:300 }).setLatLng(latlng).setContent(html).openOn(map);
     });
   }
 
-  function updateBearingPreview(e){
+    function updateBearingPreview(e){
     if (bearingPreviewLine) map.removeLayer(bearingPreviewLine);
     bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
       color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
