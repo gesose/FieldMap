@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.3';
+  var APP_VERSION = '1.8.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3230,6 +3230,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       fstopoLayer.on('click', function(e){
         if (!identifyMode) return;
         L.DomEvent.stopPropagation(e);
+        // VectorGrid doesn't always populate e.latlng — derive from containerPoint if needed
+        var latlng = e.latlng;
+        if (!latlng && e.containerPoint) latlng = map.containerPointToLatLng(e.containerPoint);
+        if (!latlng) return; // can't place popup without a location
         var lname = e.layer && e.layer.properties && e.layer.layerName ? e.layer.layerName : (e.layer && e.layer.layerName) || 'Unknown layer';
         var props = (e.layer && e.layer.properties) || {};
         // Filter out null/empty props
@@ -3245,7 +3249,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }
         html += '</div>';
         L.popup({ maxWidth:300 })
-          .setLatLng(e.latlng)
+          .setLatLng(latlng)
           .setContent(html)
           .openOn(map);
         setIdentifyMode(false);
@@ -5280,11 +5284,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // For other overlays, query their services
     var results = [];
     var tolerance = 0.002;
-    var bbox = {
-      xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
-      xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance
-    };
-    var geom = encodeURIComponent(bbox.xmin+','+bbox.ymin+','+bbox.xmax+','+bbox.ymax);
+    var geomObj = { xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
+                    xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance,
+                    spatialReference: { wkid: 4326 } };
+    var geom = encodeURIComponent(JSON.stringify(geomObj));
     var qparams = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
 
     console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5),
@@ -7183,12 +7186,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsRecLayer(){
     if (!usfsRecOn) return;
     var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var geomEnv = JSON.stringify({ xmin:b.getWest(), ymin:b.getSouth(), xmax:b.getEast(), ymax:b.getNorth(), spatialReference:{wkid:4326} });
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(bbox) +
+      '&geometry=' + encodeURIComponent(geomEnv) +
       '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4269&outSR=4326' +
+      '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
       '&returnGeometry=true' +
@@ -7232,12 +7235,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsTrailsLayer(){
     if (!usfsTrailsOn) return;
     var b = map.getBounds();
-    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    var geomEnv = JSON.stringify({ xmin:b.getWest(), ymin:b.getSouth(), xmax:b.getEast(), ymax:b.getNorth(), spatialReference:{wkid:4326} });
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(bbox) +
+      '&geometry=' + encodeURIComponent(geomEnv) +
       '&geometryType=esriGeometryEnvelope' +
-      '&inSR=4269&outSR=4326' +
+      '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
       '&returnGeometry=true' +
