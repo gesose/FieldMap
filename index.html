@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.7.9';
+  var APP_VERSION = '1.8.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -5254,13 +5254,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Query all active queryable layers at this point
     var results = [];
     var queries = [];
-    var tolerance = 0.0005; // ~50m at mid-latitudes
+    var tolerance = 0.002; // ~200m buffer for easier tapping
     var bbox = {
       xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
-      xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance,
-      spatialReference: { wkid: 4326 }
+      xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance
     };
-    var geom = encodeURIComponent(JSON.stringify(bbox));
+    var geom = encodeURIComponent(bbox.xmin+','+bbox.ymin+','+bbox.xmax+','+bbox.ymax);
     // For identify: no geometry needed, JSON format
     var baseQuery = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
     // For layer loads: needs geometry, GeoJSON format
@@ -5307,6 +5306,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }).catch(function(e){ console.warn('[Identify FSTopo]', e); });
     }
 
+    console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5), 'active layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
     if (!layerQueries.length && !fstopoPending){
       showToast('Enable USFS overlay, MVUM, Rec Sites, or Trails first');
       setIdentifyMode(false);
@@ -7195,18 +7195,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsRecLayer(){
     if (!usfsRecOn) return;
     var b = map.getBounds();
-    var geom = JSON.stringify({
-      xmin: b.getWest(), ymin: b.getSouth(),
-      xmax: b.getEast(), ymax: b.getNorth(),
-      spatialReference: { wkid: 4326 }
-    });
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(geom) +
+      '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
-      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS,RECAREATYPE' +
+      '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
       '&returnGeometry=true&f=geojson';
     console.log('[USFS Rec] fetching:', url);
     fetch(url)
@@ -7246,14 +7242,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsTrailsLayer(){
     if (!usfsTrailsOn) return;
     var b = map.getBounds();
-    var geom = JSON.stringify({
-      xmin: b.getWest(), ymin: b.getSouth(),
-      xmax: b.getEast(), ymax: b.getNorth(),
-      spatialReference: { wkid: 4326 }
-    });
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
     var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(geom) +
+      '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
