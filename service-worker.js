@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v74';
+var SHELL_CACHE = 'fieldmap-shell-v75';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -62,6 +62,7 @@ var TILE_HOSTS = [
   'basemap.nationalmap.gov',
   'apps.fs.usda.gov',
   'gis.blm.gov',
+  'services1.arcgis.com',
   'services8.arcgis.com',
   'nominatim.openstreetmap.org',
   'api.openrouteservice.org',

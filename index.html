@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.4';
+  var APP_VERSION = '1.8.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3226,34 +3226,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           })
         }
       );
-      // VectorGrid click — show layer name + all properties
-      fstopoLayer.on('click', function(e){
-        if (!identifyMode) return;
-        L.DomEvent.stopPropagation(e);
-        // VectorGrid doesn't always populate e.latlng — derive from containerPoint if needed
-        var latlng = e.latlng;
-        if (!latlng && e.containerPoint) latlng = map.containerPointToLatLng(e.containerPoint);
-        if (!latlng) return; // can't place popup without a location
-        var lname = e.layer && e.layer.properties && e.layer.layerName ? e.layer.layerName : (e.layer && e.layer.layerName) || 'Unknown layer';
-        var props = (e.layer && e.layer.properties) || {};
-        // Filter out null/empty props
-        var keys = Object.keys(props).filter(function(k){ return props[k] !== null && props[k] !== undefined && props[k] !== ''; });
-        var html = '<div style="max-width:260px;">';
-        html += '<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px;">' + escapeHtml(lname) + '</div>';
-        if (keys.length){
-          keys.forEach(function(k){
-            html += '<div style="font-size:12px;margin:2px 0;"><span style="color:var(--text-muted);">' + escapeHtml(k) + ':</span> <strong>' + escapeHtml(String(props[k])) + '</strong></div>';
-          });
-        } else {
-          html += '<div style="font-size:12px;color:var(--text-muted);">No attributes available for this feature.</div>';
-        }
-        html += '</div>';
-        L.popup({ maxWidth:300 })
-          .setLatLng(latlng)
-          .setContent(html)
-          .openOn(map);
-        setIdentifyMode(false);
-      });
+      // VectorGrid 1.3.0 crashes in Leaflet internals when firing click events on
+      // features with undefined geometry — identify for FSTopo is handled via the
+      // map-level click + FSTopo MapServer REST identify (see handleIdentifyTap)
     } catch(e){
       // Fallback: raster tiles
       fstopoLayer = L.tileLayer(
@@ -5280,41 +5255,53 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function handleIdentifyTap(latlng){
-    // FSTopo: handled by VectorGrid click event (user taps directly on a feature)
-    // For other overlays, query their services
     var results = [];
-    var tolerance = 0.002;
-    var geomObj = { xmin: latlng.lng - tolerance, ymin: latlng.lat - tolerance,
-                    xmax: latlng.lng + tolerance, ymax: latlng.lat + tolerance,
-                    spatialReference: { wkid: 4326 } };
-    var geom = encodeURIComponent(JSON.stringify(geomObj));
-    var qparams = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&f=json';
+    // Flat bbox string — works with ArcGIS Online FeatureServer and apps.fs.usda.gov MapServer
+    var tol = 0.003;
+    var bbox = (latlng.lng-tol)+','+(latlng.lat-tol)+','+(latlng.lng+tol)+','+(latlng.lat+tol);
+    var geom = encodeURIComponent(bbox);
+    var qparams = '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&resultRecordCount=10&f=json';
 
     console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5),
       'layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
 
-    // If only FSTopo is on, guide the user to tap directly on a rendered feature
-    if (state.settings.fstopoOn && !usfsRecOn && !usfsTrailsOn && !state.settings.mvumOn){
-      showToast('Tap directly on a trail, road, or site on the USFS topo layer', 3000);
-      return; // stay in identify mode so VectorGrid click can fire
-    }
-
     var layerQueries = [];
+
+    // ArcGIS Online FeatureServer endpoints (CORS-open)
     if (usfsRecOn) layerQueries.push({
       label: 'Recreation Site',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'+qparams
+      url: 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_RecreationSite/FeatureServer/0/query?where=1%3D1&geometry='+geom+'&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'+qparams
     });
     if (usfsTrailsOn) layerQueries.push({
       label: 'NFS Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'+qparams
+      url: 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_TrailNFS_Publish/FeatureServer/0/query?where=1%3D1&geometry='+geom+'&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'+qparams
     });
+    // apps.fs.usda.gov MapServer — tile-only CORS, but query endpoint may work server-side
     if (state.settings.mvumOn) layerQueries.push({
       label: 'MVUM Road/Trail',
       url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE'+qparams
     });
+    // FSTopo: use MapServer identify endpoint (works from HTTPS, no VectorGrid needed)
+    if (state.settings.fstopoOn){
+      var mapPt = encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}}));
+      var px = map.latLngToContainerPoint(latlng);
+      var mapExtent = map.getBounds();
+      var extentStr = encodeURIComponent(JSON.stringify({
+        xmin:mapExtent.getWest(),ymin:mapExtent.getSouth(),xmax:mapExtent.getEast(),ymax:mapExtent.getNorth(),
+        spatialReference:{wkid:4326}
+      }));
+      layerQueries.push({
+        label: 'USFS Topo',
+        isFSTopo: true,
+        url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/identify' +
+          '?f=json&tolerance=5&returnGeometry=false&imageDisplay='+map.getSize().x+','+map.getSize().y+',96' +
+          '&geometry='+mapPt+'&geometryType=esriGeometryPoint&sr=4326' +
+          '&mapExtent='+extentStr+'&layers=all'
+      });
+    }
 
     if (!layerQueries.length){
-      showToast('Enable an overlay to identify features, or tap directly on the USFS topo layer', 3000);
+      showToast('Enable an overlay layer to identify features', 3000);
       setIdentifyMode(false);
       return;
     }
@@ -5323,7 +5310,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       return fetch(q.url)
         .then(function(r){ return r.json(); })
         .then(function(data){
-          if (data.features && data.features.length){
+          if (q.isFSTopo){
+            // MapServer identify returns {results:[{layerName,attributes}]}
+            var res = data.results || [];
+            res.forEach(function(r){
+              if (r.attributes && Object.keys(r.attributes).length){
+                results.push({ layer: r.layerName || 'USFS Topo', props: r.attributes });
+              }
+            });
+          } else if (data.features && data.features.length){
             data.features.forEach(function(f){
               results.push({ layer: q.label, props: f.attributes || {} });
             });
@@ -7186,15 +7181,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsRecLayer(){
     if (!usfsRecOn) return;
     var b = map.getBounds();
-    var geomEnv = JSON.stringify({ xmin:b.getWest(), ymin:b.getSouth(), xmax:b.getEast(), ymax:b.getNorth(), spatialReference:{wkid:4326} });
-    var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query' +
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    // Use ArcGIS Online hosted FeatureServer — CORS-open unlike apps.fs.usda.gov/arcx query endpoints
+    var url = 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_RecreationSite/FeatureServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(geomEnv) +
+      '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
       '&returnGeometry=true' +
+      '&resultRecordCount=500' +
       '&f=geojson';
     console.log('[USFS Rec] fetching:', url);
     fetch(url)
@@ -7235,15 +7232,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function loadUsfsTrailsLayer(){
     if (!usfsTrailsOn) return;
     var b = map.getBounds();
-    var geomEnv = JSON.stringify({ xmin:b.getWest(), ymin:b.getSouth(), xmax:b.getEast(), ymax:b.getNorth(), spatialReference:{wkid:4326} });
-    var url = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query' +
+    var bbox = b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth();
+    // Use ArcGIS Online hosted FeatureServer — CORS-open unlike apps.fs.usda.gov/arcx query endpoints
+    var url = 'https://services1.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/S_USA_TrailNFS_Publish/FeatureServer/0/query' +
       '?where=1%3D1' +
-      '&geometry=' + encodeURIComponent(geomEnv) +
+      '&geometry=' + encodeURIComponent(bbox) +
       '&geometryType=esriGeometryEnvelope' +
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
       '&returnGeometry=true' +
+      '&resultRecordCount=500' +
       '&f=geojson';
     console.log('[USFS Trails] fetching:', url);
     fetch(url)
