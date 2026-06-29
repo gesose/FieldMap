@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.8.0';
+  var APP_VERSION = '1.8.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -5269,41 +5269,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var layerQueries = [];
     if (usfsRecOn) layerQueries.push({
       label: 'Recreation Site',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + layerQuery + '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&f=json'
     });
     if (usfsTrailsOn) layerQueries.push({
       label: 'NFS Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + layerQuery + '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&f=json'
     });
     if (state.settings.mvumOn) layerQueries.push({
       label: 'MVUM Road/Trail',
-      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + baseQuery + '&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE'
+      url: 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/0/query?where=1%3D1&geometry=' + geom + '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=NAME,SYMBOL,OPERATIONALMAINTLEVEL,SURFACETYPE,OPENFORUSECODE&f=json'
     });
 
-    // For FSTopo vector layer — use the FSBasemap MapServer identify (not VectorTileServer)
+    // For FSTopo vector layer — query the underlying USFS feature services
     var fstopoPending = null;
     if (state.settings.fstopoOn && fstopoLayer){
-      var identUrl = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSBasemap_01/MapServer/identify?' +
-        'f=json' +
-        '&geometry=' + encodeURIComponent(JSON.stringify({x:latlng.lng,y:latlng.lat,spatialReference:{wkid:4326}})) +
-        '&geometryType=esriGeometryPoint' +
-        '&sr=4326' +
-        '&layers=all' +
-        '&tolerance=3' +
-        '&mapExtent=' + encodeURIComponent([latlng.lng-0.01,latlng.lat-0.01,latlng.lng+0.01,latlng.lat+0.01].join(',')) +
-        '&imageDisplay=400,400,96' +
-        '&returnGeometry=false';
-      fstopoPending = fetch(identUrl)
-        .then(function(r){ return r.json(); })
-        .then(function(data){
-          if (data.results && data.results.length){
-            data.results.forEach(function(r){
-              if (r.attributes && Object.keys(r.attributes).length > 0){
-                results.push({ layer: 'USFS: ' + (r.layerName || r.layerId), props: r.attributes });
-              }
+      // Query trails and recreation sites at the clicked point
+      var fsQueries = [
+        { label:'NFS Trail', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE&f=json' },
+        { label:'USFS Road', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RoadCore_FS_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=NAME,OPER_MAINT_LEVEL,SURFACE_TYPE&f=json' },
+        { label:'Recreation Site', url:'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InfraRecreationSites_01/MapServer/0/query?where=1%3D1&geometry='+geom+'&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=false&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS&f=json' }
+      ];
+      fstopoPending = Promise.all(fsQueries.map(function(q){
+        return fetch(q.url).then(function(r){ return r.json(); }).then(function(data){
+          if (data.features && data.features.length){
+            data.features.forEach(function(f){
+              results.push({ layer: q.label, props: f.attributes || {} });
             });
           }
-        }).catch(function(e){ console.warn('[Identify FSTopo]', e); });
+        }).catch(function(){});
+      }));
     }
 
     console.log('[Identify] tap at', latlng.lat.toFixed(5), latlng.lng.toFixed(5), 'active layers: rec='+usfsRecOn+' trails='+usfsTrailsOn+' mvum='+state.settings.mvumOn+' fstopo='+state.settings.fstopoOn);
@@ -7203,7 +7197,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=RECAREANAME,RECAREATYPE,RECAREASTATUS' +
-      '&returnGeometry=true&f=geojson';
+      '&returnGeometry=true' +
+      '&f=json';
     console.log('[USFS Rec] fetching:', url);
     fetch(url)
       .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -7214,21 +7209,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           showToast('USFS Rec: no features in this area (zoom in closer)', 3000);
           return;
         }
-        usfsRecLayer = L.geoJSON(data, {
-          pointToLayer: function(feat, latlng){
-            var type = ((feat.properties.RECAREATYPE || feat.properties.RECAREATYPE || '')).toLowerCase();
-            var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
-            return L.circleMarker(latlng, { radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9 });
-          },
-          onEachFeature: function(feat, layer){
-            var p = feat.properties;
-            var name = p.RECAREANAME || 'Recreation Site';
-            var type = p.RECAREATYPE || p.RECAREATYPE || '';
-            var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
-            layer.bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml(type + status));
-          }
-        }).addTo(map);
-        console.log('[USFS Rec] loaded', data.features.length, 'sites');
+        // ESRI JSON format - convert to Leaflet markers
+        var markers = [];
+        data.features.forEach(function(feat){
+          var geom = feat.geometry;
+          if (!geom) return;
+          var lat = geom.y, lng = geom.x;
+          var p = feat.attributes || {};
+          var type = (p.RECAREATYPE || '').toLowerCase();
+          var color = type.indexOf('trail') !== -1 ? '#5a9ab8' : '#e8a020';
+          var name = p.RECAREANAME || 'Recreation Site';
+          var status = p.RECAREASTATUS ? ' · ' + p.RECAREASTATUS : '';
+          var m = L.circleMarker([lat, lng], {
+            radius:6, fillColor:color, color:'#fff', weight:1.5, fillOpacity:0.9
+          }).bindPopup('<strong>' + escapeHtml(name) + '</strong><br>' + escapeHtml((p.RECAREATYPE||'') + status));
+          markers.push(m);
+        });
+        usfsRecLayer = L.layerGroup(markers).addTo(map);
+        console.log('[USFS Rec] loaded', markers.length, 'sites');
       })
       .catch(function(e){
         console.warn('[USFS Rec] fetch error:', e);
@@ -7250,7 +7248,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '&inSR=4326&outSR=4326' +
       '&spatialRel=esriSpatialRelIntersects' +
       '&outFields=TRAIL_NAME,TRAIL_NO,SURFACE_TYPE,ALLOWED_TERRA_USE,MANAGING_ORG' +
-      '&returnGeometry=true&f=geojson';
+      '&returnGeometry=true' +
+      '&f=json';
     console.log('[USFS Trails] fetching:', url);
     fetch(url)
       .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -7261,20 +7260,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           showToast('USFS Trails: no trails in this area', 3000);
           return;
         }
-        usfsTrailsLayer = L.geoJSON(data, {
-          style: function(){
-            return { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' };
-          },
-          onEachFeature: function(feat, layer){
-            var p = feat.properties;
-            var name = p.TRAIL_NAME || 'Trail';
-            var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
-            var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
-            var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
-            layer.bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
-          }
-        }).addTo(map);
-        console.log('[USFS Trails] loaded', data.features.length, 'trails');
+        // ESRI JSON format - convert polylines to Leaflet
+        var layers2 = [];
+        data.features.forEach(function(feat){
+          var geom = feat.geometry;
+          if (!geom || !geom.paths) return;
+          var p = feat.attributes || {};
+          var name = p.TRAIL_NAME || 'Trail';
+          var no = p.TRAIL_NO ? ' #' + p.TRAIL_NO : '';
+          var use = p.ALLOWED_TERRA_USE ? '<br>Use: ' + escapeHtml(p.ALLOWED_TERRA_USE) : '';
+          var surf = p.SURFACE_TYPE ? '<br>Surface: ' + escapeHtml(p.SURFACE_TYPE) : '';
+          geom.paths.forEach(function(path){
+            var latlngs = path.map(function(pt){ return [pt[1], pt[0]]; });
+            var line = L.polyline(latlngs, { color:'#d4882a', weight:1.8, opacity:0.85, dashArray:'5,4' })
+              .bindPopup('<strong>' + escapeHtml(name + no) + '</strong>' + use + surf);
+            layers2.push(line);
+          });
+        });
+        usfsTrailsLayer = L.layerGroup(layers2).addTo(map);
+        console.log('[USFS Trails] loaded', layers2.length, 'trail segments');
       })
       .catch(function(e){
         console.warn('[USFS Trails] fetch error:', e);
