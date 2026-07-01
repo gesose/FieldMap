@@ -851,11 +851,9 @@
   <div style="padding:8px 0 6px;">
     <div style="font-size:13px;margin-bottom:6px;color:var(--text);">Default base layer</div>
     <select id="settings-default-layer" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
-      <option value="street">Street (OpenStreetMap)</option>
-      <option value="opentopo">OpenTopoMap</option>
-      <option value="aerial">Aerial imagery</option>
-      <option value="topo">USGS Topo</option>
-      <option value="imagerytopo">Imagery + topo</option>
+      <option value="topo">Topo</option>
+      <option value="aerial">Aerial</option>
+      <option value="aerial-streets">Aerial + topo</option>
     </select>
   </div>
   <div style="padding:0 0 10px;">
@@ -1211,12 +1209,16 @@
   <div class="layer-section-header">BASE LAYERS</div>
   <div class="radio-row" style="margin-top:6px;">
     <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-outdoors" value="outdoors" checked>
-      Outdoors (topo + trails)
+      <input type="radio" name="base-layer" id="base-layer-topo" value="topo" checked>
+      Topo
     </label>
     <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-street" value="street">
-      Street
+      <input type="radio" name="base-layer" id="base-layer-aerial" value="aerial">
+      Aerial
+    </label>
+    <label class="radio-opt">
+      <input type="radio" name="base-layer" id="base-layer-aerial-streets" value="aerial-streets">
+      Aerial + topo
     </label>
   </div>
 
@@ -1745,13 +1747,13 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.0.0-maplibre-wip';
+  var APP_VERSION = '2.0.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
   var MAPBOX_STYLES = {
-    outdoors: 'https://api.mapbox.com/styles/v1/mapbox/outdoors-v12?access_token=' + MAPBOX_TOKEN,
-    street:   'https://api.mapbox.com/styles/v1/mapbox/streets-v12?access_token=' + MAPBOX_TOKEN
+    aerial:          'https://api.mapbox.com/styles/v1/mapbox/satellite-v9?access_token=' + MAPBOX_TOKEN,
+    'aerial-streets':'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12?access_token=' + MAPBOX_TOKEN
   };
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1814,8 +1816,8 @@
       nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
-      defaultBaseLayer: 'outdoors',
-      maplibreStyle: 'outdoors',
+      defaultBaseLayer: 'topo',
+      maplibreStyle: 'topo',
       gpsFollow: false,
       clusterPins: true,
       defaultSort: 'chronological'
@@ -3003,104 +3005,112 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var MvumTileLayer = null;
   var CorsFetchTileLayer = null;
 
-  function rewriteMapboxUrls(style){
-    // sprite: "mapbox://sprites/mapbox/streets-v12"
-    //       → "https://api.mapbox.com/styles/v1/mapbox/streets-v12/sprite"
-    // Token omitted here — transformRequest injects it after MapLibre appends suffixes like .json
-    if (style.sprite && typeof style.sprite === 'string' &&
-        style.sprite.indexOf('mapbox://sprites/') === 0) {
-      style.sprite = 'https://api.mapbox.com/styles/v1/' +
-        style.sprite.slice('mapbox://sprites/'.length) + '/sprite';
+  var styleCache = {};
+
+  function loadStyle(styleName){
+    if (styleCache[styleName]) return Promise.resolve(styleCache[styleName]);
+
+    var fetchPromise;
+    if (styleName === 'topo'){
+      fetchPromise = fetch('./topo-style.json');
+    } else {
+      var url = MAPBOX_STYLES[styleName];
+      if (!url) return Promise.reject(new Error('Unknown style: ' + styleName));
+      fetchPromise = fetch(url);
     }
 
-    // glyphs: "mapbox://fonts/mapbox/{fontstack}/{range}.pbf"
-    //       → "https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf"
-    if (style.glyphs && typeof style.glyphs === 'string' &&
-        style.glyphs.indexOf('mapbox://fonts/') === 0) {
-      style.glyphs = 'https://api.mapbox.com/fonts/v1/' +
-        style.glyphs.slice('mapbox://fonts/'.length);
-    }
-
-    return style;
-  }
-
-  function resolveMapboxSources(style){
-    // Fetch TileJSON for every source with a mapbox:// url.
-    // ?secure forces Mapbox to return https:// tile URLs with proper CORS headers.
-    // We pull out the tiles array and set it directly so MapLibre never sees mapbox://.
-    if (!style.sources) return Promise.resolve(style);
-
-    var fetches = Object.keys(style.sources).map(function(key){
-      var src = style.sources[key];
-      if (!src.url || src.url.indexOf('mapbox://') !== 0) return Promise.resolve();
-
-      var tilesetIds = src.url.slice('mapbox://'.length);
-      var tilejsonUrl = 'https://api.mapbox.com/v4/' + tilesetIds +
-        '.json?secure&access_token=' + MAPBOX_TOKEN;
-
-      return fetch(tilejsonUrl)
-        .then(function(r){
-          if (!r.ok) throw new Error('TileJSON ' + r.status + ' for ' + tilesetIds);
-          return r.json();
-        })
-        .then(function(tj){
-          src.tiles = tj.tiles;
-          if (tj.minzoom !== undefined) src.minzoom = tj.minzoom;
-          if (tj.maxzoom !== undefined) src.maxzoom = tj.maxzoom;
-          delete src.url;
-        });
-    });
-
-    return Promise.all(fetches).then(function(){ return style; });
-  }
-
-  function loadMapboxStyle(url){
-    return fetch(url)
+    return fetchPromise
       .then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' for style "' + styleName + '"');
+        return r.text();
       })
-      .then(function(style){
-        delete style.name;
-        rewriteMapboxUrls(style);
-        return resolveMapboxSources(style);
+      .then(function(text){
+        // sprite: mapbox://sprites/owner/style_id[/hash] → HTTPS (drop version hash, include token)
+        text = text.replace(/"sprite"\s*:\s*"mapbox:\/\/sprites\/([^"\/]+\/[^"\/]+)[^"]*"/g,
+          '"sprite": "https://api.mapbox.com/styles/v1/$1/sprite?access_token={{MAPBOX_TOKEN}}"');
+        // glyphs: mapbox://fonts/... → HTTPS (include token so MapLibre-expanded URLs are authorized)
+        text = text.replace(/"glyphs"\s*:\s*"mapbox:\/\/fonts\/([^"]+)"/g,
+          '"glyphs": "https://api.mapbox.com/fonts/v1/$1?access_token={{MAPBOX_TOKEN}}"');
+        // source urls: mapbox://tilesets → TileJSON with token placeholder
+        text = text.replace(/"url"\s*:\s*"mapbox:\/\/([^"]+)"/g,
+          '"url": "https://api.mapbox.com/v4/$1.json?secure&access_token={{MAPBOX_TOKEN}}"');
+        // fix any line-join:"none" (invalid in MapLibre)
+        text = text.replace(/"line-join"\s*:\s*"none"/g, '"line-join": "miter"');
+        // substitute token (covers both remote styles and topo-style.json placeholder)
+        text = text.replace(/\{\{MAPBOX_TOKEN\}\}/g, MAPBOX_TOKEN);
+        var styleObj = JSON.parse(text);
+        delete styleObj.name;
+        styleCache[styleName] = styleObj;
+        return styleObj;
       });
   }
 
   function createMap(){
     maplibregl.accessToken = MAPBOX_TOKEN;
-    var initStyleUrl = MAPBOX_STYLES[state.settings.maplibreStyle || 'outdoors'];
+    var styleName = state.settings.maplibreStyle || 'topo';
 
-    loadMapboxStyle(initStyleUrl).then(function(styleObj){
+    loadStyle(styleName)
+      .catch(function(err){
+        console.error('[FieldMap] Style "' + styleName + '" failed, trying aerial:', err);
+        showToast('Style unavailable — loading Aerial fallback', 4000);
+        return loadStyle('aerial');
+      })
+      .then(function(styleObj){
       map = new maplibregl.Map({
         container: 'map',
         style: styleObj,
         center: [state.settings.center[1], state.settings.center[0]],
         zoom: state.settings.zoom,
         attributionControl: true,
-        doubleClickZoom: false,
-        transformRequest: function(url){
-          if (url && url.indexOf('https://api.mapbox.com/') === 0) {
-            return { url: url + (url.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + MAPBOX_TOKEN };
-          }
-        }
+        doubleClickZoom: false
       });
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
 
       // Sync radio UI to initial style
-      var radio = document.getElementById('base-layer-' + (state.settings.maplibreStyle || 'outdoors'));
+      var radio = document.getElementById('base-layer-' + (state.settings.maplibreStyle || 'topo'));
       if (radio) radio.checked = true;
 
-      // Layer group stubs — pins/routes/overlays will be re-wired in later sessions
-      clusterLayerGroup = null;
+      // Layer group stubs — overlays will be re-wired in later sessions
       offlineBoundaryLayerGroup = null;
       sunPathLayerGroup = null;
 
-      map.on('load', function(){
+      // style.load fires on initial load AND every time map.setStyle() completes.
+      // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
+      map.on('style.load', function(){
         updateCenterReadout();
         updateScaleBar();
+        reinitializeLayers();
       });
+
+      // After the map finishes rendering, sync HTML marker visibility with cluster state
+      map.on('idle', updateMarkerVisibility);
+
+      // Cluster circle click — zoom in to expand
+      map.on('click', 'cluster-circles', function(e){
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var features = map.queryRenderedFeatures(e.point, { layers: ['cluster-circles'] });
+        if (!features.length) return;
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var clusterId = features[0].properties.cluster_id;
+        map.getSource('pins-source').getClusterExpansionZoom(clusterId, function(err, zoom){
+          if (err) return;
+          map.easeTo({ center: features[0].geometry.coordinates, zoom: zoom + 1 });
+        });
+      });
+
+      // Pointer cursor on hover over cluster bubbles
+      map.on('mouseenter', 'cluster-circles', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'cluster-circles', function(){ map.getCanvas().style.cursor = ''; });
 
       map.on('click', function(e){
         closeClusterPanel();
@@ -3172,16 +3182,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function setMaplibreStyle(styleName){
-    var url = MAPBOX_STYLES[styleName];
-    if (!url){ showToast('Style not available'); return; }
-    loadMapboxStyle(url).then(function(styleObj){
-      map.setStyle(styleObj);
-      state.settings.maplibreStyle = styleName;
-      scheduleSave();
-    }).catch(function(err){
-      console.error('[FieldMap] Style switch failed:', err);
-      showToast('Failed to switch map style', 4000);
-    });
+    loadStyle(styleName)
+      .then(function(styleObj){
+        map.setStyle(styleObj);
+        state.settings.maplibreStyle = styleName;
+        scheduleSave();
+      })
+      .catch(function(err){
+        console.error('[FieldMap] Style switch to "' + styleName + '" failed:', err);
+        showToast('Failed to switch map style', 4000);
+      });
   }
 
   function setBaseLayerOn(name, on){ /* no-op — legacy Leaflet API, replaced by setMaplibreStyle */ }
@@ -3323,18 +3333,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Pin markers ----------
-  function pinIcon(pin){
+  function buildPinMarkerHtml(pin){
     var iconKey = iconKeyForItem(pin);
     var color   = statusColorFor(pin);
     var isMobile = window.innerWidth <= 600;
     var circleSize = isMobile ? 28 : 34;
     var iconSize   = isMobile ? 18 : 22;
-    var html = '<div style="width:' + circleSize + 'px;height:' + circleSize + 'px;border-radius:50%;' +
+    return '<div style="width:' + circleSize + 'px;height:' + circleSize + 'px;border-radius:50%;' +
       'background:' + color + ';border:2px solid rgba(255,255,255,0.9);' +
       'box-shadow:0 2px 5px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;">' +
       renderMarkerIcon(iconKey, iconSize) + '</div>';
-    var half = Math.round(circleSize / 2);
-    return L.divIcon({ className:'pin-marker', html:html, iconSize:[circleSize,circleSize], iconAnchor:[half,half] });
   }
 
   function popupHtml(pin){
@@ -3360,100 +3368,159 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function addMarkerForPin(pin){
-    var marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin) });
-    marker.bindPopup(popupHtml(pin));
-    marker.on('click', function(e){
+    if (!map) return;
+    if (markersById[pin.id]) { markersById[pin.id].remove(); }
+
+    var el = document.createElement('div');
+    el.className = 'pin-marker';
+    el.style.cssText = 'cursor:pointer;';
+    el.innerHTML = buildPinMarkerHtml(pin);
+
+    el.addEventListener('click', function(e){
+      e.stopPropagation();
+      var latlng = { lat: pin.lat, lng: pin.lng };
       if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
-        L.DomEvent.stopPropagation(e);
-        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
-        if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (drawMode) handleDrawClick(e.latlng);
-        else if (polygonMode) handlePolygonClick(e.latlng);
-        else if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); }
+        e.stopImmediatePropagation();
+        if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+        if (compassActive){ handleCompassMapTap(latlng); return; }
+        if (drawMode){ handleDrawClick(latlng); return; }
+        if (polygonMode){ handlePolygonClick(latlng); return; }
+        if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
       }
     });
+
+    var popup = new maplibregl.Popup({ offset: 17, maxWidth: '300px', className: 'pin-popup' })
+      .setHTML(popupHtml(pin));
+
+    var marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([pin.lng, pin.lat])
+      .setPopup(popup)
+      .addTo(map);
+
+    // Polyfill openPopup() for code that calls markersById[id].openPopup()
+    marker.openPopup = function(){
+      if (!popup.isOpen()) marker.togglePopup();
+    };
+
     markersById[pin.id] = marker;
     scheduleClusterRefresh();
   }
 
   function removeMarkerForPin(id){
     if (markersById[id]){
+      markersById[id].remove();
       delete markersById[id];
       scheduleClusterRefresh();
     }
   }
 
   function refreshMarkerPopup(pin){
-    if (markersById[pin.id]){
-      markersById[pin.id].setIcon(pinIcon(pin));
-      markersById[pin.id].setPopupContent(popupHtml(pin));
-    }
+    var marker = markersById[pin.id];
+    if (!marker) return;
+    marker.getElement().innerHTML = buildPinMarkerHtml(pin);
+    if (marker.getPopup()) marker.getPopup().setHTML(popupHtml(pin));
   }
 
   function applyFilterToMarker(pin){
+    // Filtering changes which pins appear in clusters — refresh source and visibility
     scheduleClusterRefresh();
   }
 
   function scheduleClusterRefresh(){
     clearTimeout(clusterRefreshTimer);
-    clusterRefreshTimer = setTimeout(refreshClusters, 60);
+    clusterRefreshTimer = setTimeout(updatePinClusterSource, 60);
   }
 
-  function refreshClusters(){
-    if (!clusterLayerGroup) return;
-    clusterLayerGroup.clearLayers();
-    var points = [];
-    state.pins.forEach(function(p){
-      var marker = markersById[p.id];
-      if (!marker || !mapItemVisible(p)) return;
-      points.push({ pin:p, marker:marker, pt: map.latLngToContainerPoint([p.lat, p.lng]) });
-    });
-    var used = new Array(points.length).fill(false);
-    var RADIUS = 28;
+  function updatePinClusterSource(){
+    if (!map) return;
+    var src = map.getSource('pins-source');
+    if (!src) return;
+    var features = state.pins
+      .filter(function(p){ return mapItemVisible(p); })
+      .map(function(p){
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+          properties: { id: p.id }
+        };
+      });
+    src.setData({ type: 'FeatureCollection', features: features });
+  }
+
+  function updateMarkerVisibility(){
+    if (!map || !map.isStyleLoaded()) return;
     var clusteringOn = state.settings.clusterPins !== false;
-    for (var i=0;i<points.length;i++){
-      if (used[i]) continue;
-      var group = [points[i]];
-      used[i] = true;
-      if (clusteringOn){
-        for (var j=i+1;j<points.length;j++){
-          if (used[j]) continue;
-          var dx = points[j].pt.x - points[i].pt.x, dy = points[j].pt.y - points[i].pt.y;
-          if (Math.sqrt(dx*dx + dy*dy) <= RADIUS){ group.push(points[j]); used[j] = true; }
-        }
-      }
-      if (group.length === 1){
-        clusterLayerGroup.addLayer(group[0].marker);
-      } else {
-        var latSum = 0, lngSum = 0;
-        group.forEach(function(g){ latSum += g.pin.lat; lngSum += g.pin.lng; });
-        var center = [latSum/group.length, lngSum/group.length];
-        var count = group.length;
-        var size = count < 10 ? 32 : (count < 100 ? 38 : 44);
-        var icon = L.divIcon({
-          className: 'cluster-bubble',
-          html: '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:rgba(194,98,45,0.9);border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:' + (count<100?13:11) + 'px;box-shadow:0 1px 4px rgba(0,0,0,0.5);">' + count + '</div>',
-          iconSize: [size,size], iconAnchor: [size/2, size/2]
-        });
-        var clusterMarker = L.marker(center, { icon: icon });
-        clusterMarker.on('click', (function(members, center){
-          return function(e){
-            if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
-              L.DomEvent.stopPropagation(e);
-              if (elevTapMode){ fetchElevationAtPoint(center); return; }
-              if (compassActive){ handleCompassMapTap(center); return; }
-              if (drawMode) handleDrawClick(center);
-              else if (polygonMode) handlePolygonClick(center);
-              else if (addMode){ pendingLatLng = center; openPinModal(null, center); }
-              return;
-            }
-            openClusterPanel(members);
-            L.DomEvent.stopPropagation(e);
-          };
-        })(group, center));
-        clusterLayerGroup.addLayer(clusterMarker);
-      }
+
+    if (map.getLayer('cluster-circles')){
+      map.setLayoutProperty('cluster-circles', 'visibility', clusteringOn ? 'visible' : 'none');
+      map.setLayoutProperty('cluster-counts',  'visibility', clusteringOn ? 'visible' : 'none');
     }
+
+    // Always show every pin's HTML marker — querySourceFeatures() only sees features in
+    // currently loaded/rendered tiles, so off-screen pins would get stuck hidden after a
+    // style switch if we used it to decide individual marker visibility. The cluster
+    // source is only used for the cluster-circles/cluster-counts bubble display; a
+    // clustered pin may render its marker underneath the bubble for now — tightening
+    // that overlap is a later-session refinement.
+    state.pins.forEach(function(p){
+      var m = markersById[p.id];
+      if (m) m.getElement().style.display = mapItemVisible(p) ? '' : 'none';
+    });
+  }
+
+  function reinitializeLayers(){
+    if (!map) return;
+
+    // GeoJSON cluster source — always re-add after style change
+    if (!map.getSource('pins-source')){
+      map.addSource('pins-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        cluster: true,
+        clusterMaxZoom: 14,
+        clusterRadius: 50
+      });
+    }
+
+    // Cluster circle layer
+    if (!map.getLayer('cluster-circles')){
+      map.addLayer({
+        id: 'cluster-circles',
+        type: 'circle',
+        source: 'pins-source',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': 'rgba(194,98,45,0.9)',
+          'circle-radius': ['step', ['get', 'point_count'], 16, 10, 20, 100, 24],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff'
+        }
+      });
+    }
+
+    // Cluster count label layer
+    if (!map.getLayer('cluster-counts')){
+      map.addLayer({
+        id: 'cluster-counts',
+        type: 'symbol',
+        source: 'pins-source',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': '{point_count_abbreviated}',
+          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+          'text-size': 13
+        },
+        paint: { 'text-color': '#ffffff' }
+      });
+    }
+
+    // Rebuild every pin marker fresh on each style change/initial load, so icons,
+    // colors, and positions stay correct regardless of what the previous style left behind.
+    Object.keys(markersById).forEach(function(id){ removeMarkerForPin(id); });
+    state.pins.forEach(function(p){ addMarkerForPin(p); });
+
+    // Populate cluster source with current pins
+    updatePinClusterSource();
   }
 
   function openClusterPanel(members){
@@ -3486,7 +3553,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       row.appendChild(dot); row.appendChild(textEl); row.appendChild(actions);
       row.addEventListener('click', function(){
         closeClusterPanel();
-        map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 16));
+        map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
         setTimeout(function(){ if(markersById[p.id]) markersById[p.id].openPopup(); }, 400);
       });
       listEl.appendChild(row);
@@ -3671,7 +3738,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       track.status = selectedTrackStatus;
       if (dateVal) track.created = dateVal;
       if (track.distMiles === undefined) track.distMiles = trackDistanceMiles(track.points);
-      refreshTrackPopup(track);
+      // Map rendering of tracks is still Leaflet-based (Session 3 scope) and can throw —
+      // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+      try { refreshTrackPopup(track); } catch(e){ console.error('[FieldMap] refreshTrackPopup failed:', e); }
     } else if (pendingDrawPoints){
       var pts = pendingDrawPoints.map(function(p){ return [p.lat, p.lng]; });
       var newTrack = {
@@ -3682,7 +3751,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         state: stateForPoint(pts[0][0], pts[0][1])
       };
       state.tracks.push(newTrack);
-      addTrackToMap(newTrack);
+      try { addTrackToMap(newTrack); } catch(e){ console.error('[FieldMap] addTrackToMap failed:', e); }
       refreshStateChips();
     }
     closeTrackModal();
@@ -3824,9 +3893,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       pin.name = name; pin.tags = tags; pin.notes = notes; pin.trip = trip; pin.status = status;
       if (dateVal) pin.created = dateVal;
       refreshMarkerPopup(pin);
-      // Update the marker icon color immediately
-      var marker = markersById[pin.id];
-      if (marker) marker.setIcon(pinIcon(pin));
     } else {
       var newPin = {
         id: uid(), lat: pendingLatLng.lat, lng: pendingLatLng.lng,
@@ -4696,7 +4762,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         poly.name = name; poly.status = selectedPolygonStatus; poly.tags = tags;
         poly.trip = trip; poly.notes = notes;
         if (dateVal) poly.created = dateVal;
-        refreshPolygonMap(poly);
+        // Map rendering of areas is still Leaflet-based (Session 3 scope) and can throw —
+        // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+        try { refreshPolygonMap(poly); } catch(e){ console.error('[FieldMap] refreshPolygonMap failed:', e); }
       }
     } else {
       var firstPt = pendingPolygonPoints && pendingPolygonPoints[0];
@@ -4709,7 +4777,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         state: firstPt ? stateForPoint(firstPt.lat, firstPt.lng) : ''
       };
       state.polygons.push(newPoly);
-      addPolygonToMap(newPoly);
+      try { addPolygonToMap(newPoly); } catch(e){ console.error('[FieldMap] addPolygonToMap failed:', e); }
       pendingPolygonPoints = null;
     }
     closePolygonModal();
@@ -4901,7 +4969,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (b){
         b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus; b.tags = tags;
         if (dateVal) b.created = dateVal;
-        refreshBearingMap(b);
+        // Map rendering of bearings is still Leaflet-based (Session 3 scope) and can throw —
+        // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+        try { refreshBearingMap(b); } catch(e){ console.error('[FieldMap] refreshBearingMap failed:', e); }
       }
     } else {
       var newB = {
@@ -4913,7 +4983,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         created: dateVal || Date.now()
       };
       state.bearings.push(newB);
-      addBearingToMap(newB);
+      try { addBearingToMap(newB); } catch(e){ console.error('[FieldMap] addBearingToMap failed:', e); }
     }
     closeBearingModal();
     renderPinList();
@@ -4940,8 +5010,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!on){
       _remapBearingId = null;
       bearingOrigin = null;
-      if (bearingOriginMarker){ map.removeLayer(bearingOriginMarker); bearingOriginMarker = null; }
-      if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
+      // Bearing preview markers/lines are still Leaflet-based (Session 3 scope) and can
+      // throw against the MapLibre map — guard so toggling bearing mode never crashes.
+      if (bearingOriginMarker){ try { map.removeLayer(bearingOriginMarker); } catch(e){ console.error('[FieldMap] removeLayer bearingOriginMarker failed:', e); } bearingOriginMarker = null; }
+      if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(e){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', e); } bearingPreviewLine = null; }
       document.getElementById('bearing-bar').classList.add('hidden');
       document.getElementById('bearing-bar').style.display = '';
     } else {
@@ -4957,15 +5029,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!bearingOrigin){
       // First tap — set origin, show temp marker
       bearingOrigin = latlng;
-      bearingOriginMarker = L.circleMarker(latlng, {
-        radius:6, color:'#fff', fillColor:'#c47a28', fillOpacity:1, weight:2, interactive:false
-      }).addTo(map);
+      // Bearing preview rendering is still Leaflet-based (Session 3 scope) and can throw
+      // against the MapLibre map — guard so tapping the map to start a bearing never crashes.
+      try {
+        bearingOriginMarker = L.circleMarker(latlng, {
+          radius:6, color:'#fff', fillColor:'#c47a28', fillOpacity:1, weight:2, interactive:false
+        }).addTo(map);
+      } catch(e){ console.error('[FieldMap] bearing origin marker failed:', e); }
       document.getElementById('bearing-bar-text').textContent = 'Tap target point';
       map.on('mousemove', updateBearingPreview);
     } else {
       // Second tap — finish
       map.off('mousemove', updateBearingPreview);
-      if (bearingPreviewLine){ map.removeLayer(bearingPreviewLine); bearingPreviewLine = null; }
+      if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(e){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', e); } bearingPreviewLine = null; }
       var origin = bearingOrigin;
       var remapId = _remapBearingId;
       _remapBearingId = null;
@@ -4979,7 +5055,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           b.targetLat = latlng.lat; b.targetLng = latlng.lng;
           b.bearingDeg = bearingBetween(origin.lat, origin.lng, latlng.lat, latlng.lng);
           b.distMiles = haversineMiles(origin.lat, origin.lng, latlng.lat, latlng.lng);
-          refreshBearingMap(b);
+          try { refreshBearingMap(b); } catch(e){ console.error('[FieldMap] refreshBearingMap failed:', e); }
           renderPinList();
           scheduleSave();
           showToast('Bearing endpoints updated');
@@ -4990,11 +5066,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
-    function updateBearingPreview(e){
-    if (bearingPreviewLine) map.removeLayer(bearingPreviewLine);
-    bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
-      color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
-    }).addTo(map);
+  function updateBearingPreview(e){
+    if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(err){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', err); } }
+    try {
+      bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
+        color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
+      }).addTo(map);
+    } catch(err){ console.error('[FieldMap] bearing preview line failed:', err); }
   }
 
   // ---------- Mark My Location ----------
@@ -5122,7 +5200,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ---------- Settings ----------
   function applySettingsUI(){
-    document.getElementById('settings-default-layer').value = state.settings.defaultBaseLayer || 'street';
+    document.getElementById('settings-default-layer').value = state.settings.defaultBaseLayer || 'topo';
     document.getElementById('settings-default-sort').value = state.settings.defaultSort || 'chronological';
     document.getElementById('settings-gps-follow-toggle').checked = !!state.settings.gpsFollow;
     document.getElementById('settings-cluster-toggle').checked = state.settings.clusterPins !== false;
@@ -5440,7 +5518,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return;
       }
       if (it.type === 'pin'){
-        map.flyTo([d.lat, d.lng], Math.max(map.getZoom(), 14));
+        map.flyTo({ center: [d.lng, d.lat], zoom: Math.max(map.getZoom(), 14) });
         setTimeout(function(){ if (markersById[d.id]) markersById[d.id].openPopup(); }, 350);
       } else if (it.type === 'track'){
         var tEntry = trackLayersById[d.id];
@@ -7455,7 +7533,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
 
-    Object.keys(markersById).forEach(function(id){ if (markersById[id]) map.removeLayer(markersById[id]); });
+    Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
     Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
     trackLayersById = {};
@@ -7569,8 +7647,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (!state.polygons) state.polygons = [];
             if (!state.bearings) state.bearings = [];
             if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
-            if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'outdoors';
-            if (!state.settings.maplibreStyle) state.settings.maplibreStyle = 'outdoors';
+            if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'topo';
+            if (!state.settings.maplibreStyle) state.settings.maplibreStyle = 'topo';
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
@@ -7963,9 +8041,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('settings-cluster-toggle').addEventListener('change', function(){
       state.settings.clusterPins = this.checked;
-      // Force full re-render of all markers with new cluster setting
-      Object.keys(markersById).forEach(function(id){ clusterLayerGroup.removeLayer(markersById[id]); });
-      scheduleClusterRefresh();
+      updateMarkerVisibility();
       scheduleSave();
     });
     document.getElementById('settings-offline-boundaries-toggle').addEventListener('change', function(){
@@ -7989,22 +8065,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
       state.settings.defaultBaseLayer = this.value;
-      // Switch the default base layer on if it's not already on
-      var layerName = this.value;
-      if (baseLayers[layerName] && !map.hasLayer(baseLayers[layerName])){
-        // Turn off all base layers, turn on selected
-        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
-          if (baseLayers[n] && map.hasLayer(baseLayers[n])){ map.removeLayer(baseLayers[n]); state.settings.layers[n].on = false; }
-        });
-        baseLayers[layerName].addTo(map);
-        state.settings.layers[layerName].on = true;
-        ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(n){
-          var tog = document.getElementById('layer-' + n + '-toggle');
-          if (tog) tog.checked = !!state.settings.layers[n].on;
-        });
-      }
+      state.settings.maplibreStyle = this.value;
+      setMaplibreStyle(this.value);
       scheduleSave();
     });
+    // Pin modal
+    document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
+    document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    // Track modal
+    document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
+    document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
