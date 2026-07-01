@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css">
 <style>
   :root{
     --bg:#191f1b;
@@ -1208,41 +1208,17 @@
 
 <div id="layers-panel" class="floating-panel hidden">
 
-  <div class="layer-section-header">BASE LAYERS <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-stack');h.classList.toggle('show')" title="Info">?</button></div>
-  <div class="layer-hint-text" id="lh-stack">Turn on more than one to stack them — aerial sits at the bottom, topo on top.</div>
-
-  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="layer-street-toggle"> Street (OpenStreetMap)
-  </label>
-  <div class="opacity-row" id="layer-street-opacity-row"><input type="range" id="layer-street-opacity" min="10" max="100" value="100"></div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-opentopo-toggle"> OpenTopoMap (contours + roads) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-opentopo');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="layer-opentopo-opacity-row"><input type="range" id="layer-opentopo-opacity" min="10" max="100" value="100"></div>
-  <div class="layer-hint-text" id="lh-opentopo">Combines OSM roads/trails with elevation contours and hillshading — works well in both wilderness and urban areas. Not eligible for the offline area downloader (community-funded tile policy), but caches automatically as you browse.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-aerial-toggle"> Aerial imagery
-  </label>
-  <div class="opacity-row" id="layer-aerial-opacity-row"><input type="range" id="layer-aerial-opacity" min="10" max="100" value="100"></div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-topo-toggle"> USGS topo / contour
-  </label>
-  <div class="opacity-row" id="layer-topo-opacity-row"><input type="range" id="layer-topo-opacity" min="10" max="100" value="100"></div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-relief-toggle"> Shaded relief <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-relief');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="layer-relief-opacity-row"><input type="range" id="layer-relief-opacity" min="10" max="100" value="100"></div>
-  <div class="layer-hint-text" id="lh-relief">LiDAR-derived where available. Good for spotting old roadbeds under cover. Best at partial opacity over topo or aerial.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="layer-imagerytopo-toggle"> Imagery + topo <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-imgtopo');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="layer-imagerytopo-opacity-row"><input type="range" id="layer-imagerytopo-opacity" min="10" max="100" value="100"></div>
-  <div class="layer-hint-text" id="lh-imgtopo">USGS aerial + topo labels baked in as one layer.</div>
+  <div class="layer-section-header">BASE LAYERS</div>
+  <div class="radio-row" style="margin-top:6px;">
+    <label class="radio-opt">
+      <input type="radio" name="base-layer" id="base-layer-outdoors" value="outdoors" checked>
+      Outdoors (topo + trails)
+    </label>
+    <label class="radio-opt">
+      <input type="radio" name="base-layer" id="base-layer-street" value="street">
+      Street
+    </label>
+  </div>
 
   <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
 
@@ -1660,8 +1636,7 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js"></script>
 <script>
 (function(){
@@ -1770,8 +1745,14 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.2';
+  var APP_VERSION = '2.0.0-maplibre-wip';
   var APP_RELEASE_DATE = 'June 2026';
+
+  var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMHdhdnBuMGhqbDJwcHIxOGdoMnByMiJ9.soO30beyqcM3STEeJ22Q-Q';
+  var MAPBOX_STYLES = {
+    outdoors: 'https://api.mapbox.com/styles/v1/mapbox/outdoors-v12?access_token=' + MAPBOX_TOKEN,
+    street:   'https://api.mapbox.com/styles/v1/mapbox/streets-v12?access_token=' + MAPBOX_TOKEN
+  };
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
   var store = (function(){
@@ -1833,7 +1814,8 @@
       nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
-      defaultBaseLayer: 'street',
+      defaultBaseLayer: 'outdoors',
+      maplibreStyle: 'outdoors',
       gpsFollow: false,
       clusterPins: true,
       defaultSort: 'chronological'
@@ -3017,368 +2999,146 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Map setup ----------
-  var MvumTileLayer = L.TileLayer.extend({
-    getTileUrl: function(coords){
-      var z = coords.z, x = coords.x, y = coords.y;
-      var n = Math.pow(2, z);
-      var worldSize = 40075016.685578488;
-      var half = 20037508.342789244;
-      var tileSize = worldSize / n;
-      var minX = -half + x * tileSize;
-      var maxX = minX + tileSize;
-      var maxY = half - y * tileSize;
-      var minY = maxY - tileSize;
-      return this._url + '/export?bbox=' + [minX, minY, maxX, maxY].join(',') +
-        '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0,1,2&f=image';
-    }
-  });
+  // MvumTileLayer and CorsFetchTileLayer were Leaflet-specific; replaced by MapLibre in Session 2+
+  var MvumTileLayer = null;
+  var CorsFetchTileLayer = null;
 
-  var CorsFetchTileLayer = L.TileLayer.extend({
-    createTile: function(coords, done){
-      var tile = document.createElement('img');
-      var url = this.getTileUrl(coords);
-      fetch(url, { mode:'cors' }).then(function(r){
-        if (!r.ok) throw new Error('bad status ' + r.status);
-        return r.blob();
-      }).then(function(blob){
-        var objUrl = URL.createObjectURL(blob);
-        tile.onload = function(){ URL.revokeObjectURL(objUrl); };
-        tile.src = objUrl;
-        done(null, tile);
-      }).catch(function(err){
-        done(err, tile);
-      });
-      return tile;
+  function rewriteMapboxUrls(style){
+    // sprite: "mapbox://sprites/mapbox/streets-v12"
+    //       → "https://api.mapbox.com/styles/v1/mapbox/streets-v12/sprite"
+    // Token omitted here — transformRequest injects it after MapLibre appends suffixes like .json
+    if (style.sprite && typeof style.sprite === 'string' &&
+        style.sprite.indexOf('mapbox://sprites/') === 0) {
+      style.sprite = 'https://api.mapbox.com/styles/v1/' +
+        style.sprite.slice('mapbox://sprites/'.length) + '/sprite';
     }
-  });
+
+    // glyphs: "mapbox://fonts/mapbox/{fontstack}/{range}.pbf"
+    //       → "https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf"
+    if (style.glyphs && typeof style.glyphs === 'string' &&
+        style.glyphs.indexOf('mapbox://fonts/') === 0) {
+      style.glyphs = 'https://api.mapbox.com/fonts/v1/' +
+        style.glyphs.slice('mapbox://fonts/'.length);
+    }
+
+    return style;
+  }
+
+  function resolveMapboxSources(style){
+    // Fetch TileJSON for every source with a mapbox:// url.
+    // ?secure forces Mapbox to return https:// tile URLs with proper CORS headers.
+    // We pull out the tiles array and set it directly so MapLibre never sees mapbox://.
+    if (!style.sources) return Promise.resolve(style);
+
+    var fetches = Object.keys(style.sources).map(function(key){
+      var src = style.sources[key];
+      if (!src.url || src.url.indexOf('mapbox://') !== 0) return Promise.resolve();
+
+      var tilesetIds = src.url.slice('mapbox://'.length);
+      var tilejsonUrl = 'https://api.mapbox.com/v4/' + tilesetIds +
+        '.json?secure&access_token=' + MAPBOX_TOKEN;
+
+      return fetch(tilejsonUrl)
+        .then(function(r){
+          if (!r.ok) throw new Error('TileJSON ' + r.status + ' for ' + tilesetIds);
+          return r.json();
+        })
+        .then(function(tj){
+          src.tiles = tj.tiles;
+          if (tj.minzoom !== undefined) src.minzoom = tj.minzoom;
+          if (tj.maxzoom !== undefined) src.maxzoom = tj.maxzoom;
+          delete src.url;
+        });
+    });
+
+    return Promise.all(fetches).then(function(){ return style; });
+  }
+
+  function loadMapboxStyle(url){
+    return fetch(url)
+      .then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(style){
+        delete style.name;
+        rewriteMapboxUrls(style);
+        return resolveMapboxSources(style);
+      });
+  }
 
   function createMap(){
-    map = L.map('map', { zoomControl:true, attributionControl:true })
-      .setView(state.settings.center, state.settings.zoom);
-    map.attributionControl.setPosition('bottomleft');
+    maplibregl.accessToken = MAPBOX_TOKEN;
+    var initStyleUrl = MAPBOX_STYLES[state.settings.maplibreStyle || 'outdoors'];
 
-    clusterLayerGroup = L.layerGroup().addTo(map);
-    offlineBoundaryLayerGroup = L.layerGroup().addTo(map);
-    sunPathLayerGroup = L.layerGroup().addTo(map);
-
-    // ── P2 overlay layers ──
-    try {
-      // NOAA National Snow Analysis — corrected service path
-      snowDepthLayer = L.tileLayer.wms('https://mapservices.weather.noaa.gov/raster/services/snow/NOHRSC_Snow_Analysis/MapServer/WMSServer', {
-        layers: '1', // Snow Depth layer (0=SWE, 1=Snow Depth)
-        format: 'image/png',
-        transparent: true,
-        opacity: 0.75,
-        attribution: 'NOAA NOHRSC',
-        version: '1.3.0'
-      });
-    } catch(e){ snowDepthLayer = null; }
-
-
-    try {
-      // NLCD — USGS MRLC WMS
-      nlcdLayer = L.tileLayer.wms('https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/ows', {
-        layers: 'NLCD_2021_Land_Cover_L48',
-        format: 'image/png',
-        transparent: true,
-        version: '1.1.1',
-        opacity: 0.55,
-        attribution: 'USGS MRLC NLCD 2021'
-      });
-    } catch(e){ nlcdLayer = null; }
-
-    // USFS boundaries loaded dynamically
-    if (state.settings.snowDepthOn && snowDepthLayer) snowDepthLayer.addTo(map);
-    if (state.settings.nlcdOn && nlcdLayer) nlcdLayer.addTo(map);
-    if (state.settings.usfsBoundariesOn) loadUsfsBoundariesLayer();
-    // (hillshade overlay removed — shaded relief layer now uses multiply blend mode directly)
-    map.createPane('aerialPane'); map.getPane('aerialPane').style.zIndex = 190;
-    map.createPane('fstopoPane'); map.getPane('fstopoPane').style.zIndex = 192; // USFS Forest Service Basemap
-    map.createPane('streetPane'); map.getPane('streetPane').style.zIndex = 195;
-    map.createPane('opentopoPane'); map.getPane('opentopoPane').style.zIndex = 198;
-    map.createPane('topoPane'); map.getPane('topoPane').style.zIndex = 200;
-    // Shaded relief pane uses multiply blend mode for natural hillshade compositing
-    map.createPane('reliefPane');
-    map.getPane('reliefPane').style.zIndex = 205;
-    map.getPane('reliefPane').style.mixBlendMode = 'multiply';
-    map.createPane('imagerytopoPane'); map.getPane('imagerytopoPane').style.zIndex = 210;
-    map.createPane('hydroPane'); map.getPane('hydroPane').style.zIndex = 330;
-
-    baseLayers.street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:19, pane:'streetPane', attribution:'&copy; OpenStreetMap contributors'
-    });
-    baseLayers.opentopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-      maxZoom:19, maxNativeZoom:17, subdomains:'abc', pane:'opentopoPane',
-      attribution:'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)'
-    });
-    baseLayers.aerial = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:19, pane:'aerialPane', attribution:'Esri, Maxar, Earthstar Geographics'
-    });
-    // USFS Forest Service Basemap — vector tile service via Leaflet.VectorGrid
-    // Correct organization ID: gGHDlz6USftL5Pau
-    try {
-      var _fstopoLayerNames = {};
-      function fstopoStyle(layerName) {
-        if (!_fstopoLayerNames[layerName]){
-          _fstopoLayerNames[layerName] = true;
-          console.log('[FSTopo layer]', layerName);
+    loadMapboxStyle(initStyleUrl).then(function(styleObj){
+      map = new maplibregl.Map({
+        container: 'map',
+        style: styleObj,
+        center: [state.settings.center[1], state.settings.center[0]],
+        zoom: state.settings.zoom,
+        attributionControl: true,
+        doubleClickZoom: false,
+        transformRequest: function(url){
+          if (url && url.indexOf('https://api.mapbox.com/') === 0) {
+            return { url: url + (url.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + MAPBOX_TOKEN };
+          }
         }
-        switch(layerName){
-          // ── Water bodies (light blue outline, no fill) ──
-          case 'NHDWaterbody':
-            return { fill:false, color:'#5a9ab8', weight:1.0, opacity:0.85 };
-          case 'CONUS Wetlands USFWS':
-            return { fill:false, color:'#5a9ab8', weight:0.6, opacity:0.6 };
-          // ── Water lines ──
-          case 'NHD Flowline GTAC':
-            return { fill:false, color:'#5a9ab8', weight:1.2, opacity:0.85 };
-          // ── Contours — brown, minor thin, index heavier ──
-          case 'Contour USGS':
-            return function(props) {
-              var isMajor = props && (props.ContourType===1 || props.Index===1 ||
-                props.CONTOURTYPE===1 || props.isIndex===true || props.IsIndex===true);
-              return isMajor
-                ? { fill:false, color:'#c8895a', weight:1.5, opacity:0.9 }
-                : { fill:false, color:'#c8895a', weight:0.5, opacity:0.65 };
-            };
-          case 'Landform Lines GTAC':
-            return { fill:false, color:'#c8895a', weight:0.35, opacity:0.4 };
-          // ── Roads ──
-          case 'MVUM Plus GTAC':
-            return function(props) {
-              var oml = props && (props.OPERATIONALMAINTLEVEL || props.OperationalMaintenanceLevel || 0);
-              if (oml >= 3) return { fill:false, color:'#ffffff', weight:1.8, opacity:0.9 };
-              if (oml === 2) return { fill:false, color:'#cccccc', weight:1.2, opacity:0.8 };
-              return { fill:false, color:'#aaaaaa', weight:0.8, opacity:0.65 };
-            };
-          case 'Gap Roads GTAC':
-            return { fill:false, color:'#bbbbbb', weight:1.0, opacity:0.7 };
-          // ── Trails ──
-          case 'Trails Plus GTAC':
-            return { fill:false, color:'#e8c87a', weight:1.0, opacity:0.85, dashArray:'5,4' };
-          // ── NF / Admin boundaries ──
-          case 'AdministrativeForest':
-            return { fill:false, color:'#6abf50', weight:2.2, opacity:0.95, dashArray:'7,4' };
-          case 'USFS Ranger District':
-            return { fill:false, color:'#5aaf40', weight:1.2, opacity:0.8, dashArray:'4,5' };
-          case 'USFS Common Unit Name Line':
-            return { fill:false, color:'#4a9f30', weight:0.7, opacity:0.55, dashArray:'3,6' };
-          case 'USFS Wilderness':
-            return { fill:false, color:'#5abf40', weight:1.2, opacity:0.75, dashArray:'4,4' };
-          case 'USFS Basic Ownership':
-            return { fill:false, color:'#4a9f30', weight:0.5, opacity:0.4 };
-          // ── PLSS / Survey grid ──
-          case 'PLSS Township BLM':
-            return { fill:false, color:'#888888', weight:0.6, opacity:0.4 };
-          case 'PLSSFirstDivision_BLM':
-            return { fill:false, color:'#aaaaaa', weight:0.3, opacity:0.3 };
-          // ── Recreation sites ──
-          case 'USFS Recreation Site':
-            return { fill:true, fillColor:'#e8a020', fillOpacity:0.9,
-              color:'#a06010', weight:1.2, opacity:0.9 };
-          // ── Structures ──
-          case 'structures_poly_fema':
-            return { fill:false, color:'#aaaaaa', weight:0.5, opacity:0.5 };
-          // ── Census (very faint) ──
-          case 'State Generalized Census':
-            return { fill:false, color:'#888', weight:0.3, opacity:0.2 };
-          // ── Points ──
-          case 'NHD Point USGS':
-            return { fill:true, fillColor:'#5a9ab8', fillOpacity:0.8, color:'none', weight:0 };
-          // ── All label layers — invisible ──
-          case 'Contour USGS/label':
-          case 'NHD Flowline GTAC/label':
-          case 'NHDWaterbody/label':
-          case 'Landform Lines GTAC/label':
-          case 'MVUM Plus GTAC/label':
-          case 'Gap Roads GTAC/label':
-          case 'Trails Plus GTAC/label':
-          case 'PLSSFirstDivision_BLM/label':
-          case 'PLSSFirstDivision_BLM/label':
-            return { fill:false, weight:0, opacity:0, fillOpacity:0 };
-          // ── Default: very faint so unknown layers don't clutter ──
-          default:
-            return { fill:false, color:'#888', weight:0.3, opacity:0.25 };
-        }
-      }
-
-      fstopoLayer = L.vectorGrid.protobuf(
-        'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf',
-        {
-          pane: 'overlayPane',
-          attribution: 'USDA Forest Service',
-          maxNativeZoom: 15, maxZoom: 19,
-          fetchOptions: { mode: 'cors' },
-          interactive: true,
-          vectorTileLayerStyles: new Proxy({}, {
-            get: function(target, prop){ return typeof prop === 'string' ? fstopoStyle(prop) : undefined; },
-            has: function(){ return true; }
-          })
-        }
-      );
-      // VectorGrid 1.3.0 crashes in Leaflet internals when firing click events on
-      // features with undefined geometry — identify for FSTopo is handled via the
-    } catch(e){
-      // Fallback: raster tiles
-      fstopoLayer = L.tileLayer(
-        'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/MapServer/tile/{z}/{y}/{x}',
-        { maxZoom:16, maxNativeZoom:15, attribution:'USDA Forest Service',
-          errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }
-      );
-    }
-    baseLayers.topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:19, maxNativeZoom:16, pane:'topoPane', attribution:'USGS The National Map'
-    });
-    baseLayers.relief = new CorsFetchTileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}', {
-      minZoom:1, maxZoom:19, minNativeZoom:10, maxNativeZoom:13, pane:'reliefPane', attribution:'USGS The National Map'
-    });
-    baseLayers.imagerytopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom:19, maxNativeZoom:16, pane:'imagerytopoPane', attribution:'USGS The National Map'
-    });
-
-    try {
-      hydroLayer = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom:19, maxNativeZoom:16, pane:'hydroPane', attribution:'USGS The National Map'
       });
-    } catch(e){ hydroLayer = null; }
 
-    var tileErrorShown = false;
-    function onTileError(){
-      if (tileErrorShown) return;
-      tileErrorShown = true;
-      showToast("Map tiles couldn't load here — try opening this file directly in your browser instead of the chat preview", 7000);
-    }
-    baseLayers.street.on('tileerror', onTileError);
-    baseLayers.opentopo.on('tileerror', onTileError);
-    baseLayers.aerial.on('tileerror', onTileError);
-    baseLayers.topo.on('tileerror', onTileError);
-    baseLayers.relief.on('tileerror', onTileError);
-    baseLayers.imagerytopo.on('tileerror', onTileError);
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
 
-    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
-      if (!baseLayers[name]) return;
-      var cfg = state.settings.layers[name];
-      if (!cfg) return;
-      baseLayers[name].setOpacity(cfg.opacity);
-      if (cfg.on) baseLayers[name].addTo(map);
-      var toggle = document.getElementById('layer-' + name + '-toggle');
-      var opacityInput = document.getElementById('layer-' + name + '-opacity');
-      var opacityRow = document.getElementById('layer-' + name + '-opacity-row');
-      if (toggle) toggle.checked = cfg.on;
-      if (opacityInput) opacityInput.value = Math.round(cfg.opacity * 100);
-      if (opacityRow) opacityRow.classList.toggle('show', cfg.on);
-    });
+      // Sync radio UI to initial style
+      var radio = document.getElementById('base-layer-' + (state.settings.maplibreStyle || 'outdoors'));
+      if (radio) radio.checked = true;
 
-    if (state.settings.hydroOn && hydroLayer){
-      hydroLayer.addTo(map);
-      document.getElementById('hydro-toggle').checked = true;
-      document.getElementById('hydro-opacity-row').classList.add('show');
-      document.getElementById('hydro-opacity').value = Math.round((state.settings.hydroOpacity || 1) * 100);
-    }
+      // Layer group stubs — pins/routes/overlays will be re-wired in later sessions
+      clusterLayerGroup = null;
+      offlineBoundaryLayerGroup = null;
+      sunPathLayerGroup = null;
 
-
-    map.createPane('mvumPane');
-    map.getPane('mvumPane').style.zIndex = 350;
-    map.getPane('mvumPane').style.pointerEvents = 'none';
-
-    try {
-      mvumLayer = new MvumTileLayer('https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer', {
-        opacity: state.settings.mvumOpacity,
-        maxZoom: 19,
-        pane: 'mvumPane',
-        attribution: 'USFS MVUM'
+      map.on('load', function(){
+        updateCenterReadout();
+        updateScaleBar();
       });
-    } catch(e){ mvumLayer = null; }
-    if (mvumLayer){
-      var mvumErrorShown = false;
-      mvumLayer.on('tileerror', function(){
-        if (mvumErrorShown) return;
-        mvumErrorShown = true;
-        showToast("USFS roads/trails layer failed to load — the federal server may be down or slow right now");
+
+      map.on('click', function(e){
+        closeClusterPanel();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+        if (compassActive){ handleCompassMapTap(latlng); return; }
+        if (bearingMode){ handleBearingMapTap(latlng); return; }
+        if (measureMode){ handleMeasureClick(latlng); return; }
+        if (drawMode){ handleDrawClick(latlng); return; }
+        if (polygonMode){ handlePolygonClick(latlng); return; }
+        if (!addMode) return;
+        pendingLatLng = latlng;
+        openPinModal(null, latlng);
       });
-    }
 
-    if (state.settings.mvumOn && mvumLayer){
-      mvumLayer.addTo(map);
-      document.getElementById('mvum-toggle').checked = true;
-      document.getElementById('mvum-opacity-row').style.display = 'flex';
-      document.getElementById('mvum-opacity').value = Math.round(state.settings.mvumOpacity*100);
-    }
-
-    map.createPane('publicLandPane');
-    map.getPane('publicLandPane').style.zIndex = 340;
-    map.getPane('publicLandPane').style.pointerEvents = 'none';
-    map.getPane('publicLandPane').style.mixBlendMode = 'multiply';
-    map.createPane('gmuPane');
-    map.getPane('gmuPane').style.zIndex = 360;
-
-    try {
-      publicLandLayer = L.tileLayer('https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 19, maxNativeZoom: 14, pane: 'publicLandPane',
-        opacity: state.settings.publicLandOpacity || 0.55,
-        attribution: 'BLM Surface Management Agency'
+      map.on('dragstart', _onMapDragStart);
+      map.on('move', updateCenterReadout);
+      map.on('move', updateScaleBar);
+      map.on('zoomend', updateGmuLabelVisibility);
+      map.on('zoomend', scheduleClusterRefresh);
+      map.on('moveend', scheduleClusterRefresh);
+      map.on('zoomend', function(){
+        var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
+        if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
       });
-    } catch(e){ publicLandLayer = null; }
-    if (publicLandLayer){
-      var publicLandErrorShown = false;
-      publicLandLayer.on('tileerror', function(){
-        if (publicLandErrorShown) return;
-        publicLandErrorShown = true;
-        showToast('Public/private land layer failed to load — the federal server may be down or slow right now');
+      map.on('moveend', function(){
+        if (compassActive && compassUseCenter) updateCompassMapLines();
       });
-    }
-    if (state.settings.publicLandOn && publicLandLayer){
-      publicLandLayer.addTo(map);
-      document.getElementById('publicland-toggle').checked = true;
-      document.getElementById('publicland-opacity-row').classList.add('show');
-      document.getElementById('publicland-opacity').value = Math.round((state.settings.publicLandOpacity || 0.55) * 100);
-      document.getElementById('publicland-legend').classList.remove('hidden');
-      loadPublicLandLegend();
-    }
-
-    if (state.settings.gmuAzOn) toggleGmuLayer('az', true);
-
-    renderOfflineBoundaries();
-
-    map.on('click', function(e){
-      closeClusterPanel();
-      if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
-      if (compassActive){ handleCompassMapTap(e.latlng); return; }
-      if (bearingMode){ handleBearingMapTap(e.latlng); return; }
-      if (measureMode){ handleMeasureClick(e.latlng); return; }
-      if (drawMode){ handleDrawClick(e.latlng); return; }
-      if (polygonMode){ handlePolygonClick(e.latlng); return; }
-      if (!addMode) return;
-      pendingLatLng = e.latlng;
-      openPinModal(null, e.latlng);
+      map.on('moveend', function(){
+        state.settings.center = [map.getCenter().lat, map.getCenter().lng];
+        state.settings.zoom = map.getZoom();
+        scheduleSave();
+      });
+    }).catch(function(err){
+      console.error('[FieldMap] Style load failed:', err);
+      showToast('Map style failed to load — check your connection or Mapbox token', 6000);
+      document.getElementById('loading-overlay').classList.add('hidden');
     });
-
-    map.on('dragstart', _onMapDragStart);
-    map.on('move', updateCenterReadout);
-    map.on('move', updateScaleBar);
-    map.on('zoomend', updateGmuLabelVisibility);
-    map.on('zoomend moveend', scheduleClusterRefresh);
-    map.on('zoomend moveend', function(){
-      var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-      if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
-    });
-    map.on('moveend', function(){
-      if (compassActive && compassUseCenter) updateCompassMapLines();
-    });
-    map.on('moveend zoomend', function(){
-    });
-    updateCenterReadout();
-    updateScaleBar();
-
-    map.on('moveend', function(){
-      state.settings.center = [map.getCenter().lat, map.getCenter().lng];
-      state.settings.zoom = map.getZoom();
-      scheduleSave();
-    });
-
-    // Pinch-to-zoom only on touch devices — double-tap-zoom disabled because it
-    // conflicted with placing route points during route drawing.
-    if ('ontouchstart' in window) map.doubleClickZoom.disable();
   }
 
   function updateCenterReadout(){
@@ -3411,24 +3171,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('scale-bar-label').textContent = label + ' · Z' + map.getZoom();
   }
 
-  function setBaseLayerOn(name, on){
-    var layer = baseLayers[name];
-    if (!layer){ showToast('Layer not available'); return; }
-    if (on){ if (!map.hasLayer(layer)) layer.addTo(map); }
-    else { if (map.hasLayer(layer)) map.removeLayer(layer); }
-    if (!state.settings.layers[name]) state.settings.layers[name] = { on:false, opacity:1 };
-    state.settings.layers[name].on = on;
-    document.getElementById('layer-' + name + '-opacity-row').classList.toggle('show', on);
-    scheduleSave();
+  function setMaplibreStyle(styleName){
+    var url = MAPBOX_STYLES[styleName];
+    if (!url){ showToast('Style not available'); return; }
+    loadMapboxStyle(url).then(function(styleObj){
+      map.setStyle(styleObj);
+      state.settings.maplibreStyle = styleName;
+      scheduleSave();
+    }).catch(function(err){
+      console.error('[FieldMap] Style switch failed:', err);
+      showToast('Failed to switch map style', 4000);
+    });
   }
 
-  function setBaseLayerOpacity(name, opacity){
-    var layer = baseLayers[name];
-    if (!layer) return;
-    if (layer.setOpacity) layer.setOpacity(opacity);
-    state.settings.layers[name].opacity = opacity;
-    scheduleSave();
-  }
+  function setBaseLayerOn(name, on){ /* no-op — legacy Leaflet API, replaced by setMaplibreStyle */ }
+  function setBaseLayerOpacity(name, opacity){ /* no-op — legacy Leaflet API */ }
 
   var publicLandLegendLoaded = false;
   var BLM_LEGEND = [
@@ -5262,16 +5019,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
 
   // ── GPS Location Dot ──────────────────────────────────────────────────────
-  // Pulsing blue dot + heading cone that stays on map while active.
-  // locate-btn: first tap → start watching, pan to location, button turns blue.
-  //             tap again → stop watching, dot disappears.
+  // Ported to maplibregl.Marker with custom HTML element.
 
-  function buildGpsDotIcon(heading){
-    // Apple/Google Maps style: pulsing blue dot with directional arrowhead above it
+  function buildGpsDotHtml(heading){
     var hasHeading = heading !== null && heading !== undefined && !isNaN(heading);
     var arrowHtml = '';
     if (hasHeading){
-      // Small solid arrowhead pointing in direction of travel, rotated from North
       arrowHtml = '<div style="position:absolute;top:50%;left:50%;width:0;height:0;' +
         'transform-origin:center 20px;' +
         'transform:translate(-50%,-20px) rotate('+heading+'deg);' +
@@ -5283,15 +5036,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       'transform:translate(-50%,-50%);' +
       'box-shadow:0 0 0 3px rgba(58,143,212,0.3);' +
       'animation:gps-pulse 2s ease-out infinite;"></div>';
-    return L.divIcon({
-      className: '',
-      iconSize: [48, 48],
-      iconAnchor: [24, 24],
-      html: '<div style="position:relative;width:48px;height:48px;">' + arrowHtml + dot + '</div>'
-    });
+    return '<div style="position:relative;width:48px;height:48px;">' + arrowHtml + dot + '</div>';
   }
+
   function _gpsDotInit(){
-    // Shared init: start watchPosition + compass, used by all state transitions that need the dot on
     if (!navigator.geolocation){ showToast('Location not available on this device'); return false; }
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
       DeviceOrientationEvent.requestPermission().catch(function(){});
@@ -5299,36 +5047,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     function onOrientation(e){
       if (e.webkitCompassHeading != null) compassHeadingDeg = e.webkitCompassHeading;
       else if (e.alpha != null) compassHeadingDeg = (360 - e.alpha) % 360;
-      if (gpsDotMarker && lastGpsLatLng) gpsDotMarker.setIcon(buildGpsDotIcon(_effectiveHeading(null)));
+      if (gpsDotMarker && lastGpsLatLng){
+        gpsDotMarker.getElement().innerHTML = buildGpsDotHtml(_effectiveHeading(null));
+      }
     }
     window.addEventListener('deviceorientation', onOrientation, true);
     _gpsDotInit._removeOrientation = function(){ window.removeEventListener('deviceorientation', onOrientation, true); };
 
     gpsDotWatchId = navigator.geolocation.watchPosition(function(pos){
-      lastGpsLatLng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      lastGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       var heading = _effectiveHeading(pos.coords);
-      var acc = pos.coords.accuracy;
       if (!gpsDotMarker){
-        gpsDotMarker = L.marker(lastGpsLatLng, { icon:buildGpsDotIcon(heading), zIndexOffset:3000, interactive:false }).addTo(map);
-        if (acc && acc < 5000){
-          gpsAccCircle = L.circle(lastGpsLatLng, { radius:acc, color:'#3a8fd4', fillColor:'#3a8fd4',
-            fillOpacity:0.06, weight:1, opacity:0.3, interactive:false }).addTo(map);
-        }
+        var el = document.createElement('div');
+        el.style.cssText = 'width:48px;height:48px;pointer-events:none;';
+        el.innerHTML = buildGpsDotHtml(heading);
+        gpsDotMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([lastGpsLatLng.lng, lastGpsLatLng.lat])
+          .addTo(map);
       } else {
-        gpsDotMarker.setLatLng(lastGpsLatLng);
-        gpsDotMarker.setIcon(buildGpsDotIcon(heading));
-        if (gpsAccCircle){ gpsAccCircle.setLatLng(lastGpsLatLng); if (acc && acc < 5000) gpsAccCircle.setRadius(acc); }
+        gpsDotMarker.setLngLat([lastGpsLatLng.lng, lastGpsLatLng.lat]);
+        gpsDotMarker.getElement().innerHTML = buildGpsDotHtml(heading);
       }
-      if (gpsDotState === 'following') map.setView(lastGpsLatLng);
+      if (gpsDotState === 'following') map.setCenter([lastGpsLatLng.lng, lastGpsLatLng.lat]);
     }, function(err){
       showToast('Location error — check permissions');
       _gpsDotTurnOff();
-    }, { enableHighAccuracy:true, maximumAge:3000 });
+    }, { enableHighAccuracy: true, maximumAge: 3000 });
     return true;
   }
 
   function _effectiveHeading(coords){
-    // GPS heading only valid when moving; fall back to compass
     if (coords && coords.heading != null && !isNaN(coords.heading) && coords.speed > 0.5)
       return coords.heading;
     return compassHeadingDeg;
@@ -5340,27 +5088,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('locate-btn').classList.remove('active', 'locate-free');
     if (gpsDotWatchId !== null){ navigator.geolocation.clearWatch(gpsDotWatchId); gpsDotWatchId = null; }
     if (_gpsDotInit._removeOrientation){ _gpsDotInit._removeOrientation(); _gpsDotInit._removeOrientation = null; }
-    if (gpsDotMarker){ map.removeLayer(gpsDotMarker); gpsDotMarker = null; }
-    if (gpsAccCircle){ map.removeLayer(gpsAccCircle); gpsAccCircle = null; }
+    if (gpsDotMarker){ gpsDotMarker.remove(); gpsDotMarker = null; }
+    gpsAccCircle = null;
   }
 
   function handleLocateBtn(){
     if (gpsDotState === 'off'){
-      // Start dot + follow
       if (!_gpsDotInit()) return;
       gpsDotState = 'following';
       document.getElementById('locate-btn').classList.add('active');
       document.getElementById('locate-btn').classList.remove('locate-free');
       showToast('Finding your location…', 1500);
-      if (lastGpsLatLng) map.setView(lastGpsLatLng, Math.max(map.getZoom(), 14));
+      if (lastGpsLatLng) map.flyTo({ center: [lastGpsLatLng.lng, lastGpsLatLng.lat], zoom: Math.max(map.getZoom(), 14) });
     } else if (gpsDotState === 'free'){
-      // Re-center and resume following
       gpsDotState = 'following';
       document.getElementById('locate-btn').classList.add('active');
       document.getElementById('locate-btn').classList.remove('locate-free');
-      if (lastGpsLatLng) map.setView(lastGpsLatLng, Math.max(map.getZoom(), 14));
+      if (lastGpsLatLng) map.flyTo({ center: [lastGpsLatLng.lng, lastGpsLatLng.lat], zoom: Math.max(map.getZoom(), 14) });
     } else {
-      // Was following — turn off entirely
       _gpsDotTurnOff();
     }
   }
@@ -7824,7 +7569,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (!state.polygons) state.polygons = [];
             if (!state.bearings) state.bearings = [];
             if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
-            if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'street';
+            if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'outdoors';
+            if (!state.settings.maplibreStyle) state.settings.maplibreStyle = 'outdoors';
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
@@ -8571,12 +8317,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     });
 
-    ['aerial','street','opentopo','topo','relief','imagerytopo'].forEach(function(name){
-      document.getElementById('layer-' + name + '-toggle').addEventListener('change', function(){
-        setBaseLayerOn(name, this.checked);
-      });
-      document.getElementById('layer-' + name + '-opacity').addEventListener('input', function(){
-        setBaseLayerOpacity(name, this.value / 100);
+    document.querySelectorAll('input[name="base-layer"]').forEach(function(radio){
+      radio.addEventListener('change', function(){
+        if (this.checked) setMaplibreStyle(this.value);
       });
     });
 
@@ -8802,10 +8545,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   loadState().then(function(){
     createMap();
     bindUI();
-    state.pins.forEach(addMarkerForPin);
-    state.tracks.forEach(addTrackToMap);
-    (state.polygons||[]).forEach(addPolygonToMap);
-    (state.bearings||[]).forEach(addBearingToMap);
+    // Pin/track/polygon/bearing rendering deferred — Leaflet map APIs unavailable until Session 2+
+    try { state.pins.forEach(addMarkerForPin); } catch(e){}
+    try { state.tracks.forEach(addTrackToMap); } catch(e){}
+    try { (state.polygons||[]).forEach(addPolygonToMap); } catch(e){}
+    try { (state.bearings||[]).forEach(addBearingToMap); } catch(e){}
     renderPinList();
     document.getElementById('loading-overlay').classList.add('hidden');
     appIsReady = true;
@@ -8815,8 +8559,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     applySettingsUI();
     // Apply saved default sort mode
     listSortMode = state.settings.defaultSort || 'chronological';
-    // Draw polygons
-    (state.polygons || []).forEach(addPolygonToMap);
+    // Draw polygons (deferred)
+    try { (state.polygons || []).forEach(addPolygonToMap); } catch(e){}
     // Show onboarding for first-time or guest users not yet signed in
     if (shouldShowOnboarding()){
       setTimeout(function(){
