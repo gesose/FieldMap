@@ -279,7 +279,7 @@
   .pin-popup-cat{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px;}
-  .pin-popup-actions{display:flex;gap:6px;}
+  .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
 
   .floating-panel{
     position:absolute;bottom:24px;right:64px;z-index:1500;width:260px;
@@ -1772,7 +1772,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.4';
+  var APP_VERSION = '1.9.6';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3519,7 +3519,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var q = document.getElementById('search-input').value.trim();
     if (q) return true;
     function anyFalse(obj){ for (var k in obj){ if (obj[k] === false) return true; } return false; }
-    return anyFalse(activeTagFilters) || anyFalse(activeStateFilters) || anyFalse(activeTripFilters) || anyFalse(activeDateFilters);
+    function anyTrue(obj){ for (var k in obj){ if (obj[k]) return true; } return false; }
+    return anyFalse(activeTagFilters) || anyFalse(activeStateFilters) || anyFalse(activeTripFilters) || anyFalse(activeDateFilters) ||
+      anyTrue(eyeHiddenTags) || anyTrue(eyeHiddenTrips);
+  }
+
+  // exportVisible: what actually gets exported. Combines the filter-chip
+  // check (itemVisible) with the eye-hidden group state (the eye icons in
+  // the sidebar) — so hiding a group with the eye toggle keeps it out of
+  // exports, same as it's kept off the map.
+  function exportVisible(item, query){
+    if (!itemVisible(item, query)) return false;
+    var tags = item.tags && item.tags.length ? item.tags : ['uncategorized'];
+    if (tags.every(function(tid){ return eyeHiddenTags[tid]; })) return false;
+    var tripKey = item.trip || NO_TRIP_LABEL;
+    if (eyeHiddenTrips[tripKey]) return false;
+    return true;
   }
 
   function itemVisible(item, query){
@@ -3604,6 +3619,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       notes +
       '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
       '<div class="pin-popup-actions">' +
+      '<button class="btn btn-small" onclick="FieldMap.directionsToPin(\'' + pin.id + '\')">Directions</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.copyPinCoords(\'' + pin.id + '\')">Copy coords</button>' +
       '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
       '<button class="btn btn-small" onclick="FieldMap.movePin(\'' + pin.id + '\')">Move</button>' +
@@ -4115,6 +4132,27 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   window.FieldMap = {
+    directionsToPin: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (!pin) return;
+      var lat = pin.lat.toFixed(6), lng = pin.lng.toFixed(6);
+      var isApple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+      var url = isApple
+        ? 'https://maps.apple.com/?daddr=' + lat + ',' + lng + '&dirflg=d'
+        : 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng;
+      window.open(url, '_blank');
+    },
+    copyPinCoords: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (!pin) return;
+      var coords = pin.lat.toFixed(6) + ', ' + pin.lng.toFixed(6);
+      if (navigator.clipboard){
+        navigator.clipboard.writeText(coords).then(function(){ showToast('Coordinates copied'); })
+          .catch(function(){ showToast(coords, 5000); });
+      } else {
+        showToast(coords, 5000);
+      }
+    },
     editPin: function(id){
       var pin = state.pins.find(function(p){ return p.id === id; });
       if (pin) openPinModal(pin, null);
@@ -6702,18 +6740,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function exportGeoJSON(){
     var query = document.getElementById('search-input').value.trim().toLowerCase();
-    var features = state.pins.filter(function(p){ return itemVisible(p, query); }).map(function(p){
+    var features = state.pins.filter(function(p){ return exportVisible(p, query); }).map(function(p){
       return { type:'Feature', geometry:{ type:'Point', coordinates:[p.lng,p.lat] },
         properties:{ name:p.name, tags:p.tags, notes:p.notes, created:p.created, state:p.state } };
-    }).concat(state.tracks.filter(function(t){ return itemVisible(t, query); }).map(function(t){
+    }).concat(state.tracks.filter(function(t){ return exportVisible(t, query); }).map(function(t){
       return { type:'Feature', geometry:{ type:'LineString', coordinates: t.points.map(function(pt){ return [ptLng(pt),ptLat(pt)]; }) },
         properties:{ name:t.name, tags:t.tags, notes:t.notes, created:t.created, state:t.state } };
-    })).concat((state.polygons||[]).filter(function(p){ return itemVisible(p, query); }).map(function(p){
+    })).concat((state.polygons||[]).filter(function(p){ return exportVisible(p, query); }).map(function(p){
       var ring = p.points.map(function(pt){ return [pt.lng, pt.lat]; });
       if (ring.length && (ring[0][0] !== ring[ring.length-1][0] || ring[0][1] !== ring[ring.length-1][1])) ring.push(ring[0]);
       return { type:'Feature', geometry:{ type:'Polygon', coordinates:[ring] },
         properties:{ name:p.name, tags:p.tags, notes:p.notes, created:p.created, state:p.state } };
-    })).concat((state.bearings||[]).filter(function(b){ return itemVisible(b, query); }).map(function(b){
+    })).concat((state.bearings||[]).filter(function(b){ return exportVisible(b, query); }).map(function(b){
       return { type:'Feature', geometry:{ type:'LineString', coordinates:[[b.originLng,b.originLat],[b.targetLng,b.targetLat]] },
         properties:{ name:b.name, tags:b.tags, notes:b.notes, created:b.created, bearingDeg:b.bearingDeg, distMiles:b.distMiles } };
     }));
@@ -6725,21 +6763,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function exportGPX(){
     var query = document.getElementById('search-input').value.trim().toLowerCase();
-    var wpts = state.pins.filter(function(p){ return itemVisible(p, query); }).map(function(p){
+    var wpts = state.pins.filter(function(p){ return exportVisible(p, query); }).map(function(p){
       return '  <wpt lat="' + p.lat + '" lon="' + p.lng + '">\n' +
         '    <name>' + escapeXml(p.name) + '</name>\n' +
         '    <desc>' + escapeXml(p.notes || '') + '</desc>\n' +
         '    <extensions><tags>' + escapeXml((p.tags||[]).join(',')) + '</tags></extensions>\n' +
         '  </wpt>';
     }).join('\n');
-    var trks = state.tracks.filter(function(t){ return itemVisible(t, query); }).map(function(t){
+    var trks = state.tracks.filter(function(t){ return exportVisible(t, query); }).map(function(t){
       var trkpts = t.points.map(function(pt){ return '      <trkpt lat="' + ptLat(pt) + '" lon="' + ptLng(pt) + '"></trkpt>'; }).join('\n');
       return '  <trk>\n    <name>' + escapeXml(t.name) + '</name>\n' +
         '    <desc>' + escapeXml(t.notes || '') + '</desc>\n' +
         '    <extensions><tags>' + escapeXml((t.tags||[]).join(',')) + '</tags></extensions>\n' +
         '    <trkseg>\n' + trkpts + '\n    </trkseg>\n  </trk>';
     }).join('\n');
-    var areaTrks = (state.polygons||[]).filter(function(p){ return itemVisible(p, query); }).map(function(p){
+    var areaTrks = (state.polygons||[]).filter(function(p){ return exportVisible(p, query); }).map(function(p){
       var pts = p.points.slice();
       if (pts.length && (pts[0].lat !== pts[pts.length-1].lat || pts[0].lng !== pts[pts.length-1].lng)) pts.push(pts[0]);
       var trkpts = pts.map(function(pt){ return '      <trkpt lat="' + pt.lat + '" lon="' + pt.lng + '"></trkpt>'; }).join('\n');
@@ -6748,7 +6786,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '    <extensions><tags>' + escapeXml((p.tags||[]).join(',')) + '</tags></extensions>\n' +
         '    <trkseg>\n' + trkpts + '\n    </trkseg>\n  </trk>';
     }).join('\n');
-    var bearingTrks = (state.bearings||[]).filter(function(b){ return itemVisible(b, query); }).map(function(b){
+    var bearingTrks = (state.bearings||[]).filter(function(b){ return exportVisible(b, query); }).map(function(b){
       var trkpts = '      <trkpt lat="' + b.originLat + '" lon="' + b.originLng + '"></trkpt>\n' +
         '      <trkpt lat="' + b.targetLat + '" lon="' + b.targetLng + '"></trkpt>';
       return '  <trk>\n    <name>' + escapeXml(b.name) + '</name>\n' +
