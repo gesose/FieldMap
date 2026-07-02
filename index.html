@@ -1770,7 +1770,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.2';
+  var APP_VERSION = '1.9.3';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -8260,6 +8260,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
     // Polygon modal
+    document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
+    document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
+    document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-delete-btn').addEventListener('click', function(){
