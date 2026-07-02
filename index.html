@@ -854,6 +854,7 @@
     <div style="font-size:13px;margin-bottom:6px;color:var(--text);">Default base layer</div>
     <select id="settings-default-layer" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
       <option value="topo">Topo</option>
+      <option value="topo-dark">Topo Dark</option>
       <option value="aerial">Aerial</option>
       <option value="aerial-streets">Aerial + topo</option>
     </select>
@@ -1213,6 +1214,10 @@
     <label class="radio-opt">
       <input type="radio" name="base-layer" id="base-layer-topo" value="topo" checked>
       Topo
+    </label>
+    <label class="radio-opt">
+      <input type="radio" name="base-layer" id="base-layer-topo-dark" value="topo-dark">
+      Topo Dark
     </label>
     <label class="radio-opt">
       <input type="radio" name="base-layer" id="base-layer-aerial" value="aerial">
@@ -1754,8 +1759,13 @@
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
   var MAPBOX_STYLES = {
-    aerial:          'https://api.mapbox.com/styles/v1/mapbox/satellite-v9?access_token=' + MAPBOX_TOKEN,
-    'aerial-streets':'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12?access_token=' + MAPBOX_TOKEN
+    aerial: 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9?access_token=' + MAPBOX_TOKEN
+  };
+  // Custom Studio styles, refreshed locally via refresh-style.js — see LOCAL_STYLE_FILES in that script
+  var LOCAL_STYLE_FILES = {
+    topo:            './topo-style.json',
+    'topo-dark':     './topo-dark-style.json',
+    'aerial-streets':'./aerial-streets-style.json'
   };
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3013,8 +3023,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (styleCache[styleName]) return Promise.resolve(styleCache[styleName]);
 
     var fetchPromise;
-    if (styleName === 'topo'){
-      fetchPromise = fetch('./topo-style.json');
+    if (LOCAL_STYLE_FILES[styleName]){
+      fetchPromise = fetch(LOCAL_STYLE_FILES[styleName]);
     } else {
       var url = MAPBOX_STYLES[styleName];
       if (!url) return Promise.reject(new Error('Unknown style: ' + styleName));
