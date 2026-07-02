@@ -8207,7 +8207,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         });
       });
     });
-    document.getElementById('sheet-export-btn').addEventListener('click', function(){
+    document.getElementById('sheet-export-btn').addEventListener('click', function(e){
+      e.stopPropagation();
       document.getElementById('tools-sheet').classList.add('hidden');
       // Show the export sub-menu (reuse existing export-menu dropdown)
       var menu = document.getElementById('export-menu');
