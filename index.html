@@ -275,11 +275,31 @@
   .leaflet-popup-tip{background:var(--bg-elevated);}
   .draw-point-popup .leaflet-popup-content-wrapper{padding:2px;}
   .draw-point-popup .leaflet-popup-content{margin:6px 8px;}
-  .pin-popup-name{font-weight:600;font-size:14px;margin-bottom:2px;}
+  .pin-popup-name{font-weight:600;font-size:14px;margin-bottom:2px;color:var(--text);}
   .pin-popup-cat{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
-  .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;}
-  .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px;}
+  .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
+  .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
   .pin-popup-actions{display:flex;gap:6px;}
+
+  /* MapLibre popup: library defaults to a white content box, so re-theme it dark to
+     match the old Leaflet popup (.leaflet-popup-content-wrapper above) and the rest
+     of the app's dark UI. Scoped to .pin-popup, the only maplibregl.Popup in use. */
+  .pin-popup .maplibregl-popup-content{
+    background:var(--bg-elevated);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.45);
+  }
+  .pin-popup .maplibregl-popup-close-button{color:var(--text-muted);font-size:16px;}
+  .pin-popup .maplibregl-popup-close-button:hover{color:var(--text);background:transparent;}
+  .pin-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+  .pin-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+  .pin-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip{border-bottom-color:var(--bg-elevated);}
+  .pin-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+  .pin-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+  .pin-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip{border-top-color:var(--bg-elevated);}
+  .pin-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip{border-right-color:var(--bg-elevated);}
+  .pin-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip{border-left-color:var(--bg-elevated);}
+  .draw-point-popup .maplibregl-popup-content{padding:6px 8px;}
 
   .floating-panel{
     position:absolute;bottom:24px;right:64px;z-index:1500;width:260px;
@@ -1838,6 +1858,7 @@
 
   var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, polygonLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
+  var tracksRefreshTimer = null;
   var publicLandLayer = null;
   var gmuLayers = { az: null };
   var snowDepthLayer = null, nlcdLayer = null;
@@ -1854,7 +1875,12 @@
   var addMode = false;
   var measureMode = false;
   var measurePoints = [], measureMarkers = [], measureLine = null;
-  var drawMode = false, drawPoints = [], drawMarkers = [], drawLine = null, pendingDrawPoints = null, snappedPoints = null;
+  var drawMode = false, drawPoints = [], drawMarkers = [], pendingDrawPoints = null, snappedPoints = null;
+  var vertexEditingTrackId = null; // set while a saved track's shape is being vertex-edited (see editTrackVertices)
+  var vertexEditSyncFn = null; // current syncLine() closure from editTrackVertices, re-invoked after a style switch
+  var openTrackPopup = null; // the currently-open ad-hoc track popup, if any (tracks have no persistent marker/popup like pins do)
+  var lastTracksSetDataSrcRef = null; // DIAG: the source object updateTracksSource() last called .setData() on
+  var lastDrawPreviewSetDataSrcRef = null; // DIAG: same, for redrawDrawLine()
   var polygonMode = false, polygonPoints = [], polygonMarkers = [], polygonPreviewLayer = null;
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
@@ -3124,6 +3150,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'cluster-circles', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'cluster-circles', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Route line click — mode-aware pass-through, otherwise show that route's popup
+      map.on('click', 'tracks-line-touch', function(e){
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var feature = e.features && e.features[0];
+        if (!feature) return;
+        var track = state.tracks.find(function(t){ return t.id === feature.properties.id; });
+        if (!track) return;
+        openTrackPopupAt(track, e.lngLat);
+      });
+      map.on('mouseenter', 'tracks-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'tracks-line-touch', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Clicking the in-progress draw preview line inserts a new point at that spot
+      map.on('click', 'draw-preview-line', function(e){
+        if (!drawMode) return;
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        insertDrawPoint({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      });
+
       map.on('click', function(e){
         closeClusterPanel();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
@@ -3196,7 +3254,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function setMaplibreStyle(styleName){
     loadStyle(styleName)
       .then(function(styleObj){
-        map.setStyle(styleObj);
+        // diff:false forces a full teardown-and-rebuild on every switch instead of
+        // MapLibre's incremental diff path. The diff path is what silently fails to
+        // carry over reinitializeLayers()'s custom layers/sources on repaint — the
+        // full-rebuild path (already MapLibre's own fallback when it can't diff two
+        // styles, and identical to what happens on initial page load) has been 100%
+        // reliable in testing, so use it unconditionally rather than only by accident.
+        map.setStyle(styleObj, { diff: false });
         state.settings.maplibreStyle = styleName;
         scheduleSave();
       })
@@ -3389,9 +3453,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     el.innerHTML = buildPinMarkerHtml(pin);
 
     el.addEventListener('click', function(e){
-      e.stopPropagation();
       var latlng = { lat: pin.lat, lng: pin.lng };
       if (addMode || drawMode || polygonMode || elevTapMode || compassActive){
+        // Suppress the map's own click handler so a mode-driven tap on a marker doesn't
+        // also trigger its generic map-click handling (e.g. double-adding a pin).
+        e.stopPropagation();
         e.stopImmediatePropagation();
         if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
         if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -3399,6 +3465,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (polygonMode){ handlePolygonClick(latlng); return; }
         if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
       }
+      // No special mode active — let the click bubble up so MapLibre's own Marker
+      // click handling (bound on the map container) can toggle the popup open,
+      // matching the sidebar's click-to-open-popup behavior.
     });
 
     var popup = new maplibregl.Popup({ offset: 17, maxWidth: '300px', className: 'pin-popup' })
@@ -3482,6 +3551,66 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function reinitializeLayers(){
     if (!map) return;
+    console.log('[FieldMap] reinitializeLayers: bound directly to style.load (no setTimeout) — this call is running RIGHT NOW because that event just fired.',
+      'isStyleLoaded():', map.isStyleLoaded(), 'areTilesLoaded():', map.areTilesLoaded());
+    console.log('[FieldMap] reinitializeLayers: tracks-source exists?', !!map.getSource('tracks-source'),
+      'tracks-line exists?', !!map.getLayer('tracks-line'),
+      'tracks-line-touch exists?', !!map.getLayer('tracks-line-touch'),
+      'state.tracks.length:', state.tracks.length,
+      '| draw-preview-source exists?', !!map.getSource('draw-preview-source'),
+      'draw-preview-line exists?', !!map.getLayer('draw-preview-line'),
+      'drawMode:', drawMode, 'drawPoints.length:', drawPoints.length);
+
+    // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
+    // every style change. Two layers on the same source: a wide invisible one purely
+    // for easier click hit-testing on mobile, and the actual visible styled line.
+    var tracksSourceRefBefore = map.getSource('tracks-source');
+    if (!tracksSourceRefBefore){
+      try {
+        map.addSource('tracks-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] }
+        });
+        console.log('[FieldMap] DIAG addSource tracks-source succeeded');
+      } catch(err){ console.error('[FieldMap] DIAG addSource tracks-source THREW:', err); }
+    } else {
+      console.log('[FieldMap] DIAG tracks-source already existed before this reinitializeLayers call — not re-added');
+    }
+    if (!map.getLayer('tracks-line-touch')){
+      try {
+        map.addLayer({
+          id: 'tracks-line-touch',
+          type: 'line',
+          source: 'tracks-source',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-width': 18, 'line-opacity': 0 }
+        });
+        console.log('[FieldMap] DIAG addLayer tracks-line-touch succeeded');
+      } catch(err){ console.error('[FieldMap] DIAG addLayer tracks-line-touch THREW:', err); }
+    }
+    if (!map.getLayer('tracks-line')){
+      try {
+        map.addLayer({
+          id: 'tracks-line',
+          type: 'line',
+          source: 'tracks-source',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.85 }
+        });
+        console.log('[FieldMap] DIAG addLayer tracks-line succeeded');
+      } catch(err){ console.error('[FieldMap] DIAG addLayer tracks-line THREW:', err); }
+    }
+    // Object-identity check: is the source the tracks-line layer resolves to the SAME
+    // object updateTracksSource() will call .setData() on, or has a stale/duplicate
+    // reference snuck in somewhere?
+    if (map.getLayer('tracks-line')){
+      var tracksLineSourceId = map.getLayer('tracks-line').source;
+      var resolvedSrc = map.getSource(tracksLineSourceId);
+      var directSrc = map.getSource('tracks-source');
+      console.log('[FieldMap] DIAG tracks-line.source string:', tracksLineSourceId,
+        '| resolved source === map.getSource(\'tracks-source\')?', resolvedSrc === directSrc,
+        '| source object same as before this reinit call?', resolvedSrc === tracksSourceRefBefore);
+    }
 
     // GeoJSON cluster source — always re-add after style change
     if (!map.getSource('pins-source')){
@@ -3526,6 +3655,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Live preview line for an in-progress route draw. Added here (not just in
+    // setDrawMode) so it also survives a style switch mid-draw; kept empty otherwise.
+    var drawPreviewSourceRefBefore = map.getSource('draw-preview-source');
+    if (!drawPreviewSourceRefBefore){
+      try {
+        map.addSource('draw-preview-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] }
+        });
+        console.log('[FieldMap] DIAG addSource draw-preview-source succeeded');
+      } catch(err){ console.error('[FieldMap] DIAG addSource draw-preview-source THREW:', err); }
+    } else {
+      console.log('[FieldMap] DIAG draw-preview-source already existed before this reinitializeLayers call — not re-added');
+    }
+    if (!map.getLayer('draw-preview-line')){
+      try {
+        map.addLayer({
+          id: 'draw-preview-line',
+          type: 'line',
+          source: 'draw-preview-source',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-width': 4, 'line-color': '#3b8f76' }
+        });
+        console.log('[FieldMap] DIAG addLayer draw-preview-line succeeded');
+      } catch(err){ console.error('[FieldMap] DIAG addLayer draw-preview-line THREW:', err); }
+    }
+    if (map.getLayer('draw-preview-line')){
+      var drawPreviewLineSourceId = map.getLayer('draw-preview-line').source;
+      var resolvedDrawSrc = map.getSource(drawPreviewLineSourceId);
+      var directDrawSrc = map.getSource('draw-preview-source');
+      console.log('[FieldMap] DIAG draw-preview-line.source string:', drawPreviewLineSourceId,
+        '| resolved source === map.getSource(\'draw-preview-source\')?', resolvedDrawSrc === directDrawSrc,
+        '| source object same as before this reinit call?', resolvedDrawSrc === drawPreviewSourceRefBefore);
+    }
+
+    // Live preview line for an in-progress "Edit shape" vertex edit (see editTrackVertices).
+    // Separate from draw-preview-source so the two features never fight over the same layer.
+    if (!map.getSource('vertex-edit-preview-source')){
+      map.addSource('vertex-edit-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('vertex-edit-preview-line')){
+      map.addLayer({
+        id: 'vertex-edit-preview-line',
+        type: 'line',
+        source: 'vertex-edit-preview-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-width': 3, 'line-color': '#5a9bd8' }
+      });
+    }
+
     // Rebuild every pin marker fresh on each style change/initial load, so icons,
     // colors, and positions stay correct regardless of what the previous style left behind.
     Object.keys(markersById).forEach(function(id){ removeMarkerForPin(id); });
@@ -3533,6 +3715,51 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // Populate cluster source with current pins
     updatePinClusterSource();
+    updateTracksSource();
+    redrawDrawLine();
+    if (vertexEditSyncFn) vertexEditSyncFn();
+
+    // Test fix for a suspected paint/readiness race: style.load firing (and addLayer/
+    // setData succeeding) doesn't guarantee MapLibre actually paints a frame afterward.
+    // Force one explicitly rather than waiting for some later, unrelated interaction to do it.
+    map.triggerRepaint();
+    console.log('[FieldMap] reinitializeLayers: called map.triggerRepaint()');
+
+    logLayerPaintDiagnostics('tracks-line', 'tracks-source', 'immediately after reinitializeLayers');
+    logLayerPaintDiagnostics('draw-preview-line', 'draw-preview-source', 'immediately after reinitializeLayers');
+    setTimeout(function(){
+      logLayerPaintDiagnostics('tracks-line', 'tracks-source', '~250ms later');
+      logLayerPaintDiagnostics('draw-preview-line', 'draw-preview-source', '~250ms later');
+    }, 250);
+  }
+
+  function logLayerPaintDiagnostics(layerId, sourceId, whenLabel){
+    if (!map.getLayer(layerId)){
+      console.log('[FieldMap] DIAG (' + whenLabel + ') ' + layerId + ': layer does not exist');
+      return;
+    }
+    var styleLayers = map.getStyle().layers;
+    var idx = styleLayers.findIndex(function(l){ return l.id === layerId; });
+    var before = idx > 0 ? styleLayers[idx - 1] : null;
+    var after = idx < styleLayers.length - 1 ? styleLayers[idx + 1] : null;
+    var src = map.getSource(sourceId);
+    var srcData = src && src._data;
+    var featureCount = srcData && srcData.features ? srcData.features.length : 'n/a (no _data)';
+    var lastSetDataSrc = layerId === 'tracks-line' ? lastTracksSetDataSrcRef
+      : layerId === 'draw-preview-line' ? lastDrawPreviewSetDataSrcRef : undefined;
+    console.log('[FieldMap] DIAG (' + whenLabel + ') ' + layerId + ':', {
+      'line-color': map.getPaintProperty(layerId, 'line-color'),
+      'line-width': map.getPaintProperty(layerId, 'line-width'),
+      'line-opacity': map.getPaintProperty(layerId, 'line-opacity'),
+      'visibility': map.getLayoutProperty(layerId, 'visibility'),
+      'layerIndex': idx,
+      'totalLayers': styleLayers.length,
+      'layerBefore (renders under this)': before ? before.id + ' (type ' + before.type + ')' : null,
+      'layerAfter (renders over this)': after ? after.id + ' (type ' + after.type + ')' : null,
+      'sourceExists': !!src,
+      'sourceDataFeatureCount': featureCount,
+      'map.getSource(sourceId) === source last setData() was called on?': src === lastSetDataSrc
+    });
   }
 
   function openClusterPanel(members){
@@ -3592,60 +3819,58 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
-  function addTrackToMap(track){
-    var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
-    // Invisible wide touch target polyline sits on top to make tapping easier on mobile
-    var touchPoly = L.polyline(track.points, { weight:18, opacity:0, interactive:true });
-    var poly = L.polyline(track.points, { color: sc.bg, weight: 3, opacity: 0.85, interactive:false });
-    touchPoly.bindPopup(trackPopupHtml(track));
-    touchPoly.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
-        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
-        if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
-        if (measureMode){ handleMeasureClick(e.latlng); return; }
-        if (drawMode){ handleDrawClick(e.latlng); return; }
-        if (polygonMode){ handlePolygonClick(e.latlng); return; }
-        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
-        return;
-      }
-    });
-    touchPoly.addTo(map);
-    poly.addTo(map);
-    trackLayersById[track.id] = { vis: poly, touch: touchPoly };
-    applyFilterToTrack(track);
+  // Tracks have no persistent marker/popup object like pins do (ad-hoc popup created on
+  // click) — this keeps a single shared reference so any entry point (map click, sidebar
+  // click, Edit shape) can close whichever one is currently open before doing its own thing.
+  function openTrackPopupAt(track, lngLat){
+    if (openTrackPopup){ openTrackPopup.remove(); openTrackPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML(trackPopupHtml(track))
+      .addTo(map);
+    popup.on('close', function(){ if (openTrackPopup === popup) openTrackPopup = null; });
+    openTrackPopup = popup;
   }
 
-  function removeTrackFromMap(id){
-    var entry = trackLayersById[id];
-    if (!entry) return;
-    // Support both old format (single layer) and new format {vis, touch}
-    var layers = entry.vis ? [entry.vis, entry.touch] : [entry];
-    layers.forEach(function(l){ try { if (l && map.hasLayer(l)) map.removeLayer(l); } catch(e){} });
-    delete trackLayersById[id];
+  // Routes render from a single shared GeoJSON source (tracks-source, set up in
+  // reinitializeLayers) rather than one Leaflet layer per track — same architecture as
+  // pins-source. All four entry points below just recompute the whole source from
+  // current state, mirroring how applyFilterToMarker/scheduleClusterRefresh work for pins.
+  function addTrackToMap(track){ scheduleTracksRefresh(); }
+  function removeTrackFromMap(id){ scheduleTracksRefresh(); }
+  function refreshTrackPopup(track){ scheduleTracksRefresh(); }
+  function applyFilterToTrack(track){ scheduleTracksRefresh(); }
+
+  function scheduleTracksRefresh(){
+    clearTimeout(tracksRefreshTimer);
+    tracksRefreshTimer = setTimeout(updateTracksSource, 60);
   }
 
-  function refreshTrackPopup(track){
-    var entry = trackLayersById[track.id];
-    var touch = entry && entry.touch ? entry.touch : entry;
-    var vis = entry && entry.vis ? entry.vis : null;
-    if (touch){
-      var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
-      if (vis) vis.setStyle({ color: sc.bg });
-      touch.setPopupContent(trackPopupHtml(track));
-    }
-  }
-
-  function applyFilterToTrack(track){
-    var entry = trackLayersById[track.id];
-    if (!entry) return;
-    var layers = entry.vis ? [entry.vis, entry.touch] : [entry];
-    var visible = mapItemVisible(track);
-    layers.forEach(function(l){
-      if (!l) return;
-      if (visible){ if (!map.hasLayer(l)) l.addTo(map); }
-      else { if (map.hasLayer(l)) map.removeLayer(l); }
-    });
+  function updateTracksSource(){
+    if (!map) return;
+    var src = map.getSource('tracks-source');
+    if (!src) return;
+    var features = state.tracks
+      .filter(function(t){ return t.id !== vertexEditingTrackId && mapItemVisible(t); })
+      .map(function(t){
+        var sc = STATUS_COLORS[t.status || 'escout'] || STATUS_COLORS.escout;
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: t.points.map(function(p){
+              var lat = Array.isArray(p) ? p[0] : p.lat;
+              var lng = Array.isArray(p) ? p[1] : p.lng;
+              return [lng, lat];
+            })
+          },
+          properties: { id: t.id, color: sc.bg }
+        };
+      });
+    src.setData({ type: 'FeatureCollection', features: features });
+    lastTracksSetDataSrcRef = src;
+    console.log('[FieldMap] updateTracksSource: set', features.length, 'features. tracks-line layer present after:', !!map.getLayer('tracks-line'),
+      'in map.getStyle().layers:', map.getStyle().layers.some(function(l){ return l.id === 'tracks-line'; }));
   }
 
   function deleteTrackById(id){
@@ -3996,76 +4221,91 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     editTrackVertices: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
       if (!track) return;
-      map.closePopup();
-      var entry = trackLayersById[track.id];
-      var poly = entry && entry.vis ? entry.vis : entry;
-      var touchPoly = entry && entry.touch ? entry.touch : null;
-      if (!poly) return;
+      if (openTrackPopup){ openTrackPopup.remove(); openTrackPopup = null; }
 
-      var origPoints = track.points.map(function(p){ return Array.isArray(p) ? [p[0],p[1]] : [p.lat,p.lng]; });
       var vertexMarkers = [];
       var midMarkers = [];
+      var sc = STATUS_COLORS[track.status || 'escout'] || STATUS_COLORS.escout;
 
-      var vertIcon = L.divIcon({ className:'', iconSize:[28,28], iconAnchor:[14,14],
-        html:'<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;"></div></div>'});
-      var midIcon = L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
-        html:'<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.9;"></div></div>'});
+      // Hide the saved line for this one track while editing (its live preview below
+      // takes over) — everything else in tracks-source keeps rendering normally.
+      vertexEditingTrackId = track.id;
+      updateTracksSource();
 
-      function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
-      function syncLines(){ var pts=getPts(); poly.setLatLngs(pts); if(touchPoly) touchPoly.setLatLngs(pts); }
+      function vertexIconHtml(){
+        return '<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#5a9bd8;border:2px solid #fff;box-sizing:border-box;"></div></div>';
+      }
+      function midIconHtml(){
+        return '<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #5a9bd8;box-sizing:border-box;opacity:0.9;"></div></div>';
+      }
+
+      function getPts(){ return vertexMarkers.map(function(vm){ var ll = vm.getLngLat(); return [ll.lat, ll.lng]; }); }
+      function syncLine(){
+        var pts = getPts();
+        if (!map.getSource('vertex-edit-preview-source')) return;
+        map.getSource('vertex-edit-preview-source').setData({
+          type: 'FeatureCollection',
+          features: pts.length > 1 ? [{ type:'Feature', geometry:{ type:'LineString', coordinates: pts.map(function(p){ return [p[1], p[0]]; }) }, properties:{} }] : []
+        });
+        if (map.getLayer('vertex-edit-preview-line')) map.setPaintProperty('vertex-edit-preview-line', 'line-color', sc.bg);
+      }
+      vertexEditSyncFn = syncLine;
 
       function rebuildMidMarkers(){
-        midMarkers.forEach(function(x){ map.removeLayer(x); });
+        midMarkers.forEach(function(x){ x.remove(); });
         midMarkers.length = 0;
         for (var i=1; i<vertexMarkers.length; i++){
           (function(idx){
-            var a=vertexMarkers[idx-1].getLatLng(), b=vertexMarkers[idx].getLatLng();
-            var mm = L.marker(L.latLng((a.lat+b.lat)/2,(a.lng+b.lng)/2),
-              {icon:midIcon, zIndexOffset:1500, interactive:true}).addTo(map);
-            mm.on('click', function(e){
-              L.DomEvent.stopPropagation(e);
-              midMarkers.forEach(function(x){ map.removeLayer(x); }); midMarkers.length=0;
-              var mNew = L.marker(mm.getLatLng(), {icon:vertIcon, draggable:true, zIndexOffset:2000}).addTo(map);
-              mNew.on('drag', function(){ syncLines(); rebuildMidMarkers(); });
-              mNew.on('contextmenu', function(e2){
-                L.DomEvent.stopPropagation(e2);
-                if(vertexMarkers.length<=2){ showToast('Need at least 2 points'); return; }
-                vertexMarkers.splice(vertexMarkers.indexOf(mNew),1); map.removeLayer(mNew);
-                syncLines(); rebuildMidMarkers();
-              });
-              vertexMarkers.splice(idx,0,mNew);
-              syncLines(); rebuildMidMarkers();
+            var a = vertexMarkers[idx-1].getLngLat(), b = vertexMarkers[idx].getLngLat();
+            var midLat = (a.lat+b.lat)/2, midLng = (a.lng+b.lng)/2;
+            var el = document.createElement('div');
+            el.innerHTML = midIconHtml();
+            el.style.cursor = 'pointer';
+            var mm = new maplibregl.Marker({ element: el, anchor:'center' }).setLngLat([midLng, midLat]).addTo(map);
+            el.addEventListener('click', function(e){
+              e.stopPropagation();
+              midMarkers.forEach(function(x){ x.remove(); }); midMarkers.length = 0;
+              var mNew = addVertexMarker({ lat: midLat, lng: midLng });
+              vertexMarkers.splice(idx, 0, mNew);
+              syncLine(); rebuildMidMarkers();
             });
             midMarkers.push(mm);
           })(i);
         }
       }
 
-      function addVertex(pt){
-        var ptLat = Array.isArray(pt) ? pt[0] : pt.lat;
-        var ptLng = Array.isArray(pt) ? pt[1] : pt.lng;
-        var m = L.marker([ptLat,ptLng], {icon:vertIcon, draggable:true, zIndexOffset:2000}).addTo(map);
-        m.on('drag', function(){ syncLines(); rebuildMidMarkers(); });
-        m.on('contextmenu', function(e){
-          L.DomEvent.stopPropagation(e);
-          if(vertexMarkers.length<=2){ showToast('Need at least 2 points'); return; }
-          vertexMarkers.splice(vertexMarkers.indexOf(m),1); map.removeLayer(m);
-          syncLines(); rebuildMidMarkers();
+      function addVertexMarker(pt){
+        var lat = Array.isArray(pt) ? pt[0] : pt.lat;
+        var lng = Array.isArray(pt) ? pt[1] : pt.lng;
+        var el = document.createElement('div');
+        el.innerHTML = vertexIconHtml();
+        el.style.cursor = 'grab';
+        var m = new maplibregl.Marker({ element: el, anchor:'center', draggable:true }).setLngLat([lng, lat]).addTo(map);
+        m.on('drag', function(){ syncLine(); rebuildMidMarkers(); });
+        el.addEventListener('contextmenu', function(e){
+          e.preventDefault();
+          e.stopPropagation();
+          if (vertexMarkers.length <= 2){ showToast('Need at least 2 points'); return; }
+          vertexMarkers.splice(vertexMarkers.indexOf(m), 1);
+          m.remove();
+          syncLine(); rebuildMidMarkers();
         });
-        vertexMarkers.push(m);
+        return m;
       }
 
+      function addVertex(pt){ vertexMarkers.push(addVertexMarker(pt)); }
+
       function rebuildVertices(pts){
-        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
-        midMarkers.forEach(function(m){ map.removeLayer(m); });
-        vertexMarkers.length=0; midMarkers.length=0;
+        vertexMarkers.forEach(function(m){ m.remove(); });
+        midMarkers.forEach(function(m){ m.remove(); });
+        vertexMarkers.length = 0; midMarkers.length = 0;
         pts.forEach(function(pt){ addVertex(pt); });
-        syncLines(); rebuildMidMarkers();
+        syncLine(); rebuildMidMarkers();
       }
 
       // Build initial vertices then midpoints
       track.points.forEach(function(pt){ addVertex(pt); });
-      syncLines();
+      syncLine();
       rebuildMidMarkers();
 
       // Bar UI
@@ -4091,7 +4331,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         .then(function(data){
           var line=data.features&&data.features[0]&&data.features[0].geometry&&data.features[0].geometry.coordinates;
           if(!line||line.length<2) throw new Error('no geometry');
-          rebuildVertices(line.map(function(c){ return L.latLng(c[1],c[0]); }));
+          rebuildVertices(line.map(function(c){ return { lat: c[1], lng: c[0] }; }));
           showToast('Snapped · right-click dense vertices to remove');
         }).catch(function(){ showToast("Couldn't snap — check connection or trail proximity",5000); });
         // Reset button after either success or failure
@@ -4099,22 +4339,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
 
       var finish = function(save){
-        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
-        midMarkers.forEach(function(m){ map.removeLayer(m); });
+        vertexMarkers.forEach(function(m){ m.remove(); });
+        midMarkers.forEach(function(m){ m.remove(); });
         if(doneBtn.parentNode) barEl.removeChild(doneBtn);
         if(snapBtn.parentNode) barEl.removeChild(snapBtn);
         barEl.classList.add('hidden'); barEl.style.display='';
+        if (map.getSource('vertex-edit-preview-source')){
+          map.getSource('vertex-edit-preview-source').setData({ type:'FeatureCollection', features: [] });
+        }
+        vertexEditSyncFn = null;
+        vertexEditingTrackId = null;
         if(save){
           track.points = getPts();
           track.distMiles = trackDistanceMiles(track.points);
-          poly.setLatLngs(track.points);
-          if(touchPoly) touchPoly.setLatLngs(track.points);
-          refreshTrackPopup(track);
           scheduleSave(); showToast('Route shape updated');
-        } else {
-          poly.setLatLngs(origPoints);
-          if(touchPoly) touchPoly.setLatLngs(origPoints);
         }
+        updateTracksSource();
         document.getElementById('bearing-bar-cancel').onclick=null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
@@ -4217,12 +4457,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     movePin: function(id){
       var pin = state.pins.find(function(p){ return p.id === id; });
       if (!pin) return;
-      map.closePopup();
       var marker = markersById[pin.id];
       if (!marker) return;
+      // Popups are per-instance in MapLibre (no map.closePopup()) — close this marker's own.
+      var openPopup = marker.getPopup();
+      if (openPopup && openPopup.isOpen()) openPopup.remove();
       // Make draggable
-      marker.dragging.enable();
-      marker.setOpacity(0.7);
+      marker.setDraggable(true);
+      marker.getElement().style.opacity = '0.7';
       // Show confirm bar
       document.getElementById('bearing-bar-text').textContent = 'Drag pin to new location';
       document.getElementById('bearing-bar').classList.remove('hidden');
@@ -4233,20 +4475,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
       var finish = function(save){
-        marker.dragging.disable();
-        marker.setOpacity(1);
+        marker.setDraggable(false);
+        marker.getElement().style.opacity = '1';
         barEl.removeChild(doneBtn);
         document.getElementById('bearing-bar').classList.add('hidden');
         document.getElementById('bearing-bar').style.display = '';
         if (save){
-          var ll = marker.getLatLng();
+          var ll = marker.getLngLat();
           pin.lat = ll.lat; pin.lng = ll.lng;
           pin.state = stateForPoint(ll.lat, ll.lng);
-          marker.setPopupContent(popupHtml(pin));
+          refreshMarkerPopup(pin);
           scheduleSave();
           showToast('Pin location updated');
         } else {
-          marker.setLatLng([pin.lat, pin.lng]);
+          marker.setLngLat([pin.lng, pin.lat]);
         }
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
@@ -4340,9 +4582,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function clearDraw(){
     drawPoints = [];
     snappedPoints = null;
-    drawMarkers.forEach(function(m){ map.removeLayer(m); });
+    drawMarkers.forEach(function(m){ m.remove(); });
     drawMarkers = [];
-    if (drawLine){ map.removeLayer(drawLine); drawLine = null; }
+    redrawDrawLine();
     updateDrawBar();
   }
 
@@ -4361,15 +4603,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function redrawDrawLine(){
-    if (drawLine){ map.removeLayer(drawLine); drawLine = null; }
-    var pts = snappedPoints || drawPoints;
-    if (pts.length > 1){
-      drawLine = L.polyline(pts, { color: snappedPoints ? '#5fa88f' : '#3b8f76', weight:4 }).addTo(map);
-      drawLine.on('click', function(e){
-        L.DomEvent.stopPropagation(e);
-        insertDrawPoint(e.latlng);
-      });
+    if (!map || !map.getSource('draw-preview-source')){
+      console.log('[FieldMap] redrawDrawLine: bailing early — map?', !!map, 'draw-preview-source exists?', !!(map && map.getSource('draw-preview-source')));
+      return;
     }
+    var pts = snappedPoints || drawPoints;
+    var coords = pts.length > 1 ? pts.map(function(p){ return [p.lng, p.lat]; }) : [];
+    var drawSrc = map.getSource('draw-preview-source');
+    drawSrc.setData({
+      type: 'FeatureCollection',
+      features: coords.length ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }] : []
+    });
+    lastDrawPreviewSetDataSrcRef = drawSrc;
+    if (map.getLayer('draw-preview-line')){
+      map.setPaintProperty('draw-preview-line', 'line-color', snappedPoints ? '#5fa88f' : '#3b8f76');
+    }
+    console.log('[FieldMap] redrawDrawLine: drawPoints.length=', drawPoints.length, 'coords.length=', coords.length,
+      'draw-preview-line layer present after:', !!map.getLayer('draw-preview-line'),
+      'in map.getStyle().layers:', map.getStyle().layers.some(function(l){ return l.id === 'draw-preview-line'; }));
   }
 
   function distToSegmentSquared(p, a, b){
@@ -4385,56 +4636,67 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (idx === -1) return;
     drawPoints.splice(idx, 1);
     drawMarkers.splice(idx, 1);
-    map.removeLayer(marker);
+    marker.remove();
     snappedPoints = null;
     redrawDrawLine();
     updateDrawBar();
   }
 
   function createDrawMarker(latlng){
-    var icon = L.divIcon({
-      className: 'draw-point-icon',
-      html: '<div style="width:13px;height:13px;border-radius:50%;background:#3b8f76;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);cursor:context-menu;" title="Tap or right-click to delete this point"></div>',
-      iconSize: [13,13], iconAnchor: [6,6]
-    });
-    var marker = L.marker(latlng, { icon: icon, draggable: true }).addTo(map);
+    var el = document.createElement('div');
+    el.className = 'draw-point-marker';
+    el.style.cssText = 'cursor:context-menu;';
+    el.title = 'Tap or right-click to delete this point';
+    el.innerHTML = '<div style="width:13px;height:13px;border-radius:50%;background:#3b8f76;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>';
 
-    // Tap-friendly delete popup (works on mobile where right-click isn't available)
     var popupEl = document.createElement('div');
     popupEl.style.textAlign = 'center';
     var delBtn = document.createElement('button');
     delBtn.className = 'btn btn-small btn-danger';
     delBtn.textContent = 'Delete this point';
     delBtn.addEventListener('click', function(){
+      var openPopup = marker.getPopup();
+      if (openPopup && openPopup.isOpen()) openPopup.remove();
       deleteDrawMarker(marker);
-      map.closePopup();
     });
     popupEl.appendChild(delBtn);
-    marker.bindPopup(popupEl, { closeButton:false, className:'draw-point-popup', offset:[0,-4] });
 
-    marker.on('dragstart', function(){ marker.closePopup(); });
+    var popup = new maplibregl.Popup({ closeButton:false, offset:8, className:'pin-popup draw-point-popup' })
+      .setDOMContent(popupEl);
+
+    var marker = new maplibregl.Marker({ element: el, anchor:'center', draggable:true })
+      .setLngLat([latlng.lng, latlng.lat])
+      .setPopup(popup)
+      .addTo(map);
+
+    el.addEventListener('contextmenu', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      deleteDrawMarker(marker);
+    });
+    marker.on('dragstart', function(){
+      var openPopup = marker.getPopup();
+      if (openPopup && openPopup.isOpen()) openPopup.remove();
+    });
     marker.on('drag', function(){
       var idx = drawMarkers.indexOf(marker);
       if (idx === -1) return;
-      drawPoints[idx] = marker.getLatLng();
+      var ll = marker.getLngLat();
+      drawPoints[idx] = { lat: ll.lat, lng: ll.lng };
       snappedPoints = null;
       redrawDrawLine();
       updateDrawBar();
-    });
-    marker.on('contextmenu', function(e){
-      L.DomEvent.stopPropagation(e);
-      deleteDrawMarker(marker);
     });
     return marker;
   }
 
   function insertDrawPoint(latlng){
     if (drawPoints.length < 2) return;
-    var clickPt = map.latLngToContainerPoint(latlng);
+    var clickPt = map.project([latlng.lng, latlng.lat]);
     var bestIdx = 0, bestDist = Infinity;
     for (var i=0;i<drawPoints.length-1;i++){
-      var a = map.latLngToContainerPoint(drawPoints[i]);
-      var b = map.latLngToContainerPoint(drawPoints[i+1]);
+      var a = map.project([drawPoints[i].lng, drawPoints[i].lat]);
+      var b = map.project([drawPoints[i+1].lng, drawPoints[i+1].lat]);
       var d = distToSegmentSquared(clickPt, a, b);
       if (d < bestDist){ bestDist = d; bestIdx = i; }
     }
@@ -4449,7 +4711,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (drawPoints.length === 0) return;
     drawPoints.pop();
     var m = drawMarkers.pop();
-    if (m) map.removeLayer(m);
+    if (m) m.remove();
     snappedPoints = null;
     redrawDrawLine();
     updateDrawBar();
@@ -4477,7 +4739,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }).then(function(data){
       var line = data.features && data.features[0] && data.features[0].geometry && data.features[0].geometry.coordinates;
       if (!line || line.length < 2) throw new Error('no route geometry returned');
-      snappedPoints = line.map(function(c){ return L.latLng(c[1], c[0]); });
+      snappedPoints = line.map(function(c){ return { lat: c[1], lng: c[0] }; });
       redrawDrawLine();
       updateDrawBar();
       showToast('Snapped to trail');
@@ -5096,8 +5358,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     showToast('Getting your location…', 3000);
     navigator.geolocation.getCurrentPosition(function(pos){
-      var latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
-      map.flyTo(latlng, Math.max(map.getZoom(), 16));
+      var latlng = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+      map.flyTo({ center: latlng, zoom: Math.max(map.getZoom(), 16) });
       pendingLatLng = latlng;
       setTimeout(function(){
         openPinModal(null, latlng);
@@ -5533,14 +5795,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         map.flyTo({ center: [d.lng, d.lat], zoom: Math.max(map.getZoom(), 14) });
         setTimeout(function(){ if (markersById[d.id]) markersById[d.id].openPopup(); }, 350);
       } else if (it.type === 'track'){
-        var tEntry = trackLayersById[d.id];
-        var visPoly = tEntry && tEntry.vis ? tEntry.vis : tEntry;
-        var touchPoly2 = tEntry && tEntry.touch ? tEntry.touch : null;
-        if (visPoly){
-          if (!map.hasLayer(visPoly)) visPoly.addTo(map);
-          if (touchPoly2 && !map.hasLayer(touchPoly2)) touchPoly2.addTo(map);
-          map.flyToBounds(visPoly.getBounds(), { padding:[40,40] });
-          setTimeout(function(){ if (touchPoly2) touchPoly2.openPopup(); else visPoly.openPopup(); }, 350);
+        if (d.points && d.points.length){
+          var tBounds = d.points.reduce(function(b, p){
+            var lat = Array.isArray(p) ? p[0] : p.lat, lng = Array.isArray(p) ? p[1] : p.lng;
+            return [Math.min(b[0], lng), Math.min(b[1], lat), Math.max(b[2], lng), Math.max(b[3], lat)];
+          }, [Infinity, Infinity, -Infinity, -Infinity]);
+          map.fitBounds([[tBounds[0], tBounds[1]], [tBounds[2], tBounds[3]]], { padding: 40 });
+          var midPt = d.points[Math.floor(d.points.length / 2)];
+          var midLatLng = Array.isArray(midPt) ? { lat: midPt[0], lng: midPt[1] } : midPt;
+          setTimeout(function(){ openTrackPopupAt(d, midLatLng); }, 350);
         }
       } else if (it.type === 'polygon'){
         var entry = polygonLayersById[d.id];
@@ -7547,8 +7810,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
-    Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
-    trackLayersById = {};
     Object.keys(polygonLayersById).forEach(function(id){ removePolygonFromMap(id); });
     Object.keys(bearingLayersById).forEach(function(id){ removeBearingFromMap(id); });
     state.pins.forEach(addMarkerForPin);
@@ -8401,7 +8662,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.querySelectorAll('input[name="base-layer"]').forEach(function(radio){
       radio.addEventListener('change', function(){
-        if (this.checked) setMaplibreStyle(this.value);
+        if (this.checked){
+          setMaplibreStyle(this.value);
+          // Close immediately so no separate dismiss click is needed — that click would
+          // otherwise land on the map and, e.g., add a stray point mid-route-draw.
+          document.getElementById('layers-panel').classList.add('hidden');
+        }
       });
     });
 
