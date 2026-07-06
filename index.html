@@ -675,6 +675,12 @@
 </head>
 <body>
 
+<script>
+  if ((function(){ try { return new URLSearchParams(location.search).get('safemode') === '1'; } catch(e){ return false; } })()){
+    document.write('<div style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;text-align:center;padding:8px 12px;font-family:sans-serif;font-weight:700;font-size:13px;">SAFE MODE — cloud sync is disabled. Nothing will upload or download. Export your data, then close this and reload normally.</div>');
+  }
+</script>
+
 <div id="loading-overlay">
   <p>Loading your pins…</p>
 </div>
@@ -1768,11 +1774,14 @@
     return null;
   }
 
+  var SAFE_MODE = (function(){
+    try { return new URLSearchParams(location.search).get('safemode') === '1'; } catch(e){ return false; }
+  })();
   var STORAGE_KEY = 'field-map-state-v1';
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.6';
+  var APP_VERSION = '1.9.7';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -7763,6 +7772,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function scheduleCloudPush(){
+    if (SAFE_MODE) return;
     if (!isSignedIn || !window.FieldMapSync) return;
     clearTimeout(cloudPushTimer);
     cloudPushTimer = setTimeout(function(){
@@ -9090,6 +9100,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   });
 
   onAuthStateChanged(auth, function(user){
+    if (SAFE_MODE){
+      console.warn('[FieldMap] SAFE MODE active — ignoring auth state change, no Firestore reads/writes will occur.');
+      return;
+    }
     if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
     window.FieldMapApp.whenReady(function(){
       if (user){
