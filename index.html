@@ -1628,6 +1628,9 @@
     <label style="margin-bottom:10px;"><span>Set tag for all (optional shortcut)</span>
       <select id="import-bulk-category"></select>
     </label>
+    <label style="margin-bottom:10px;"><span>Set status for all (optional shortcut)</span>
+      <select id="import-bulk-status"></select>
+    </label>
     <label style="margin-bottom:10px;"><span>Assign to trip (optional — applies to all items)</span>
       <input type="text" id="import-trip" list="trip-suggestions" maxlength="60" placeholder="e.g. Nov 2026 quail trip">
     </label>
@@ -1781,7 +1784,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.12';
+  var APP_VERSION = '1.9.13';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3986,11 +3989,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     selectEl.appendChild(newOpt);
   }
 
+  function populateStatusSelect(selectEl){
+    selectEl.innerHTML = '';
+    Object.keys(STATUS_COLORS).forEach(function(key){
+      var opt = document.createElement('option');
+      opt.value = key; opt.textContent = STATUS_COLORS[key].label;
+      selectEl.appendChild(opt);
+    });
+    selectEl.value = 'escout';
+  }
+
   function handleImportTagSelectChange(e){
     var sel = e.target;
     if (sel.value !== '__new__') return;
     var id = quickAddTag(prompt('New tag name:'));
-    document.querySelectorAll('#import-item-list select, #import-track-list select').forEach(function(s){
+    document.querySelectorAll('#import-item-list select.import-row-category, #import-track-list select.import-row-category').forEach(function(s){
       var keep = (s === sel) ? (id || 'uncategorized') : s.value;
       populateCategorySelect(s);
       s.value = keep;
@@ -6574,10 +6587,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var dupeCount = result.pins.filter(isDuplicatePin).length + result.tracks.filter(isDuplicateTrack).length;
       var dupePart = dupeCount > 0 ? ' (' + dupeCount + ' possible duplicate' + (dupeCount===1?'':'s') + ' flagged)' : '';
       document.getElementById('import-summary').textContent =
-        'Found ' + parts.join(' and ') + ' in ' + file.name + '.' + dupePart + ' Each defaults to Uncategorized.';
+        'Found ' + parts.join(' and ') + ' in ' + file.name + '.' + dupePart + ' Each defaults to Uncategorized / E-Scout only.';
       renderImportItemList();
       renderImportTrackList();
       document.getElementById('import-bulk-category').value = '';
+      document.getElementById('import-bulk-status').value = '';
       document.getElementById('import-pins-section').classList.toggle('hidden', result.pins.length === 0);
       document.getElementById('import-tracks-section').classList.toggle('hidden', result.tracks.length === 0);
       document.getElementById('import-modal').classList.remove('hidden');
@@ -6650,6 +6664,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     info.appendChild(nameEl); info.appendChild(metaEl);
     var sel = document.createElement('select');
+    sel.className = 'import-row-category';
     populateCategorySelect(sel);
     sel.value = 'uncategorized';
     if (!isTrack && item.suggestedTag){
@@ -6661,7 +6676,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     sel.addEventListener('change', handleImportTagSelectChange);
     sel.addEventListener('click', function(){ lastClickRef.idx = idx; });
-    row.appendChild(info); row.appendChild(sel);
+    var statusSel = document.createElement('select');
+    statusSel.className = 'import-row-status';
+    populateStatusSelect(statusSel);
+    row.appendChild(info); row.appendChild(sel); row.appendChild(statusSel);
     return row;
   }
 
@@ -6695,12 +6713,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var row = pinRows[i];
       var cb = row && row.querySelector('.import-row-include');
       if (cb && !cb.checked){ skipped++; return; }
-      var sel = row && row.querySelector('select');
+      var sel = row && row.querySelector('.import-row-category');
       var tagId = (sel && sel.value) || 'uncategorized';
+      var statusSel = row && row.querySelector('.import-row-status');
+      var status = (statusSel && statusSel.value) || 'escout';
       var pin = {
         id: uid(), lat: p.lat, lng: p.lng,
-        name: p.name || 'Imported point', tags: [tagId],
-        notes: p.notes || '', created: p.createdAt || Date.now(), source: 'imported',
+        name: p.name || 'Imported point', tags: [tagId], status: status,
+        notes: p.notes || '', created: p.createdAt || Date.now(), updatedAt: Date.now(), source: 'imported',
         trip: importTrip, state: stateForPoint(p.lat, p.lng)
       };
       state.pins.push(pin);
@@ -6712,11 +6732,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var row = trackRows[i];
       var cb = row && row.querySelector('.import-row-include');
       if (cb && !cb.checked){ skipped++; return; }
-      var sel = row && row.querySelector('select');
+      var sel = row && row.querySelector('.import-row-category');
       var tagId = (sel && sel.value) || 'uncategorized';
+      var statusSel = row && row.querySelector('.import-row-status');
+      var status = (statusSel && statusSel.value) || 'escout';
       var track = {
-        id: uid(), name: t.name || 'Imported track', points: t.points, tags: [tagId],
-        notes: t.notes || '', created: t.createdAt || Date.now(), source: 'imported',
+        id: uid(), name: t.name || 'Imported track', points: t.points, tags: [tagId], status: status,
+        notes: t.notes || '', created: t.createdAt || Date.now(), updatedAt: Date.now(), source: 'imported',
         distMiles: trackDistanceMiles(t.points),
         trip: importTrip, state: stateForPoint(t.points[0][0], t.points[0][1])
       };
@@ -8750,7 +8772,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     bulkSel.addEventListener('change', function(){
       var val = this.value;
-      document.querySelectorAll('#import-item-list select, #import-track-list select').forEach(function(s){ s.value = val; });
+      document.querySelectorAll('#import-item-list select.import-row-category, #import-track-list select.import-row-category').forEach(function(s){ s.value = val; });
+    });
+
+    var bulkStatusSel = document.getElementById('import-bulk-status');
+    bulkStatusSel.innerHTML = '<option value="" disabled selected>Choose a status…</option>';
+    Object.keys(STATUS_COLORS).forEach(function(key){
+      var opt = document.createElement('option');
+      opt.value = key; opt.textContent = STATUS_COLORS[key].label;
+      bulkStatusSel.appendChild(opt);
+    });
+    bulkStatusSel.addEventListener('change', function(){
+      var val = this.value;
+      document.querySelectorAll('#import-item-list select.import-row-status, #import-track-list select.import-row-status').forEach(function(s){ s.value = val; });
     });
 
     // export-btn removed from sidebar — export is now in Tools sheet
