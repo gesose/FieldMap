@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.10';
+  var APP_VERSION = '1.9.11';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -7864,7 +7864,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     showToast: showToast,
     whenReady: whenAppReady,
     markInitialSyncComplete: function(){ initialSyncComplete = true; },
-    resetInitialSyncComplete: function(){ initialSyncComplete = false; }
+    resetInitialSyncComplete: function(){ initialSyncComplete = false; },
+    isSafeMode: function(){ return SAFE_MODE; }
   };
 
   // ---------- Persistence ----------
@@ -9134,7 +9135,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   });
 
   onAuthStateChanged(auth, function(user){
-    if (SAFE_MODE){
+    if (window.FieldMapApp.isSafeMode()){
       console.warn('[FieldMap] SAFE MODE active — ignoring auth state change, no Firestore reads/writes will occur.');
       return;
     }
