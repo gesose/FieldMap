@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.11';
+  var APP_VERSION = '1.9.12';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -9198,6 +9198,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // All state is in localStorage/Firestore so this is safe and instant.
         navigator.serviceWorker.addEventListener('controllerchange', function(){
           window.location.reload();
+        });
+        // Actively ask the browser to check for a new version right now,
+        // rather than relying on its own implicit check timing — that
+        // implicit check can be throttled/cached in a way that makes a
+        // plain reload inconsistently pick up updates. This is what a hard
+        // reload was effectively forcing as a side effect.
+        reg.update();
+        // Also check again any time the app comes back to the foreground —
+        // useful since this app often sits backgrounded for long stretches
+        // in the field.
+        document.addEventListener('visibilitychange', function(){
+          if (document.visibilityState === 'visible') reg.update();
         });
       }).catch(function(err){
         console.warn('Service worker registration failed:', err);
