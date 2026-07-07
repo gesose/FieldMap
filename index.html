@@ -1781,7 +1781,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.9';
+  var APP_VERSION = '1.9.10';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -9129,6 +9129,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }).catch(function(err){
     if (err && err.code && err.code !== 'auth/no-current-user'){
       console.warn('[FieldMap] Redirect result error:', err.code, err.message);
+      window.FieldMapApp && window.FieldMapApp.showToast('Sign-in redirect error — ' + err.code + '. Try email sign-in instead.', 6000);
     }
   });
 
@@ -9158,19 +9159,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Popup is the primary sign-in path — cleaner UX, no full-page redirect,
       // and avoids the IndexedDB contention between signInWithRedirect and
       // Firestore's persistentLocalCache which caused sign-ins to silently fail.
-      // Fall back to redirect if the browser blocks the popup.
+      // Fall back to redirect on ANY popup failure — Safari's popup handling
+      // doesn't always report 'auth/popup-blocked' even when it's effectively
+      // blocking/closing the popup itself, so treating only that one code as
+      // "try redirect" left real failures with no fallback and no feedback.
       signInWithPopup(auth, provider).catch(function(err){
         if (!err) return;
-        if (err.code === 'auth/popup-blocked'){
-          console.log('[FieldMap] Popup blocked — falling back to redirect');
-          signInWithRedirect(auth, provider).catch(function(e){
-            console.error('[FieldMap] Redirect sign-in also failed:', e);
-            window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — check that popups are not blocked');
-          });
-        } else if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request'){
-          console.error('[FieldMap] Sign-in error:', err.code, err.message);
-          window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — ' + (err.message || 'please try again'));
-        }
+        console.warn('[FieldMap] Popup sign-in failed:', err.code, err.message);
+        window.FieldMapApp && window.FieldMapApp.showToast('Popup sign-in unavailable (' + (err.code || 'unknown') + ') — trying redirect…', 3000);
+        signInWithRedirect(auth, provider).catch(function(e){
+          console.error('[FieldMap] Redirect sign-in also failed:', e);
+          window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — ' + (e.code || e.message || 'unknown error') + '. Try email sign-in instead.', 6000);
+        });
       });
     },
     signOut: function(){
