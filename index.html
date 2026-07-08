@@ -1828,7 +1828,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.16';
+  var APP_VERSION = '1.9.17';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -5130,6 +5130,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
       wrap.appendChild(chip);
     });
+    var addChip = document.createElement('div');
+    addChip.className = 'chip';
+    addChip.dataset.newTag = '1';
+    addChip.style.cssText = 'border-style:solid;border-color:var(--accent);color:var(--accent);background:var(--bg);';
+    addChip.textContent = '+ New';
+    addChip.addEventListener('click', function(){
+      var current = [];
+      document.querySelectorAll('#polygon-tags-row .chip.active').forEach(function(c){ current.push(c.dataset.tagId); });
+      var id = quickAddTag(prompt('New tag name:'));
+      if (id){ current.push(id); renderPolygonTagChips(current); }
+    });
+    wrap.appendChild(addChip);
     applyChipCollapse('polygon-tags-row');
     renderFavoriteTagRow('polygon-fav-row', 'polygon-tags-row');
   }
@@ -5290,6 +5302,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
       wrap.appendChild(chip);
     });
+    var addChip = document.createElement('div');
+    addChip.className = 'chip';
+    addChip.dataset.newTag = '1';
+    addChip.style.cssText = 'border-style:solid;border-color:var(--accent);color:var(--accent);background:var(--bg);';
+    addChip.textContent = '+ New';
+    addChip.addEventListener('click', function(){
+      var current = [];
+      document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ current.push(c.dataset.tagId); });
+      var id = quickAddTag(prompt('New tag name:'));
+      if (id){ current.push(id); renderBearingTagChips(current); }
+    });
+    wrap.appendChild(addChip);
     applyChipCollapse('bearing-tags-row');
     renderFavoriteTagRow('bearing-fav-row', 'bearing-tags-row');
   }
