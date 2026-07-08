@@ -1828,7 +1828,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.15';
+  var APP_VERSION = '1.9.16';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -4098,13 +4098,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function computeFavoriteTags(n){
+    var WINDOW = 50; // rank by frequency within your most recently saved items,
+                      // not all-time — lets favorites drift with what you're
+                      // actually focused on lately without shifting on every
+                      // single save the way pure "most recent" would.
+    var all = []
+      .concat(state.pins || [])
+      .concat(state.tracks || [])
+      .concat(state.polygons || [])
+      .concat(state.bearings || []);
+    var recent = all
+      .slice()
+      .sort(function(a,b){ return (b.created||0) - (a.created||0); })
+      .slice(0, WINDOW);
     var counts = {};
-    function tally(items){
-      (items||[]).forEach(function(item){
-        (item.tags||[]).forEach(function(tagId){ counts[tagId] = (counts[tagId]||0) + 1; });
-      });
-    }
-    tally(state.pins); tally(state.tracks); tally(state.polygons); tally(state.bearings);
+    recent.forEach(function(item){
+      (item.tags||[]).forEach(function(tagId){ counts[tagId] = (counts[tagId]||0) + 1; });
+    });
     return Object.keys(counts)
       .sort(function(a,b){ return counts[b] - counts[a]; })
       .slice(0, n || 5);
