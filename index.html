@@ -695,6 +695,12 @@
 </head>
 <body>
 
+<script>
+  if ((function(){ try { return new URLSearchParams(location.search).get('safemode') === '1'; } catch(e){ return false; } })()){
+    document.write('<div style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;text-align:center;padding:8px 12px;font-family:sans-serif;font-weight:700;font-size:13px;">SAFE MODE — cloud sync is disabled. Nothing will upload or download. Export your data, then close this and reload normally.</div>');
+  }
+</script>
+
 <div id="loading-overlay">
   <p>Loading your pins…</p>
 </div>
@@ -1770,11 +1776,14 @@
     return null;
   }
 
+  var SAFE_MODE = (function(){
+    try { return new URLSearchParams(location.search).get('safemode') === '1'; } catch(e){ return false; }
+  })();
   var STORAGE_KEY = 'field-map-state-v1';
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.0.0';
+  var APP_VERSION = '2.0.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3973,6 +3982,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var track = state.tracks.find(function(t){ return t.id === editingTrackId; });
       track.name = name; track.tags = tags; track.notes = notes; track.trip = trip;
       track.status = selectedTrackStatus;
+      track.updatedAt = Date.now();
       if (dateVal) track.created = dateVal;
       if (track.distMiles === undefined) track.distMiles = trackDistanceMiles(track.points);
       // Map rendering of tracks is still Leaflet-based (Session 3 scope) and can throw —
@@ -3983,7 +3993,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var newTrack = {
         id: uid(), name: name, points: pts, tags: tags, notes: notes, trip: trip,
         status: selectedTrackStatus,
-        created: dateVal || Date.now(), source: 'drawn',
+        created: dateVal || Date.now(), updatedAt: Date.now(), source: 'drawn',
         distMiles: trackDistanceMiles(pts),
         state: stateForPoint(pts[0][0], pts[0][1])
       };
@@ -4128,13 +4138,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (editingPinId){
       var pin = state.pins.find(function(p){ return p.id === editingPinId; });
       pin.name = name; pin.tags = tags; pin.notes = notes; pin.trip = trip; pin.status = status;
+      pin.updatedAt = Date.now();
       if (dateVal) pin.created = dateVal;
       refreshMarkerPopup(pin);
     } else {
       var newPin = {
         id: uid(), lat: pendingLatLng.lat, lng: pendingLatLng.lng,
         name: name, tags: tags, notes: notes, trip: trip, status: status,
-        created: dateVal || Date.now(), source: 'manual',
+        created: dateVal || Date.now(), updatedAt: Date.now(), source: 'manual',
         state: stateForPoint(pendingLatLng.lat, pendingLatLng.lng)
       };
       state.pins.push(newPin);
@@ -4352,6 +4363,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if(save){
           track.points = getPts();
           track.distMiles = trackDistanceMiles(track.points);
+          track.updatedAt = Date.now();
           scheduleSave(); showToast('Route shape updated');
         }
         updateTracksSource();
@@ -4443,6 +4455,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         barEl.classList.add('hidden'); barEl.style.display = '';
         if (save){
           polygon.points = getPts();
+          polygon.updatedAt = Date.now();
           addPolygonToMap(polygon);
           scheduleSave(); showToast('Area shape updated');
         } else {
@@ -4484,6 +4497,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var ll = marker.getLngLat();
           pin.lat = ll.lat; pin.lng = ll.lng;
           pin.state = stateForPoint(ll.lat, ll.lng);
+          pin.updatedAt = Date.now();
           refreshMarkerPopup(pin);
           scheduleSave();
           showToast('Pin location updated');
@@ -5035,6 +5049,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (poly){
         poly.name = name; poly.status = selectedPolygonStatus; poly.tags = tags;
         poly.trip = trip; poly.notes = notes;
+        poly.updatedAt = Date.now();
         if (dateVal) poly.created = dateVal;
         // Map rendering of areas is still Leaflet-based (Session 3 scope) and can throw —
         // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
@@ -5047,7 +5062,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         points: pendingPolygonPoints || [],
         status: selectedPolygonStatus, fillOpacity: 0.18,
         tags: tags, trip: trip, notes: notes,
-        created: dateVal || Date.now(),
+        created: dateVal || Date.now(), updatedAt: Date.now(),
         state: firstPt ? stateForPoint(firstPt.lat, firstPt.lng) : ''
       };
       state.polygons.push(newPoly);
@@ -5242,6 +5257,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
       if (b){
         b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus; b.tags = tags;
+        b.updatedAt = Date.now();
         if (dateVal) b.created = dateVal;
         // Map rendering of bearings is still Leaflet-based (Session 3 scope) and can throw —
         // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
@@ -5254,7 +5270,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         targetLat: +modal.dataset.targetLat, targetLng: +modal.dataset.targetLng,
         bearingDeg: +modal.dataset.bearingDeg, distMiles: +modal.dataset.distMiles,
         status: selectedBearingStatus, tags: tags, notes: notes, trip: trip,
-        created: dateVal || Date.now()
+        created: dateVal || Date.now(), updatedAt: Date.now()
       };
       state.bearings.push(newB);
       try { addBearingToMap(newB); } catch(e){ console.error('[FieldMap] addBearingToMap failed:', e); }
@@ -6027,6 +6043,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
       if (trip) item.trip = trip;
       if (dateVal) item.created = dateVal;
+      item.updatedAt = Date.now();
     }
 
     pinIds.forEach(function(id){
@@ -7772,6 +7789,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // SDK). The two communicate through this small bridge object on window.
   var cloudPushTimer = null;
   var isSignedIn = false;
+  var initialSyncComplete = false; // guards against pushing a not-yet-merged local state during the brief window while initial sync (in the Firebase module) is still in flight
   var appIsReady = false;
   var appReadyCallbacks = [];
 
@@ -7780,7 +7798,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function scheduleCloudPush(){
-    if (!isSignedIn || !window.FieldMapSync) return;
+    if (SAFE_MODE) return;
+    if (!isSignedIn || !window.FieldMapSync || !initialSyncComplete) return;
     clearTimeout(cloudPushTimer);
     cloudPushTimer = setTimeout(function(){
       window.FieldMapSync.pushNow(getSyncableState());
@@ -7858,7 +7877,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateAccountUI: updateAccountUI,
     updateSyncStatusUI: updateSyncStatusUI,
     showToast: showToast,
-    whenReady: whenAppReady
+    whenReady: whenAppReady,
+    markInitialSyncComplete: function(){ initialSyncComplete = true; },
+    resetInitialSyncComplete: function(){ initialSyncComplete = false; },
+    isSafeMode: function(){ return SAFE_MODE; }
   };
 
   // ---------- Persistence ----------
@@ -9003,7 +9025,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var byId = {};
       (cloudArr || []).forEach(function(item){ byId[item.id] = item; });
       (localArr || []).forEach(function(item){
-        if (!byId[item.id] || localNewer) byId[item.id] = item;
+        var existing = byId[item.id];
+        if (!existing){ byId[item.id] = item; return; } // unique to local — always kept
+        // Item exists on both sides. Prefer per-item timestamps when both
+        // sides have one — this is the correct, precise comparison. Fall
+        // back to the whole-session timestamp only for older items saved
+        // before this field existed.
+        if (item.updatedAt != null && existing.updatedAt != null){
+          if (item.updatedAt >= existing.updatedAt) byId[item.id] = item;
+        } else if (localNewer){
+          byId[item.id] = item;
+        }
       });
       return Object.keys(byId)
         .filter(function(id){ return !tombstones[id]; })
@@ -9029,6 +9061,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!snap.exists()){
         return setDoc(ref, serializeForFirestore(local)).then(function(){
           window.FieldMapApp.updateSyncStatusUI('Synced', null);
+          window.FieldMapApp.markInitialSyncComplete();
         });
       }
       var cloud = snap.data();
@@ -9038,6 +9071,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         window.FieldMapApp.applyMergedState(merged);
         applyingRemote = false;
         window.FieldMapApp.updateSyncStatusUI('Synced', null);
+        window.FieldMapApp.markInitialSyncComplete();
       });
     }).catch(function(err){
       console.error('Initial sync failed', err);
@@ -9054,14 +9088,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var local = window.FieldMapApp.getSyncableState();
       if ((cloud.updatedAtMs || 0) <= (local.lastLocalEditAt || 0)) return;
 
+      // CRITICAL: never apply raw cloud data directly. Always merge with
+      // whatever's still sitting in local state first — a device that was
+      // offline (or just hasn't pushed yet) may have items that exist
+      // nowhere else. A raw overwrite here would silently discard them.
+      var merged = mergeStates(local, cloud);
       applyingRemote = true;
-      window.FieldMapApp.applyMergedState({
-        pins: cloud.pins, tracks: cloud.tracks, tags: cloud.tags,
-        polygons: cloud.polygons || [],
-        bearings: cloud.bearings || [],
-        tombstones: cloud.tombstones, lastLocalEditAt: cloud.updatedAtMs
+      setDoc(ref, serializeForFirestore(merged)).then(function(){
+        window.FieldMapApp.applyMergedState(merged);
+        applyingRemote = false;
+      }).catch(function(err){
+        console.error('Live sync merge-push failed', err);
+        // Still apply the merge locally even if writing it back to the
+        // cloud failed — this device shouldn't lose its own merge result,
+        // and the local copy stays the safe, complete union either way.
+        window.FieldMapApp.applyMergedState(merged);
+        applyingRemote = false;
       });
-      applyingRemote = false;
     }, function(err){
       console.error('Live sync listener error', err);
       window.FieldMapApp.updateSyncStatusUI('Sync error', 'error');
@@ -9092,11 +9135,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }).catch(function(err){
     if (err && err.code && err.code !== 'auth/no-current-user'){
       console.warn('[FieldMap] Redirect result error:', err.code, err.message);
+      window.FieldMapApp && window.FieldMapApp.showToast('Sign-in redirect error — ' + err.code + '. Try email sign-in instead.', 6000);
     }
   });
 
   onAuthStateChanged(auth, function(user){
+    if (window.FieldMapApp.isSafeMode()){
+      console.warn('[FieldMap] SAFE MODE active — ignoring auth state change, no Firestore reads/writes will occur.');
+      return;
+    }
     if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
+    window.FieldMapApp.resetInitialSyncComplete();
     window.FieldMapApp.whenReady(function(){
       if (user){
         currentUid = user.uid;
@@ -9116,19 +9165,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Popup is the primary sign-in path — cleaner UX, no full-page redirect,
       // and avoids the IndexedDB contention between signInWithRedirect and
       // Firestore's persistentLocalCache which caused sign-ins to silently fail.
-      // Fall back to redirect if the browser blocks the popup.
+      // Fall back to redirect on ANY popup failure — Safari's popup handling
+      // doesn't always report 'auth/popup-blocked' even when it's effectively
+      // blocking/closing the popup itself, so treating only that one code as
+      // "try redirect" left real failures with no fallback and no feedback.
       signInWithPopup(auth, provider).catch(function(err){
         if (!err) return;
-        if (err.code === 'auth/popup-blocked'){
-          console.log('[FieldMap] Popup blocked — falling back to redirect');
-          signInWithRedirect(auth, provider).catch(function(e){
-            console.error('[FieldMap] Redirect sign-in also failed:', e);
-            window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — check that popups are not blocked');
-          });
-        } else if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request'){
-          console.error('[FieldMap] Sign-in error:', err.code, err.message);
-          window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — ' + (err.message || 'please try again'));
-        }
+        console.warn('[FieldMap] Popup sign-in failed:', err.code, err.message);
+        window.FieldMapApp && window.FieldMapApp.showToast('Popup sign-in unavailable (' + (err.code || 'unknown') + ') — trying redirect…', 3000);
+        signInWithRedirect(auth, provider).catch(function(e){
+          console.error('[FieldMap] Redirect sign-in also failed:', e);
+          window.FieldMapApp && window.FieldMapApp.showToast('Sign-in failed — ' + (e.code || e.message || 'unknown error') + '. Try email sign-in instead.', 6000);
+        });
       });
     },
     signOut: function(){
@@ -9155,6 +9203,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // All state is in localStorage/Firestore so this is safe and instant.
         navigator.serviceWorker.addEventListener('controllerchange', function(){
           window.location.reload();
+        });
+        // Actively ask the browser to check for a new version right now,
+        // rather than relying on its own implicit check timing — that
+        // implicit check can be throttled/cached in a way that makes a
+        // plain reload inconsistently pick up updates.
+        reg.update();
+        // Also check again any time the app comes back to the foreground —
+        // useful since this app often sits backgrounded for long stretches
+        // in the field.
+        document.addEventListener('visibilitychange', function(){
+          if (document.visibilityState === 'visible') reg.update();
         });
       }).catch(function(err){
         console.warn('Service worker registration failed:', err);
