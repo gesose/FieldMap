@@ -1419,15 +1419,26 @@
 <!-- Pin add/edit modal -->
 <div class="modal-overlay hidden" id="pin-modal">
   <div class="modal">
-    <h2 id="pin-modal-title">Add pin</h2>
-    <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h2 id="pin-modal-title" style="margin:0;">Add pin</h2>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="pin-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="pin-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Quick category</div>
+      <div id="pin-fav-row" style="display:flex;gap:6px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Status</div>
       <div id="pin-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="pin-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <div style="border-top:1px solid var(--border);margin-bottom:14px;"></div>
+    <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category (full list)</div>
       <div class="chip-row" id="pin-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1445,15 +1456,26 @@
 <!-- Track/route edit modal -->
 <div class="modal-overlay hidden" id="track-modal">
   <div class="modal">
-    <h2 id="track-modal-title">Save route</h2>
-    <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h2 id="track-modal-title" style="margin:0;">Save route</h2>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="track-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="track-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Quick category</div>
+      <div id="track-fav-row" style="display:flex;gap:6px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Status</div>
       <div id="track-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="track-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <div style="border-top:1px solid var(--border);margin-bottom:14px;"></div>
+    <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category (full list)</div>
       <div class="chip-row" id="track-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="track-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1471,15 +1493,26 @@
 <!-- Polygon/area edit modal -->
 <div class="modal-overlay hidden" id="polygon-modal">
   <div class="modal">
-    <h2 id="polygon-modal-title">New area</h2>
-    <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h2 id="polygon-modal-title" style="margin:0;">New area</h2>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="polygon-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="polygon-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Quick category</div>
+      <div id="polygon-fav-row" style="display:flex;gap:6px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Status</div>
       <div id="polygon-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="polygon-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <div style="border-top:1px solid var(--border);margin-bottom:14px;"></div>
+    <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category (full list)</div>
       <div class="chip-row" id="polygon-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
@@ -1497,15 +1530,26 @@
 <!-- Bearing modal -->
 <div class="modal-overlay hidden" id="bearing-modal">
   <div class="modal">
-    <h2 id="bearing-modal-title">Save bearing</h2>
-    <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h2 id="bearing-modal-title" style="margin:0;">Save bearing</h2>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="bearing-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="bearing-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Quick category</div>
+      <div id="bearing-fav-row" style="display:flex;gap:6px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Status</div>
       <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <div style="border-top:1px solid var(--border);margin-bottom:14px;"></div>
+    <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category (full list)</div>
       <div class="chip-row" id="bearing-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1784,7 +1828,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.13';
+  var APP_VERSION = '1.9.14';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -1926,9 +1970,8 @@
     escout:    { bg:'#8A8F8C', label:'E-Scout only' },
     verify:    { bg:'#F28C28', label:'Needs verification' },
     confirmed: { bg:'#3A8F45', label:'Confirmed' },
-    repeat:    { bg:'#1F5E32', label:'Repeat producer' },
-    favorite:  { bg:'#7B61FF', label:'Favorite / Priority' },
-    issue:     { bg:'#D64545', label:'Issue / Avoid' }
+    favorite:  { bg:'#7B61FF', label:'Favorite' },
+    issue:     { bg:'#D64545', label:'Avoid' }
   };
 
   // Tag → icon key mapping
@@ -3879,6 +3922,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     var addChip = document.createElement('div');
     addChip.className = 'chip';
+    addChip.dataset.newTag = '1';
     addChip.style.borderStyle = 'dashed';
     addChip.textContent = '+ New';
     addChip.addEventListener('click', function(){
@@ -3887,6 +3931,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (id){ current.push(id); renderTrackTagChips(current); }
     });
     wrap.appendChild(addChip);
+    applyChipCollapse('track-tags-row');
+    renderFavoriteTagRow('track-fav-row', 'track-tags-row');
   }
 
   function selectedTrackTagIds(){
@@ -3989,6 +4035,81 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     selectEl.appendChild(newOpt);
   }
 
+  function renderFavoriteTagRow(favRowId, fullRowId){
+    var favRow = document.getElementById(favRowId);
+    if (!favRow) return;
+    favRow.innerHTML = '';
+    computeFavoriteTags(5).forEach(function(tagId){
+      var tag = tagById(tagId);
+      if (!tag) return;
+      var chip = document.createElement('div');
+      chip.className = 'chip fav-chip';
+      chip.dataset.tagId = tagId;
+      chip.style.cssText = 'flex:1;min-width:0;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      chip.textContent = tag.label;
+      var syncActive = function(){
+        var full = document.querySelector('#' + fullRowId + ' .chip[data-tag-id="' + tagId + '"]');
+        var isActive = !!(full && full.classList.contains('active'));
+        chip.classList.toggle('active', isActive);
+        chip.style.background = isActive ? tag.color : 'var(--bg)';
+        chip.style.borderColor = isActive ? tag.color : 'var(--border)';
+      };
+      chip.addEventListener('click', function(){
+        var full = document.querySelector('#' + fullRowId + ' .chip[data-tag-id="' + tagId + '"]');
+        if (full) full.click();
+        syncActive();
+      });
+      syncActive();
+      favRow.appendChild(chip);
+    });
+  }
+
+  function applyChipCollapse(rowId){
+    var wrap = document.getElementById(rowId);
+    if (!wrap) return;
+    var KEEP = 5;
+    var chips = Array.prototype.slice.call(wrap.querySelectorAll('.chip[data-tag-id]'));
+    var hiddenCount = 0;
+    chips.forEach(function(chip, i){
+      if (i >= KEEP && !chip.classList.contains('active')){
+        chip.style.display = 'none';
+        chip.classList.add('chip-collapsed');
+        hiddenCount++;
+      } else {
+        chip.style.display = '';
+        chip.classList.remove('chip-collapsed');
+      }
+    });
+    var existingToggle = wrap.querySelector('.chip-more-toggle');
+    if (existingToggle) existingToggle.remove();
+    if (hiddenCount > 0){
+      var toggle = document.createElement('div');
+      toggle.className = 'chip chip-more-toggle';
+      toggle.style.cssText = 'border-style:dashed;cursor:pointer;';
+      toggle.textContent = '+' + hiddenCount + ' more';
+      toggle.addEventListener('click', function(){
+        var willExpand = toggle.textContent.indexOf('more') !== -1;
+        wrap.querySelectorAll('.chip-collapsed').forEach(function(c){ c.style.display = willExpand ? '' : 'none'; });
+        toggle.textContent = willExpand ? 'Show fewer' : ('+' + hiddenCount + ' more');
+      });
+      var addChip = wrap.querySelector('.chip[data-new-tag]');
+      if (addChip) wrap.insertBefore(toggle, addChip); else wrap.appendChild(toggle);
+    }
+  }
+
+  function computeFavoriteTags(n){
+    var counts = {};
+    function tally(items){
+      (items||[]).forEach(function(item){
+        (item.tags||[]).forEach(function(tagId){ counts[tagId] = (counts[tagId]||0) + 1; });
+      });
+    }
+    tally(state.pins); tally(state.tracks); tally(state.polygons); tally(state.bearings);
+    return Object.keys(counts)
+      .sort(function(a,b){ return counts[b] - counts[a]; })
+      .slice(0, n || 5);
+  }
+
   function populateStatusSelect(selectEl){
     selectEl.innerHTML = '';
     Object.keys(STATUS_COLORS).forEach(function(key){
@@ -4030,6 +4151,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     var addChip = document.createElement('div');
     addChip.className = 'chip';
+    addChip.dataset.newTag = '1';
     addChip.style.borderStyle = 'dashed';
     addChip.textContent = '+ New';
     addChip.addEventListener('click', function(){
@@ -4038,6 +4160,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (id){ current.push(id); renderPinTagChips(current); }
     });
     wrap.appendChild(addChip);
+    applyChipCollapse('pin-tags-row');
+    renderFavoriteTagRow('pin-fav-row', 'pin-tags-row');
   }
 
   function selectedPinTagIds(){
@@ -4996,6 +5120,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
       wrap.appendChild(chip);
     });
+    applyChipCollapse('polygon-tags-row');
+    renderFavoriteTagRow('polygon-fav-row', 'polygon-tags-row');
   }
 
   function savePolygonFromModal(){
@@ -5154,6 +5280,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
       wrap.appendChild(chip);
     });
+    applyChipCollapse('bearing-tags-row');
+    renderFavoriteTagRow('bearing-fav-row', 'bearing-tags-row');
   }
 
   function openBearingModal(b){
@@ -7832,6 +7960,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
 
+    // Status set collapsed from 6 to 5 — migrate any 'repeat' arriving from a
+    // device still running older code, same as the local loadState migration.
+    function migrateRepeatStatus(item){ if (item.status === 'repeat') item.status = 'confirmed'; }
+    state.pins.forEach(migrateRepeatStatus);
+    state.tracks.forEach(migrateRepeatStatus);
+    state.polygons.forEach(migrateRepeatStatus);
+    state.bearings.forEach(migrateRepeatStatus);
+
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) map.removeLayer(markersById[id]); });
     markersById = {};
     Object.keys(trackLayersById).forEach(function(id){ removeTrackFromMap(id); });
@@ -7931,6 +8067,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               }
             });
             if (!state.tracks) state.tracks = [];
+            // Status set collapsed from 6 to 5 — "Repeat producer" merges into "Confirmed".
+            function migrateRepeatStatus(item){ if (item.status === 'repeat') item.status = 'confirmed'; }
+            (state.pins||[]).forEach(migrateRepeatStatus);
+            (state.tracks||[]).forEach(migrateRepeatStatus);
+            (state.polygons||[]).forEach(migrateRepeatStatus);
+            (state.bearings||[]).forEach(migrateRepeatStatus);
             if (!state.settings.layers){
               var oldBase = state.settings.baseLayer || 'topo';
               state.settings.layers = {
@@ -8388,10 +8530,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Polygon modal
     document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
+    document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
     document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
+    document.getElementById('track-save-btn-top').addEventListener('click', saveTrackFromModal);
+    document.getElementById('track-cancel-btn-top').addEventListener('click', closeTrackModal);
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
+    document.getElementById('polygon-save-btn-top').addEventListener('click', savePolygonFromModal);
+    document.getElementById('polygon-cancel-btn-top').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-delete-btn').addEventListener('click', function(){
       if (!editingPolygonId) return;
       if (!confirm('Delete this area? This cannot be undone.')) return;
@@ -8402,6 +8550,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Bearing modal
     document.getElementById('bearing-save-btn').addEventListener('click', saveBearingFromModal);
     document.getElementById('bearing-cancel-btn').addEventListener('click', closeBearingModal);
+    document.getElementById('bearing-save-btn-top').addEventListener('click', saveBearingFromModal);
+    document.getElementById('bearing-cancel-btn-top').addEventListener('click', closeBearingModal);
     document.getElementById('bearing-delete-btn').addEventListener('click', function(){
       if (!editingBearingId) return;
       if (!confirm('Delete this bearing?')) return;
