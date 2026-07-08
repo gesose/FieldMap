@@ -1828,7 +1828,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '1.9.14';
+  var APP_VERSION = '1.9.15';
   var APP_RELEASE_DATE = 'June 2026';
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -3923,7 +3923,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var addChip = document.createElement('div');
     addChip.className = 'chip';
     addChip.dataset.newTag = '1';
-    addChip.style.borderStyle = 'dashed';
+    addChip.style.cssText = 'border-style:solid;border-color:var(--accent);color:var(--accent);background:var(--bg);';
     addChip.textContent = '+ New';
     addChip.addEventListener('click', function(){
       var current = selectedTrackTagIds();
@@ -4085,7 +4085,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (hiddenCount > 0){
       var toggle = document.createElement('div');
       toggle.className = 'chip chip-more-toggle';
-      toggle.style.cssText = 'border-style:dashed;cursor:pointer;';
+      toggle.style.cssText = 'border-style:solid;border-color:var(--accent);background:var(--accent);color:#2a1208;font-weight:600;cursor:pointer;';
       toggle.textContent = '+' + hiddenCount + ' more';
       toggle.addEventListener('click', function(){
         var willExpand = toggle.textContent.indexOf('more') !== -1;
@@ -4152,7 +4152,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var addChip = document.createElement('div');
     addChip.className = 'chip';
     addChip.dataset.newTag = '1';
-    addChip.style.borderStyle = 'dashed';
+    addChip.style.cssText = 'border-style:solid;border-color:var(--accent);color:var(--accent);background:var(--bg);';
     addChip.textContent = '+ New';
     addChip.addEventListener('click', function(){
       var current = selectedPinTagIds();
@@ -8530,12 +8530,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Polygon modal
     document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    document.getElementById('pin-delete-btn').addEventListener('click', deletePinFromModal);
     document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
     document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
     document.getElementById('track-save-btn-top').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn-top').addEventListener('click', closeTrackModal);
+    document.getElementById('track-delete-btn').addEventListener('click', function(){
+      if (!editingTrackId) return;
+      if (!confirm('Delete this track? This cannot be undone.')) return;
+      deleteTrackById(editingTrackId);
+      closeTrackModal();
+    });
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-save-btn-top').addEventListener('click', savePolygonFromModal);
