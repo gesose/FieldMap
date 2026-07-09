@@ -147,6 +147,8 @@
     cursor:pointer;color:var(--text-muted);background:var(--bg);user-select:none;
   }
   .chip.active{color:#191f1b;border-color:transparent;}
+  .chip-toggle-more{background:var(--accent);color:#2a1208;font-weight:600;border-color:var(--accent);}
+  .chip-add-new{background:var(--bg);color:var(--accent);border-color:var(--accent);}
 
   .hidden{display:none;}
 
@@ -188,6 +190,12 @@
     position:relative;
   }
   .modal h2{font-size:16px;margin:0 0 14px;font-weight:600;}
+  .modal-header-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;}
+  .modal-header-row h2{margin:0;}
+  .modal-header-actions{display:flex;gap:8px;flex-shrink:0;}
+  .modal-header-actions .btn{padding:7px 12px;font-size:13px;}
+  .modal-divider{border:none;border-top:1px solid var(--border);margin:4px 0 14px;}
+  .modal-section-label{font-size:12px;color:var(--text-muted);margin-bottom:6px;}
   .modal label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:14px;}
   .modal label span{display:block;margin-bottom:5px;}
   .modal input[type=text], .modal select, .modal textarea{
@@ -1422,15 +1430,26 @@
 <!-- Pin add/edit modal -->
 <div class="modal-overlay hidden" id="pin-modal">
   <div class="modal">
-    <h2 id="pin-modal-title">Add pin</h2>
-    <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
+    <div class="modal-header-row">
+      <h2 id="pin-modal-title">Add pin</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="pin-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="pin-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="pin-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
       <div id="pin-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="pin-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="pin-name" maxlength="60" placeholder="e.g. Saddle glassing spot"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div class="modal-section-label">Category</div>
       <div class="chip-row" id="pin-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1448,15 +1467,26 @@
 <!-- Track/route edit modal -->
 <div class="modal-overlay hidden" id="track-modal">
   <div class="modal">
-    <h2 id="track-modal-title">Save route</h2>
-    <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
+    <div class="modal-header-row">
+      <h2 id="track-modal-title">Save route</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="track-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="track-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="track-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
       <div id="track-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="track-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="track-name" maxlength="60" placeholder="e.g. Ridge loop"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div class="modal-section-label">Category</div>
       <div class="chip-row" id="track-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="track-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1474,15 +1504,26 @@
 <!-- Polygon/area edit modal -->
 <div class="modal-overlay hidden" id="polygon-modal">
   <div class="modal">
-    <h2 id="polygon-modal-title">New area</h2>
-    <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
+    <div class="modal-header-row">
+      <h2 id="polygon-modal-title">New area</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="polygon-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="polygon-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="polygon-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
       <div id="polygon-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="polygon-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="polygon-name" maxlength="60" placeholder="e.g. Elk winter range"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div class="modal-section-label">Category</div>
       <div class="chip-row" id="polygon-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
@@ -1500,15 +1541,26 @@
 <!-- Bearing modal -->
 <div class="modal-overlay hidden" id="bearing-modal">
   <div class="modal">
-    <h2 id="bearing-modal-title">Save bearing</h2>
-    <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
+    <div class="modal-header-row">
+      <h2 id="bearing-modal-title">Save bearing</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="bearing-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="bearing-save-btn-top">Save</button>
+      </div>
+    </div>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Status</div>
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="bearing-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
       <div id="bearing-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       <div id="bearing-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
     </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="bearing-name" maxlength="60" placeholder="e.g. Bearing to summit"></label>
     <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Category</div>
+      <div class="modal-section-label">Category</div>
       <div class="chip-row" id="bearing-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
@@ -1943,10 +1995,16 @@
     escout:    { bg:'#8A8F8C', label:'E-Scout only' },
     verify:    { bg:'#F28C28', label:'Needs verification' },
     confirmed: { bg:'#3A8F45', label:'Confirmed' },
-    repeat:    { bg:'#1F5E32', label:'Repeat producer' },
-    favorite:  { bg:'#7B61FF', label:'Favorite / Priority' },
-    issue:     { bg:'#D64545', label:'Issue / Avoid' }
+    favorite:  { bg:'#7B61FF', label:'Favorite' },
+    issue:     { bg:'#D64545', label:'Avoid' }
   };
+
+  // 'repeat' was removed (visually duplicated 'confirmed') — existing items migrate in
+  // loadState() and applyMergedState(), see migrateRepeatStatus().
+  function migrateRepeatStatus(item){
+    if (item.status === 'repeat'){ item.status = 'confirmed'; return true; }
+    return false;
+  }
 
   // Tag → icon key mapping
   var TAG_ICON_MAP = {
@@ -1971,8 +2029,8 @@
 
   // Get the correct icon key for a water pin based on status
   function waterIconKeyForStatus(status){
-    // confirmed/repeat/favorite/issue → solid filled drop; escout/verify → outline drop
-    return (status === 'confirmed' || status === 'repeat' || status === 'favorite' || status === 'issue')
+    // confirmed/favorite/issue → solid filled drop; escout/verify → outline drop
+    return (status === 'confirmed' || status === 'favorite' || status === 'issue')
       ? 'water_confirmed' : 'water';
   }
 
@@ -1992,7 +2050,7 @@
   function statusColorFor(item){
     var s = item.status || 'escout';
     if (isWaterPin(item)){
-      if (s === 'confirmed' || s === 'repeat' || s === 'favorite') return '#1B6BB5';
+      if (s === 'confirmed' || s === 'favorite') return '#1B6BB5';
       if (s === 'issue') return (STATUS_COLORS.issue || { bg:'#D64545' }).bg;
       return (STATUS_COLORS[s] || STATUS_COLORS.escout).bg;
     }
@@ -3436,7 +3494,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var notes = pin.notes ? '<div class="pin-popup-notes">' + escapeHtml(pin.notes) + '</div>' : '';
     var statusBadge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + sc.bg + '22;border:1px solid ' + sc.bg + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
       '<span style="width:7px;height:7px;border-radius:50%;background:' + sc.bg + ';flex-shrink:0;display:inline-block;"></span>' +
-      '<span style="font-size:10px;font-weight:700;color:' + (sc.bg === '#1F5E32' ? '#6dbf7e' : sc.bg) + ';">' + sc.label + '</span></span>';
+      '<span style="font-size:10px;font-weight:700;color:' + sc.bg + ';">' + sc.label + '</span></span>';
     return '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' +
         statusBadge +
@@ -3448,6 +3506,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
       '<button class="btn btn-small" onclick="FieldMap.movePin(\'' + pin.id + '\')">Move</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.directionsToPin(\'' + pin.id + '\')">Directions</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.copyPinCoords(\'' + pin.id + '\')">Copy coords</button>' +
       '<button class="btn btn-small btn-danger" onclick="FieldMap.deletePin(\'' + pin.id + '\')">Delete</button>' +
       '</div>';
   }
@@ -3891,10 +3951,101 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     showToast('Track deleted');
   }
 
-  function renderTrackTagChips(selectedIds){
-    var wrap = document.getElementById('track-tags-row');
+  // ── Quick category + collapsible full category chips ──────────────────────
+  // Shared across the pin/track/polygon/bearing modals. The "full category list"
+  // (renderCategoryChips) collapses to the top 5 tags (+ any already-selected tags
+  // outside that top 5) with a "+X more"/"Show fewer" toggle. The "quick category"
+  // row surfaces the most-used tags across recent items; tapping one proxy-clicks
+  // the matching real chip below so no separate selection state has to be kept in
+  // sync, and existing save-time `.chip.active` queries keep working unchanged.
+  var categoryExpandedState = {}; // keyed by the full-category row id
+  var CATEGORY_ROW_TO_QUICK_ROW = {
+    'pin-tags-row': 'pin-quick-tags-row',
+    'track-tags-row': 'track-quick-tags-row',
+    'polygon-tags-row': 'polygon-quick-tags-row',
+    'bearing-tags-row': 'bearing-quick-tags-row'
+  };
+
+  function computeQuickCategoryTagIds(){
+    var all = state.pins.concat(state.tracks, state.polygons || [], state.bearings || []);
+    all.sort(function(a,b){ return (b.created||0) - (a.created||0); });
+    var recent = all.slice(0, 50);
+    var freq = {};
+    recent.forEach(function(item){
+      (item.tags || []).forEach(function(tid){ freq[tid] = (freq[tid]||0) + 1; });
+    });
+    return Object.keys(freq).sort(function(a,b){ return freq[b] - freq[a]; }).slice(0, 5);
+  }
+
+  function renderQuickCategoryChips(quickRowId, targetRowId){
+    var wrap = document.getElementById(quickRowId);
+    if (!wrap) return;
     wrap.innerHTML = '';
-    sortedTags().forEach(function(t){
+    var quickIds = computeQuickCategoryTagIds();
+    var targetWrap = document.getElementById(targetRowId);
+    var activeIds = targetWrap ? Array.prototype.map.call(targetWrap.querySelectorAll('.chip.active'), function(c){ return c.dataset.tagId; }) : [];
+    quickIds.forEach(function(tid){
+      var t = tagById(tid);
+      var chip = document.createElement('div');
+      var active = activeIds.indexOf(tid) !== -1;
+      chip.className = 'chip' + (active ? ' active' : '');
+      chip.style.background = active ? t.color : 'var(--bg)';
+      chip.style.borderColor = active ? t.color : 'var(--border)';
+      chip.innerHTML = chipLabelHtml(t);
+      chip.dataset.tagId = tid;
+      chip.addEventListener('click', function(){
+        toggleRealCategoryChip(targetRowId, tid);
+        renderQuickCategoryChips(quickRowId, targetRowId);
+      });
+      wrap.appendChild(chip);
+    });
+  }
+
+  // Toggles the actual chip in the full category list (expanding the collapsed
+  // list first if that tag isn't currently visible) rather than tracking selection
+  // state twice.
+  function toggleRealCategoryChip(targetRowId, tagId){
+    var wrap = document.getElementById(targetRowId);
+    if (!wrap) return;
+    var chip = wrap.querySelector('[data-tag-id="' + tagId + '"]');
+    if (!chip){
+      categoryExpandedState[targetRowId] = true;
+      renderCategoryChips(targetRowId);
+      chip = wrap.querySelector('[data-tag-id="' + tagId + '"]');
+    }
+    if (chip) chip.click();
+  }
+
+  function syncQuickCategoryForRow(rowId){
+    var quickRowId = CATEGORY_ROW_TO_QUICK_ROW[rowId];
+    if (quickRowId) renderQuickCategoryChips(quickRowId, rowId);
+  }
+
+  // Renders the full category chip list into rowId. On the very first render (row
+  // empty) selection comes from initialSelectedIds; on any re-render (collapse
+  // toggle, +New) it's read live from the DOM so in-progress selections survive.
+  function renderCategoryChips(rowId, initialSelectedIds){
+    var wrap = document.getElementById(rowId);
+    if (!wrap) return;
+    var hasExisting = wrap.children.length > 0;
+    var existingActive = Array.prototype.map.call(wrap.querySelectorAll('.chip.active'), function(c){ return c.dataset.tagId; });
+    var selectedIds = hasExisting ? existingActive : (initialSelectedIds || []);
+
+    wrap.innerHTML = '';
+    var all = sortedTags();
+    var expanded = !!categoryExpandedState[rowId];
+    var topIds = all.slice(0, 5).map(function(t){ return t.id; });
+    var visible;
+    if (expanded){
+      visible = all;
+    } else {
+      var visibleIdSet = {};
+      topIds.forEach(function(id){ visibleIdSet[id] = true; });
+      selectedIds.forEach(function(id){ visibleIdSet[id] = true; });
+      visible = all.filter(function(t){ return visibleIdSet[t.id]; });
+    }
+
+    visible.forEach(function(t){
       var chip = document.createElement('div');
       var active = selectedIds.indexOf(t.id) !== -1;
       chip.className = 'chip' + (active ? ' active' : '');
@@ -3906,19 +4057,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         var isActive = chip.classList.toggle('active');
         chip.style.background = isActive ? t.color : 'var(--bg)';
         chip.style.borderColor = isActive ? t.color : 'var(--border)';
+        syncQuickCategoryForRow(rowId);
       });
       wrap.appendChild(chip);
     });
+
+    var hiddenCount = all.length - visible.length;
+    if (!expanded && hiddenCount > 0){
+      var moreChip = document.createElement('div');
+      moreChip.className = 'chip chip-toggle-more';
+      moreChip.textContent = '+' + hiddenCount + ' more';
+      moreChip.addEventListener('click', function(){
+        categoryExpandedState[rowId] = true;
+        renderCategoryChips(rowId);
+      });
+      wrap.appendChild(moreChip);
+    } else if (expanded && all.length > 5){
+      var fewerChip = document.createElement('div');
+      fewerChip.className = 'chip chip-toggle-more';
+      fewerChip.textContent = 'Show fewer';
+      fewerChip.addEventListener('click', function(){
+        categoryExpandedState[rowId] = false;
+        renderCategoryChips(rowId);
+      });
+      wrap.appendChild(fewerChip);
+    }
+
     var addChip = document.createElement('div');
-    addChip.className = 'chip';
-    addChip.style.borderStyle = 'dashed';
+    addChip.className = 'chip chip-add-new';
     addChip.textContent = '+ New';
     addChip.addEventListener('click', function(){
-      var current = selectedTrackTagIds();
       var id = quickAddTag(prompt('New tag name:'));
-      if (id){ current.push(id); renderTrackTagChips(current); }
+      if (id){
+        var current = Array.prototype.map.call(wrap.querySelectorAll('.chip.active'), function(c){ return c.dataset.tagId; });
+        current.push(id);
+        renderCategoryChips(rowId, current);
+        syncQuickCategoryForRow(rowId);
+      }
     });
     wrap.appendChild(addChip);
+  }
+
+  function renderTrackTagChips(selectedIds){
+    categoryExpandedState['track-tags-row'] = false;
+    // Clear first — the row persists across modal opens, so without this the shared
+    // renderer would read stale selection state left over from whatever was open last.
+    document.getElementById('track-tags-row').innerHTML = '';
+    renderCategoryChips('track-tags-row', selectedIds || []);
+    renderQuickCategoryChips('track-quick-tags-row', 'track-tags-row');
   }
 
   function selectedTrackTagIds(){
@@ -4035,33 +4221,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function renderPinTagChips(selectedIds){
-    var wrap = document.getElementById('pin-tags-row');
-    wrap.innerHTML = '';
-    sortedTags().forEach(function(t){
-      var chip = document.createElement('div');
-      var active = selectedIds.indexOf(t.id) !== -1;
-      chip.className = 'chip' + (active ? ' active' : '');
-      chip.style.background = active ? t.color : 'var(--bg)';
-      chip.style.borderColor = active ? t.color : 'var(--border)';
-      chip.innerHTML = chipLabelHtml(t);
-      chip.dataset.tagId = t.id;
-      chip.addEventListener('click', function(){
-        var isActive = chip.classList.toggle('active');
-        chip.style.background = isActive ? t.color : 'var(--bg)';
-        chip.style.borderColor = isActive ? t.color : 'var(--border)';
-      });
-      wrap.appendChild(chip);
-    });
-    var addChip = document.createElement('div');
-    addChip.className = 'chip';
-    addChip.style.borderStyle = 'dashed';
-    addChip.textContent = '+ New';
-    addChip.addEventListener('click', function(){
-      var current = selectedPinTagIds();
-      var id = quickAddTag(prompt('New tag name:'));
-      if (id){ current.push(id); renderPinTagChips(current); }
-    });
-    wrap.appendChild(addChip);
+    categoryExpandedState['pin-tags-row'] = false;
+    document.getElementById('pin-tags-row').innerHTML = '';
+    renderCategoryChips('pin-tags-row', selectedIds || []);
+    renderQuickCategoryChips('pin-quick-tags-row', 'pin-tags-row');
   }
 
   function selectedPinTagIds(){
@@ -4194,6 +4357,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       } else {
         navigator.clipboard ? navigator.clipboard.writeText(url).then(function(){ showToast('Google Maps link copied'); }) :
           showToast(pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5), 5000);
+      }
+    },
+    directionsToPin: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (!pin) return;
+      var isAppleDevice = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+      var url = isAppleDevice
+        ? 'https://maps.apple.com/?daddr=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6) + '&dirflg=d'
+        : 'https://www.google.com/maps/dir/?api=1&destination=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6);
+      window.open(url, '_blank', 'noopener');
+    },
+    copyPinCoords: function(id){
+      var pin = state.pins.find(function(p){ return p.id === id; });
+      if (!pin) return;
+      var text = pin.lat.toFixed(6) + ', ' + pin.lng.toFixed(6);
+      if (navigator.clipboard){
+        navigator.clipboard.writeText(text).then(function(){ showToast('Coordinates copied'); })
+          .catch(function(){ showToast(text, 6000); });
+      } else {
+        showToast(text, 6000);
       }
     },
     editTrack: function(id){
@@ -4986,8 +5169,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Polygon modal ----------
-  var selectedPolygonTagIds = [];
-
   function openPolygonModal(polygon){
     refreshTripSuggestions();
     editingPolygonId = polygon ? polygon.id : null;
@@ -5016,23 +5197,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function renderPolygonTagChips(activeTags){
-    var wrap = document.getElementById('polygon-tags-row');
-    wrap.innerHTML = '';
-    selectedPolygonTagIds = activeTags ? activeTags.slice() : ['uncategorized'];
-    state.tags.forEach(function(t){
-      var chip = document.createElement('div');
-      chip.className = 'chip' + (selectedPolygonTagIds.indexOf(t.id) !== -1 ? ' active' : '');
-      chip.style.background = selectedPolygonTagIds.indexOf(t.id) !== -1 ? t.color : 'var(--bg)';
-      chip.style.borderColor = selectedPolygonTagIds.indexOf(t.id) !== -1 ? t.color : 'var(--border)';
-      chip.innerHTML = chipLabelHtml(t);
-      chip.dataset.tagId = t.id;
-      chip.addEventListener('click', function(){
-        var isActive = chip.classList.toggle('active');
-        chip.style.background = isActive ? t.color : 'var(--bg)';
-        chip.style.borderColor = isActive ? t.color : 'var(--border)';
-      });
-      wrap.appendChild(chip);
-    });
+    categoryExpandedState['polygon-tags-row'] = false;
+    document.getElementById('polygon-tags-row').innerHTML = '';
+    renderCategoryChips('polygon-tags-row', activeTags ? activeTags.slice() : ['uncategorized']);
+    renderQuickCategoryChips('polygon-quick-tags-row', 'polygon-tags-row');
   }
 
   function savePolygonFromModal(){
@@ -5176,23 +5344,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function renderBearingTagChips(activeTags){
-    var wrap = document.getElementById('bearing-tags-row');
-    wrap.innerHTML = '';
-    state.tags.forEach(function(t){
-      var chip = document.createElement('div');
-      var active = (activeTags||[]).indexOf(t.id) !== -1;
-      chip.className = 'chip' + (active ? ' active' : '');
-      chip.style.background = active ? t.color : 'var(--bg)';
-      chip.style.borderColor = active ? t.color : 'var(--border)';
-      chip.innerHTML = chipLabelHtml(t);
-      chip.dataset.tagId = t.id;
-      chip.addEventListener('click', function(){
-        var isActive = chip.classList.toggle('active');
-        chip.style.background = isActive ? t.color : 'var(--bg)';
-        chip.style.borderColor = isActive ? t.color : 'var(--border)';
-      });
-      wrap.appendChild(chip);
-    });
+    categoryExpandedState['bearing-tags-row'] = false;
+    document.getElementById('bearing-tags-row').innerHTML = '';
+    renderCategoryChips('bearing-tags-row', activeTags || []);
+    renderQuickCategoryChips('bearing-quick-tags-row', 'bearing-tags-row');
   }
 
   function openBearingModal(b){
@@ -7827,6 +7982,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
 
+    // A merge can bring in data from a device still running old code with the 'repeat' status.
+    state.pins.forEach(migrateRepeatStatus);
+    state.tracks.forEach(migrateRepeatStatus);
+    state.polygons.forEach(migrateRepeatStatus);
+    state.bearings.forEach(migrateRepeatStatus);
+
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
     Object.keys(polygonLayersById).forEach(function(id){ removePolygonFromMap(id); });
@@ -7966,6 +8127,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               if (t.state === undefined && t.points && t.points[0]) t.state = stateForPoint(t.points[0][0], t.points[0][1]);
               if (t.trip === undefined) t.trip = '';
             });
+            // 'repeat' status removed — migrate any existing local items to 'confirmed'.
+            // Only persist if something actually changed, so a normal load with nothing
+            // to migrate doesn't trigger an unnecessary write.
+            var repeatMigrated = false;
+            state.pins.forEach(function(p){ if (migrateRepeatStatus(p)) repeatMigrated = true; });
+            state.tracks.forEach(function(t){ if (migrateRepeatStatus(t)) repeatMigrated = true; });
+            state.polygons.forEach(function(p){ if (migrateRepeatStatus(p)) repeatMigrated = true; });
+            state.bearings.forEach(function(b){ if (migrateRepeatStatus(b)) repeatMigrated = true; });
+            if (repeatMigrated) persist();
           }
         } catch(e){}
       }
@@ -8367,12 +8537,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Pin modal
     document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
+    document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
+    document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
     // Track modal
     document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
+    document.getElementById('track-save-btn-top').addEventListener('click', saveTrackFromModal);
+    document.getElementById('track-cancel-btn-top').addEventListener('click', closeTrackModal);
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
+    document.getElementById('polygon-save-btn-top').addEventListener('click', savePolygonFromModal);
+    document.getElementById('polygon-cancel-btn-top').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-delete-btn').addEventListener('click', function(){
       if (!editingPolygonId) return;
       if (!confirm('Delete this area? This cannot be undone.')) return;
@@ -8383,6 +8559,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Bearing modal
     document.getElementById('bearing-save-btn').addEventListener('click', saveBearingFromModal);
     document.getElementById('bearing-cancel-btn').addEventListener('click', closeBearingModal);
+    document.getElementById('bearing-save-btn-top').addEventListener('click', saveBearingFromModal);
+    document.getElementById('bearing-cancel-btn-top').addEventListener('click', closeBearingModal);
     document.getElementById('bearing-delete-btn').addEventListener('click', function(){
       if (!editingBearingId) return;
       if (!confirm('Delete this bearing?')) return;
