@@ -591,6 +591,21 @@
   .pub-land-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;}
   .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
 
+  #wildlife-legend{
+    position:absolute;bottom:14px;left:14px;
+    z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.1);border-radius:10px;
+    padding:8px 12px;max-width:220px;
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #wildlife-legend.hidden{display:none;}
+  .wildlife-tab-btn{
+    flex:1;padding:8px 4px;font-size:12px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  .wildlife-tab-btn.active{background:var(--accent);color:#2a1208;font-weight:600;}
+  .wildlife-tab-btn + .wildlife-tab-btn{border-left:1px solid var(--border);}
+
   #mobile-handle{display:none;}
 
   /* Mobile */
@@ -697,6 +712,7 @@
 
     /* Public land legend: hide on mobile (legend is in layers panel) */
     #publicland-legend{display:none !important;}
+    #wildlife-legend{display:none !important;}
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -808,6 +824,7 @@
   <span style="color:#C0C0C0;">Local</span>
 </div>
 
+<div id="wildlife-legend" class="hidden"></div>
 
 <div id="map-controls">
   <button class="map-icon-btn" id="search-toggle-btn" aria-label="Search">
@@ -1334,6 +1351,28 @@
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="gmu-or-toggle" disabled> Oregon <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
   </label>
+
+  <div class="layer-section-header" style="margin-top:10px;">WILDLIFE</div>
+  <button class="btn btn-small" id="wildlife-layers-open-btn" style="width:100%;margin-top:6px;">Wildlife Layers</button>
+</div>
+
+<div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <h2 style="margin:0;">Wildlife Layers</h2>
+    <button class="link-btn" id="wildlife-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px;">
+    <button class="wildlife-tab-btn active" data-category="big_game">Big Game</button>
+    <button class="wildlife-tab-btn" data-category="upland">Upland Birds</button>
+    <button class="wildlife-tab-btn" data-category="small_game">Small Game</button>
+  </div>
+  <div id="wildlife-loading" style="font-size:12px;color:var(--text-muted);display:none;margin-bottom:8px;">Loading species data…</div>
+  <select id="wildlife-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
+    <option value="">Select a species…</option>
+  </select>
+  <div id="wildlife-sublayers" style="display:none;"></div>
+  <div id="wildlife-species-info" style="font-size:11px;color:var(--text-muted);display:none;margin-top:8px;line-height:1.4;"></div>
+  <button class="link-btn" id="wildlife-clear-btn" style="font-size:11px;margin-top:10px;">Clear selection</button>
 </div>
 
 <div id="filter-panel" class="floating-panel hidden">
@@ -1837,7 +1876,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.2.0';
+  var APP_VERSION = '2.3.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1952,6 +1991,25 @@
   var openTrackPopup = null; // the currently-open ad-hoc track popup, if any (tracks have no persistent marker/popup like pins do)
   var openPolygonPopup = null; // same, for areas
   var openBearingPopup = null; // same, for bearings
+  var openWildlifePopup = null; // same, for wildlife range polygons
+
+  // ── Wildlife Layers (P3a) ──
+  var WILDLIFE_CATEGORIES = ['big_game', 'upland', 'small_game'];
+  var WILDLIFE_CATEGORY_LABELS = { big_game: 'Big Game', upland: 'Upland Birds', small_game: 'Small Game' };
+  var WILDLIFE_CATEGORY_FILES = { big_game: 'data/big_game-species.geojson', upland: 'data/upland-species.geojson', small_game: 'data/small_game-species.geojson' };
+  var WILDLIFE_NAME_OVERRIDES = { 'Montezuma Quail': "Mearns' Quail" };
+  // Fill/stroke pair per simultaneous sub-layer. Color 0 reuses var(--accent) (#c2622d) —
+  // the same orange used for active states / quick-favorites elsewhere in the UI — since a
+  // light green blended into the topo style's forested areas. Color 1 is the app's other
+  // established accent (the GPS-locate blue, #3a8fd4) for a contrasting-but-consistent
+  // second tone rather than a new color invented for this feature. Strokes are darker/more
+  // saturated versions of their fill for legibility against both topo and aerial imagery.
+  var WILDLIFE_FILL_COLORS = ['#c2622d', '#3a8fd4'];
+  var WILDLIFE_STROKE_COLORS = ['#8a4520', '#1f5f8f'];
+  var wildlifeCache = {}; // category -> parsed FeatureCollection, cached for the session
+  var wildlifeLoadCallbacks = {}; // category -> array of pending callbacks while a fetch is in flight
+  var wildlifeActiveCategory = 'big_game'; // which tab is currently open in the picker
+  var wildlifeActive = null; // { category, speciesName, codes: [...] } — the one species rendered on the map, or null
   var polygonMode = false, polygonPoints = [], polygonMarkers = [];
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
@@ -3306,6 +3364,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Wildlife range click — mode-aware pass-through, otherwise show that species' popup.
+      // Read-only reference data (not part of state.*), so the feature's own properties
+      // are used directly rather than looking anything up by id.
+      function handleWildlifeFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var wlFeature = e.features && e.features[0];
+        if (!wlFeature) return;
+        openWildlifePopupAt(wlFeature.properties, e.lngLat);
+      }
+      WILDLIFE_CATEGORIES.forEach(function(cat){
+        var layerId = 'wildlife-' + cat + '-fill';
+        map.on('click', layerId, handleWildlifeFillClick);
+        map.on('mouseenter', layerId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', layerId, function(){ map.getCanvas().style.cursor = ''; });
+      });
+
       // Clicking the in-progress draw preview line inserts a new point at that spot
       map.on('click', 'draw-preview-line', function(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
@@ -3318,7 +3405,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('click', function(e){
         // Registered last, so this only runs for clicks that didn't already land on (and
         // get fully handled by) cluster-circles/tracks-line-touch/polygons-fill/
-        // bearings-line-touch/draw-preview-line — see cluster-circles handler above for why
+        // bearings-line-touch/wildlife-*-fill/draw-preview-line — see cluster-circles handler above for why
         // that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
@@ -3687,6 +3774,52 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function reinitializeLayers(){
     if (!map) return;
 
+    // Wildlife range polygons — one source per category, added first so they render
+    // beneath all user-drawn content (pins/tracks/areas/bearings). Sources are seeded
+    // from wildlifeCache (in-memory, session-lived) so a style switch doesn't re-fetch.
+    // Same fill treatment as Draw Area (fill-opacity 0.18) per spec, plus a separate
+    // opaque stroke line layer — fill-outline-color is subject to the same translucent
+    // fill-opacity, so it can't give a legible boundary on its own; a dedicated line
+    // layer at full opacity can. Filter/paint on both are reapplied at the end of this
+    // function via updateWildlifeMapFilter().
+    WILDLIFE_CATEGORIES.forEach(function(cat){
+      var srcId = 'wildlife-' + cat + '-source';
+      var fillLayerId = 'wildlife-' + cat + '-fill';
+      var lineLayerId = 'wildlife-' + cat + '-line';
+      if (!map.getSource(srcId)){
+        map.addSource(srcId, {
+          type: 'geojson',
+          data: wildlifeCache[cat] || { type: 'FeatureCollection', features: [] }
+        });
+      }
+      if (!map.getLayer(fillLayerId)){
+        map.addLayer({
+          id: fillLayerId,
+          type: 'fill',
+          source: srcId,
+          filter: ['in', ['get', 'species_code'], ['literal', []]],
+          paint: {
+            'fill-color': WILDLIFE_FILL_COLORS[0],
+            'fill-opacity': 0.18
+          }
+        });
+      }
+      if (!map.getLayer(lineLayerId)){
+        map.addLayer({
+          id: lineLayerId,
+          type: 'line',
+          source: srcId,
+          filter: ['in', ['get', 'species_code'], ['literal', []]],
+          layout: { 'line-join': 'round' },
+          paint: {
+            'line-color': WILDLIFE_STROKE_COLORS[0],
+            'line-width': 1.75,
+            'line-opacity': 0.95
+          }
+        });
+      }
+    });
+
     // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
     // every style change. Two layers on the same source: a wide invisible one purely
     // for easier click hit-testing on mobile, and the actual visible styled line.
@@ -3997,6 +4130,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (SUNRISE_ARC_ON && !document.getElementById('sunrise-panel').classList.contains('hidden')) renderSunArc(map.getCenter(), sunDate);
     if (compassActive) updateCompassMapLines();
     redrawCompassTarget();
+    updateWildlifeMapFilter();
   }
 
   function openClusterPanel(members){
@@ -7913,7 +8047,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closeAllPanels_except(keepId){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel'].forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
     if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); sunriseDockClose(); }
@@ -8210,10 +8344,210 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return '🌡️';
   }
 
+  // ── Wildlife Layers (P3a) ──
+  // Lazy-loads one GeoJSON per category (cached in wildlifeCache for the session), groups
+  // its features by species_common_name for the dropdown, and treats distinct species_code
+  // values within a name-group as sub-layer "layer types" (checkboxes) — in the current
+  // data every name maps to exactly one code, so the checkbox UI never actually triggers
+  // today, but the grouping is data-driven so it activates automatically if future data
+  // adds a real subspecies split under one common name.
+  function wildlifeDisplayName(name){
+    return WILDLIFE_NAME_OVERRIDES[name] || name;
+  }
+
+  function loadWildlifeCategory(category, cb){
+    if (wildlifeCache[category]){ cb(wildlifeCache[category]); return; }
+    if (wildlifeLoadCallbacks[category]){ wildlifeLoadCallbacks[category].push(cb); return; }
+    wildlifeLoadCallbacks[category] = [cb];
+    fetch(WILDLIFE_CATEGORY_FILES[category])
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){
+        wildlifeCache[category] = data;
+        var cbs = wildlifeLoadCallbacks[category]; delete wildlifeLoadCallbacks[category];
+        cbs.forEach(function(f){ f(data); });
+      })
+      .catch(function(err){
+        console.error('[FieldMap] Wildlife layer fetch failed:', category, err);
+        showToast('Could not load ' + WILDLIFE_CATEGORY_LABELS[category] + ' data');
+        var cbs = wildlifeLoadCallbacks[category]; delete wildlifeLoadCallbacks[category];
+        cbs.forEach(function(f){ f(null); });
+      });
+  }
+
+  function wildlifeSpeciesGroups(category){
+    var data = wildlifeCache[category];
+    if (!data) return [];
+    var byName = {}, order = [];
+    data.features.forEach(function(f){
+      var p = f.properties;
+      if (!byName[p.species_common_name]){
+        byName[p.species_common_name] = { name: p.species_common_name, codes: [], sample: p };
+        order.push(p.species_common_name);
+      }
+      if (byName[p.species_common_name].codes.indexOf(p.species_code) === -1){
+        byName[p.species_common_name].codes.push(p.species_code);
+      }
+    });
+    order.sort(function(a, b){ return wildlifeDisplayName(a).localeCompare(wildlifeDisplayName(b)); });
+    return order.map(function(name){ return byName[name]; });
+  }
+
+  function ensureWildlifeCategoryLoaded(category){
+    var loadingEl = document.getElementById('wildlife-loading');
+    var selectEl = document.getElementById('wildlife-species-select');
+    if (wildlifeCache[category]){
+      if (map && map.getSource('wildlife-' + category + '-source')) map.getSource('wildlife-' + category + '-source').setData(wildlifeCache[category]);
+      renderWildlifeSpeciesDropdown();
+      return;
+    }
+    loadingEl.style.display = 'block';
+    selectEl.disabled = true;
+    loadWildlifeCategory(category, function(data){
+      if (wildlifeActiveCategory !== category) return; // user switched tabs while this was in flight
+      loadingEl.style.display = 'none';
+      selectEl.disabled = false;
+      if (!data) return;
+      if (map && map.getSource('wildlife-' + category + '-source')) map.getSource('wildlife-' + category + '-source').setData(data);
+      renderWildlifeSpeciesDropdown();
+    });
+  }
+
+  function renderWildlifeSpeciesDropdown(){
+    var select = document.getElementById('wildlife-species-select');
+    var groups = wildlifeSpeciesGroups(wildlifeActiveCategory);
+    select.innerHTML = '<option value="">Select a species…</option>' +
+      groups.map(function(g){
+        return '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(wildlifeDisplayName(g.name)) + '</option>';
+      }).join('');
+    select.value = (wildlifeActive && wildlifeActive.category === wildlifeActiveCategory) ? wildlifeActive.speciesName : '';
+    renderWildlifeSublayers();
+  }
+
+  function renderWildlifeSublayers(){
+    var wrap = document.getElementById('wildlife-sublayers');
+    var infoEl = document.getElementById('wildlife-species-info');
+    var speciesName = document.getElementById('wildlife-species-select').value;
+    wrap.innerHTML = '';
+    wrap.style.display = 'none';
+    if (!speciesName){ infoEl.style.display = 'none'; return; }
+    var group = wildlifeSpeciesGroups(wildlifeActiveCategory).find(function(g){ return g.name === speciesName; });
+    if (!group) return;
+    var activeCodes = (wildlifeActive && wildlifeActive.category === wildlifeActiveCategory && wildlifeActive.speciesName === speciesName) ? wildlifeActive.codes : [];
+    if (group.codes.length > 1){
+      wrap.style.display = 'block';
+      wrap.innerHTML = group.codes.map(function(code){
+        var checked = activeCodes.indexOf(code) !== -1;
+        return '<label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">' +
+          '<input type="checkbox" class="wildlife-sublayer-checkbox" data-code="' + escapeHtml(code) + '"' + (checked ? ' checked' : '') + '> Layer: ' + escapeHtml(code) +
+          '</label>';
+      }).join('');
+    }
+    showWildlifeSpeciesInfo(group);
+  }
+
+  function showWildlifeSpeciesInfo(group){
+    var infoEl = document.getElementById('wildlife-species-info');
+    var p = group.sample;
+    var statusLabel = { game: 'Game species', restricted: 'Restricted', protected: 'Protected — not legally hunted' }[p.hunting_status] || p.hunting_status;
+    infoEl.innerHTML = escapeHtml(statusLabel) + (p.season ? ' · ' + escapeHtml(p.season) : '') +
+      (p.conservation_note ? '<br>' + escapeHtml(p.conservation_note) : '');
+    infoEl.style.display = 'block';
+  }
+
+  function setWildlifeCategory(category){
+    wildlifeActiveCategory = category;
+    document.querySelectorAll('.wildlife-tab-btn').forEach(function(btn){
+      btn.classList.toggle('active', btn.dataset.category === category);
+    });
+    ensureWildlifeCategoryLoaded(category);
+  }
+
+  function setWildlifeSpecies(category, speciesName, codes){
+    wildlifeActive = (speciesName && codes.length) ? { category: category, speciesName: speciesName, codes: codes.slice() } : null;
+    updateWildlifeMapFilter();
+    updateWildlifeLegend();
+  }
+
+  function clearWildlifeSelection(){
+    wildlifeActive = null;
+    document.getElementById('wildlife-species-select').value = '';
+    renderWildlifeSublayers();
+    updateWildlifeMapFilter();
+    updateWildlifeLegend();
+  }
+
+  // Reapplies the active species' filter/color to whichever category layer it belongs to,
+  // and clears the other two — this is what guarantees switching species never stacks with
+  // the previous one, including across category tabs. Also called after every style switch.
+  function updateWildlifeMapFilter(){
+    if (!map) return;
+    WILDLIFE_CATEGORIES.forEach(function(cat){
+      var fillLayerId = 'wildlife-' + cat + '-fill';
+      var lineLayerId = 'wildlife-' + cat + '-line';
+      if (!map.getLayer(fillLayerId)) return;
+      if (wildlifeActive && wildlifeActive.category === cat && wildlifeActive.codes.length){
+        var codeFilter = ['in', ['get', 'species_code'], ['literal', wildlifeActive.codes]];
+        map.setFilter(fillLayerId, codeFilter);
+        map.setFilter(lineLayerId, codeFilter);
+        var fillExpr = ['match', ['get', 'species_code']];
+        var lineExpr = ['match', ['get', 'species_code']];
+        wildlifeActive.codes.forEach(function(code, i){
+          fillExpr.push(code, WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length]);
+          lineExpr.push(code, WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length]);
+        });
+        fillExpr.push(WILDLIFE_FILL_COLORS[0]);
+        lineExpr.push(WILDLIFE_STROKE_COLORS[0]);
+        map.setPaintProperty(fillLayerId, 'fill-color', fillExpr);
+        map.setPaintProperty(lineLayerId, 'line-color', lineExpr);
+      } else {
+        var emptyFilter = ['in', ['get', 'species_code'], ['literal', []]];
+        map.setFilter(fillLayerId, emptyFilter);
+        map.setFilter(lineLayerId, emptyFilter);
+      }
+    });
+  }
+
+  function updateWildlifeLegend(){
+    var legend = document.getElementById('wildlife-legend');
+    if (!wildlifeActive || !wildlifeActive.codes.length){ legend.classList.add('hidden'); return; }
+    var name = wildlifeDisplayName(wildlifeActive.speciesName);
+    var multi = wildlifeActive.codes.length > 1;
+    var swatches = wildlifeActive.codes.map(function(code, i){
+      var color = WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length];
+      var border = WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length];
+      return '<span class="legend-swatch" style="background:' + color + ';border:1px solid ' + border + ';color:#fff;">' + (multi ? ('Layer ' + (i + 1)) : escapeHtml(name)) + '</span>';
+    }).join(' ');
+    legend.innerHTML = (multi ? '<div style="font-size:11px;font-weight:600;margin-bottom:4px;">' + escapeHtml(name) + '</div>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>';
+    legend.classList.remove('hidden');
+  }
+
+  function wildlifePopupHtml(props){
+    var name = wildlifeDisplayName(props.species_common_name);
+    var statusLabel = { game: 'Game species', restricted: 'Restricted', protected: 'Protected — not legally hunted' }[props.hunting_status] || props.hunting_status;
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(name) + '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(statusLabel) + (props.season ? ' · ' + escapeHtml(props.season) : '') + '</div>' +
+      (props.conservation_note ? '<div class="pin-popup-notes">' + escapeHtml(props.conservation_note) + '</div>' : '') +
+      '</div>';
+  }
+
+  // Wildlife ranges have no persistent marker/popup object — ad-hoc popup on click,
+  // mirrors openPolygonPopupAt/openBearingPopupAt.
+  function openWildlifePopupAt(props, lngLat){
+    if (openWildlifePopup){ openWildlifePopup.remove(); openWildlifePopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML(wildlifePopupHtml(props))
+      .addTo(map);
+    popup.on('close', function(){ if (openWildlifePopup === popup) openWildlifePopup = null; });
+    openWildlifePopup = popup;
+  }
+
   // ── Close all panels helper (updated to include P2 panels) ──
   function closeAllPanels(){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
@@ -8662,6 +8996,41 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('publicland-toggle').checked = !!state.settings.publicLandOn;
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
+
+    // ── Wildlife Layers (P3a) ──
+    document.getElementById('wildlife-layers-open-btn').addEventListener('click', function(){
+      var panel = document.getElementById('wildlife-panel');
+      closeAllPanels();
+      panel.classList.remove('hidden');
+      ensureWildlifeCategoryLoaded(wildlifeActiveCategory);
+    });
+    document.getElementById('wildlife-close-btn').addEventListener('click', function(){
+      document.getElementById('wildlife-panel').classList.add('hidden');
+    });
+    document.querySelectorAll('.wildlife-tab-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){ setWildlifeCategory(btn.dataset.category); });
+    });
+    document.getElementById('wildlife-species-select').addEventListener('change', function(){
+      var speciesName = this.value;
+      if (!speciesName){ clearWildlifeSelection(); return; }
+      var group = wildlifeSpeciesGroups(wildlifeActiveCategory).find(function(g){ return g.name === speciesName; });
+      if (!group) return;
+      // A species with only one layer type activates immediately; one with several
+      // defaults to just the first checked so something renders right away.
+      var codes = group.codes.length > 1 ? [group.codes[0]] : group.codes.slice();
+      setWildlifeSpecies(wildlifeActiveCategory, speciesName, codes);
+      renderWildlifeSublayers();
+    });
+    document.getElementById('wildlife-sublayers').addEventListener('change', function(e){
+      if (!e.target.classList.contains('wildlife-sublayer-checkbox')) return;
+      var checked = Array.prototype.slice.call(document.querySelectorAll('.wildlife-sublayer-checkbox:checked'))
+        .map(function(cb){ return cb.dataset.code; });
+      var speciesName = document.getElementById('wildlife-species-select').value;
+      setWildlifeSpecies(wildlifeActiveCategory, speciesName, checked);
+    });
+    document.getElementById('wildlife-clear-btn').addEventListener('click', function(){
+      clearWildlifeSelection();
+    });
 
     // Layer info panel ? buttons — use event delegation
     document.getElementById('layers-panel').addEventListener('click', function(e){
