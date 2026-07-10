@@ -287,7 +287,9 @@
   .pin-popup-cat{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
-  .pin-popup-actions{display:flex;gap:6px;}
+  .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
+  .pin-popup-actions-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+  .pin-popup-actions-grid .btn{padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
   /* MapLibre popup: library defaults to a white content box, so re-theme it dark to
      match the old Leaflet popup (.leaflet-popup-content-wrapper above) and the rest
@@ -1835,7 +1837,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.0.1';
+  var APP_VERSION = '2.1.2';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1917,7 +1919,7 @@
     }
   };
 
-  var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, polygonLayersById = {}, clusterLayerGroup;
+  var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
   var publicLandLayer = null;
@@ -1938,11 +1940,14 @@
   var measurePoints = [], measureMarkers = [], measureLine = null;
   var drawMode = false, drawPoints = [], drawMarkers = [], pendingDrawPoints = null, snappedPoints = null;
   var vertexEditingTrackId = null; // set while a saved track's shape is being vertex-edited (see editTrackVertices)
-  var vertexEditSyncFn = null; // current syncLine() closure from editTrackVertices, re-invoked after a style switch
+  var vertexEditingPolygonId = null; // same, for editPolygonVertices — shares vertex-edit-preview-source with tracks
+  var vertexEditSyncFn = null; // current syncLine() closure from editTrackVertices/editPolygonVertices, re-invoked after a style switch
+  var bearingEndpointSyncFn = null; // current syncLine() closure from the bearing-remap-btn handler, re-invoked after a style switch
+  var bearingEndpointEditingId = null; // set while a saved bearing's endpoints are being dragged (see bearing-remap-btn handler)
   var openTrackPopup = null; // the currently-open ad-hoc track popup, if any (tracks have no persistent marker/popup like pins do)
-  var lastTracksSetDataSrcRef = null; // DIAG: the source object updateTracksSource() last called .setData() on
-  var lastDrawPreviewSetDataSrcRef = null; // DIAG: same, for redrawDrawLine()
-  var polygonMode = false, polygonPoints = [], polygonMarkers = [], polygonPreviewLayer = null;
+  var openPolygonPopup = null; // same, for areas
+  var openBearingPopup = null; // same, for bearings
+  var polygonMode = false, polygonPoints = [], polygonMarkers = [];
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
   var gpsFollowWatchId = null;
@@ -1958,10 +1963,9 @@
   var ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjhhYjgwZjdmYTdmZDQxNDI5YTdmNmExOWIzODAwOTY3IiwiaCI6Im11cm11cjY0In0=';
   var searchResultMarker = null;
   var editingPinId = null, editingTrackId = null;
-  var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewLine = null;
+  var bearingMode = false, bearingOrigin = null, bearingOriginMarker = null, bearingPreviewTarget = null;
 
   var editingBearingId = null, selectedBearingStatus = 'escout';
-  var bearingLayersById = {}; // {id: {line, arrowMarker}}
   var _remapBearingId = null; // when set, draw mode updates this bearing instead of creating new
   var pendingLatLng = null;
   var activeTagFilters = {};
@@ -3193,6 +3197,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       // Cluster circle click — zoom in to expand
       map.on('click', 'cluster-circles', function(e){
+        // map.on('click', layerId, fn) is internally just another listener on the same
+        // shared 'click' array as every other click handler (both layer-scoped and the
+        // generic one) — e.preventDefault() sets a flag but MapLibre never checks it
+        // itself, so each handler must check e.defaultPrevented manually to avoid
+        // double-processing a single click that lands on more than one interactive layer.
+        if (e.defaultPrevented) return;
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var features = map.queryRenderedFeatures(e.point, { layers: ['cluster-circles'] });
@@ -3219,6 +3229,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       // Route line click — mode-aware pass-through, otherwise show that route's popup
       map.on('click', 'tracks-line-touch', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
@@ -3241,8 +3252,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'tracks-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'tracks-line-touch', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Area click — mode-aware pass-through, otherwise show that area's popup
+      map.on('click', 'polygons-fill', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var polyFeature = e.features && e.features[0];
+        if (!polyFeature) return;
+        var polygon = state.polygons.find(function(p){ return p.id === polyFeature.properties.id; });
+        if (!polygon) return;
+        openPolygonPopupAt(polygon, e.lngLat);
+      });
+      map.on('mouseenter', 'polygons-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'polygons-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Bearing click — mode-aware pass-through, otherwise show that bearing's popup
+      map.on('click', 'bearings-line-touch', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var brgFeature = e.features && e.features[0];
+        if (!brgFeature) return;
+        var bearing = state.bearings.find(function(b){ return b.id === brgFeature.properties.id; });
+        if (!bearing) return;
+        openBearingPopupAt(bearing, e.lngLat);
+      });
+      map.on('mouseenter', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = ''; });
+
       // Clicking the in-progress draw preview line inserts a new point at that spot
       map.on('click', 'draw-preview-line', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
         if (!drawMode) return;
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
@@ -3250,6 +3312,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
 
       map.on('click', function(e){
+        // Registered last, so this only runs for clicks that didn't already land on (and
+        // get fully handled by) cluster-circles/tracks-line-touch/polygons-fill/
+        // bearings-line-touch/draw-preview-line — see cluster-circles handler above for why
+        // that check is necessary at all.
+        if (e.defaultPrevented) return;
         closeClusterPanel();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
         if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
@@ -3457,13 +3524,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function refreshAllVisibility(){
     state.pins.forEach(applyFilterToMarker);
     state.tracks.forEach(applyFilterToTrack);
-    (state.polygons || []).forEach(function(poly){
-      var entry = polygonLayersById[poly.id];
-      if (!entry) return;
-      var visible = mapItemVisible(poly);
-      if (entry.poly){ if (visible) entry.poly.addTo(map); else if (map.hasLayer(entry.poly)) map.removeLayer(entry.poly); }
-      if (entry.label){ if (visible) entry.label.addTo(map); else if (map.hasLayer(entry.label)) map.removeLayer(entry.label); }
-    });
+    schedulePolygonsRefresh();
+    scheduleBearingsRefresh();
   }
 
   function zoomToVisible(){
@@ -3502,7 +3564,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>' +
       notes +
       '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
-      '<div class="pin-popup-actions">' +
+      '<div class="pin-popup-actions pin-popup-actions-grid">' +
       '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
       '<button class="btn btn-small" onclick="FieldMap.movePin(\'' + pin.id + '\')">Move</button>' +
@@ -3620,65 +3682,83 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function reinitializeLayers(){
     if (!map) return;
-    console.log('[FieldMap] reinitializeLayers: bound directly to style.load (no setTimeout) — this call is running RIGHT NOW because that event just fired.',
-      'isStyleLoaded():', map.isStyleLoaded(), 'areTilesLoaded():', map.areTilesLoaded());
-    console.log('[FieldMap] reinitializeLayers: tracks-source exists?', !!map.getSource('tracks-source'),
-      'tracks-line exists?', !!map.getLayer('tracks-line'),
-      'tracks-line-touch exists?', !!map.getLayer('tracks-line-touch'),
-      'state.tracks.length:', state.tracks.length,
-      '| draw-preview-source exists?', !!map.getSource('draw-preview-source'),
-      'draw-preview-line exists?', !!map.getLayer('draw-preview-line'),
-      'drawMode:', drawMode, 'drawPoints.length:', drawPoints.length);
 
     // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
     // every style change. Two layers on the same source: a wide invisible one purely
     // for easier click hit-testing on mobile, and the actual visible styled line.
-    var tracksSourceRefBefore = map.getSource('tracks-source');
-    if (!tracksSourceRefBefore){
-      try {
-        map.addSource('tracks-source', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: [] }
-        });
-        console.log('[FieldMap] DIAG addSource tracks-source succeeded');
-      } catch(err){ console.error('[FieldMap] DIAG addSource tracks-source THREW:', err); }
-    } else {
-      console.log('[FieldMap] DIAG tracks-source already existed before this reinitializeLayers call — not re-added');
+    if (!map.getSource('tracks-source')){
+      map.addSource('tracks-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
     }
     if (!map.getLayer('tracks-line-touch')){
-      try {
-        map.addLayer({
-          id: 'tracks-line-touch',
-          type: 'line',
-          source: 'tracks-source',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-width': 18, 'line-opacity': 0 }
-        });
-        console.log('[FieldMap] DIAG addLayer tracks-line-touch succeeded');
-      } catch(err){ console.error('[FieldMap] DIAG addLayer tracks-line-touch THREW:', err); }
+      map.addLayer({
+        id: 'tracks-line-touch',
+        type: 'line',
+        source: 'tracks-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-width': 18, 'line-opacity': 0 }
+      });
     }
     if (!map.getLayer('tracks-line')){
-      try {
-        map.addLayer({
-          id: 'tracks-line',
-          type: 'line',
-          source: 'tracks-source',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.85 }
-        });
-        console.log('[FieldMap] DIAG addLayer tracks-line succeeded');
-      } catch(err){ console.error('[FieldMap] DIAG addLayer tracks-line THREW:', err); }
+      map.addLayer({
+        id: 'tracks-line',
+        type: 'line',
+        source: 'tracks-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.85 }
+      });
     }
-    // Object-identity check: is the source the tracks-line layer resolves to the SAME
-    // object updateTracksSource() will call .setData() on, or has a stale/duplicate
-    // reference snuck in somewhere?
-    if (map.getLayer('tracks-line')){
-      var tracksLineSourceId = map.getLayer('tracks-line').source;
-      var resolvedSrc = map.getSource(tracksLineSourceId);
-      var directSrc = map.getSource('tracks-source');
-      console.log('[FieldMap] DIAG tracks-line.source string:', tracksLineSourceId,
-        '| resolved source === map.getSource(\'tracks-source\')?', resolvedSrc === directSrc,
-        '| source object same as before this reinit call?', resolvedSrc === tracksSourceRefBefore);
+
+    // Areas (polygons) — GeoJSON source of all saved area polygons. Fill + outline layers.
+    if (!map.getSource('polygons-source')){
+      map.addSource('polygons-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('polygons-fill')){
+      map.addLayer({
+        id: 'polygons-fill',
+        type: 'fill',
+        source: 'polygons-source',
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fillOpacity'] }
+      });
+    }
+    if (!map.getLayer('polygons-line')){
+      map.addLayer({
+        id: 'polygons-line',
+        type: 'line',
+        source: 'polygons-source',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2 }
+      });
+    }
+
+    // Bearings — GeoJSON source of all saved bearing lines. Wide invisible touch layer +
+    // the actual dashed line; the target-point dot is a separate maplibregl.Marker per
+    // bearing (see updateBearingsSource) since it needs its own independent click target.
+    if (!map.getSource('bearings-source')){
+      map.addSource('bearings-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('bearings-line-touch')){
+      map.addLayer({
+        id: 'bearings-line-touch',
+        type: 'line',
+        source: 'bearings-source',
+        paint: { 'line-width': 18, 'line-opacity': 0 }
+      });
+    }
+    if (!map.getLayer('bearings-line')){
+      map.addLayer({
+        id: 'bearings-line',
+        type: 'line',
+        source: 'bearings-source',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': 0.92, 'line-dasharray': [2, 1.5] }
+      });
     }
 
     // GeoJSON cluster source — always re-add after style change
@@ -3726,45 +3806,41 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // Live preview line for an in-progress route draw. Added here (not just in
     // setDrawMode) so it also survives a style switch mid-draw; kept empty otherwise.
-    var drawPreviewSourceRefBefore = map.getSource('draw-preview-source');
-    if (!drawPreviewSourceRefBefore){
-      try {
-        map.addSource('draw-preview-source', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: [] }
-        });
-        console.log('[FieldMap] DIAG addSource draw-preview-source succeeded');
-      } catch(err){ console.error('[FieldMap] DIAG addSource draw-preview-source THREW:', err); }
-    } else {
-      console.log('[FieldMap] DIAG draw-preview-source already existed before this reinitializeLayers call — not re-added');
+    if (!map.getSource('draw-preview-source')){
+      map.addSource('draw-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
     }
     if (!map.getLayer('draw-preview-line')){
-      try {
-        map.addLayer({
-          id: 'draw-preview-line',
-          type: 'line',
-          source: 'draw-preview-source',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-width': 4, 'line-color': '#3b8f76' }
-        });
-        console.log('[FieldMap] DIAG addLayer draw-preview-line succeeded');
-      } catch(err){ console.error('[FieldMap] DIAG addLayer draw-preview-line THREW:', err); }
-    }
-    if (map.getLayer('draw-preview-line')){
-      var drawPreviewLineSourceId = map.getLayer('draw-preview-line').source;
-      var resolvedDrawSrc = map.getSource(drawPreviewLineSourceId);
-      var directDrawSrc = map.getSource('draw-preview-source');
-      console.log('[FieldMap] DIAG draw-preview-line.source string:', drawPreviewLineSourceId,
-        '| resolved source === map.getSource(\'draw-preview-source\')?', resolvedDrawSrc === directDrawSrc,
-        '| source object same as before this reinit call?', resolvedDrawSrc === drawPreviewSourceRefBefore);
+      map.addLayer({
+        id: 'draw-preview-line',
+        type: 'line',
+        source: 'draw-preview-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-width': 4, 'line-color': '#3b8f76' }
+      });
     }
 
-    // Live preview line for an in-progress "Edit shape" vertex edit (see editTrackVertices).
-    // Separate from draw-preview-source so the two features never fight over the same layer.
+    // Live preview for an in-progress "Edit shape" vertex edit — shared by both track
+    // and polygon vertex-editing (mutually exclusive UI modes, never both live at once).
+    // MapLibre's fill renderer does NOT skip LineString features — it triangulates
+    // whatever points it's given as an implicitly-closed ring, so without a geometry-type
+    // filter this layer would paint a fill across a route's shape too (route edits put a
+    // LineString in this shared source). The filter restricts it to actual Polygon data.
     if (!map.getSource('vertex-edit-preview-source')){
       map.addSource('vertex-edit-preview-source', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('vertex-edit-preview-fill')){
+      map.addLayer({
+        id: 'vertex-edit-preview-fill',
+        type: 'fill',
+        source: 'vertex-edit-preview-source',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#5a9bd8', 'fill-opacity': 0.15 }
       });
     }
     if (!map.getLayer('vertex-edit-preview-line')){
@@ -3777,6 +3853,65 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Live preview for an in-progress area draw (handlePolygonClick). Fill only shows
+    // once there are enough points to close a ring; the line layer covers the open
+    // 2-point case too.
+    if (!map.getSource('polygon-draw-preview-source')){
+      map.addSource('polygon-draw-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('polygon-draw-preview-fill')){
+      map.addLayer({
+        id: 'polygon-draw-preview-fill',
+        type: 'fill',
+        source: 'polygon-draw-preview-source',
+        paint: { 'fill-color': '#c2622d', 'fill-opacity': 0.12 }
+      });
+    }
+    if (!map.getLayer('polygon-draw-preview-line')){
+      map.addLayer({
+        id: 'polygon-draw-preview-line',
+        type: 'line',
+        source: 'polygon-draw-preview-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-width': 2, 'line-color': '#c2622d', 'line-dasharray': [2, 1.33] }
+      });
+    }
+
+    // Live preview line for an in-progress bearing draw (handleBearingMapTap).
+    if (!map.getSource('bearing-draw-preview-source')){
+      map.addSource('bearing-draw-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('bearing-draw-preview-line')){
+      map.addLayer({
+        id: 'bearing-draw-preview-line',
+        type: 'line',
+        source: 'bearing-draw-preview-source',
+        paint: { 'line-width': 1.5, 'line-color': '#c47a28', 'line-opacity': 0.6, 'line-dasharray': [2, 1.33] }
+      });
+    }
+
+    // Live preview line for remapping an existing bearing's endpoints (drag handles).
+    if (!map.getSource('bearing-endpoint-preview-source')){
+      map.addSource('bearing-endpoint-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('bearing-endpoint-preview-line')){
+      map.addLayer({
+        id: 'bearing-endpoint-preview-line',
+        type: 'line',
+        source: 'bearing-endpoint-preview-source',
+        paint: { 'line-width': 2.5, 'line-color': '#8A8F8C', 'line-dasharray': [2, 1.5] }
+      });
+    }
+
     // Rebuild every pin marker fresh on each style change/initial load, so icons,
     // colors, and positions stay correct regardless of what the previous style left behind.
     Object.keys(markersById).forEach(function(id){ removeMarkerForPin(id); });
@@ -3785,50 +3920,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Populate cluster source with current pins
     updatePinClusterSource();
     updateTracksSource();
+    updatePolygonsSource();
+    updateBearingsSource();
     redrawDrawLine();
+    redrawPolygonDraft();
+    redrawBearingDrawPreview();
     if (vertexEditSyncFn) vertexEditSyncFn();
-
-    // Test fix for a suspected paint/readiness race: style.load firing (and addLayer/
-    // setData succeeding) doesn't guarantee MapLibre actually paints a frame afterward.
-    // Force one explicitly rather than waiting for some later, unrelated interaction to do it.
-    map.triggerRepaint();
-    console.log('[FieldMap] reinitializeLayers: called map.triggerRepaint()');
-
-    logLayerPaintDiagnostics('tracks-line', 'tracks-source', 'immediately after reinitializeLayers');
-    logLayerPaintDiagnostics('draw-preview-line', 'draw-preview-source', 'immediately after reinitializeLayers');
-    setTimeout(function(){
-      logLayerPaintDiagnostics('tracks-line', 'tracks-source', '~250ms later');
-      logLayerPaintDiagnostics('draw-preview-line', 'draw-preview-source', '~250ms later');
-    }, 250);
-  }
-
-  function logLayerPaintDiagnostics(layerId, sourceId, whenLabel){
-    if (!map.getLayer(layerId)){
-      console.log('[FieldMap] DIAG (' + whenLabel + ') ' + layerId + ': layer does not exist');
-      return;
-    }
-    var styleLayers = map.getStyle().layers;
-    var idx = styleLayers.findIndex(function(l){ return l.id === layerId; });
-    var before = idx > 0 ? styleLayers[idx - 1] : null;
-    var after = idx < styleLayers.length - 1 ? styleLayers[idx + 1] : null;
-    var src = map.getSource(sourceId);
-    var srcData = src && src._data;
-    var featureCount = srcData && srcData.features ? srcData.features.length : 'n/a (no _data)';
-    var lastSetDataSrc = layerId === 'tracks-line' ? lastTracksSetDataSrcRef
-      : layerId === 'draw-preview-line' ? lastDrawPreviewSetDataSrcRef : undefined;
-    console.log('[FieldMap] DIAG (' + whenLabel + ') ' + layerId + ':', {
-      'line-color': map.getPaintProperty(layerId, 'line-color'),
-      'line-width': map.getPaintProperty(layerId, 'line-width'),
-      'line-opacity': map.getPaintProperty(layerId, 'line-opacity'),
-      'visibility': map.getLayoutProperty(layerId, 'visibility'),
-      'layerIndex': idx,
-      'totalLayers': styleLayers.length,
-      'layerBefore (renders under this)': before ? before.id + ' (type ' + before.type + ')' : null,
-      'layerAfter (renders over this)': after ? after.id + ' (type ' + after.type + ')' : null,
-      'sourceExists': !!src,
-      'sourceDataFeatureCount': featureCount,
-      'map.getSource(sourceId) === source last setData() was called on?': src === lastSetDataSrc
-    });
+    if (bearingEndpointSyncFn) bearingEndpointSyncFn();
   }
 
   function openClusterPanel(members){
@@ -4171,8 +4269,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       track.updatedAt = Date.now();
       if (dateVal) track.created = dateVal;
       if (track.distMiles === undefined) track.distMiles = trackDistanceMiles(track.points);
-      // Map rendering of tracks is still Leaflet-based (Session 3 scope) and can throw —
-      // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+      // refreshTrackPopup() just triggers a debounced source refresh and can't throw —
+      // kept defensive anyway, consistent with the other save flows.
       try { refreshTrackPopup(track); } catch(e){ console.error('[FieldMap] refreshTrackPopup failed:', e); }
     } else if (pendingDrawPoints){
       var pts = pendingDrawPoints.map(function(p){ return [p.lat, p.lng]; });
@@ -4404,11 +4502,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     },
     editPolygon: function(id){
       var poly = state.polygons.find(function(p){ return p.id === id; });
-      if (poly){ map.closePopup(); openPolygonModal(poly); }
+      if (poly){
+        if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
+        openPolygonModal(poly);
+      }
     },
     deletePolygon: function(id){
       if (confirm('Delete this area? This cannot be undone.')){
-        map.closePopup();
+        if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
         deletePolygonById(id);
       }
     },
@@ -4555,74 +4656,90 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       doneBtn.addEventListener('click', function(){ finish(true); });
       document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); },{once:true});
     },
-        editPolygonVertices: function(id){
+    editPolygonVertices: function(id){
       var polygon = (state.polygons||[]).find(function(p){ return p.id === id; });
       if (!polygon) return;
-      map.closePopup();
-      var entry = polygonLayersById[polygon.id];
-      if (!entry || !entry.poly) return;
-      var origPoints = polygon.points.map(function(p){ return [p[0]||p.lat, p[1]||p.lng]; });
-      // Hide the live polygon layer during edit — we redraw on Done
-      map.removeLayer(entry.poly);
-      if (entry.label) map.removeLayer(entry.label);
-      // Draw a working preview polygon
-      var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
-      var previewPoly = L.polygon(origPoints, {
-        color: sc.bg, weight:2, fillColor:sc.bg, fillOpacity:0.18, interactive:false
-      }).addTo(map);
+      if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
+
       var vertexMarkers = [];
-      var midMarkers2 = [];
-      var vertIcon = L.divIcon({ className:'', iconSize:[28,28], iconAnchor:[14,14],
-        html:'<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;"></div></div>'});
-      var midIcon2 = L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
-        html:'<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #c2622d;box-sizing:border-box;opacity:0.9;"></div></div>'});
+      var midMarkers = [];
+      var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
 
-      function getPts(){ return vertexMarkers.map(function(vm){ var l=vm.getLatLng(); return [l.lat,l.lng]; }); }
+      // Hide the saved area for this one polygon while editing — shares
+      // vertex-edit-preview-source with editTrackVertices (mutually exclusive modes).
+      vertexEditingPolygonId = polygon.id;
+      updatePolygonsSource();
 
-      function rebuildMid2(){
-        midMarkers2.forEach(function(x){ map.removeLayer(x); });
-        midMarkers2.length = 0;
+      function vertexIconHtml(){
+        return '<div style="width:28px;height:28px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:16px;height:16px;border-radius:50%;background:#c2622d;border:2px solid #fff;box-sizing:border-box;"></div></div>';
+      }
+      function midIconHtml(){
+        return '<div style="width:22px;height:22px;border-radius:50%;background:transparent;display:flex;align-items:center;justify-content:center;"><div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #c2622d;box-sizing:border-box;opacity:0.9;"></div></div>';
+      }
+
+      function getPts(){ return vertexMarkers.map(function(vm){ var ll = vm.getLngLat(); return [ll.lat, ll.lng]; }); }
+      function syncLine(){
+        var pts = getPts();
+        if (!map.getSource('vertex-edit-preview-source')) return;
+        var features = [];
+        if (pts.length >= 3){
+          var ring = pts.map(function(p){ return [p[1], p[0]]; });
+          ring.push(ring[0]);
+          features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: {} });
+        }
+        map.getSource('vertex-edit-preview-source').setData({ type: 'FeatureCollection', features: features });
+        if (map.getLayer('vertex-edit-preview-line')) map.setPaintProperty('vertex-edit-preview-line', 'line-color', sc.bg);
+        if (map.getLayer('vertex-edit-preview-fill')) map.setPaintProperty('vertex-edit-preview-fill', 'fill-color', sc.bg);
+      }
+      vertexEditSyncFn = syncLine;
+
+      // Closed ring: midpoints exist between every consecutive pair, including
+      // wrapping from the last vertex back to the first (unlike the open-path track edit).
+      function rebuildMidMarkers(){
+        midMarkers.forEach(function(x){ x.remove(); });
+        midMarkers.length = 0;
         for (var i=0; i<vertexMarkers.length; i++){
           (function(idx){
-            var a = vertexMarkers[idx].getLatLng();
-            var b = vertexMarkers[(idx+1) % vertexMarkers.length].getLatLng();
-            var mid = L.latLng((a.lat+b.lat)/2,(a.lng+b.lng)/2);
-            var mm = L.marker(mid,{icon:midIcon2,zIndexOffset:1500,interactive:true}).addTo(map);
-            mm.on('click',function(e){
-              L.DomEvent.stopPropagation(e);
-              midMarkers2.forEach(function(x){ map.removeLayer(x); }); midMarkers2.length=0;
-              var insertAt = idx+1;
-              var ll = mm.getLatLng();
-              var mNew = L.marker(ll,{icon:vertIcon,draggable:true,zIndexOffset:2000}).addTo(map);
-              mNew.on('drag',function(){ previewPoly.setLatLngs(getPts()); rebuildMid2(); });
-              mNew.on('contextmenu',function(e2){
-                L.DomEvent.stopPropagation(e2);
-                if(vertexMarkers.length<=3){showToast('Need at least 3');return;}
-                var ix=vertexMarkers.indexOf(mNew); vertexMarkers.splice(ix,1); map.removeLayer(mNew);
-                previewPoly.setLatLngs(getPts()); rebuildMid2();
-              });
-              vertexMarkers.splice(insertAt,0,mNew);
-              previewPoly.setLatLngs(getPts()); rebuildMid2();
+            var a = vertexMarkers[idx].getLngLat(), b = vertexMarkers[(idx+1) % vertexMarkers.length].getLngLat();
+            var midLat = (a.lat+b.lat)/2, midLng = (a.lng+b.lng)/2;
+            var el = document.createElement('div');
+            el.innerHTML = midIconHtml();
+            el.style.cursor = 'pointer';
+            var mm = new maplibregl.Marker({ element: el, anchor:'center' }).setLngLat([midLng, midLat]).addTo(map);
+            el.addEventListener('click', function(e){
+              e.stopPropagation();
+              midMarkers.forEach(function(x){ x.remove(); }); midMarkers.length = 0;
+              var mNew = addVertexMarker({ lat: midLat, lng: midLng });
+              vertexMarkers.splice(idx+1, 0, mNew);
+              syncLine(); rebuildMidMarkers();
             });
-            midMarkers2.push(mm);
+            midMarkers.push(mm);
           })(i);
         }
       }
 
-      polygon.points.forEach(function(pt){
-        var lat = pt[0]||pt.lat, lng = pt[1]||pt.lng;
-        var m = L.marker([lat,lng], { icon:vertIcon, draggable:true, zIndexOffset:2000 }).addTo(map);
-        m.on('drag', function(){ previewPoly.setLatLngs(getPts()); rebuildMid2(); });
-        m.on('contextmenu', function(e){
-          L.DomEvent.stopPropagation(e);
+      function addVertexMarker(pt){
+        var lat = Array.isArray(pt) ? pt[0] : pt.lat;
+        var lng = Array.isArray(pt) ? pt[1] : pt.lng;
+        var el = document.createElement('div');
+        el.innerHTML = vertexIconHtml();
+        el.style.cursor = 'grab';
+        var m = new maplibregl.Marker({ element: el, anchor:'center', draggable:true }).setLngLat([lng, lat]).addTo(map);
+        m.on('drag', function(){ syncLine(); rebuildMidMarkers(); });
+        el.addEventListener('contextmenu', function(e){
+          e.preventDefault();
+          e.stopPropagation();
           if (vertexMarkers.length <= 3){ showToast('Need at least 3 points'); return; }
-          var idx = vertexMarkers.indexOf(m);
-          vertexMarkers.splice(idx, 1); map.removeLayer(m);
-          previewPoly.setLatLngs(getPts()); rebuildMid2();
+          vertexMarkers.splice(vertexMarkers.indexOf(m), 1);
+          m.remove();
+          syncLine(); rebuildMidMarkers();
         });
-        vertexMarkers.push(m);
-      });
-      rebuildMid2();
+        return m;
+      }
+
+      polygon.points.forEach(function(pt){ vertexMarkers.push(addVertexMarker(pt)); });
+      syncLine();
+      rebuildMidMarkers();
 
       var barEl = document.getElementById('bearing-bar');
       document.getElementById('bearing-bar-text').textContent = 'Drag vertices · tap ◦ to add · right-click to delete';
@@ -4631,20 +4748,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       doneBtn.className = 'btn btn-small btn-primary'; doneBtn.textContent = 'Done';
       barEl.appendChild(doneBtn);
       var finish = function(save){
-        vertexMarkers.forEach(function(m){ map.removeLayer(m); });
-        midMarkers2.forEach(function(m){ map.removeLayer(m); });
-        map.removeLayer(previewPoly);
-        if(doneBtn.parentNode) barEl.removeChild(doneBtn);
+        vertexMarkers.forEach(function(m){ m.remove(); });
+        midMarkers.forEach(function(m){ m.remove(); });
+        if (doneBtn.parentNode) barEl.removeChild(doneBtn);
         barEl.classList.add('hidden'); barEl.style.display = '';
+        if (map.getSource('vertex-edit-preview-source')){
+          map.getSource('vertex-edit-preview-source').setData({ type: 'FeatureCollection', features: [] });
+        }
+        vertexEditSyncFn = null;
+        vertexEditingPolygonId = null;
         if (save){
           polygon.points = getPts();
           polygon.updatedAt = Date.now();
-          addPolygonToMap(polygon);
           scheduleSave(); showToast('Area shape updated');
-        } else {
-          // Restore original — re-add the hidden layers
-          addPolygonToMap(polygon);
         }
+        updatePolygonsSource();
         document.getElementById('bearing-bar-cancel').onclick = null;
       };
       doneBtn.addEventListener('click', function(){ finish(true); });
@@ -4694,11 +4812,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     },
     editBearing: function(id){
       var b = state.bearings.find(function(x){ return x.id === id; });
-      if (b){ map.closePopup(); openBearingModal(b); }
+      if (b){
+        if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
+        openBearingModal(b);
+      }
     },
     deleteBearing: function(id){
       if (confirm('Delete this bearing? This cannot be undone.')){
-        map.closePopup();
+        if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
         deleteBearingById(id);
       }
     }
@@ -5018,6 +5139,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
+  // Areas have no persistent marker/popup object like pins do (ad-hoc popup created on
+  // click) — mirrors openTrackPopupAt.
+  function openPolygonPopupAt(polygon, lngLat){
+    if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML(polygonPopupHtml(polygon))
+      .addTo(map);
+    popup.on('close', function(){ if (openPolygonPopup === popup) openPolygonPopup = null; });
+    openPolygonPopup = popup;
+  }
+
   // ---------- Polygon drawing ----------
   function setPolygonMode(on){
     polygonMode = on;
@@ -5028,55 +5161,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function clearPolygonDraft(){
-    polygonMarkers.forEach(function(m){ map.removeLayer(m); });
+    polygonMarkers.forEach(function(m){ m.remove(); });
     polygonMarkers = [];
     polygonPoints = [];
-    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
+    redrawPolygonDraft();
     document.getElementById('polygon-finish-btn').disabled = true;
     document.getElementById('polygon-finish-btn').textContent = 'Finish (3+ pts)';
     document.getElementById('polygon-bar-text').textContent = 'Tap map to place points';
   }
 
+  // Live fill+outline preview for an in-progress area draw. <2 points: nothing.
+  // 2 points: open LineString. 3+ points: closed Polygon ring (fill only kicks in here).
+  function redrawPolygonDraft(){
+    if (!map || !map.getSource('polygon-draw-preview-source')) return;
+    var features = [];
+    if (polygonPoints.length >= 3){
+      var ring = polygonPoints.map(function(p){ return [p.lng, p.lat]; });
+      ring.push(ring[0]);
+      features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: {} });
+    } else if (polygonPoints.length >= 2){
+      features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: polygonPoints.map(function(p){ return [p.lng, p.lat]; }) }, properties: {} });
+    }
+    map.getSource('polygon-draw-preview-source').setData({ type: 'FeatureCollection', features: features });
+  }
+
+  function createPolygonVertexMarker(latlng, isFirst){
+    var el = document.createElement('div');
+    var ringStyle = isFirst ? 'box-shadow:0 0 0 6px rgba(194,98,45,0.25),0 1px 3px rgba(0,0,0,0.5);' : 'box-shadow:0 1px 3px rgba(0,0,0,0.5);';
+    el.innerHTML = '<div style="width:11px;height:11px;border-radius:50%;background:#c2622d;border:2px solid #fff;' + ringStyle + '"></div>';
+    return new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([latlng.lng, latlng.lat]).addTo(map);
+  }
+
   function handlePolygonClick(latlng){
     // Check if clicking close to the first vertex to auto-close (within 20px)
     if (polygonPoints.length >= 3){
-      var firstPt = map.latLngToContainerPoint(polygonPoints[0]);
-      var clickPt = map.latLngToContainerPoint(latlng);
+      var firstPt = map.project([polygonPoints[0].lng, polygonPoints[0].lat]);
+      var clickPt = map.project([latlng.lng, latlng.lat]);
       if (Math.hypot(firstPt.x - clickPt.x, firstPt.y - clickPt.y) < 20){
         finishPolygon(); return;
       }
     }
     polygonPoints.push(latlng);
-
-    // Vertex marker
-    var vIcon = L.divIcon({
-      className:'polygon-vertex-icon',
-      html:'<div style="width:11px;height:11px;border-radius:50%;background:' + '#c2622d' + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>',
-      iconSize:[11,11], iconAnchor:[5,5]
-    });
-    // First vertex gets a larger target ring
-    if (polygonPoints.length === 1){
-      vIcon = L.divIcon({
-        className:'polygon-vertex-icon',
-        html:'<div style="width:11px;height:11px;border-radius:50%;background:' + '#c2622d' + ';border:2px solid #fff;box-shadow:0 0 0 6px rgba(194,98,45,0.25),0 1px 3px rgba(0,0,0,0.5);"></div>',
-        iconSize:[11,11], iconAnchor:[5,5]
-      });
-    }
-    var marker = L.marker(latlng, { icon:vIcon, interactive:false }).addTo(map);
-    polygonMarkers.push(marker);
-
-    // Update preview polygon/polyline
-    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
-    if (polygonPoints.length >= 3){
-      polygonPreviewLayer = L.polygon(polygonPoints, {
-        color: '#c2622d', weight:2, dashArray:'6,4',
-        fillColor: '#c2622d', fillOpacity:0.12, interactive:false
-      }).addTo(map);
-    } else if (polygonPoints.length >= 2){
-      polygonPreviewLayer = L.polyline(polygonPoints, {
-        color: '#c2622d', weight:2, dashArray:'6,4', interactive:false
-      }).addTo(map);
-    }
+    polygonMarkers.push(createPolygonVertexMarker(latlng, polygonPoints.length === 1));
+    redrawPolygonDraft();
 
     var n = polygonPoints.length;
     document.getElementById('polygon-bar-text').textContent = n + ' point' + (n===1?'':'s') + (n >= 3 ? ' · tap first point to close' : '');
@@ -5088,18 +5215,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (polygonPoints.length === 0) return;
     polygonPoints.pop();
     var m = polygonMarkers.pop();
-    if (m) map.removeLayer(m);
-    if (polygonPreviewLayer){ map.removeLayer(polygonPreviewLayer); polygonPreviewLayer = null; }
-    if (polygonPoints.length >= 3){
-      polygonPreviewLayer = L.polygon(polygonPoints, {
-        color:'#c2622d', weight:2, dashArray:'6,4',
-        fillColor:'#c2622d', fillOpacity:0.12, interactive:false
-      }).addTo(map);
-    } else if (polygonPoints.length >= 2){
-      polygonPreviewLayer = L.polyline(polygonPoints, {
-        color:'#c2622d', weight:2, dashArray:'6,4', interactive:false
-      }).addTo(map);
-    }
+    if (m) m.remove();
+    redrawPolygonDraft();
     var n = polygonPoints.length;
     document.getElementById('polygon-bar-text').textContent = n > 0 ? n + ' point' + (n===1?'':'s') : 'Tap map to place points';
     document.getElementById('polygon-finish-btn').disabled = n < 3;
@@ -5114,58 +5231,79 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Polygon map rendering ----------
-  function addPolygonToMap(polygon){
-    var sc = STATUS_COLORS[polygon.status || 'escout'] || STATUS_COLORS.escout;
-    var color = sc.bg;
-    var layer = L.polygon(polygon.points, {
-      color: color,
-      weight: 2,
-      fillColor: color,
-      fillOpacity: polygon.fillOpacity !== undefined ? polygon.fillOpacity : 0.18,
-      interactive: true
-    }).addTo(map);
+  // Areas render from a single shared GeoJSON source (polygons-source, set up in
+  // reinitializeLayers) rather than one Leaflet layer per area — same architecture as
+  // tracks-source. Labels are separate maplibregl.Marker HTML elements at each area's
+  // bounding-box center (matching the old L.divIcon label's centroid math exactly).
+  var polygonLabelMarkersById = {};
+  var polygonsRefreshTimer = null;
 
-    layer.bindPopup(polygonPopupHtml(polygon), { maxWidth:280, className:'polygon-popup' });
-    layer.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
-        // Pass click through to the map handler — don't stopPropagation
-        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
-        if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
-        if (measureMode){ handleMeasureClick(e.latlng); return; }
-        if (drawMode){ handleDrawClick(e.latlng); return; }
-        if (polygonMode){ handlePolygonClick(e.latlng); return; }
-        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
-        return;
+  function addPolygonToMap(polygon){ schedulePolygonsRefresh(); }
+  function removePolygonFromMap(id){ schedulePolygonsRefresh(); }
+  function refreshPolygonMap(polygon){ schedulePolygonsRefresh(); }
+
+  function schedulePolygonsRefresh(){
+    clearTimeout(polygonsRefreshTimer);
+    polygonsRefreshTimer = setTimeout(updatePolygonsSource, 60);
+  }
+
+  function polygonBoundsCenter(points){
+    var minLat=Infinity, maxLat=-Infinity, minLng=Infinity, maxLng=-Infinity;
+    points.forEach(function(pt){
+      var lat = Array.isArray(pt) ? pt[0] : pt.lat;
+      var lng = Array.isArray(pt) ? pt[1] : pt.lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    });
+    return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 };
+  }
+
+  function updatePolygonsSource(){
+    if (!map) return;
+    var src = map.getSource('polygons-source');
+    if (!src) return;
+    var visible = state.polygons.filter(function(p){ return p.id !== vertexEditingPolygonId && mapItemVisible(p); });
+    var features = visible.filter(function(p){ return p.points && p.points.length >= 3; }).map(function(p){
+      var sc = STATUS_COLORS[p.status || 'escout'] || STATUS_COLORS.escout;
+      var ring = p.points.map(function(pt){
+        var lat = Array.isArray(pt) ? pt[0] : pt.lat;
+        var lng = Array.isArray(pt) ? pt[1] : pt.lng;
+        return [lng, lat];
+      });
+      var first = ring[0], last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) ring = ring.concat([first]);
+      return {
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [ring] },
+        properties: { id: p.id, color: sc.bg, fillOpacity: p.fillOpacity !== undefined ? p.fillOpacity : 0.18 }
+      };
+    });
+    src.setData({ type: 'FeatureCollection', features: features });
+
+    var showLabels = state.settings.showAreaLabels !== false;
+    var seenIds = {};
+    visible.forEach(function(p){
+      if (!p.points || p.points.length < 3) return;
+      seenIds[p.id] = true;
+      var sc = STATUS_COLORS[p.status || 'escout'] || STATUS_COLORS.escout;
+      var center = polygonBoundsCenter(p.points);
+      var marker = polygonLabelMarkersById[p.id];
+      if (!marker){
+        var el = document.createElement('div');
+        el.style.cssText = 'pointer-events:none;';
+        marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([center.lng, center.lat]).addTo(map);
+        polygonLabelMarkersById[p.id] = marker;
+      } else {
+        marker.setLngLat([center.lng, center.lat]);
       }
-      L.DomEvent.stopPropagation(e);
-      layer.openPopup(e.latlng);
+      marker.getElement().innerHTML = '<div style="font-size:14px;font-weight:700;color:' + sc.bg + ';pointer-events:none;white-space:nowrap;line-height:1.2;">' + escapeHtml(p.name) + '</div>';
+      marker.getElement().style.display = showLabels ? '' : 'none';
     });
-
-    var labelIcon = L.divIcon({
-      className:'polygon-label',
-      html:'<div style="font-size:14px;font-weight:700;color:' + color + ';pointer-events:none;white-space:nowrap;line-height:1.2;">' + escapeHtml(polygon.name) + '</div>',
-      iconSize:[0,0]
+    Object.keys(polygonLabelMarkersById).forEach(function(id){
+      if (!seenIds[id]){ polygonLabelMarkersById[id].remove(); delete polygonLabelMarkersById[id]; }
     });
-    var centroid = layer.getBounds().getCenter();
-    var labelMarker = L.marker(centroid, { icon:labelIcon, interactive:false });
-    if (state.settings.showAreaLabels !== false) labelMarker.addTo(map);
-
-    polygonLayersById[polygon.id] = { poly: layer, label: labelMarker };
-  }
-
-  function removePolygonFromMap(id){
-    var entry = polygonLayersById[id];
-    if (!entry) return;
-    try { if (entry.poly && map.hasLayer(entry.poly)) map.removeLayer(entry.poly); } catch(e){}
-    try { if (entry.label && map.hasLayer(entry.label)) map.removeLayer(entry.label); } catch(e){}
-    delete polygonLayersById[id];
-  }
-
-  function refreshPolygonMap(polygon){
-    removePolygonFromMap(polygon.id);
-    addPolygonToMap(polygon);
-    // Popup content is re-bound by addPolygonToMap with updated data
   }
 
   // ---------- Polygon modal ----------
@@ -5219,8 +5357,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         poly.trip = trip; poly.notes = notes;
         poly.updatedAt = Date.now();
         if (dateVal) poly.created = dateVal;
-        // Map rendering of areas is still Leaflet-based (Session 3 scope) and can throw —
-        // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+        // refreshPolygonMap() just triggers a debounced source refresh and can't throw —
+        // kept defensive anyway, consistent with the other save flows.
         try { refreshPolygonMap(poly); } catch(e){ console.error('[FieldMap] refreshPolygonMap failed:', e); }
       }
     } else {
@@ -5288,59 +5426,72 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
-  function addBearingToMap(b){
-    var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
-    var color = sc.bg;
-    var origin = L.latLng(b.originLat, b.originLng);
-    var target = L.latLng(b.targetLat, b.targetLng);
+  // Bearings have no persistent marker/popup object like pins do (ad-hoc popup created
+  // on click) — mirrors openTrackPopupAt/openPolygonPopupAt.
+  function openBearingPopupAt(bearing, lngLat){
+    if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML(bearingPopupHtml(bearing))
+      .addTo(map);
+    popup.on('close', function(){ if (openBearingPopup === popup) openBearingPopup = null; });
+    openBearingPopup = popup;
+  }
 
-    var line = L.polyline([origin, target], {
-      color: color, weight: 2.5, dashArray: '8,5', opacity: 0.92, interactive: true
+  // Bearings render from a single shared GeoJSON source (bearings-source, set up in
+  // reinitializeLayers) for the dashed line — same architecture as tracks-source. The
+  // target-point dot is a separate maplibregl.Marker per bearing since it needs its own
+  // independent click target (matches the old dotMarker's always-open-popup behavior,
+  // which — unlike the line — never passed clicks through to mode handlers).
+  var bearingTargetMarkersById = {};
+  var bearingsRefreshTimer = null;
+
+  function addBearingToMap(b){ scheduleBearingsRefresh(); }
+  function removeBearingFromMap(id){ scheduleBearingsRefresh(); }
+  function refreshBearingMap(b){ scheduleBearingsRefresh(); }
+
+  function scheduleBearingsRefresh(){
+    clearTimeout(bearingsRefreshTimer);
+    bearingsRefreshTimer = setTimeout(updateBearingsSource, 60);
+  }
+
+  function updateBearingsSource(){
+    if (!map) return;
+    var src = map.getSource('bearings-source');
+    if (!src) return;
+    var visible = state.bearings.filter(function(b){ return b.id !== bearingEndpointEditingId && mapItemVisible(b); });
+    var features = visible.map(function(b){
+      var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+      return {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [[b.originLng, b.originLat], [b.targetLng, b.targetLat]] },
+        properties: { id: b.id, color: sc.bg }
+      };
     });
+    src.setData({ type: 'FeatureCollection', features: features });
 
-    var dotIcon = L.divIcon({
-      className:'', iconSize:[16,16], iconAnchor:[8,8],
-      html:'<div style="width:16px;height:16px;border-radius:50%;background:' + color + ';border:2px solid rgba(255,255,255,0.7);box-sizing:border-box;"></div>'
-    });
-    var dotMarker = L.marker(target, { icon:dotIcon, interactive:true });
-
-    var popup = L.popup({ maxWidth:280 }).setContent(bearingPopupHtml(b));
-
-    line.on('click', function(e){
-      if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
-        if (bearingMode){ handleBearingMapTap(e.latlng); return; }
-        if (elevTapMode){ fetchElevationAtPoint(e.latlng); return; }
-        if (compassActive){ handleCompassMapTap(e.latlng); return; }
-        if (measureMode){ handleMeasureClick(e.latlng); return; }
-        if (drawMode){ handleDrawClick(e.latlng); return; }
-        if (addMode){ pendingLatLng = e.latlng; openPinModal(null, e.latlng); return; }
-        return;
+    var seenIds = {};
+    visible.forEach(function(b){
+      seenIds[b.id] = true;
+      var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+      var marker = bearingTargetMarkersById[b.id];
+      if (!marker){
+        var el = document.createElement('div');
+        el.style.cssText = 'cursor:pointer;';
+        marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([b.targetLng, b.targetLat]).addTo(map);
+        el.addEventListener('click', function(e){
+          e.stopPropagation();
+          openBearingPopupAt(b, { lng: b.targetLng, lat: b.targetLat });
+        });
+        bearingTargetMarkersById[b.id] = marker;
+      } else {
+        marker.setLngLat([b.targetLng, b.targetLat]);
       }
-      L.DomEvent.stopPropagation(e);
-      popup.setLatLng(e.latlng).openOn(map);
+      marker.getElement().innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:' + sc.bg + ';border:2px solid rgba(255,255,255,0.7);box-sizing:border-box;"></div>';
     });
-
-    dotMarker.on('click', function(e){
-      L.DomEvent.stopPropagation(e);
-      popup.setLatLng(target).openOn(map);
+    Object.keys(bearingTargetMarkersById).forEach(function(id){
+      if (!seenIds[id]){ bearingTargetMarkersById[id].remove(); delete bearingTargetMarkersById[id]; }
     });
-
-    line.addTo(map);
-    dotMarker.addTo(map);
-    bearingLayersById[b.id] = { line: line, arrow: dotMarker, popup: popup };
-  }
-
-  function removeBearingFromMap(id){
-    var entry = bearingLayersById[id];
-    if (!entry) return;
-    if (entry.line) map.removeLayer(entry.line);
-    if (entry.arrow) map.removeLayer(entry.arrow);
-    delete bearingLayersById[id];
-  }
-
-  function refreshBearingMap(b){
-    removeBearingFromMap(b.id);
-    addBearingToMap(b);
   }
 
   function renderBearingTagChips(activeTags){
@@ -5414,8 +5565,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus; b.tags = tags;
         b.updatedAt = Date.now();
         if (dateVal) b.created = dateVal;
-        // Map rendering of bearings is still Leaflet-based (Session 3 scope) and can throw —
-        // isolate it so a draw failure never blocks closing the modal / refreshing the sidebar.
+        // refreshBearingMap() just triggers a debounced source refresh and can't throw —
+        // kept defensive anyway, consistent with the other save flows.
         try { refreshBearingMap(b); } catch(e){ console.error('[FieldMap] refreshBearingMap failed:', e); }
       }
     } else {
@@ -5455,10 +5606,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!on){
       _remapBearingId = null;
       bearingOrigin = null;
-      // Bearing preview markers/lines are still Leaflet-based (Session 3 scope) and can
-      // throw against the MapLibre map — guard so toggling bearing mode never crashes.
-      if (bearingOriginMarker){ try { map.removeLayer(bearingOriginMarker); } catch(e){ console.error('[FieldMap] removeLayer bearingOriginMarker failed:', e); } bearingOriginMarker = null; }
-      if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(e){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', e); } bearingPreviewLine = null; }
+      bearingPreviewTarget = null;
+      if (bearingOriginMarker){ bearingOriginMarker.remove(); bearingOriginMarker = null; }
+      clearBearingDrawPreview();
       document.getElementById('bearing-bar').classList.add('hidden');
       document.getElementById('bearing-bar').style.display = '';
     } else {
@@ -5470,27 +5620,43 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
+  function clearBearingDrawPreview(){
+    if (map && map.getSource('bearing-draw-preview-source')){
+      map.getSource('bearing-draw-preview-source').setData({ type: 'FeatureCollection', features: [] });
+    }
+  }
+
+  // Re-invoked from reinitializeLayers so a style switch mid-draw restores the preview
+  // line from bearingOrigin + the last known mouse position, instead of losing it.
+  function redrawBearingDrawPreview(){
+    if (!map || !map.getSource('bearing-draw-preview-source')) return;
+    var features = [];
+    if (bearingOrigin && bearingPreviewTarget){
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [[bearingOrigin.lng, bearingOrigin.lat], [bearingPreviewTarget.lng, bearingPreviewTarget.lat]] },
+        properties: {}
+      });
+    }
+    map.getSource('bearing-draw-preview-source').setData({ type: 'FeatureCollection', features: features });
+  }
+
   function handleBearingMapTap(latlng){
     if (!bearingOrigin){
       // First tap — set origin, show temp marker
       bearingOrigin = latlng;
-      // Bearing preview rendering is still Leaflet-based (Session 3 scope) and can throw
-      // against the MapLibre map — guard so tapping the map to start a bearing never crashes.
-      try {
-        bearingOriginMarker = L.circleMarker(latlng, {
-          radius:6, color:'#fff', fillColor:'#c47a28', fillOpacity:1, weight:2, interactive:false
-        }).addTo(map);
-      } catch(e){ console.error('[FieldMap] bearing origin marker failed:', e); }
+      var el = document.createElement('div');
+      el.innerHTML = '<div style="width:12px;height:12px;border-radius:50%;background:#c47a28;border:2px solid #fff;box-sizing:border-box;"></div>';
+      bearingOriginMarker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([latlng.lng, latlng.lat]).addTo(map);
       document.getElementById('bearing-bar-text').textContent = 'Tap target point';
       map.on('mousemove', updateBearingPreview);
     } else {
       // Second tap — finish
       map.off('mousemove', updateBearingPreview);
-      if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(e){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', e); } bearingPreviewLine = null; }
       var origin = bearingOrigin;
       var remapId = _remapBearingId;
       _remapBearingId = null;
-      setBearingMode(false);
+      setBearingMode(false); // clears bearingOrigin, bearingOriginMarker, and the preview line
       document.getElementById('map').style.cursor = '';
       if (remapId){
         // Update existing bearing endpoints
@@ -5500,7 +5666,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           b.targetLat = latlng.lat; b.targetLng = latlng.lng;
           b.bearingDeg = bearingBetween(origin.lat, origin.lng, latlng.lat, latlng.lng);
           b.distMiles = haversineMiles(origin.lat, origin.lng, latlng.lat, latlng.lng);
-          try { refreshBearingMap(b); } catch(e){ console.error('[FieldMap] refreshBearingMap failed:', e); }
+          refreshBearingMap(b);
           renderPinList();
           scheduleSave();
           showToast('Bearing endpoints updated');
@@ -5512,12 +5678,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function updateBearingPreview(e){
-    if (bearingPreviewLine){ try { map.removeLayer(bearingPreviewLine); } catch(err){ console.error('[FieldMap] removeLayer bearingPreviewLine failed:', err); } }
-    try {
-      bearingPreviewLine = L.polyline([bearingOrigin, e.latlng], {
-        color:'#c47a28', weight:1.5, dashArray:'6,4', opacity:0.6, interactive:false
-      }).addTo(map);
-    } catch(err){ console.error('[FieldMap] bearing preview line failed:', err); }
+    bearingPreviewTarget = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+    redrawBearingDrawPreview();
   }
 
   // ---------- Mark My Location ----------
@@ -5977,23 +6139,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           setTimeout(function(){ openTrackPopupAt(d, midLatLng); }, 350);
         }
       } else if (it.type === 'polygon'){
-        var entry = polygonLayersById[d.id];
-        if (entry && entry.poly){
-          map.flyToBounds(entry.poly.getBounds(), { padding:[40,40] });
-          setTimeout(function(){ entry.poly.openPopup(entry.poly.getBounds().getCenter()); }, 350);
+        if (d.points && d.points.length >= 3){
+          var pBounds = d.points.reduce(function(b, p){
+            var lat = Array.isArray(p) ? p[0] : p.lat, lng = Array.isArray(p) ? p[1] : p.lng;
+            return [Math.min(b[0], lng), Math.min(b[1], lat), Math.max(b[2], lng), Math.max(b[3], lat)];
+          }, [Infinity, Infinity, -Infinity, -Infinity]);
+          map.fitBounds([[pBounds[0], pBounds[1]], [pBounds[2], pBounds[3]]], { padding: 40 });
+          var pCenter = polygonBoundsCenter(d.points);
+          setTimeout(function(){ openPolygonPopupAt(d, pCenter); }, 350);
         }
       } else if (it.type === 'bearing'){
-        var bEntry = bearingLayersById[d.id];
-        if (bEntry && bEntry.line){
-          map.flyToBounds(bEntry.line.getBounds(), { padding:[60,60] });
-        }
+        var bBounds = [
+          Math.min(d.originLng, d.targetLng), Math.min(d.originLat, d.targetLat),
+          Math.max(d.originLng, d.targetLng), Math.max(d.originLat, d.targetLat)
+        ];
+        map.fitBounds([[bBounds[0], bBounds[1]], [bBounds[2], bBounds[3]]], { padding: 60 });
         setTimeout(function(){
-          var bEntry2 = bearingLayersById[d.id];
-          if (bEntry2 && bEntry2.popup){
-            var midLat = (d.originLat + d.targetLat) / 2;
-            var midLng = (d.originLng + d.targetLng) / 2;
-            bEntry2.popup.setLatLng([midLat, midLng]).openOn(map);
-          }
+          var midLat = (d.originLat + d.targetLat) / 2;
+          var midLng = (d.originLng + d.targetLng) / 2;
+          openBearingPopupAt(d, { lat: midLat, lng: midLng });
         }, 350);
       }
     });
@@ -7990,12 +8154,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
-    Object.keys(polygonLayersById).forEach(function(id){ removePolygonFromMap(id); });
-    Object.keys(bearingLayersById).forEach(function(id){ removeBearingFromMap(id); });
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
     state.polygons.forEach(addPolygonToMap);
-    (state.bearings||[]).forEach(addBearingToMap);
+    // addBearingToMap() just triggers a debounced source refresh and can't throw —
+    // kept defensive anyway, consistent with the other save flows.
+    (state.bearings||[]).forEach(function(b){
+      try { addBearingToMap(b); } catch(e){ console.error('[FieldMap] addBearingToMap failed:', e); }
+    });
     refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
     renderDateChips(); renderPinList(); refreshAllVisibility();
     persist();
@@ -8516,16 +8682,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('settings-area-labels-toggle').addEventListener('change', function(){
       state.settings.showAreaLabels = this.checked;
-      // Show or hide all existing polygon labels
-      Object.keys(polygonLayersById).forEach(function(id){
-        var entry = polygonLayersById[id];
-        if (!entry || !entry.label) return;
-        if (state.settings.showAreaLabels){
-          if (!map.hasLayer(entry.label)) entry.label.addTo(map);
-        } else {
-          if (map.hasLayer(entry.label)) map.removeLayer(entry.label);
-        }
-      });
+      updatePolygonsSource();
       scheduleSave();
     });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
@@ -8582,26 +8739,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
       closeBearingModal();
 
-      // Place draggable markers at current origin and target
-      var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
-      var makeDragIcon = function(color){
-        return L.divIcon({
-          className:'', iconSize:[18,18], iconAnchor:[9,9],
-          html:'<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>'
-        });
-      };
-      var oMark = L.marker([b.originLat, b.originLng], { icon:makeDragIcon('#3A8F45'), draggable:true, zIndexOffset:1000 }).addTo(map);
-      var tMark = L.marker([b.targetLat, b.targetLng], { icon:makeDragIcon('#D64545'), draggable:true, zIndexOffset:1000 }).addTo(map);
+      // Hide the saved bearing (line + target dot) while its endpoints are being dragged
+      bearingEndpointEditingId = b.id;
+      updateBearingsSource();
 
-      // Update bearing line live as user drags
-      var updateLive = function(){
-        var oLL = oMark.getLatLng(), tLL = tMark.getLatLng();
-        var entry = bearingLayersById[b.id];
-        if (entry && entry.line) entry.line.setLatLngs([oLL, tLL]);
-        if (entry && entry.arrow) entry.arrow.setLatLng(tLL);
+      var makeDragEl = function(color){
+        var el = document.createElement('div');
+        el.innerHTML = '<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>';
+        return el;
       };
-      oMark.on('drag', updateLive);
-      tMark.on('drag', updateLive);
+      var oMark = new maplibregl.Marker({ element: makeDragEl('#3A8F45'), anchor:'center', draggable:true }).setLngLat([b.originLng, b.originLat]).addTo(map);
+      var tMark = new maplibregl.Marker({ element: makeDragEl('#D64545'), anchor:'center', draggable:true }).setLngLat([b.targetLng, b.targetLat]).addTo(map);
+
+      // Update the live preview line as the user drags
+      function syncLine(){
+        if (!map.getSource('bearing-endpoint-preview-source')) return;
+        var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
+        map.getSource('bearing-endpoint-preview-source').setData({
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [[oLL.lng, oLL.lat], [tLL.lng, tLL.lat]] }, properties: {} }]
+        });
+      }
+      bearingEndpointSyncFn = syncLine;
+      syncLine();
+      oMark.on('drag', syncLine);
+      tMark.on('drag', syncLine);
 
       // Confirm bar — reuse bearing bar
       document.getElementById('bearing-bar-text').textContent = 'Drag endpoints · tap Done to save';
@@ -8615,13 +8777,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       barEl.appendChild(doneBtn);
 
       var finish = function(save){
-        oMark.off('drag', updateLive); tMark.off('drag', updateLive);
-        map.removeLayer(oMark); map.removeLayer(tMark);
+        oMark.off('drag', syncLine); tMark.off('drag', syncLine);
+        oMark.remove(); tMark.remove();
         barEl.removeChild(doneBtn);
         document.getElementById('bearing-bar').classList.add('hidden');
         document.getElementById('bearing-bar').style.display = '';
+        if (map.getSource('bearing-endpoint-preview-source')){
+          map.getSource('bearing-endpoint-preview-source').setData({ type: 'FeatureCollection', features: [] });
+        }
+        bearingEndpointSyncFn = null;
+        bearingEndpointEditingId = null;
         if (save){
-          var oLL = oMark.getLatLng(), tLL = tMark.getLatLng();
+          var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
           b.originLat = oLL.lat; b.originLng = oLL.lng;
           b.targetLat = tLL.lat; b.targetLng = tLL.lng;
           b.bearingDeg = bearingBetween(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
@@ -8631,7 +8798,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           scheduleSave();
           showToast('Bearing endpoints updated');
         } else {
-          // Revert live preview
           refreshBearingMap(b);
         }
         // Restore cancel button behavior
