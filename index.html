@@ -1837,7 +1837,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.1.2';
+  var APP_VERSION = '2.2.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1926,8 +1926,13 @@
   var gmuLayers = { az: null };
   var snowDepthLayer = null, nlcdLayer = null;
   var usfsBoundariesLayer = null, hillshadeLayer = null;
-  var sunPathLayerGroup = null;
-  var compassNorthLine = null, compassFacingLine = null, compassTargetLine = null;
+  // Sun-path arc: sun-arc-source (colored day/golden/twilight segments) + sun-dash-source
+  // (dashed line from map center to the sun dot), plus 3 reused maplibregl.Marker instances
+  // for the sun dot and the sunrise/sunset time labels (re-added by reinitializeLayers()).
+  var sunArcSunDotMarker = null, sunArcSunriseLabelMarker = null, sunArcSunsetLabelMarker = null;
+  // Compass: compass-dashed-source (north + facing reference lines) + compass-target-source
+  // (solid bearing line to a tapped target), plus a reused marker for the target dot.
+  var compassTargetMarker = null;
   var compassActive = false, compassHeading = null, elevTapMode = false;
   var compassTargetLatLng = null;
   var compassUseCenter = false; // false = GPS location, true = map center
@@ -3182,7 +3187,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       // Layer group stubs — overlays will be re-wired in later sessions
       offlineBoundaryLayerGroup = null;
-      sunPathLayerGroup = null;
 
       // style.load fires on initial load AND every time map.setStyle() completes.
       // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
@@ -3912,6 +3916,69 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Sun-path arc (Sunrise/Sunset tool) — colored day/golden/twilight segments, plus a
+    // separate dashed line from map center to the sun dot (sun dot itself is a marker).
+    if (!map.getSource('sun-arc-source')){
+      map.addSource('sun-arc-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('sun-arc-line')){
+      map.addLayer({
+        id: 'sun-arc-line',
+        type: 'line',
+        source: 'sun-arc-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': 0.92 }
+      });
+    }
+    if (!map.getSource('sun-dash-source')){
+      map.addSource('sun-dash-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('sun-dash-line')){
+      map.addLayer({
+        id: 'sun-dash-line',
+        type: 'line',
+        source: 'sun-dash-source',
+        paint: { 'line-color': '#f0c040', 'line-width': 1.5, 'line-dasharray': [6, 5], 'line-opacity': 0.85 }
+      });
+    }
+
+    // Compass — red/blue dashed north+facing reference lines (data-driven color, shared
+    // dasharray) and a separate solid gold bearing-to-target line + target dot marker.
+    if (!map.getSource('compass-dashed-source')){
+      map.addSource('compass-dashed-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('compass-dashed-line')){
+      map.addLayer({
+        id: 'compass-dashed-line',
+        type: 'line',
+        source: 'compass-dashed-source',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-dasharray': [8, 5], 'line-opacity': 0.9 }
+      });
+    }
+    if (!map.getSource('compass-target-source')){
+      map.addSource('compass-target-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('compass-target-line')){
+      map.addLayer({
+        id: 'compass-target-line',
+        type: 'line',
+        source: 'compass-target-source',
+        paint: { 'line-color': '#d9a13f', 'line-width': 2.5, 'line-opacity': 0.9 }
+      });
+    }
+
     // Rebuild every pin marker fresh on each style change/initial load, so icons,
     // colors, and positions stay correct regardless of what the previous style left behind.
     Object.keys(markersById).forEach(function(id){ removeMarkerForPin(id); });
@@ -3927,6 +3994,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     redrawBearingDrawPreview();
     if (vertexEditSyncFn) vertexEditSyncFn();
     if (bearingEndpointSyncFn) bearingEndpointSyncFn();
+    if (SUNRISE_ARC_ON && !document.getElementById('sunrise-panel').classList.contains('hidden')) renderSunArc(map.getCenter(), sunDate);
+    if (compassActive) updateCompassMapLines();
+    redrawCompassTarget();
   }
 
   function openClusterPanel(members){
@@ -7556,10 +7626,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     requestAnimationFrame(function(){ requestAnimationFrame(function(){
       var panelH = panel.offsetHeight || 180;
       mapEl.style.bottom = (88 + panelH) + 'px';
-      // Capture center before invalidate, then re-center after so arc draws in middle of shrunken map
+      // Capture center before resize, then re-center after so arc draws in middle of shrunken map
       var prevCenter = map.getCenter();
-      map.invalidateSize({ animate:false });
-      map.setView(prevCenter, map.getZoom(), { animate:false });
+      map.resize();
+      map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
       if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
     }); });
   }
@@ -7571,7 +7641,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     panel.classList.remove('sunrise-docked-panel');
     mapEl.classList.remove('sunrise-docked');
     mapEl.style.bottom = '';
-    map.invalidateSize({ animate:false });
+    map.resize();
   }
 
   function openSunrisePanel(){
@@ -7698,17 +7768,27 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function sunArcDistDeg(){
     var isMobile = window.innerWidth <= 640;
-    var mapSizePx = map.getSize();
-    var visibleH  = mapSizePx.y - (isMobile ? 90 : 0);
+    var visibleH  = map.getContainer().clientHeight - (isMobile ? 90 : 0);
     var targetPx  = visibleH * (isMobile ? 0.235 : 0.33);
-    var mpp = map.containerPointToLatLng([0,0]).distanceTo(map.containerPointToLatLng([0,targetPx]));
+    var mpp = map.unproject([0,0]).distanceTo(map.unproject([0,targetPx]));
     return mpp / 111320;
   }
 
+  // Wipes the sun-path arc: both GeoJSON sources plus the 3 reused markers
+  // (sun dot, sunrise label, sunset label).
+  function clearSunArc(){
+    if (map && map.getSource('sun-arc-source')) map.getSource('sun-arc-source').setData({ type:'FeatureCollection', features: [] });
+    if (map && map.getSource('sun-dash-source')) map.getSource('sun-dash-source').setData({ type:'FeatureCollection', features: [] });
+    if (sunArcSunDotMarker){ sunArcSunDotMarker.remove(); sunArcSunDotMarker = null; }
+    if (sunArcSunriseLabelMarker){ sunArcSunriseLabelMarker.remove(); sunArcSunriseLabelMarker = null; }
+    if (sunArcSunsetLabelMarker){ sunArcSunsetLabelMarker.remove(); sunArcSunsetLabelMarker = null; }
+  }
+
   function renderSunArc(center, date){
-    sunPathLayerGroup.clearLayers();
+    clearSunArc();
     if (!SUNRISE_ARC_ON) return;
     if (typeof SunCalc === 'undefined'){ showToast('SunCalc library not loaded'); return; }
+    if (!map.getSource('sun-arc-source')) return; // sources not ready yet (mid style-load)
 
     var drawCenter = center; // arc always draws at map center
     var times = SunCalc.getTimes(date, center.lat, center.lng);
@@ -7738,15 +7818,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!curRun || curRun.key !== key){ curRun = { key:key, pts:[] }; runs.push(curRun); }
       curRun.pts.push(pt);
     }
+    var arcFeatures = [];
     runs.forEach(function(run){
       if (run.pts.length >= 2){
-        L.polyline(run.pts, { color:arcColors[run.key], weight:3.5, opacity:0.92, interactive:false })
-          .addTo(sunPathLayerGroup);
+        arcFeatures.push({
+          type: 'Feature',
+          properties: { color: arcColors[run.key] },
+          geometry: { type: 'LineString', coordinates: run.pts.map(function(p){ return [p[1], p[0]]; }) }
+        });
       }
     });
+    map.getSource('sun-arc-source').setData({ type: 'FeatureCollection', features: arcFeatures });
 
     // Sun position — use slider time if set, otherwise real now (today only)
-    var sunDot = null, sunDotPos = null;
+    var sunDotPos = null;
     var isToday = date.toDateString() === new Date().toDateString();
     if (sunSliderMinutes !== null){
       var sliderDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(),
@@ -7755,57 +7840,69 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (sPos.altitude > -0.1){
         var sAz = sPos.azimuth + Math.PI;
         sunDotPos = [drawCenter.lat + distDeg * Math.cos(sAz), drawCenter.lng + distDeg * Math.sin(sAz) / cosLat];
-        sunDot = L.circleMarker(sunDotPos, {
-          radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
-        }).addTo(sunPathLayerGroup);
       }
     } else if (isToday){
       var nowPos = SunCalc.getPosition(new Date(), center.lat, center.lng);
       if (nowPos.altitude > -0.1){
         var nowAz = nowPos.azimuth + Math.PI;
         sunDotPos = [drawCenter.lat + distDeg * Math.cos(nowAz), drawCenter.lng + distDeg * Math.sin(nowAz) / cosLat];
-        sunDot = L.circleMarker(sunDotPos, {
-          radius:7, color:'#fff', fillColor:'#f0e898', fillOpacity:1, weight:2, interactive:false
-        }).addTo(sunPathLayerGroup);
+      }
+    }
+
+    if (sunDotPos){
+      if (!sunArcSunDotMarker){
+        var dotEl = document.createElement('div');
+        dotEl.innerHTML = '<div style="width:14px;height:14px;border-radius:50%;background:#f0e898;border:2px solid #fff;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>';
+        sunArcSunDotMarker = new maplibregl.Marker({ element: dotEl, anchor: 'center' }).setLngLat([sunDotPos[1], sunDotPos[0]]).addTo(map);
+      } else {
+        sunArcSunDotMarker.setLngLat([sunDotPos[1], sunDotPos[0]]);
       }
     }
 
     // Dashed yellow line from drawCenter to sun dot
-    if (sunDotPos){
-      L.polyline([drawCenter, sunDotPos], {
-        color:'#f0c040', weight:1.5, dashArray:'6,5', opacity:0.85, interactive:false
-      }).addTo(sunPathLayerGroup);
-    }
+    map.getSource('sun-dash-source').setData({
+      type: 'FeatureCollection',
+      features: sunDotPos ? [{
+        type: 'Feature', properties: {},
+        geometry: { type: 'LineString', coordinates: [[drawCenter.lng, drawCenter.lat], [sunDotPos[1], sunDotPos[0]]] }
+      }] : []
+    });
 
     // Rise/set labels — anchored radially outward, no arrows
     // Place label using your approach: project arc center and arc-edge point to screen pixels,
     // extend vector by fixed px beyond arc edge, unproject back to latlng.
     var PAD_PX = 12;
     function addDirMarker(tTime, label, color, textAlign){
-      if (!tTime || isNaN(tTime.getTime())) return;
+      var isRight = textAlign === 'right';
+      if (!tTime || isNaN(tTime.getTime())){
+        if (isRight && sunArcSunsetLabelMarker){ sunArcSunsetLabelMarker.remove(); sunArcSunsetLabelMarker = null; }
+        if (!isRight && sunArcSunriseLabelMarker){ sunArcSunriseLabelMarker.remove(); sunArcSunriseLabelMarker = null; }
+        return;
+      }
       var pos = SunCalc.getPosition(tTime, center.lat, center.lng);
       var az  = pos.azimuth + Math.PI;
       var edgeLat = drawCenter.lat + distDeg * Math.cos(az);
       var edgeLng = drawCenter.lng + distDeg * Math.sin(az) / cosLat;
-      var cPx = map.latLngToContainerPoint(L.latLng(drawCenter.lat, drawCenter.lng));
-      var ePx = map.latLngToContainerPoint(L.latLng(edgeLat, edgeLng));
+      var cPx = map.project([drawCenter.lng, drawCenter.lat]);
+      var ePx = map.project([edgeLng, edgeLat]);
       var dx = ePx.x - cPx.x, dy = ePx.y - cPx.y;
       var len = Math.sqrt(dx*dx + dy*dy) || 1;
       var lx = ePx.x + (dx/len) * PAD_PX;
       var ly = ePx.y + (dy/len) * PAD_PX;
-      var labelLatLng = map.containerPointToLatLng(L.point(lx, ly));
+      var labelLngLat = map.unproject([lx, ly]);
+
       // Sunrise (east, left-anchored): position is left edge, text flows right
       // Sunset (west, right-anchored): position is right edge, text flows left
-      // Use a wide fixed-width container with text-align to control which edge is at the point
-      var isRight = textAlign === 'right';
-      var containerStyle = isRight
-        ? 'width:120px;text-align:right;transform:translate(-120px,-50%);'
-        : 'width:120px;text-align:left;transform:translateY(-50%);';
-      var icon = L.divIcon({
-        className:'', iconSize:[0,0],
-        html:'<div style="' + containerStyle + 'white-space:nowrap;font-size:14px;font-weight:700;color:' + color + ';pointer-events:none;">' + label + '</div>'
-      });
-      L.marker(labelLatLng, { icon:icon, interactive:false }).addTo(sunPathLayerGroup);
+      var marker = isRight ? sunArcSunsetLabelMarker : sunArcSunriseLabelMarker;
+      if (!marker){
+        var el = document.createElement('div');
+        el.style.cssText = 'width:120px;white-space:nowrap;font-size:14px;font-weight:700;color:' + color + ';pointer-events:none;text-align:' + (isRight ? 'right' : 'left') + ';';
+        marker = new maplibregl.Marker({ element: el, anchor: isRight ? 'right' : 'left' }).setLngLat(labelLngLat).addTo(map);
+        if (isRight) sunArcSunsetLabelMarker = marker; else sunArcSunriseLabelMarker = marker;
+      } else {
+        marker.setLngLat(labelLngLat);
+      }
+      marker.getElement().textContent = label;
     }
     // Sunrise = always east (right side) → text left-aligned, grows rightward from point
     // Sunset  = always west (left side)  → text right-aligned, grows leftward from point
@@ -7819,7 +7916,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel'].forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
-    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ sunPathLayerGroup && sunPathLayerGroup.clearLayers(); sunriseDockClose(); }
+    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); sunriseDockClose(); }
   }
 
   function setElevTapMode(on){
@@ -7863,7 +7960,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Get GPS position and watch it
     if (navigator.geolocation){
       gpsWatchIdCompass = navigator.geolocation.watchPosition(function(pos){
-        currentGpsLatLng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+        currentGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         updateCompassMapLines();
       }, null, { enableHighAccuracy:true });
     } else {
@@ -7901,31 +7998,66 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function updateCompassMapLines(){
+    if (!map || !map.getSource('compass-dashed-source')) return;
     var origin = compassUseCenter ? map.getCenter() : currentGpsLatLng;
-    if (!origin) return;
-    if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
-    if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
+    if (!origin){
+      map.getSource('compass-dashed-source').setData({ type:'FeatureCollection', features: [] });
+      return;
+    }
 
     // Lines extend to 3× the visible map height so they always go well off-screen
     var mapBounds = map.getBounds();
     var d = Math.max(0.1, (mapBounds.getNorth() - mapBounds.getSouth()) * 3);
 
+    var features = [];
+
     // North line (red dashed — fixed geographic north reference)
-    var northPt = L.latLng(origin.lat + d, origin.lng);
-    compassNorthLine = L.polyline([origin, northPt], {
-      color:'#e03535', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
-    }).addTo(map);
+    var northPt = { lat: origin.lat + d, lng: origin.lng };
+    features.push({
+      type: 'Feature', properties: { color: '#e03535' },
+      geometry: { type: 'LineString', coordinates: [[origin.lng, origin.lat], [northPt.lng, northPt.lat]] }
+    });
 
     // Facing direction line (blue dashed — rotates with device)
     if (compassHeading != null){
       var az = compassHeading * Math.PI / 180;
-      var facingPt = L.latLng(
-        origin.lat + d * Math.cos(az),
-        origin.lng + d * Math.sin(az) / Math.cos(origin.lat * Math.PI / 180)
-      );
-      compassFacingLine = L.polyline([origin, facingPt], {
-        color:'#5a9bd8', weight:2.5, dashArray:'8,5', opacity:0.9, interactive:false
-      }).addTo(map);
+      var facingPt = {
+        lat: origin.lat + d * Math.cos(az),
+        lng: origin.lng + d * Math.sin(az) / Math.cos(origin.lat * Math.PI / 180)
+      };
+      features.push({
+        type: 'Feature', properties: { color: '#5a9bd8' },
+        geometry: { type: 'LineString', coordinates: [[origin.lng, origin.lat], [facingPt.lng, facingPt.lat]] }
+      });
+    }
+
+    map.getSource('compass-dashed-source').setData({ type: 'FeatureCollection', features: features });
+  }
+
+  // Redraws the solid gold bearing-to-target line + target dot marker from
+  // compassTargetLatLng — shared by handleCompassMapTap and reinitializeLayers()
+  // (so a style switch mid-compass-session doesn't lose the target).
+  function redrawCompassTarget(){
+    if (!map || !map.getSource('compass-target-source')) return;
+    if (!compassTargetLatLng){
+      map.getSource('compass-target-source').setData({ type:'FeatureCollection', features: [] });
+      if (compassTargetMarker){ compassTargetMarker.remove(); compassTargetMarker = null; }
+      return;
+    }
+    var fromPt = (!compassUseCenter && currentGpsLatLng) ? currentGpsLatLng : map.getCenter();
+    map.getSource('compass-target-source').setData({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature', properties: {},
+        geometry: { type: 'LineString', coordinates: [[fromPt.lng, fromPt.lat], [compassTargetLatLng.lng, compassTargetLatLng.lat]] }
+      }]
+    });
+    if (!compassTargetMarker){
+      var el = document.createElement('div');
+      el.innerHTML = '<div style="width:12px;height:12px;background:#d9a13f;border-radius:50%;border:2.5px solid #fff;box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,0.5);"></div>';
+      compassTargetMarker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([compassTargetLatLng.lng, compassTargetLatLng.lat]).addTo(map);
+    } else {
+      compassTargetMarker.setLngLat([compassTargetLatLng.lng, compassTargetLatLng.lat]);
     }
   }
 
@@ -7933,25 +8065,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Use GPS if available and not in map-center mode, otherwise map center
     var fromPt = (!compassUseCenter && currentGpsLatLng) ? currentGpsLatLng : map.getCenter();
     compassTargetLatLng = latlng;
-    if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
-    if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
 
     var bearing = bearingBetween(fromPt.lat, fromPt.lng, latlng.lat, latlng.lng);
     var distMi  = haversineMiles(fromPt.lat, fromPt.lng, latlng.lat, latlng.lng);
     var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
     var dirLabel = dirs[Math.round(bearing / 22.5) % 16];
 
-    // Solid gold line from "from" point to target
-    compassTargetLine = L.polyline([fromPt, latlng], {
-      color:'#d9a13f', weight:2.5, opacity:0.9, interactive:false
-    }).addTo(map);
-
-    // Circle dot at target end
-    var arrowIcon = L.divIcon({
-      className:'', iconSize:[0,0],
-      html:'<div style="width:12px;height:12px;background:#d9a13f;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5);transform:translate(-50%,-50%);"></div>'
-    });
-    window._compassArrow = L.marker(latlng, { icon:arrowIcon, interactive:false }).addTo(map);
+    redrawCompassTarget();
 
     document.getElementById('compass-target-bearing').textContent = dirLabel + ' ' + Math.round(bearing) + '°';
     document.getElementById('compass-target-dist').textContent = distMi.toFixed(2) + ' mi · ' + (distMi * 1.60934).toFixed(2) + ' km';
@@ -7962,7 +8082,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       : '— from map center (no GPS) · gold=bearing —';
   }
 
-  
+
   function bearingBetween(lat1, lng1, lat2, lng2){
     var toRad = function(d){ return d * Math.PI / 180; };
     var dLng = toRad(lng2 - lng1);
@@ -7978,10 +8098,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (gpsWatchIdCompass != null){ navigator.geolocation && navigator.geolocation.clearWatch(gpsWatchIdCompass); gpsWatchIdCompass = null; }
     window.removeEventListener('deviceorientation', handleCompassOrientation, true);
     window.removeEventListener('deviceorientationabsolute', handleCompassOrientation, true);
-    if (compassNorthLine){ map.removeLayer(compassNorthLine); compassNorthLine = null; }
-    if (compassFacingLine){ map.removeLayer(compassFacingLine); compassFacingLine = null; }
-    if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
-    if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
+    if (map && map.getSource('compass-dashed-source')) map.getSource('compass-dashed-source').setData({ type:'FeatureCollection', features: [] });
+    compassTargetLatLng = null;
+    redrawCompassTarget();
     document.getElementById('compass-panel').classList.add('hidden');
     document.getElementById('compass-target-col').classList.add('hidden');
     document.getElementById('compass-save-target-btn').classList.add('hidden');
@@ -8098,7 +8217,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
-    if (wasSunriseOpen){ sunPathLayerGroup.clearLayers(); sunriseDockClose(); }
+    if (wasSunriseOpen){ clearSunArc(); sunriseDockClose(); }
   }
 
   // ---------- Cloud sync bridge ----------
@@ -8373,8 +8492,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var h = panel.offsetHeight || 180;
           document.getElementById('map').style.bottom = (88 + h) + 'px';
           var prevCenter = map.getCenter();
-          map.invalidateSize({ animate:false });
-          map.setView(prevCenter, map.getZoom(), { animate:false });
+          map.resize();
+          map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
           if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
         }); });
       }
@@ -8382,8 +8501,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sunrise-my-location-btn').addEventListener('click', function(){
       if (!navigator.geolocation){ showToast('Location not available'); return; }
       navigator.geolocation.getCurrentPosition(function(pos){
-        var ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-        map.setView(ll, Math.max(map.getZoom(), 12));
+        map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: Math.max(map.getZoom(), 12) });
         setTimeout(function(){
           var center = map.getCenter();
           renderSunriseTimes(center, sunDate);
@@ -8393,7 +8511,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
-      sunPathLayerGroup.clearLayers();
+      clearSunArc();
       sunriseDockClose();
     });
     document.getElementById('sunrise-prev-btn').addEventListener('click', function(){
@@ -8426,7 +8544,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('sunrise-arc-toggle').addEventListener('change', function(){
       SUNRISE_ARC_ON = this.checked;
       if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
-      else sunPathLayerGroup.clearLayers();
+      else clearSunArc();
     });
 
     // Time slider — scrub sun position through the day
@@ -8490,10 +8608,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       compassUseCenter = !compassUseCenter;
       this.textContent = compassUseCenter ? '🗺 Map Center' : '📍 My Location';
       // Clear target line when switching modes
-      if (compassTargetLine){ map.removeLayer(compassTargetLine); compassTargetLine = null; }
-      if (window._compassArrow){ map.removeLayer(window._compassArrow); window._compassArrow = null; }
-      document.getElementById('compass-target-col').classList.add('hidden');
       compassTargetLatLng = null;
+      redrawCompassTarget();
+      document.getElementById('compass-target-col').classList.add('hidden');
       var statusEl = document.getElementById('compass-status');
       statusEl.textContent = compassUseCenter
         ? '— origin: map center · pan map to reposition —'
