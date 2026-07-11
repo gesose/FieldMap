@@ -572,13 +572,6 @@
   .map-search-result-row:hover{background:rgba(255,255,255,0.08);color:var(--accent);}
   .map-search-status{padding:10px 14px;font-size:12px;color:var(--text-muted);}
 
-  .leaflet-tooltip.gmu-label{
-    background:transparent;border:none;box-shadow:none;color:#e8854a;
-    font-size:12px;font-weight:700;padding:0;
-    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 4px rgba(0,0,0,0.8);
-  }
-  .leaflet-tooltip.gmu-label::before{display:none;}
-
   #publicland-legend{
     position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
     z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
@@ -1294,7 +1287,7 @@
   </div>
 
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
+    <input type="checkbox" id="hydro-toggle" disabled> Hydrography <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span> <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
   </label>
   <div class="opacity-row" id="hydro-opacity-row"><input type="range" id="hydro-opacity" min="10" max="100" value="100"></div>
   <div class="layer-info-panel" id="lh-hydro">
@@ -1303,7 +1296,7 @@
   </div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="mvum-toggle"> USFS roads &amp; trails (MVUM) <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
+    <input type="checkbox" id="mvum-toggle" disabled> USFS roads &amp; trails (MVUM) <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span> <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
   </label>
   <div id="mvum-opacity-row">
     <input type="range" id="mvum-opacity" min="20" max="100" value="80">
@@ -1317,7 +1310,7 @@
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="snowdepth-toggle"> Snow depth
+    <input type="checkbox" id="snowdepth-toggle" disabled> Snow depth <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
     <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
   </label>
   <div class="layer-info-panel" id="lh-snow">
@@ -1326,7 +1319,7 @@
   </div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
+    <input type="checkbox" id="nlcd-toggle" disabled> Land cover (NLCD) <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
     <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
   </label>
   <div class="layer-info-panel" id="lh-nlcd">
@@ -1343,17 +1336,33 @@
     <a class="layer-info-src" href="https://www.mrlc.gov/" target="_blank">Source: USGS MRLC NLCD</a>
   </div>
 
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="usfsboundaries-toggle"> USFS Forest boundaries <button class="layer-hint-btn" data-layer-id="lh-usfsboundaries" title="About">?</button>
+  </label>
+  <div class="opacity-row" id="usfsboundaries-opacity-row"><input type="range" id="usfsboundaries-opacity" min="20" max="100" value="90"></div>
+  <div class="layer-info-panel" id="lh-usfsboundaries">
+    <div class="layer-info-desc">Current administrative boundary of each National Forest (not the roads/trails MVUM layer). Fetched once and cached for the session.</div>
+    <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service EDW</a>
+  </div>
+
 
   <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="gmu-az-toggle"> Arizona
   </label>
+  <div class="opacity-row" id="gmu-az-opacity-row"><input type="range" id="gmu-az-opacity" min="20" max="100" value="90"></div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="gmu-or-toggle" disabled> Oregon <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
   </label>
 
   <div class="layer-section-header" style="margin-top:10px;">WILDLIFE</div>
-  <button class="btn btn-small" id="wildlife-layers-open-btn" style="width:100%;margin-top:6px;">Wildlife Layers</button>
+  <div class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;cursor:default;">
+    <input type="checkbox" id="wildlife-quick-toggle">
+    <button class="btn btn-small" id="wildlife-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
+      <span id="wildlife-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
+      <span id="wildlife-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Select species</span>
+    </button>
+  </div>
 </div>
 
 <div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
@@ -1876,7 +1885,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.3.1';
+  var APP_VERSION = '2.5.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1943,11 +1952,12 @@
       },
       mvumOn: false, mvumOpacity: 0.8,
       hydroOn: false, hydroOpacity: 1,
-      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
+      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false, gmuAzOpacity: 0.9,
+      wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
       showOfflineBoundaries: true,
       showAreaLabels: true,
       snowDepthOn: false,
-      nlcdOn: false, usfsBoundariesOn: false, hillshadeOn: false,
+      nlcdOn: false, usfsBoundariesOn: false, usfsBoundariesOpacity: 0.9, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'topo',
@@ -1961,10 +1971,14 @@
   var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
-  var publicLandLayer = null;
-  var gmuLayers = { az: null };
   var snowDepthLayer = null, nlcdLayer = null;
-  var usfsBoundariesLayer = null, hillshadeLayer = null;
+  var hillshadeLayer = null;
+  var GMU_LINE_COLOR = '#e8854a'; // existing GMU orange
+  var USFS_BOUNDARY_COLOR = '#2fa8a0'; // teal — distinct from GMU orange and from green forested basemap areas
+  var gmuAzCache = null; // fetched-once GeoJSON, cached for the session (re-seeds the source after a style switch)
+  var usfsBoundariesCache = null; // same, for the national forest boundary layer
+  var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt
+  var openUsfsBoundaryPopup = null;
   // Sun-path arc: sun-arc-source (colored day/golden/twilight segments) + sun-dash-source
   // (dashed line from map center to the sun dot), plus 3 reused maplibregl.Marker instances
   // for the sun dot and the sunrise/sunset time labels (re-added by reinitializeLayers()).
@@ -1979,6 +1993,11 @@
   var GMU_SOURCES = {
     az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' }
   };
+  // Administrative (current, not "original proclaimed") National Forest boundary — confirmed
+  // via research: direct f=geojson query support, inSR=4269 works, no min-zoom/scale gating
+  // on the query endpoint (that only applies to /export map-image requests).
+  var USFS_BOUNDARIES_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query?' +
+    'where=1%3D1&outFields=forestname,region,forestnumber,gis_acres&returnGeometry=true&inSR=4269&outSR=4326&f=geojson';
   var addMode = false;
   var measureMode = false;
   var measurePoints = [], measureMarkers = [], measureLine = null;
@@ -1998,6 +2017,86 @@
   var WILDLIFE_CATEGORY_LABELS = { big_game: 'Big Game', upland: 'Upland Birds', small_game: 'Small Game' };
   var WILDLIFE_CATEGORY_FILES = { big_game: 'data/big_game-species.geojson', upland: 'data/upland-species.geojson', small_game: 'data/small_game-species.geojson' };
   var WILDLIFE_NAME_OVERRIDES = { 'Montezuma Quail': "Mearns' Quail" };
+  // Presentation-layer-only grouping for the species dropdown — keyed by the raw
+  // species_common_name (not the display-override name), same as WILDLIFE_NAME_OVERRIDES.
+  // No changes to the underlying GeoJSON/species_code/schema; this only controls how the
+  // <select> buckets species into <optgroup>s. Species with no entry here fall into "Other".
+  var WILDLIFE_SPECIES_GROUPS = {
+    // Upland Birds
+    'California Quail': 'Quail',
+    "Gambel's Quail": 'Quail',
+    'Montezuma Quail': 'Quail', // displayed as "Mearns' Quail" via WILDLIFE_NAME_OVERRIDES
+    'Mountain Quail': 'Quail',
+    'Scaled Quail': 'Quail',
+    'Northern Bobwhite': 'Quail',
+    'Chukar': 'Partridge & Pheasant',
+    'Gray (Hungarian) Partridge': 'Partridge & Pheasant',
+    'Ring-necked Pheasant': 'Partridge & Pheasant',
+    'Dusky Grouse': 'Grouse & Ptarmigan',
+    'Ruffed Grouse': 'Grouse & Ptarmigan',
+    'Sharp-tailed Grouse': 'Grouse & Ptarmigan',
+    'Columbian Sharp-tailed Grouse': 'Grouse & Ptarmigan',
+    'Plains Sharp-tailed Grouse': 'Grouse & Ptarmigan',
+    'Prairie Sharp-tailed Grouse': 'Grouse & Ptarmigan',
+    'Sooty Grouse': 'Grouse & Ptarmigan',
+    'Spruce Grouse': 'Grouse & Ptarmigan',
+    'White-tailed Ptarmigan': 'Grouse & Ptarmigan',
+    'Greater Sage-Grouse': 'Grouse & Ptarmigan',
+    'Gunnison Sage-Grouse': 'Grouse & Ptarmigan',
+    'Greater Prairie-Chicken': 'Prairie-Chicken',
+    'Greater Prairie-Chicken (pinnatus)': 'Prairie-Chicken',
+    "Attwater's Greater Prairie-Chicken": 'Prairie-Chicken',
+    'Lesser Prairie-Chicken': 'Prairie-Chicken',
+    'Wild Turkey': 'Turkey',
+    "Merriam's Turkey": 'Turkey',
+    'Mourning Dove': 'Doves & Pigeons',
+    'White-winged Dove': 'Doves & Pigeons',
+    'Eurasian Collared-Dove': 'Doves & Pigeons',
+    'Inca Dove': 'Doves & Pigeons',
+    'Common Ground-Dove': 'Doves & Pigeons',
+    'White-tipped Dove': 'Doves & Pigeons',
+    'Spotted Dove': 'Doves & Pigeons',
+    'American Woodcock': 'Woodcock & Snipe',
+    "Wilson's Snipe": 'Woodcock & Snipe',
+    // Big Game
+    'Mule Deer': 'Deer & Elk',
+    'White-tailed Deer': 'Deer & Elk',
+    'Columbian White-tailed Deer': 'Deer & Elk',
+    'Blackbeard Island Deer': 'Deer & Elk',
+    'Elk (Rocky Mountain)': 'Deer & Elk',
+    'Roosevelt Elk': 'Deer & Elk',
+    'Moose': 'Deer & Elk',
+    'Pronghorn': 'Pronghorn',
+    'Sonoran Pronghorn': 'Pronghorn',
+    'Bighorn Sheep': 'Mountain Game',
+    'Mountain Goat': 'Mountain Game',
+    'American Black Bear': 'Bear',
+    'Brown Bear (Grizzly)': 'Bear',
+    'Cougar / Mountain Lion': 'Predators & Small Big Game',
+    'Bobcat': 'Predators & Small Big Game',
+    'Coyote': 'Predators & Small Big Game',
+    'Collared Peccary (Javelina)': 'Predators & Small Big Game',
+    // Small Game
+    'Appalachian Cottontail': 'Cottontails',
+    'Desert Cottontail': 'Cottontails',
+    'Eastern Cottontail': 'Cottontails',
+    'Mountain Cottontail': 'Cottontails',
+    'New England Cottontail': 'Cottontails',
+    'Robust Cottontail': 'Cottontails',
+    'Antelope Jackrabbit': 'Jackrabbits & Hares',
+    'Black-tailed Jackrabbit': 'Jackrabbits & Hares',
+    'White-sided Jackrabbit': 'Jackrabbits & Hares',
+    'White-tailed Jackrabbit': 'Jackrabbits & Hares'
+  };
+  // Group display order per category tab — "sensible hunting-relevant order" per spec,
+  // matching the existing Big Game / Upland Birds / Small Game tab structure. Any species
+  // whose group isn't listed here (or has no WILDLIFE_SPECIES_GROUPS entry at all) sorts
+  // into a trailing "Other" bucket rather than being dropped.
+  var WILDLIFE_GROUP_ORDER = {
+    upland: ['Quail', 'Partridge & Pheasant', 'Grouse & Ptarmigan', 'Prairie-Chicken', 'Turkey', 'Doves & Pigeons', 'Woodcock & Snipe'],
+    big_game: ['Deer & Elk', 'Pronghorn', 'Mountain Game', 'Bear', 'Predators & Small Big Game'],
+    small_game: ['Cottontails', 'Jackrabbits & Hares']
+  };
   // Fill/stroke pair per simultaneous sub-layer. Color 0 reuses var(--accent) (#c2622d) —
   // the same orange used for active states / quick-favorites elsewhere in the UI — since a
   // light green blended into the topo style's forested areas. Color 1 is the app's other
@@ -2009,7 +2108,8 @@
   var wildlifeCache = {}; // category -> parsed FeatureCollection, cached for the session
   var wildlifeLoadCallbacks = {}; // category -> array of pending callbacks while a fetch is in flight
   var wildlifeActiveCategory = 'big_game'; // which tab is currently open in the picker
-  var wildlifeActive = null; // { category, speciesName, codes: [...] } — the one species rendered on the map, or null
+  var wildlifeActive = null; // { category, speciesName, codes: [...] } — the currently *selected* species, or null
+  var wildlifeOn = false; // whether the quick-toggle has the selected species' layer actually visible right now
   var polygonMode = false, polygonPoints = [], polygonMarkers = [];
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
@@ -3248,10 +3348,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       // style.load fires on initial load AND every time map.setStyle() completes.
       // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
+      var overlayDataRestoredOnInit = false;
       map.on('style.load', function(){
         updateCenterReadout();
         updateScaleBar();
         reinitializeLayers();
+        // reinitializeLayers() already restores each overlay's on/off *visibility* from
+        // state.settings (baked into the layer's initial layout.visibility), but GMU/USFS
+        // still need their GeoJSON actually fetched once if the toggle started out "on" —
+        // bindUI()'s restore code runs synchronously before this map/style even exists, so
+        // it can only flip layout.visibility indirectly via reinitializeLayers(); the fetch
+        // trigger has to happen here, once, after the map is real.
+        if (!overlayDataRestoredOnInit){
+          overlayDataRestoredOnInit = true;
+          if (state.settings.gmuAzOn) ensureGmuAzLoaded(function(data){
+            if (data && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
+          });
+          if (state.settings.usfsBoundariesOn) ensureUsfsBoundariesLoaded(function(data){
+            if (data && map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
+          });
+          if (wildlifeOn && wildlifeActive) loadWildlifeCategory(wildlifeActive.category, function(data){
+            if (data && map.getSource('wildlife-' + wildlifeActive.category + '-source')){
+              map.getSource('wildlife-' + wildlifeActive.category + '-source').setData(data);
+              updateWildlifeMapFilter();
+              updateWildlifeLegend();
+            }
+          });
+        }
       });
 
       // After the map finishes rendering, sync HTML marker visibility with cluster state
@@ -3393,6 +3516,53 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         map.on('mouseleave', layerId, function(){ map.getCanvas().style.cursor = ''; });
       });
 
+      // GMU / USFS boundary click — same mode-aware pass-through, read-only reference data.
+      function handleGmuFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var gmuFeature = e.features && e.features[0];
+        if (!gmuFeature) return;
+        openGmuPopupAt(gmuFeature.properties, e.lngLat);
+      }
+      map.on('click', 'gmu-az-fill', handleGmuFillClick);
+      map.on('mouseenter', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      function handleUsfsBoundaryFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var usfsFeature = e.features && e.features[0];
+        if (!usfsFeature) return;
+        openUsfsBoundaryPopupAt(usfsFeature.properties, e.lngLat);
+      }
+      map.on('click', 'usfs-boundaries-fill', handleUsfsBoundaryFillClick);
+      map.on('mouseenter', 'usfs-boundaries-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'usfs-boundaries-fill', function(){ map.getCanvas().style.cursor = ''; });
+
       // Clicking the in-progress draw preview line inserts a new point at that spot
       map.on('click', 'draw-preview-line', function(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
@@ -3405,8 +3575,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('click', function(e){
         // Registered last, so this only runs for clicks that didn't already land on (and
         // get fully handled by) cluster-circles/tracks-line-touch/polygons-fill/
-        // bearings-line-touch/wildlife-*-fill/draw-preview-line — see cluster-circles handler above for why
-        // that check is necessary at all.
+        // bearings-line-touch/wildlife-*-fill/gmu-az-fill/usfs-boundaries-fill/draw-preview-line
+        // — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
@@ -3424,7 +3594,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('dragstart', _onMapDragStart);
       map.on('move', updateCenterReadout);
       map.on('move', updateScaleBar);
-      map.on('zoomend', updateGmuLabelVisibility);
       map.on('zoomend', scheduleClusterRefresh);
       map.on('moveend', scheduleClusterRefresh);
       map.on('zoomend', function(){
@@ -3527,52 +3696,118 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     publicLandLegendLoaded = true;
   }
 
-  function toggleGmuLayer(stateKey, on){
-    if (!on){
-      if (gmuLayers[stateKey]) map.removeLayer(gmuLayers[stateKey]);
-      return;
-    }
-    if (gmuLayers[stateKey]){
-      gmuLayers[stateKey].addTo(map);
-      updateGmuLabelVisibility();
-      return;
-    }
-    var src = GMU_SOURCES[stateKey];
-    if (!src) return;
-    fetch(src.url).then(function(r){ return r.json(); }).then(function(data){
-      gmuLayers[stateKey] = L.geoJSON(data, {
-        pane: 'gmuPane',
-        style: { color:'#e8854a', weight:1.5, fillOpacity:0.02, fillColor:'#e8854a' },
-        onEachFeature: function(feature, layer){
-          var p = feature.properties || {};
-          var label = p.GMU || p.UNIT_NAME || p.NAME || p.UNIT_ID || '';
-          if (!label) return;
-          layer.bindTooltip(String(label), { permanent: true, direction: 'center', className: 'gmu-label' });
-          var region = p.REG_NAME ? '<div class="pin-popup-cat">' + escapeHtml(p.REG_NAME) + '</div>' : '';
-          var azgfdUrl = 'https://www.azgfd.com/location/gmu-' + encodeURIComponent(String(label).toLowerCase()) + '/';
-          layer.bindPopup('<div class="pin-popup-name">GMU ' + escapeHtml(String(label)) + '</div>' + region +
-            '<div class="pin-popup-actions"><a class="btn btn-small" href="' + azgfdUrl + '" target="_blank" rel="noopener">AZGFD unit info</a></div>');
-        }
+  // ── GMU boundaries (Arizona) ── GeoJSON source + fill (hit-test only)/line/label layers,
+  // matching the wildlife-layer pattern: fetch once, cache in memory, re-seed the source
+  // from cache on every style switch instead of re-fetching. Label visibility is scale-gated
+  // via the layer's own minzoom/maxzoom rather than a manual zoomend listener.
+  function ensureGmuAzLoaded(cb){
+    if (gmuAzCache){ cb(gmuAzCache); return; }
+    fetch(GMU_SOURCES.az.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){ gmuAzCache = data; cb(data); })
+      .catch(function(err){
+        console.error('[FieldMap] GMU AZ fetch failed:', err);
+        showToast(GMU_SOURCES.az.label + ' GMU boundaries failed to load — check your connection');
+        cb(null);
       });
-      gmuLayers[stateKey].addTo(map);
-      updateGmuLabelVisibility();
-    }).catch(function(){
-      showToast(src.label + ' GMU boundaries failed to load — check your connection');
-      var cb = document.getElementById('gmu-' + stateKey + '-toggle');
-      if (cb) cb.checked = false;
+  }
+
+  function setGmuAzLayersVisible(on){
+    ['gmu-az-fill', 'gmu-az-line', 'gmu-az-label'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    document.getElementById('gmu-az-opacity-row').classList.toggle('show', on);
+    if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
+  }
+
+  function setGmuAzOn(on){
+    state.settings.gmuAzOn = on;
+    if (!on){ setGmuAzLayersVisible(false); return; }
+    ensureGmuAzLoaded(function(data){
+      if (!data){
+        document.getElementById('gmu-az-toggle').checked = false;
+        state.settings.gmuAzOn = false;
+        return;
+      }
+      if (map && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
+      setGmuAzLayersVisible(true);
     });
   }
 
-  function updateGmuLabelVisibility(){
-    var z = map.getZoom();
-    var show = z >= 7 && z <= 11;
-    Object.keys(gmuLayers).forEach(function(key){
-      var layer = gmuLayers[key];
-      if (!layer || !map.hasLayer(layer)) return;
-      layer.eachLayer(function(featLayer){
-        if (show) featLayer.openTooltip(); else featLayer.closeTooltip();
+  function gmuPopupHtml(props){
+    var label = props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '';
+    var region = props.REG_NAME ? '<div class="pin-popup-meta">' + escapeHtml(props.REG_NAME) + '</div>' : '';
+    var link = props.AGFDLink || ('https://www.azgfd.com/location/gmu-' + encodeURIComponent(String(label).toLowerCase()) + '/');
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">GMU ' + escapeHtml(String(label)) + '</div>' +
+      region +
+      '</div>' +
+      '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(link) + '" target="_blank" rel="noopener">AZGFD unit info</a></div>';
+  }
+
+  function openGmuPopupAt(props, lngLat){
+    if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(gmuPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
+    openGmuPopup = popup;
+  }
+
+  // ── USFS National Forest administrative boundaries ── same pattern as GMU above.
+  function ensureUsfsBoundariesLoaded(cb){
+    if (usfsBoundariesCache){ cb(usfsBoundariesCache); return; }
+    fetch(USFS_BOUNDARIES_URL).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){ usfsBoundariesCache = data; cb(data); })
+      .catch(function(err){
+        console.error('[FieldMap] USFS boundaries fetch failed:', err);
+        showToast('USFS Forest boundaries failed to load — check your connection');
+        cb(null);
       });
+  }
+
+  function setUsfsBoundariesLayersVisible(on){
+    ['usfs-boundaries-fill', 'usfs-boundaries-line', 'usfs-boundaries-label'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
     });
+    document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', on);
+    if (!on && openUsfsBoundaryPopup){ openUsfsBoundaryPopup.remove(); openUsfsBoundaryPopup = null; }
+  }
+
+  function setUsfsBoundariesOn(on){
+    state.settings.usfsBoundariesOn = on;
+    if (!on){ setUsfsBoundariesLayersVisible(false); return; }
+    ensureUsfsBoundariesLoaded(function(data){
+      if (!data){
+        document.getElementById('usfsboundaries-toggle').checked = false;
+        state.settings.usfsBoundariesOn = false;
+        return;
+      }
+      if (map && map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
+      setUsfsBoundariesLayersVisible(true);
+    });
+  }
+
+  function usfsBoundaryPopupHtml(props){
+    var acres = props.gis_acres ? Number(props.gis_acres).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres' : '';
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(props.forestname || 'National Forest') + '</div>' +
+      (acres ? '<div class="pin-popup-meta">' + acres + '</div>' : '') +
+      '</div>';
+  }
+
+  function openUsfsBoundaryPopupAt(props, lngLat){
+    if (openUsfsBoundaryPopup){ openUsfsBoundaryPopup.remove(); openUsfsBoundaryPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(usfsBoundaryPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openUsfsBoundaryPopup === popup) openUsfsBoundaryPopup = null; });
+    openUsfsBoundaryPopup = popup;
+  }
+
+  // ── Public/private land (BLM Surface Management Agency, cached tiles) ──
+  function setPublicLandOn(on){
+    state.settings.publicLandOn = on;
+    if (map && map.getLayer('publicland-raster')) map.setLayoutProperty('publicland-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('publicland-opacity-row').classList.toggle('show', on);
+    document.getElementById('publicland-legend').classList.toggle('hidden', !on);
   }
 
   // ---------- Filtering (shared by pins and tracks) ----------
@@ -3774,6 +4009,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function reinitializeLayers(){
     if (!map) return;
 
+    // Public/private land (BLM Surface Management Agency, nationwide cached tiles) — added
+    // first so it sits beneath every other overlay/user layer. Raster layers with no
+    // beforeId land on TOP of everything if added late, so insertion order here matters.
+    if (!map.getSource('publicland-source')){
+      map.addSource('publicland-source', {
+        type: 'raster',
+        tiles: ['https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256
+      });
+    }
+    if (!map.getLayer('publicland-raster')){
+      map.addLayer({
+        id: 'publicland-raster',
+        type: 'raster',
+        source: 'publicland-source',
+        layout: { visibility: state.settings.publicLandOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.publicLandOpacity != null ? state.settings.publicLandOpacity : 0.55 }
+      });
+    }
+
     // Wildlife range polygons — one source per category, added first so they render
     // beneath all user-drawn content (pins/tracks/areas/bearings). Sources are seeded
     // from wildlifeCache (in-memory, session-lived) so a style switch doesn't re-fetch.
@@ -3819,6 +4074,107 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         });
       }
     });
+
+    // GMU boundaries (Arizona) — near-invisible fill for click hit-testing (matches the
+    // original Leaflet build's fillOpacity:0.02, kept fixed regardless of the opacity
+    // slider since it's not meant to be seen), a visible line, and a label symbol layer
+    // gated to the same zoom 7-11 range the old permanent-tooltip logic used, now handled
+    // natively via minzoom/maxzoom instead of a manual zoomend listener.
+    if (!map.getSource('gmu-az-source')){
+      map.addSource('gmu-az-source', {
+        type: 'geojson',
+        data: gmuAzCache || { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('gmu-az-fill')){
+      map.addLayer({
+        id: 'gmu-az-fill',
+        type: 'fill',
+        source: 'gmu-az-source',
+        layout: { visibility: state.settings.gmuAzOn ? 'visible' : 'none' },
+        paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
+      });
+    }
+    if (!map.getLayer('gmu-az-line')){
+      map.addLayer({
+        id: 'gmu-az-line',
+        type: 'line',
+        source: 'gmu-az-source',
+        layout: { visibility: state.settings.gmuAzOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9 }
+      });
+    }
+    if (!map.getLayer('gmu-az-label')){
+      map.addLayer({
+        id: 'gmu-az-label',
+        type: 'symbol',
+        source: 'gmu-az-source',
+        minzoom: 7,
+        maxzoom: 12,
+        layout: {
+          visibility: state.settings.gmuAzOn ? 'visible' : 'none',
+          'text-field': ['get', 'GMU'],
+          'text-size': 12,
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+        },
+        paint: {
+          'text-color': GMU_LINE_COLOR,
+          'text-halo-color': '#000',
+          'text-halo-width': 1.5,
+          'text-opacity': state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9
+        }
+      });
+    }
+
+    // USFS National Forest administrative boundaries — same fill/line/label pattern as GMU,
+    // in a distinct teal (not green, which blends into the topo style's forested areas —
+    // the same lesson learned from the wildlife-layer color fix) so the two boundary types
+    // stay visually distinguishable when both are on at once.
+    if (!map.getSource('usfs-boundaries-source')){
+      map.addSource('usfs-boundaries-source', {
+        type: 'geojson',
+        data: usfsBoundariesCache || { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('usfs-boundaries-fill')){
+      map.addLayer({
+        id: 'usfs-boundaries-fill',
+        type: 'fill',
+        source: 'usfs-boundaries-source',
+        layout: { visibility: state.settings.usfsBoundariesOn ? 'visible' : 'none' },
+        paint: { 'fill-color': USFS_BOUNDARY_COLOR, 'fill-opacity': 0.02 }
+      });
+    }
+    if (!map.getLayer('usfs-boundaries-line')){
+      map.addLayer({
+        id: 'usfs-boundaries-line',
+        type: 'line',
+        source: 'usfs-boundaries-source',
+        layout: { visibility: state.settings.usfsBoundariesOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': USFS_BOUNDARY_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9 }
+      });
+    }
+    if (!map.getLayer('usfs-boundaries-label')){
+      map.addLayer({
+        id: 'usfs-boundaries-label',
+        type: 'symbol',
+        source: 'usfs-boundaries-source',
+        minzoom: 5,
+        maxzoom: 13,
+        layout: {
+          visibility: state.settings.usfsBoundariesOn ? 'visible' : 'none',
+          'text-field': ['get', 'forestname'],
+          'text-size': 12,
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+        },
+        paint: {
+          'text-color': USFS_BOUNDARY_COLOR,
+          'text-halo-color': '#000',
+          'text-halo-width': 1.5,
+          'text-opacity': state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9
+        }
+      });
+    }
 
     // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
     // every style change. Two layers on the same source: a wide invisible one purely
@@ -8374,6 +8730,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
   }
 
+  function wildlifeSpeciesGroupLabel(name){
+    return WILDLIFE_SPECIES_GROUPS[name] || 'Other';
+  }
+
   function wildlifeSpeciesGroups(category){
     var data = wildlifeCache[category];
     if (!data) return [];
@@ -8388,7 +8748,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         byName[p.species_common_name].codes.push(p.species_code);
       }
     });
-    order.sort(function(a, b){ return wildlifeDisplayName(a).localeCompare(wildlifeDisplayName(b)); });
+    // Group first (in the category's hunting-relevant order, unmapped species trailing
+    // into "Other"), alphabetical by display name within each group.
+    var groupOrder = WILDLIFE_GROUP_ORDER[category] || [];
+    function groupIndex(name){
+      var idx = groupOrder.indexOf(wildlifeSpeciesGroupLabel(name));
+      return idx === -1 ? groupOrder.length : idx;
+    }
+    order.sort(function(a, b){
+      var gi = groupIndex(a) - groupIndex(b);
+      if (gi !== 0) return gi;
+      return wildlifeDisplayName(a).localeCompare(wildlifeDisplayName(b));
+    });
     return order.map(function(name){ return byName[name]; });
   }
 
@@ -8415,10 +8786,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function renderWildlifeSpeciesDropdown(){
     var select = document.getElementById('wildlife-species-select');
     var groups = wildlifeSpeciesGroups(wildlifeActiveCategory);
-    select.innerHTML = '<option value="">Select a species…</option>' +
-      groups.map(function(g){
-        return '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(wildlifeDisplayName(g.name)) + '</option>';
-      }).join('');
+    // groups is already sorted by group order, so same-group entries are contiguous —
+    // bucket them into <optgroup>s as we walk the list rather than pre-grouping separately.
+    var html = '<option value="">Select a species…</option>';
+    var openGroupLabel = null;
+    groups.forEach(function(g){
+      var label = wildlifeSpeciesGroupLabel(g.name);
+      if (label !== openGroupLabel){
+        if (openGroupLabel !== null) html += '</optgroup>';
+        html += '<optgroup label="' + escapeHtml(label) + '">';
+        openGroupLabel = label;
+      }
+      html += '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(wildlifeDisplayName(g.name)) + '</option>';
+    });
+    if (openGroupLabel !== null) html += '</optgroup>';
+    select.innerHTML = html;
     select.value = (wildlifeActive && wildlifeActive.category === wildlifeActiveCategory) ? wildlifeActive.speciesName : '';
     renderWildlifeSublayers();
   }
@@ -8464,16 +8846,62 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setWildlifeSpecies(category, speciesName, codes){
     wildlifeActive = (speciesName && codes.length) ? { category: category, speciesName: speciesName, codes: codes.slice() } : null;
+    // Picking a species in the full picker auto-enables the quick-toggle — "sync both
+    // directions" per spec — but clearing (empty select / all sublayer boxes unchecked)
+    // doesn't force it off; that's clearWildlifeSelection's job.
+    if (wildlifeActive) wildlifeOn = true;
+    persistWildlifeSettings();
     updateWildlifeMapFilter();
     updateWildlifeLegend();
+    updateWildlifeQuickToggleUI();
   }
 
   function clearWildlifeSelection(){
     wildlifeActive = null;
+    wildlifeOn = false;
     document.getElementById('wildlife-species-select').value = '';
     renderWildlifeSublayers();
+    persistWildlifeSettings();
     updateWildlifeMapFilter();
     updateWildlifeLegend();
+    updateWildlifeQuickToggleUI();
+  }
+
+  // Quick-toggle checkbox handler — flips visibility only, never touches the selection
+  // itself, so unchecking hides the layer without losing what species was chosen.
+  function setWildlifeOn(on){
+    wildlifeOn = on;
+    persistWildlifeSettings();
+    updateWildlifeMapFilter();
+    updateWildlifeLegend();
+    updateWildlifeQuickToggleUI();
+  }
+
+  function persistWildlifeSettings(){
+    state.settings.wildlifeOn = wildlifeOn;
+    state.settings.wildlifeCategory = wildlifeActive ? wildlifeActive.category : null;
+    state.settings.wildlifeSpeciesName = wildlifeActive ? wildlifeActive.speciesName : null;
+    state.settings.wildlifeCodes = wildlifeActive ? wildlifeActive.codes.slice() : null;
+    scheduleSave();
+  }
+
+  // Updates the quick-toggle checkbox + the button's dot/label — called from both
+  // directions (checkbox change, and picking a species in the full picker) so they can
+  // never drift out of sync with each other.
+  function updateWildlifeQuickToggleUI(){
+    var checkbox = document.getElementById('wildlife-quick-toggle');
+    var dot = document.getElementById('wildlife-quick-dot');
+    var label = document.getElementById('wildlife-quick-label');
+    if (!checkbox) return;
+    checkbox.checked = !!wildlifeOn;
+    if (wildlifeActive){
+      label.textContent = wildlifeDisplayName(wildlifeActive.speciesName);
+      dot.style.display = 'inline-block';
+      dot.style.background = WILDLIFE_FILL_COLORS[0];
+    } else {
+      label.textContent = 'Select species';
+      dot.style.display = 'none';
+    }
   }
 
   // Reapplies the active species' filter/color to whichever category layer it belongs to,
@@ -8485,7 +8913,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var fillLayerId = 'wildlife-' + cat + '-fill';
       var lineLayerId = 'wildlife-' + cat + '-line';
       if (!map.getLayer(fillLayerId)) return;
-      if (wildlifeActive && wildlifeActive.category === cat && wildlifeActive.codes.length){
+      if (wildlifeOn && wildlifeActive && wildlifeActive.category === cat && wildlifeActive.codes.length){
         var codeFilter = ['in', ['get', 'species_code'], ['literal', wildlifeActive.codes]];
         map.setFilter(fillLayerId, codeFilter);
         map.setFilter(lineLayerId, codeFilter);
@@ -8509,7 +8937,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function updateWildlifeLegend(){
     var legend = document.getElementById('wildlife-legend');
-    if (!wildlifeActive || !wildlifeActive.codes.length){ legend.classList.add('hidden'); return; }
+    if (!wildlifeOn || !wildlifeActive || !wildlifeActive.codes.length){ legend.classList.add('hidden'); return; }
     var name = wildlifeDisplayName(wildlifeActive.speciesName);
     var multi = wildlifeActive.codes.length > 1;
     var swatches = wildlifeActive.codes.map(function(code, i){
@@ -8730,6 +9158,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
+            if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
+            if (state.settings.gmuAzOpacity === undefined) state.settings.gmuAzOpacity = 0.9;
+            if (state.settings.wildlifeOn === undefined) state.settings.wildlifeOn = false;
+            if (state.settings.wildlifeCategory === undefined) state.settings.wildlifeCategory = null;
+            if (state.settings.wildlifeSpeciesName === undefined) state.settings.wildlifeSpeciesName = null;
+            if (state.settings.wildlifeCodes === undefined) state.settings.wildlifeCodes = null;
             // Migrate existing pins to add status field
             (state.pins || []).forEach(function(p){ if (!p.status) p.status = 'escout'; });
             (state.tracks || []).forEach(function(t){ if (!t.status) t.status = 'escout'; });
@@ -8766,6 +9200,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ---------- Panels ----------
   // ---------- Wire up UI ----------
   function bindUI(){
+    // Restore the wildlife species selection from settings before anything else touches
+    // wildlifeActive/wildlifeOn — this only needs the plain strings already in
+    // state.settings, not the map (which may not exist yet), so the quick-toggle button
+    // can show the right species name immediately on load. The actual GeoJSON fetch (if
+    // the layer was left "on") is triggered later, once, from inside the first
+    // map.on('style.load', ...) handler in createMap() — see overlayDataRestoredOnInit.
+    if (state.settings.wildlifeSpeciesName){
+      wildlifeActive = {
+        category: state.settings.wildlifeCategory,
+        speciesName: state.settings.wildlifeSpeciesName,
+        codes: state.settings.wildlifeCodes || []
+      };
+      wildlifeActiveCategory = state.settings.wildlifeCategory || wildlifeActiveCategory;
+    }
+    wildlifeOn = !!state.settings.wildlifeOn;
+
     renderTagChips();
     renderStateChips();
     renderTripChips();
@@ -8967,22 +9417,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // ── P2 Layer toggles ──
     document.getElementById('publicland-toggle').addEventListener('change', function(){
-      state.settings.publicLandOn = this.checked;
-      if (this.checked && publicLandLayer){
-        publicLandLayer.addTo(map);
-        document.getElementById('publicland-opacity-row').classList.add('show');
-        document.getElementById('publicland-legend').classList.remove('hidden');
-      } else {
-        if (publicLandLayer) map.removeLayer(publicLandLayer);
-        document.getElementById('publicland-opacity-row').classList.remove('show');
-        document.getElementById('publicland-legend').classList.add('hidden');
-      }
-      saveState();
+      setPublicLandOn(this.checked);
+      scheduleSave();
     });
     document.getElementById('publicland-opacity').addEventListener('input', function(){
       state.settings.publicLandOpacity = this.value / 100;
-      if (publicLandLayer) publicLandLayer.setOpacity(state.settings.publicLandOpacity);
-      saveState();
+      if (map.getLayer('publicland-raster')) map.setPaintProperty('publicland-raster', 'raster-opacity', state.settings.publicLandOpacity);
+      scheduleSave();
     });
     document.getElementById('snowdepth-toggle').addEventListener('change', function(){
       toggleSimpleLayer(snowDepthLayer, 'snowDepthOn', this.checked);
@@ -8990,19 +9431,62 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('nlcd-toggle').addEventListener('change', function(){
       toggleSimpleLayer(nlcdLayer, 'nlcdOn', this.checked);
     });
-    // usfsboundaries-toggle removed from layers panel
 
-    // Restore layer toggle states
+    // ── USFS Forest boundaries ──
+    document.getElementById('usfsboundaries-toggle').addEventListener('change', function(){
+      setUsfsBoundariesOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('usfsboundaries-opacity').addEventListener('input', function(){
+      state.settings.usfsBoundariesOpacity = this.value / 100;
+      if (map.getLayer('usfs-boundaries-line')) map.setPaintProperty('usfs-boundaries-line', 'line-opacity', state.settings.usfsBoundariesOpacity);
+      if (map.getLayer('usfs-boundaries-label')) map.setPaintProperty('usfs-boundaries-label', 'text-opacity', state.settings.usfsBoundariesOpacity);
+      scheduleSave();
+    });
+
+    // ── GMU boundaries (Arizona) ──
+    document.getElementById('gmu-az-toggle').addEventListener('change', function(){
+      setGmuAzOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('gmu-az-opacity').addEventListener('input', function(){
+      state.settings.gmuAzOpacity = this.value / 100;
+      if (map.getLayer('gmu-az-line')) map.setPaintProperty('gmu-az-line', 'line-opacity', state.settings.gmuAzOpacity);
+      if (map.getLayer('gmu-az-label')) map.setPaintProperty('gmu-az-label', 'text-opacity', state.settings.gmuAzOpacity);
+      scheduleSave();
+    });
+
+    // Restore layer toggle states. This runs before the map/style has actually loaded
+    // (createMap() kicks off an async fetch chain that bindUI() doesn't wait on), so only
+    // checkbox/slider/DOM state is restored here — the layers themselves get their correct
+    // initial visibility from reinitializeLayers() reading state.settings directly, and
+    // GMU/USFS's data fetch (if the toggle started "on") is triggered once from inside the
+    // first style.load handler in createMap(), where map is guaranteed to exist.
     document.getElementById('publicland-toggle').checked = !!state.settings.publicLandOn;
+    document.getElementById('publicland-opacity').value = Math.round((state.settings.publicLandOpacity != null ? state.settings.publicLandOpacity : 0.55) * 100);
+    document.getElementById('publicland-opacity-row').classList.toggle('show', !!state.settings.publicLandOn);
+    document.getElementById('publicland-legend').classList.toggle('hidden', !state.settings.publicLandOn);
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
+    document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
+    document.getElementById('usfsboundaries-opacity').value = Math.round((state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9) * 100);
+    document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', !!state.settings.usfsBoundariesOn);
+    document.getElementById('gmu-az-toggle').checked = !!state.settings.gmuAzOn;
+    document.getElementById('gmu-az-opacity').value = Math.round((state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9) * 100);
+    document.getElementById('gmu-az-opacity-row').classList.toggle('show', !!state.settings.gmuAzOn);
 
     // ── Wildlife Layers (P3a) ──
+    document.getElementById('wildlife-quick-toggle').addEventListener('change', function(){
+      setWildlifeOn(this.checked);
+    });
     document.getElementById('wildlife-layers-open-btn').addEventListener('click', function(){
       var panel = document.getElementById('wildlife-panel');
       closeAllPanels();
       panel.classList.remove('hidden');
-      ensureWildlifeCategoryLoaded(wildlifeActiveCategory);
+      // Open the picker on whichever category the active selection belongs to (if any),
+      // so re-opening the panel doesn't strand the user on a different tab than what's live.
+      if (wildlifeActive) setWildlifeCategory(wildlifeActive.category);
+      else ensureWildlifeCategoryLoaded(wildlifeActiveCategory);
     });
     document.getElementById('wildlife-close-btn').addEventListener('click', function(){
       document.getElementById('wildlife-panel').classList.add('hidden');
@@ -9031,6 +9515,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('wildlife-clear-btn').addEventListener('click', function(){
       clearWildlifeSelection();
     });
+    // Reflect whatever was just restored from settings (species name/dot, checked state)
+    // immediately — doesn't need the map, just the wildlifeActive/wildlifeOn already set
+    // at the top of bindUI().
+    updateWildlifeQuickToggleUI();
 
     // Layer info panel ? buttons — use event delegation
     document.getElementById('layers-panel').addEventListener('click', function(e){
