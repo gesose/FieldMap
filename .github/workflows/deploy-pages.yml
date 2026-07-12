@@ -1,0 +1,70 @@
+name: Deploy Pages (production + staging)
+
+# Single Pages site serving two branches at once:
+#   gesose.github.io/FieldMap/          <- main (production, unchanged)
+#   gesose.github.io/FieldMap/staging/  <- maplibre (mobile-testable staging copy)
+#
+# Every run rebuilds both trees from scratch regardless of which branch triggered it, so a
+# push to either branch redeploys both and they never drift out of sync with each other.
+#
+# One-time manual step required (can't be set from a workflow file): in the repo's Settings
+# -> Pages, the "Build and deployment" source must be switched to "GitHub Actions" (it's
+# likely still set to "Deploy from a branch" from the site's current legacy setup). Until
+# that's switched, this workflow will build and upload the artifact but GitHub won't publish
+# it via actions/deploy-pages.
+
+on:
+  push:
+    branches:
+      - main
+      - maplibre
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout main (production)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: src-main
+
+      - name: Checkout maplibre (staging)
+        uses: actions/checkout@v4
+        with:
+          ref: maplibre
+          path: src-maplibre
+
+      - name: Assemble combined site
+        run: |
+          set -e
+          rm -rf site
+          mkdir -p site
+          rsync -a --exclude='.git' src-main/ site/
+          mkdir -p site/staging
+          rsync -a --exclude='.git' src-maplibre/ site/staging/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
