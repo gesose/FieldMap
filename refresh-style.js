@@ -108,8 +108,25 @@ function sanitizeV3OnlyLayer(layer){
 // sources/layers structure so it renders the same without fragment support.
 //
 // Studio also re-lists every layer you've customized at the top level using the SAME id as
-// its fragment counterpart (the top-level copy is the edited override, in the fragment's
-// original position) — so this can't be a naive prepend, or you'd get duplicate layer ids.
+// its fragment counterpart (the top-level copy is the edited override) — but customizing a
+// layer doesn't always keep its id: splitting the fragment's generic "roads"/"roads-case"
+// into per-class layers (road-minor, road-primary, road-motorway-trunk, etc., a normal
+// outcome of Studio's road-styling panel) produces ids that exist ONLY at the top level,
+// with no fragment counterpart at all. An earlier version of this function used the
+// fragment's order as the skeleton and appended every such "no fragment match" layer at
+// the very end, regardless of type — which pushed all the real road line layers after
+// road-label (a same-id override matched to a much earlier fragment position), even
+// though the top-level array itself already has them in the correct relative order
+// (confirmed by fetching the raw Studio JSON directly: road-label sits after every
+// road-*-case/road-minor/road-primary/etc. line layer in styleObj.layers already). Root
+// cause: merging around the fragment's skeleton instead of the top-level one.
+//
+// Fix: use the top-level layers array as the skeleton (it's Studio's fully-resolved
+// order, covering both same-id overrides and split/renamed layers alike), and only pull
+// in genuinely fragment-only layers (never customized at top level — e.g. the raster
+// satellite base layer) by splicing them in next to the nearest fragment neighbor that
+// DOES have a top-level match, preserving their position relative to that context
+// instead of dumping them all at the front or back.
 function flattenImports(styleObj){
   if (!styleObj.imports || !styleObj.imports.length) return;
 
@@ -123,34 +140,37 @@ function flattenImports(styleObj){
       if (!(key in styleObj.sources)) styleObj.sources[key] = fragSources[key];
     });
 
-    // Layers: walk the fragment's order (the real render order) and substitute the
-    // top-level edited layer wherever its id matches; keep the fragment's own layer
-    // otherwise. "slot" layers are fragment-only placeholders (bottom/middle/top) with
-    // no classic-spec meaning, so drop them. Fragment-only layers that use v3-only
-    // constructs (["config",...] expressions, *-emissive-strength paint, and the
-    // model/building/clip layer types that ride on them) get dropped too, since
-    // MapLibre's validator rejects them — except the handful we actually need, which
-    // get sanitized (offending keys stripped) instead of dropped. Any top-level layers
-    // with no fragment counterpart (genuinely new additions) are appended at the end.
-    var topById = {};
-    styleObj.layers.forEach(function(l){ topById[l.id] = l; });
-    var usedTopIds = {};
-    var merged = [];
+    var topIds = {};
+    styleObj.layers.forEach(function(l){ topIds[l.id] = true; });
+
+    // Bucket fragment-only layers by "anchor" — the id of the nearest PRECEDING fragment
+    // layer that also has a top-level match. '' means "before any anchor was seen yet"
+    // (prepended at the very front). "slot" layers are fragment-only placeholders
+    // (bottom/middle/top) with no classic-spec meaning, so they're skipped entirely
+    // (not treated as anchors, not kept). Fragment-only layers using v3-only constructs
+    // (["config",...] expressions, *-emissive-strength paint, model/building/clip types)
+    // get dropped too — except the handful we actually need (isKeepLayer), which get
+    // sanitized (offending keys stripped) instead.
+    var buckets = {};
+    var currentAnchor = '';
     fragLayers.forEach(function(fl){
       if (fl.type === 'slot') return;
-      if (topById[fl.id]){
-        usedTopIds[fl.id] = true;
-        merged.push(topById[fl.id]);
+      if (topIds[fl.id]){
+        currentAnchor = fl.id;
         return;
       }
       if (isV3OnlyLayer(fl)){
-        if (isKeepLayer(fl)) merged.push(sanitizeV3OnlyLayer(fl));
-        return;
+        if (!isKeepLayer(fl)) return;
+        fl = sanitizeV3OnlyLayer(fl);
       }
-      merged.push(fl);
+      if (!buckets[currentAnchor]) buckets[currentAnchor] = [];
+      buckets[currentAnchor].push(fl);
     });
+
+    var merged = (buckets[''] || []).slice();
     styleObj.layers.forEach(function(l){
-      if (!usedTopIds[l.id]) merged.push(l);
+      merged.push(l);
+      if (buckets[l.id]) merged = merged.concat(buckets[l.id]);
     });
     styleObj.layers = merged;
   });

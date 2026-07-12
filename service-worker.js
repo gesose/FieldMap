@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v88';
+var SHELL_CACHE = 'fieldmap-shell-v92';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -21,6 +21,18 @@ var SHELL_FILES = [
   './icon-512.png',
   './icon-512-maskable.png',
   './icon-180.png',
+  // Local custom Mapbox styles (refreshed via refresh-style.js) — explicitly pre-cached
+  // here so every SHELL_CACHE bump deterministically re-fetches them fresh on install.
+  // Previously these were only cached opportunistically on first fetch (the generic
+  // cache-first fallback below), which meant a browser that had already visited FieldMap
+  // before a style-content fix could keep serving the old cached copy indefinitely: the
+  // old named cache only gets deleted once a NEW service worker actually activates for
+  // that tab, and until a fetch for these exact URLs happened again there was nothing to
+  // force that revalidation. Listing them here ties their freshness to the same
+  // install/activate cycle as the rest of the shell.
+  './topo-style.json',
+  './topo-dark-style.json',
+  './aerial-streets-style.json',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js',

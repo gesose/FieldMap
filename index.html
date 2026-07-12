@@ -1350,9 +1350,8 @@
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="gmu-az-toggle"> Arizona
   </label>
-  <div class="opacity-row" id="gmu-az-opacity-row"><input type="range" id="gmu-az-opacity" min="20" max="100" value="90"></div>
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="gmu-or-toggle" disabled> Oregon <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
+    <input type="checkbox" id="gmu-or-toggle"> Oregon
   </label>
 
   <div class="layer-section-header" style="margin-top:10px;">WILDLIFE</div>
@@ -1885,7 +1884,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.5.0';
+  var APP_VERSION = '2.7.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1952,7 +1951,8 @@
       },
       mvumOn: false, mvumOpacity: 0.8,
       hydroOn: false, hydroOpacity: 1,
-      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false, gmuAzOpacity: 0.9,
+      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
+      gmuOrOn: false,
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
       showOfflineBoundaries: true,
       showAreaLabels: true,
@@ -1974,10 +1974,16 @@
   var snowDepthLayer = null, nlcdLayer = null;
   var hillshadeLayer = null;
   var GMU_LINE_COLOR = '#e8854a'; // existing GMU orange
-  var USFS_BOUNDARY_COLOR = '#2fa8a0'; // teal — distinct from GMU orange and from green forested basemap areas
+  // Forest Boundaries fill/stroke — light olive-green fill (distinct from the brighter/paler
+  // greens already used for the "USFS" agency swatch in the Public/Private Land legend,
+  // #6FCF52/#a8c98e) with a darker, more saturated stroke. Also distinct from the Wildlife
+  // layers' orange/blue and (once built) hydrography's blue.
+  var USFS_FILL_COLOR = '#7a9b5e';
+  var USFS_STROKE_COLOR = '#3f5c2a';
   var gmuAzCache = null; // fetched-once GeoJSON, cached for the session (re-seeds the source after a style switch)
+  var gmuOrCache = null; // same, for Oregon
   var usfsBoundariesCache = null; // same, for the national forest boundary layer
-  var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt
+  var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt — shared by AZ and OR (only one GMU popup open at a time)
   var openUsfsBoundaryPopup = null;
   // Sun-path arc: sun-arc-source (colored day/golden/twilight segments) + sun-dash-source
   // (dashed line from map center to the sun dot), plus 3 reused maplibregl.Marker instances
@@ -1991,7 +1997,8 @@
   var compassUseCenter = false; // false = GPS location, true = map center
   var sunDate = null; // date currently shown in sunrise panel
   var GMU_SOURCES = {
-    az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' }
+    az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' },
+    or: { url: 'data/oregon-gmu.geojson', label: 'Oregon' }
   };
   // Administrative (current, not "original proclaimed") National Forest boundary — confirmed
   // via research: direct f=geojson query support, inSR=4269 works, no min-zoom/scale gating
@@ -3362,10 +3369,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (!overlayDataRestoredOnInit){
           overlayDataRestoredOnInit = true;
           if (state.settings.gmuAzOn) ensureGmuAzLoaded(function(data){
-            if (data && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
+            if (!data) return;
+            if (map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
+            if (map.getSource('gmu-az-label-source')) map.getSource('gmu-az-label-source').setData(buildLabelPointFeatureCollection(data));
+          });
+          if (state.settings.gmuOrOn) ensureGmuOrLoaded(function(data){
+            if (!data) return;
+            if (map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
+            if (map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
           });
           if (state.settings.usfsBoundariesOn) ensureUsfsBoundariesLoaded(function(data){
-            if (data && map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
+            if (!data) return;
+            if (map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
+            if (map.getSource('usfs-boundaries-label-source')) map.getSource('usfs-boundaries-label-source').setData(buildLabelPointFeatureCollection(data));
           });
           if (wildlifeOn && wildlifeActive) loadWildlifeCategory(wildlifeActive.category, function(data){
             if (data && map.getSource('wildlife-' + wildlifeActive.category + '-source')){
@@ -3540,6 +3556,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = ''; });
 
+      function handleGmuOrFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var gmuOrFeature = e.features && e.features[0];
+        if (!gmuOrFeature) return;
+        openGmuOrPopupAt(gmuOrFeature.properties, e.lngLat);
+      }
+      map.on('click', 'gmu-or-fill', handleGmuOrFillClick);
+      map.on('mouseenter', 'gmu-or-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'gmu-or-fill', function(){ map.getCanvas().style.cursor = ''; });
+
       function handleUsfsBoundaryFillClick(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
         e.preventDefault();
@@ -3575,8 +3614,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('click', function(e){
         // Registered last, so this only runs for clicks that didn't already land on (and
         // get fully handled by) cluster-circles/tracks-line-touch/polygons-fill/
-        // bearings-line-touch/wildlife-*-fill/gmu-az-fill/usfs-boundaries-fill/draw-preview-line
-        // — see cluster-circles handler above for why that check is necessary at all.
+        // bearings-line-touch/wildlife-*-fill/gmu-az-fill/gmu-or-fill/usfs-boundaries-fill/
+        // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
@@ -3696,6 +3735,135 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     publicLandLegendLoaded = true;
   }
 
+  // ── Shared label-point generation (GMU AZ/OR, USFS boundaries) ──
+  // A text-field symbol layer placed directly on a Polygon/MultiPolygon source repeats its
+  // label once per tile the feature's geometry crosses — GeoJSON sources get tiled
+  // internally (geojson-vt) the same as any vector source, and a symbol layer has no
+  // built-in concept of "this polygon is really one feature spread across N tiles". A large
+  // unit like Oregon GMU 65 (Beulah) or a multi-part National Forest boundary can span
+  // several tiles at once even at a fairly zoomed-out level, so its label was rendering
+  // 3+ times. Fix: derive a single Point per feature (one label, period, regardless of tile
+  // boundaries) and put the symbol layer on that instead, decoupled from the fill/line
+  // layer which stays on the original polygon source.
+  //
+  // The point itself is an approximate "pole of inaccessibility" (the point deepest inside
+  // the shape) via iterative grid-search refinement, not a plain centroid — a centroid can
+  // land outside a concave/horseshoe-shaped unit (common for hunt units and forest
+  // boundaries that follow rivers/ridgelines) or inside a hole. For a MultiPolygon, the
+  // label goes on the largest part by area.
+  function ringArea(ring){
+    var area = 0;
+    for (var i = 0; i < ring.length; i++){
+      var j = (i + 1) % ring.length;
+      area += ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];
+    }
+    return Math.abs(area / 2);
+  }
+
+  function pointInRing(pt, ring){
+    var x = pt[0], y = pt[1], inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++){
+      var xi = ring[i][0], yi = ring[i][1];
+      var xj = ring[j][0], yj = ring[j][1];
+      var intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function pointInPolygonRings(pt, rings){
+    if (!pointInRing(pt, rings[0])) return false;
+    for (var i = 1; i < rings.length; i++){
+      if (pointInRing(pt, rings[i])) return false; // inside a hole
+    }
+    return true;
+  }
+
+  function distToSegment(px, py, ax, ay, bx, by){
+    var dx = bx - ax, dy = by - ay;
+    var lenSq = dx * dx + dy * dy;
+    var t = lenSq ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+    var cx = ax + t * dx, cy = ay + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  function distToRings(pt, rings){
+    var minDist = Infinity;
+    rings.forEach(function(ring){
+      for (var i = 0; i < ring.length; i++){
+        var a = ring[i], b = ring[(i + 1) % ring.length];
+        var d = distToSegment(pt[0], pt[1], a[0], a[1], b[0], b[1]);
+        if (d < minDist) minDist = d;
+      }
+    });
+    return minDist;
+  }
+
+  // rings = [outerRing, ...holeRings] for a single polygon part, each ring an array of [lng,lat].
+  function polygonPoleOfInaccessibility(rings){
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    rings[0].forEach(function(p){
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    });
+    var cellSize = Math.max(maxX - minX, maxY - minY);
+    if (!cellSize) return [minX, minY];
+    var best = null, bestDist = -Infinity;
+    var gridSteps = 12;
+    for (var iter = 0; iter < 6; iter++){
+      var step = cellSize / gridSteps;
+      var foundThisPass = false;
+      for (var gx = 0; gx <= gridSteps; gx++){
+        for (var gy = 0; gy <= gridSteps; gy++){
+          var x = minX + gx * step, y = minY + gy * step;
+          if (!pointInPolygonRings([x, y], rings)) continue;
+          var d = distToRings([x, y], rings);
+          if (d > bestDist){ bestDist = d; best = [x, y]; foundThisPass = true; }
+        }
+      }
+      if (!best) break; // degenerate/sliver polygon — caller falls back to bbox center
+      if (!foundThisPass) break; // grid refined past any point still inside — keep best so far
+      minX = best[0] - step; maxX = best[0] + step;
+      minY = best[1] - step; maxY = best[1] + step;
+      cellSize = step * 2;
+    }
+    return best;
+  }
+
+  // Picks the largest part of a Polygon/MultiPolygon by outer-ring area, then its pole of
+  // inaccessibility; falls back to the outer ring's bbox center for a degenerate shape.
+  function bestLabelPointForGeometry(geom){
+    var polygons = geom.type === 'Polygon' ? [geom.coordinates] : geom.type === 'MultiPolygon' ? geom.coordinates : null;
+    if (!polygons || !polygons.length) return null;
+    var largest = polygons[0], largestArea = ringArea(polygons[0][0]);
+    for (var i = 1; i < polygons.length; i++){
+      var a = ringArea(polygons[i][0]);
+      if (a > largestArea){ largestArea = a; largest = polygons[i]; }
+    }
+    var pt = polygonPoleOfInaccessibility(largest);
+    if (pt) return pt;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    largest[0].forEach(function(p){
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    });
+    return [(minX + maxX) / 2, (minY + maxY) / 2];
+  }
+
+  // Builds a one-point-per-feature FeatureCollection from a Polygon/MultiPolygon
+  // FeatureCollection, for use as a dedicated label-only source (see comment above).
+  // All original properties pass through unchanged.
+  function buildLabelPointFeatureCollection(featureCollection){
+    var points = [];
+    (featureCollection && featureCollection.features || []).forEach(function(f){
+      if (!f.geometry) return;
+      var pt = bestLabelPointForGeometry(f.geometry);
+      if (!pt) return;
+      points.push({ type: 'Feature', geometry: { type: 'Point', coordinates: pt }, properties: f.properties });
+    });
+    return { type: 'FeatureCollection', features: points };
+  }
+
   // ── GMU boundaries (Arizona) ── GeoJSON source + fill (hit-test only)/line/label layers,
   // matching the wildlife-layer pattern: fetch once, cache in memory, re-seed the source
   // from cache on every style switch instead of re-fetching. Label visibility is scale-gated
@@ -3715,7 +3883,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     ['gmu-az-fill', 'gmu-az-line', 'gmu-az-label'].forEach(function(id){
       if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
     });
-    document.getElementById('gmu-az-opacity-row').classList.toggle('show', on);
     if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
   }
 
@@ -3729,6 +3896,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return;
       }
       if (map && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
+      if (map && map.getSource('gmu-az-label-source')) map.getSource('gmu-az-label-source').setData(buildLabelPointFeatureCollection(data));
       setGmuAzLayersVisible(true);
     });
   }
@@ -3748,6 +3916,61 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
     var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
       .setLngLat(lngLat).setHTML(gmuPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
+    openGmuPopup = popup;
+  }
+
+  // ── GMU boundaries (Oregon) ── local GeoJSON file (data/oregon-gmu.geojson, 69 features,
+  // properties: unit_num, unit_name) instead of a remote ArcGIS query, but otherwise an
+  // exact mirror of the Arizona GMU pattern above — same fill/line/label treatment, same
+  // opacity slider, same ad-hoc popup mechanics (shares openGmuPopup with AZ so only one
+  // GMU popup is ever open at a time, regardless of which state it came from).
+  function ensureGmuOrLoaded(cb){
+    if (gmuOrCache){ cb(gmuOrCache); return; }
+    fetch(GMU_SOURCES.or.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){ gmuOrCache = data; cb(data); })
+      .catch(function(err){
+        console.error('[FieldMap] GMU OR fetch failed:', err);
+        showToast(GMU_SOURCES.or.label + ' GMU boundaries failed to load — check your connection');
+        cb(null);
+      });
+  }
+
+  function setGmuOrLayersVisible(on){
+    ['gmu-or-fill', 'gmu-or-line', 'gmu-or-label'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
+  }
+
+  function setGmuOrOn(on){
+    state.settings.gmuOrOn = on;
+    if (!on){ setGmuOrLayersVisible(false); return; }
+    ensureGmuOrLoaded(function(data){
+      if (!data){
+        document.getElementById('gmu-or-toggle').checked = false;
+        state.settings.gmuOrOn = false;
+        return;
+      }
+      if (map && map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
+      if (map && map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
+      setGmuOrLayersVisible(true);
+    });
+  }
+
+  function gmuOrPopupHtml(props){
+    var name = props.unit_name || '';
+    var num = props.unit_num;
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(String(name)) + '</div>' +
+      (num != null ? '<div class="pin-popup-meta">Unit ' + escapeHtml(String(num)) + '</div>' : '') +
+      '</div>';
+  }
+
+  function openGmuOrPopupAt(props, lngLat){
+    if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(gmuOrPopupHtml(props)).addTo(map);
     popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
     openGmuPopup = popup;
   }
@@ -3782,16 +4005,46 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return;
       }
       if (map && map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
+      if (map && map.getSource('usfs-boundaries-label-source')) map.getSource('usfs-boundaries-label-source').setData(buildLabelPointFeatureCollection(data));
       setUsfsBoundariesLayersVisible(true);
     });
   }
 
+  // Confirmed-working fs.usda.gov URLs, keyed by the exact forestname string returned by
+  // EDW_ForestSystemBoundaries_01 — covers only the AZ (region 03) and OR (region 06)
+  // forests actually relevant to this app's GMU coverage, per the request not to
+  // algorithmically guess a URL pattern from the name (some forests use a "main/<slug>/home"
+  // redirect, most use "r03/<slug>" or "r06/<slug>" directly, and slugs don't always match
+  // the forest name in an obvious way — e.g. Mt. Hood is "mthood" not "mt-hood"). A forest
+  // with no entry here just shows no link rather than a fabricated/possibly-broken one.
+  var USFS_FOREST_URLS = {
+    'Apache-Sitgreaves National Forests': 'https://www.fs.usda.gov/r03/apache-sitgreaves',
+    'Coconino National Forest': 'https://www.fs.usda.gov/r03/coconino',
+    'Coronado National Forest': 'https://www.fs.usda.gov/r03/coronado',
+    'Kaibab National Forest': 'https://www.fs.usda.gov/r03/kaibab',
+    'Prescott National Forest': 'https://www.fs.usda.gov/r03/prescott',
+    'Tonto National Forest': 'https://www.fs.usda.gov/r03/tonto',
+    'Deschutes National Forest': 'https://www.fs.usda.gov/r06/deschutes',
+    'Fremont-Winema National Forest': 'https://www.fs.usda.gov/r06/fremont-winema',
+    'Malheur National Forest': 'https://www.fs.usda.gov/r06/malheur',
+    'Mt. Hood National Forest': 'https://www.fs.usda.gov/r06/mthood',
+    'Ochoco National Forest': 'https://www.fs.usda.gov/r06/ochoco',
+    'Rogue River-Siskiyou National Forests': 'https://www.fs.usda.gov/r06/rogue-siskiyou',
+    'Siuslaw National Forest': 'https://www.fs.usda.gov/r06/siuslaw',
+    'Umatilla National Forest': 'https://www.fs.usda.gov/r06/umatilla',
+    'Umpqua National Forest': 'https://www.fs.usda.gov/r06/umpqua',
+    'Wallowa-Whitman National Forest': 'https://www.fs.usda.gov/r06/wallowa-whitman',
+    'Willamette National Forest': 'https://www.fs.usda.gov/r06/willamette'
+  };
+
   function usfsBoundaryPopupHtml(props){
     var acres = props.gis_acres ? Number(props.gis_acres).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres' : '';
+    var url = USFS_FOREST_URLS[props.forestname];
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">' + escapeHtml(props.forestname || 'National Forest') + '</div>' +
       (acres ? '<div class="pin-popup-meta">' + acres + '</div>' : '') +
-      '</div>';
+      '</div>' +
+      (url ? '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">Forest info (fs.usda.gov)</a></div>' : '');
   }
 
   function openUsfsBoundaryPopupAt(props, lngLat){
@@ -4101,14 +4354,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         type: 'line',
         source: 'gmu-az-source',
         layout: { visibility: state.settings.gmuAzOn ? 'visible' : 'none', 'line-join': 'round' },
-        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9 }
+        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
+      });
+    }
+    // Dedicated point source for the label — one feature per polygon (see
+    // buildLabelPointFeatureCollection comment above) instead of placing the symbol layer
+    // directly on the polygon source, which repeated the label once per tile a large unit
+    // spans.
+    if (!map.getSource('gmu-az-label-source')){
+      map.addSource('gmu-az-label-source', {
+        type: 'geojson',
+        data: buildLabelPointFeatureCollection(gmuAzCache || { type: 'FeatureCollection', features: [] })
       });
     }
     if (!map.getLayer('gmu-az-label')){
       map.addLayer({
         id: 'gmu-az-label',
         type: 'symbol',
-        source: 'gmu-az-source',
+        source: 'gmu-az-label-source',
         minzoom: 7,
         maxzoom: 12,
         layout: {
@@ -4121,15 +4384,70 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           'text-color': GMU_LINE_COLOR,
           'text-halo-color': '#000',
           'text-halo-width': 1.5,
-          'text-opacity': state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9
+          'text-opacity': 0.9
         }
       });
     }
 
-    // USFS National Forest administrative boundaries — same fill/line/label pattern as GMU,
-    // in a distinct teal (not green, which blends into the topo style's forested areas —
-    // the same lesson learned from the wildlife-layer color fix) so the two boundary types
-    // stay visually distinguishable when both are on at once.
+    // GMU boundaries (Oregon) — exact mirror of the Arizona block above (unit_num is the
+    // on-map label, matching AZ's role of showing the short numeric code on the map while
+    // the full unit_name shows in the popup — see gmuOrPopupHtml).
+    if (!map.getSource('gmu-or-source')){
+      map.addSource('gmu-or-source', {
+        type: 'geojson',
+        data: gmuOrCache || { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('gmu-or-fill')){
+      map.addLayer({
+        id: 'gmu-or-fill',
+        type: 'fill',
+        source: 'gmu-or-source',
+        layout: { visibility: state.settings.gmuOrOn ? 'visible' : 'none' },
+        paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
+      });
+    }
+    if (!map.getLayer('gmu-or-line')){
+      map.addLayer({
+        id: 'gmu-or-line',
+        type: 'line',
+        source: 'gmu-or-source',
+        layout: { visibility: state.settings.gmuOrOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
+      });
+    }
+    if (!map.getSource('gmu-or-label-source')){
+      map.addSource('gmu-or-label-source', {
+        type: 'geojson',
+        data: buildLabelPointFeatureCollection(gmuOrCache || { type: 'FeatureCollection', features: [] })
+      });
+    }
+    if (!map.getLayer('gmu-or-label')){
+      map.addLayer({
+        id: 'gmu-or-label',
+        type: 'symbol',
+        source: 'gmu-or-label-source',
+        minzoom: 7,
+        maxzoom: 12,
+        layout: {
+          visibility: state.settings.gmuOrOn ? 'visible' : 'none',
+          'text-field': ['get', 'unit_num'],
+          'text-size': 12,
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+        },
+        paint: {
+          'text-color': GMU_LINE_COLOR,
+          'text-halo-color': '#000',
+          'text-halo-width': 1.5,
+          'text-opacity': 0.9
+        }
+      });
+    }
+
+    // USFS National Forest administrative boundaries — light olive-green fill (visible this
+    // time, not just a hit-test sliver like GMU's — Forest Boundaries is the one boundary
+    // layer with a real fill treatment) + a darker/more saturated stroke, distinguishable
+    // from GMU's orange and from Public/Private Land and Wildlife.
     if (!map.getSource('usfs-boundaries-source')){
       map.addSource('usfs-boundaries-source', {
         type: 'geojson',
@@ -4142,7 +4460,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         type: 'fill',
         source: 'usfs-boundaries-source',
         layout: { visibility: state.settings.usfsBoundariesOn ? 'visible' : 'none' },
-        paint: { 'fill-color': USFS_BOUNDARY_COLOR, 'fill-opacity': 0.02 }
+        paint: { 'fill-color': USFS_FILL_COLOR, 'fill-opacity': 0.15 }
       });
     }
     if (!map.getLayer('usfs-boundaries-line')){
@@ -4151,14 +4469,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         type: 'line',
         source: 'usfs-boundaries-source',
         layout: { visibility: state.settings.usfsBoundariesOn ? 'visible' : 'none', 'line-join': 'round' },
-        paint: { 'line-color': USFS_BOUNDARY_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9 }
+        paint: { 'line-color': USFS_STROKE_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9 }
+      });
+    }
+    if (!map.getSource('usfs-boundaries-label-source')){
+      map.addSource('usfs-boundaries-label-source', {
+        type: 'geojson',
+        data: buildLabelPointFeatureCollection(usfsBoundariesCache || { type: 'FeatureCollection', features: [] })
       });
     }
     if (!map.getLayer('usfs-boundaries-label')){
       map.addLayer({
         id: 'usfs-boundaries-label',
         type: 'symbol',
-        source: 'usfs-boundaries-source',
+        source: 'usfs-boundaries-label-source',
         minzoom: 5,
         maxzoom: 13,
         layout: {
@@ -4168,8 +4492,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
         },
         paint: {
-          'text-color': USFS_BOUNDARY_COLOR,
-          'text-halo-color': '#000',
+          'text-color': USFS_STROKE_COLOR,
+          'text-halo-color': '#fff',
           'text-halo-width': 1.5,
           'text-opacity': state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9
         }
@@ -6399,9 +6723,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ---------- Go to place ----------
   function showSearchResultMarker(lat, lng, label){
-    if (searchResultMarker) map.removeLayer(searchResultMarker);
-    searchResultMarker = L.circleMarker([lat, lng], { radius:9, color:'#fff', weight:2, fillColor:'#2dd4d4', fillOpacity:0.95 }).addTo(map);
-    if (label) searchResultMarker.bindPopup(escapeHtml(label)).openPopup();
+    if (searchResultMarker){ searchResultMarker.remove(); searchResultMarker = null; }
+    var el = document.createElement('div');
+    el.style.cssText = 'width:18px;height:18px;border-radius:50%;background:#2dd4d4;border:2px solid #fff;box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,0.5);';
+    searchResultMarker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+    if (label){
+      searchResultMarker.setPopup(new maplibregl.Popup({ offset: 10, maxWidth: '260px', className: 'pin-popup' }).setHTML(escapeHtml(label)));
+      searchResultMarker.togglePopup();
+    }
   }
 
   function renderGotoResults(results){
@@ -6417,7 +6746,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       row.textContent = r.display_name;
       row.addEventListener('click', function(){
         var lat = parseFloat(r.lat), lng = parseFloat(r.lon);
-        map.setView([lat, lng], 13);
+        map.flyTo({ center: [lng, lat], zoom: 13 });
         showSearchResultMarker(lat, lng, r.display_name);
       });
       wrap.appendChild(row);
@@ -6431,7 +6760,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (coordMatch){
       var lat = parseFloat(coordMatch[1]), lng = parseFloat(coordMatch[2]);
       if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180){
-        map.setView([lat, lng], 14);
+        map.flyTo({ center: [lng, lat], zoom: 14 });
         showSearchResultMarker(lat, lng, lat.toFixed(5) + ', ' + lng.toFixed(5));
         document.getElementById('map-search-results').innerHTML = '';
         return;
@@ -9159,7 +9488,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
-            if (state.settings.gmuAzOpacity === undefined) state.settings.gmuAzOpacity = 0.9;
+            if (state.settings.gmuOrOn === undefined) state.settings.gmuOrOn = false;
+            delete state.settings.gmuAzOpacity; // removed — GMU is outline+label only, no opacity slider
+            delete state.settings.gmuOrOpacity;
             if (state.settings.wildlifeOn === undefined) state.settings.wildlifeOn = false;
             if (state.settings.wildlifeCategory === undefined) state.settings.wildlifeCategory = null;
             if (state.settings.wildlifeSpeciesName === undefined) state.settings.wildlifeSpeciesName = null;
@@ -9444,15 +9775,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
-    // ── GMU boundaries (Arizona) ──
+    // ── GMU boundaries (Arizona) ── outline+label only, no opacity slider
     document.getElementById('gmu-az-toggle').addEventListener('change', function(){
       setGmuAzOn(this.checked);
       scheduleSave();
     });
-    document.getElementById('gmu-az-opacity').addEventListener('input', function(){
-      state.settings.gmuAzOpacity = this.value / 100;
-      if (map.getLayer('gmu-az-line')) map.setPaintProperty('gmu-az-line', 'line-opacity', state.settings.gmuAzOpacity);
-      if (map.getLayer('gmu-az-label')) map.setPaintProperty('gmu-az-label', 'text-opacity', state.settings.gmuAzOpacity);
+
+    // ── GMU boundaries (Oregon) ── same, no opacity slider
+    document.getElementById('gmu-or-toggle').addEventListener('change', function(){
+      setGmuOrOn(this.checked);
       scheduleSave();
     });
 
@@ -9472,8 +9803,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('usfsboundaries-opacity').value = Math.round((state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9) * 100);
     document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', !!state.settings.usfsBoundariesOn);
     document.getElementById('gmu-az-toggle').checked = !!state.settings.gmuAzOn;
-    document.getElementById('gmu-az-opacity').value = Math.round((state.settings.gmuAzOpacity != null ? state.settings.gmuAzOpacity : 0.9) * 100);
-    document.getElementById('gmu-az-opacity-row').classList.toggle('show', !!state.settings.gmuAzOn);
+    document.getElementById('gmu-or-toggle').checked = !!state.settings.gmuOrOn;
 
     // ── Wildlife Layers (P3a) ──
     document.getElementById('wildlife-quick-toggle').addEventListener('change', function(){
@@ -9946,13 +10276,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       else {
         document.getElementById('map-search-input').value = '';
         document.getElementById('map-search-results').innerHTML = '';
-        if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+        if (searchResultMarker){ searchResultMarker.remove(); searchResultMarker = null; }
       }
     });
     document.getElementById('map-search-clear-btn').addEventListener('click', function(){
       document.getElementById('map-search-input').value = '';
       document.getElementById('map-search-results').innerHTML = '';
-      if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+      if (searchResultMarker){ searchResultMarker.remove(); searchResultMarker = null; }
       document.getElementById('map-search-bar').classList.remove('search-open');
     });
     document.getElementById('measure-clear-btn').addEventListener('click', function(e){
@@ -10218,7 +10548,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (measureMode) setMeasureMode(false);
         if (drawMode) setDrawMode(false);
         document.getElementById('map-search-results').innerHTML = '';
-        if (searchResultMarker){ map.removeLayer(searchResultMarker); searchResultMarker = null; }
+        if (searchResultMarker){ searchResultMarker.remove(); searchResultMarker = null; }
         closeAllPanels();
       }
     });
