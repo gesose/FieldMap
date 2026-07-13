@@ -1310,20 +1310,22 @@
   <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="snowdepth-toggle" disabled> Snow depth <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
+    <input type="checkbox" id="snowdepth-toggle"> Snow depth
     <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
   </label>
+  <div class="opacity-row" id="snowdepth-opacity-row"><input type="range" id="snowdepth-opacity" min="20" max="100" value="75"></div>
   <div class="layer-info-panel" id="lh-snow">
-    <div class="layer-info-desc">NOAA daily snow depth analysis — Nov–Apr. WMS overlay, updates daily. Shows no data in snow-free areas (correct behavior).</div>
+    <div class="layer-info-desc">NOAA daily snow depth analysis, updated ~4x/day. Image overlay from a live federal server; shows no data in snow-free areas (correct behavior).</div>
     <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
   </div>
 
   <label class="layer-overlay-row">
-    <input type="checkbox" id="nlcd-toggle" disabled> Land cover (NLCD) <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span>
+    <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
     <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
   </label>
+  <div class="opacity-row" id="nlcd-opacity-row"><input type="range" id="nlcd-opacity" min="20" max="100" value="70"></div>
   <div class="layer-info-panel" id="lh-nlcd">
-    <div class="layer-info-desc">USGS National Land Cover Database 2021 — habitat types across the contiguous US.</div>
+    <div class="layer-info-desc">USGS Annual National Land Cover Database, 2025 — habitat types across the contiguous US.</div>
     <div class="layer-info-legend">
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
         <span class="legend-swatch" style="background:#5CA65C;color:#fff;">Forest</span>
@@ -1343,6 +1345,15 @@
   <div class="layer-info-panel" id="lh-usfsboundaries">
     <div class="layer-info-desc">Current administrative boundary of each National Forest (not the roads/trails MVUM layer). Fetched once and cached for the session.</div>
     <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service EDW</a>
+  </div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="fireperimeters-toggle"> Active fire perimeters <button class="layer-hint-btn" data-layer-id="lh-fireperimeters" title="About">?</button>
+  </label>
+  <div class="opacity-row" id="fireperimeters-opacity-row"><input type="range" id="fireperimeters-opacity" min="20" max="100" value="55"></div>
+  <div class="layer-info-panel" id="lh-fireperimeters">
+    <div class="layer-info-desc">Current/active wildland fire perimeters — re-fetched live each time this layer is turned on. Contained and stale small fires are dropped by the source service automatically.</div>
+    <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about" target="_blank">Source: NIFC WFIGS</a>
   </div>
 
 
@@ -1373,14 +1384,39 @@
     <button class="wildlife-tab-btn active" data-category="big_game">Big Game</button>
     <button class="wildlife-tab-btn" data-category="upland">Upland Birds</button>
     <button class="wildlife-tab-btn" data-category="small_game">Small Game</button>
+    <button class="wildlife-tab-btn" data-category="migration">Migration</button>
   </div>
   <div id="wildlife-loading" style="font-size:12px;color:var(--text-muted);display:none;margin-bottom:8px;">Loading species data…</div>
-  <select id="wildlife-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
-    <option value="">Select a species…</option>
-  </select>
-  <div id="wildlife-sublayers" style="display:none;"></div>
-  <div id="wildlife-species-info" style="font-size:11px;color:var(--text-muted);display:none;margin-top:8px;line-height:1.4;"></div>
-  <button class="link-btn" id="wildlife-clear-btn" style="font-size:11px;margin-top:10px;">Clear selection</button>
+  <div id="wildlife-standard-body">
+    <select id="wildlife-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
+      <option value="">Select a species…</option>
+    </select>
+    <div id="wildlife-sublayers" style="display:none;"></div>
+    <div id="wildlife-species-info" style="font-size:11px;color:var(--text-muted);display:none;margin-top:8px;line-height:1.4;"></div>
+    <button class="link-btn" id="wildlife-clear-btn" style="font-size:11px;margin-top:10px;">Clear selection</button>
+  </div>
+  <div id="migration-body" style="display:none;">
+    <select id="migration-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
+      <option value="">Select a species…</option>
+    </select>
+    <div id="migration-sublayers" style="display:none;">
+      <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
+        <input type="checkbox" id="migration-corridor-toggle"> Corridors
+        <span class="legend-swatch" style="margin-left:auto;background:#a78bda;border:1px solid #6b3fa0;color:#fff;font-size:10px;">Low</span>
+        <span class="legend-swatch" style="background:#6b3fa0;border:1px solid #3f2560;color:#fff;font-size:10px;">High</span>
+      </label>
+      <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
+        <input type="checkbox" id="migration-stopover-toggle"> Stopover
+        <span class="legend-swatch" style="margin-left:auto;background:#c060d8;border:1px solid #8a3aa0;color:#fff;font-size:10px;">Stopover</span>
+      </label>
+      <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
+        <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
+        <span class="legend-swatch" style="margin-left:auto;background:#5a4a9e;border:1px solid #362a63;color:#fff;font-size:10px;">Winter</span>
+      </label>
+    </div>
+    <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener">westernmigrations.net</a>.</p>
+    <button class="link-btn" id="migration-clear-btn" style="font-size:11px;margin-top:10px;">Clear selection</button>
+  </div>
 </div>
 
 <div id="filter-panel" class="floating-panel hidden">
@@ -1884,7 +1920,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.7.0';
+  var APP_VERSION = '2.8.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1954,9 +1990,11 @@
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       gmuOrOn: false,
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
+      migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false,
       showOfflineBoundaries: true,
       showAreaLabels: true,
-      snowDepthOn: false,
+      snowDepthOn: false, snowDepthOpacity: 0.75,
+      nlcdOpacity: 0.7, fireperimetersOn: false, fireperimetersOpacity: 0.55,
       nlcdOn: false, usfsBoundariesOn: false, usfsBoundariesOpacity: 0.9, hillshadeOn: false,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
@@ -1971,7 +2009,6 @@
   var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
-  var snowDepthLayer = null, nlcdLayer = null;
   var hillshadeLayer = null;
   var GMU_LINE_COLOR = '#e8854a'; // existing GMU orange
   // Forest Boundaries fill/stroke — light olive-green fill (distinct from the brighter/paler
@@ -2005,6 +2042,32 @@
   // on the query endpoint (that only applies to /export map-image requests).
   var USFS_BOUNDARIES_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query?' +
     'where=1%3D1&outFields=forestname,region,forestnumber,gis_acres&returnGeometry=true&inSR=4269&outSR=4326&f=geojson';
+  // NIFC WFIGS live perimeters. The task's originally-given "Current_WildlandFire_Perimeters"
+  // FeatureServer now returns "Token Required" (confirmed via a live request) — this is its
+  // current public replacement (same NIFC ArcGIS Online org, confirmed working via a live
+  // query). f=geojson always reprojects to WGS84 regardless of the source SR, so no
+  // inSR/outSR needed here (unlike the USFS query above). outFields kept narrow (not *) since
+  // the layer has 140+ attribute fields and we only need name/acres/containment.
+  var FIRE_PERIMETERS_URL = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query?' +
+    'where=1%3D1&outFields=poly_IncidentName,poly_GISAcres,attr_IncidentSize,attr_PercentContained&f=geojson';
+  var FIRE_FILL_COLOR = '#e8432b', FIRE_STROKE_COLOR = '#8f1d0e';
+  var fireperimetersCache = null; // last-fetched FeatureCollection — only used to reseed the source across a style switch; setFirePerimetersOn always re-fetches fresh on toggle-on since this is live data
+  var openFirePerimeterPopup = null;
+  // NOHRSC snow depth — ArcGIS Server dynamic MapServer /export, image (not tiled-cache)
+  // service, native SR is 4269 but (confirmed via a live request) it reprojects fine when
+  // given a Web Mercator bbox/bboxSR like the MVUM export already does — unlike the
+  // fs.usda.gov *query* endpoints, this /export image endpoint isn't SR-picky. layers=show:0
+  // renders the "Snow Depth" group (its Image sub-layer), skipping the Boundary/Footprint
+  // reference sub-layers. {bbox-epsg-3857} is a MapLibre/Mapbox GL built-in raster source
+  // token — it substitutes each tile's own Web Mercator bounds into the URL, so no manual
+  // per-tile bbox math is needed here (unlike the older Leaflet-era mvumTileUrl).
+  var SNOWDEPTH_TILE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/snow/NOHRSC_Snow_Analysis/MapServer/export?' +
+    'bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0&f=image';
+  // MRLC Annual NLCD Land Cover, 2025 (most recent year in the 1985–2025 series) — confirmed
+  // layer name and TIME support via a live GetMap request.
+  var NLCD_TILE_URL = 'https://dmsdata.cr.usgs.gov/geoserver/mrlc_Land-Cover-Native_conus_year_data/wms?' +
+    'service=WMS&version=1.1.1&request=GetMap&layers=mrlc_Land-Cover-Native_conus_year_data:Land-Cover-Native_conus_year_data&' +
+    'time=2025-01-01&styles=&bbox={bbox-epsg-3857}&width=256&height=256&srs=EPSG:3857&format=image/png&transparent=true';
   var addMode = false;
   var measureMode = false;
   var measurePoints = [], measureMarkers = [], measureLine = null;
@@ -2117,6 +2180,32 @@
   var wildlifeActiveCategory = 'big_game'; // which tab is currently open in the picker
   var wildlifeActive = null; // { category, speciesName, codes: [...] } — the currently *selected* species, or null
   var wildlifeOn = false; // whether the quick-toggle has the selected species' layer actually visible right now
+
+  // ── Migration corridors (P4 proof of concept — elk only) ── lives in the same
+  // Wildlife Layers panel/tab-bar shell as a 4th tab, but is otherwise a self-contained
+  // system (own source/layers/state), not folded into the generic WILDLIFE_CATEGORIES loop
+  // above — that loop's filtering/coloring is keyed on species_code, which this dataset
+  // doesn't have, and Migration's independent multi-checkbox model (any subset of
+  // Corridor/Stopover/WinterRange can be on at once) doesn't match the single-select
+  // "codes as alternate layers" semantics the sublayer checkboxes were built for either.
+  // One entry per herd/species dataset — add more files here as more herds are added; the
+  // species picker is derived from whatever's in the merged data, so no other rework needed.
+  var MIGRATION_DATA_FILES = ['data/ungulate-migrations/elk-west-goose-lake.geojson'];
+  var MIGRATION_CATEGORY_LABELS = { Corridor: 'Corridors', Stopover: 'Stopover', WinterRange: 'Winter Range' };
+  // One hue (violet) for the whole feature — kept clearly distinct from Wildlife's orange
+  // (#c2622d) and GPS's blue (#3a8fd4) so Migration reads as its own thing next to GAP
+  // species-range polygons. Corridor Low/High are two shades of it; Stopover and Winter
+  // Range get their own shades of the same violet family so all three can render
+  // simultaneously (independent checkboxes) and still read as distinct from each other.
+  var MIGRATION_CORRIDOR_LOW_FILL = '#a78bda', MIGRATION_CORRIDOR_LOW_STROKE = '#6b3fa0';
+  var MIGRATION_CORRIDOR_HIGH_FILL = '#6b3fa0', MIGRATION_CORRIDOR_HIGH_STROKE = '#3f2560';
+  var MIGRATION_STOPOVER_FILL = '#c060d8', MIGRATION_STOPOVER_STROKE = '#8a3aa0';
+  var MIGRATION_WINTERRANGE_FILL = '#5a4a9e', MIGRATION_WINTERRANGE_STROKE = '#362a63';
+  var migrationCache = null; // merged FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
+  var migrationLoadCallbacks = null; // array of pending callbacks while the fetch is in flight, or null
+  var migrationActiveSpecies = null; // currently selected species name (e.g. 'Elk'), or null
+  var openMigrationPopup = null; // ad-hoc popup, same pattern as openWildlifePopup
+
   var polygonMode = false, polygonPoints = [], polygonMarkers = [];
   var editingPolygonId = null, pendingPolygonPoints = null;
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
@@ -3346,6 +3435,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
 
+      // Surfaces a one-time toast (instead of letting MapLibre repeat a raw console error per
+      // failed tile) if a live third-party raster source can't be reached — e.g. the NLCD WMS
+      // host rejecting cross-origin browser fetches. One toast per source per session, not per
+      // tile, since a single outage can fail dozens of tiles in a row.
+      var rasterSourceErrorShown = {};
+      map.on('error', function(e){
+        var srcId = e && e.sourceId;
+        var labels = { 'nlcd-source': 'Land cover (NLCD)', 'snowdepth-source': 'Snow depth' };
+        if (!srcId || !labels[srcId] || rasterSourceErrorShown[srcId]) return;
+        rasterSourceErrorShown[srcId] = true;
+        showToast(labels[srcId] + ' tiles failed to load — the source service may be unavailable');
+      });
+
       // Sync radio UI to initial style
       var radio = document.getElementById('base-layer-' + (state.settings.maplibreStyle || 'topo'));
       if (radio) radio.checked = true;
@@ -3389,6 +3491,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               updateWildlifeMapFilter();
               updateWildlifeLegend();
             }
+          });
+          if (migrationActiveSpecies) loadMigrationData(function(data){
+            if (data && map.getSource('migration-source')){
+              map.getSource('migration-source').setData(migrationFilteredData());
+              updateMigrationMapFilter();
+            }
+          });
+          if (state.settings.fireperimetersOn) ensureFirePerimetersLoaded(function(data){
+            if (data && map.getSource('fireperimeters-source')) map.getSource('fireperimeters-source').setData(data);
           });
         }
       });
@@ -3531,6 +3642,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         map.on('mouseenter', layerId, function(){ map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layerId, function(){ map.getCanvas().style.cursor = ''; });
       });
+
+      // Migration corridor click — same mode-aware pass-through as Wildlife above.
+      function handleMigrationFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var migFeature = e.features && e.features[0];
+        if (!migFeature) return;
+        openMigrationPopupAt(migFeature.properties, e.lngLat);
+      }
+      map.on('click', 'migration-fill', handleMigrationFillClick);
+      map.on('mouseenter', 'migration-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'migration-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Active fire perimeters click — read-only reference data, same mode-aware guard.
+      function handleFirePerimetersFillClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var fireFeature = e.features && e.features[0];
+        if (!fireFeature) return;
+        openFirePerimeterPopupAt(fireFeature.properties, e.lngLat);
+      }
+      map.on('click', 'fireperimeters-fill', handleFirePerimetersFillClick);
+      map.on('mouseenter', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = ''; });
 
       // GMU / USFS boundary click — same mode-aware pass-through, read-only reference data.
       function handleGmuFillClick(e){
@@ -4055,12 +4214,78 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openUsfsBoundaryPopup = popup;
   }
 
+  // ── Active fire perimeters (NIFC WFIGS) ── same shape as USFS boundaries above, except
+  // there's no session-long cache — this is live data, re-fetched every time the toggle is
+  // turned on rather than reused from a prior fetch.
+  function ensureFirePerimetersLoaded(cb){
+    fetch(FIRE_PERIMETERS_URL).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){ fireperimetersCache = data; cb(data); })
+      .catch(function(err){
+        console.error('[FieldMap] Fire perimeters fetch failed:', err);
+        showToast('Active fire perimeters failed to load — check your connection');
+        cb(null);
+      });
+  }
+
+  function setFirePerimetersLayersVisible(on){
+    ['fireperimeters-fill', 'fireperimeters-line'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    document.getElementById('fireperimeters-opacity-row').classList.toggle('show', on);
+    if (!on && openFirePerimeterPopup){ openFirePerimeterPopup.remove(); openFirePerimeterPopup = null; }
+  }
+
+  function setFirePerimetersOn(on){
+    state.settings.fireperimetersOn = on;
+    if (!on){ setFirePerimetersLayersVisible(false); return; }
+    ensureFirePerimetersLoaded(function(data){
+      if (!data){
+        document.getElementById('fireperimeters-toggle').checked = false;
+        state.settings.fireperimetersOn = false;
+        return;
+      }
+      if (map && map.getSource('fireperimeters-source')) map.getSource('fireperimeters-source').setData(data);
+      setFirePerimetersLayersVisible(true);
+    });
+  }
+
+  function firePerimeterPopupHtml(props){
+    var acres = props.poly_GISAcres != null ? Number(props.poly_GISAcres) : (props.attr_IncidentSize != null ? Number(props.attr_IncidentSize) : null);
+    var parts = [];
+    if (acres != null && !isNaN(acres)) parts.push(acres.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres');
+    if (props.attr_PercentContained != null && props.attr_PercentContained !== '') parts.push(props.attr_PercentContained + '% contained');
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(props.poly_IncidentName || 'Unnamed fire') + '</div>' +
+      (parts.length ? '<div class="pin-popup-meta">' + escapeHtml(parts.join(' · ')) + '</div>' : '') +
+      '</div>';
+  }
+
+  function openFirePerimeterPopupAt(props, lngLat){
+    if (openFirePerimeterPopup){ openFirePerimeterPopup.remove(); openFirePerimeterPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '280px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(firePerimeterPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openFirePerimeterPopup === popup) openFirePerimeterPopup = null; });
+    openFirePerimeterPopup = popup;
+  }
+
   // ── Public/private land (BLM Surface Management Agency, cached tiles) ──
   function setPublicLandOn(on){
     state.settings.publicLandOn = on;
     if (map && map.getLayer('publicland-raster')) map.setLayoutProperty('publicland-raster', 'visibility', on ? 'visible' : 'none');
     document.getElementById('publicland-opacity-row').classList.toggle('show', on);
     document.getElementById('publicland-legend').classList.toggle('hidden', !on);
+  }
+
+  function setSnowDepthOn(on){
+    state.settings.snowDepthOn = on;
+    if (map && map.getLayer('snowdepth-raster')) map.setLayoutProperty('snowdepth-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('snowdepth-opacity-row').classList.toggle('show', on);
+  }
+
+  function setNlcdOn(on){
+    state.settings.nlcdOn = on;
+    if (map && map.getLayer('nlcd-raster')) map.setLayoutProperty('nlcd-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('nlcd-opacity-row').classList.toggle('show', on);
   }
 
   // ---------- Filtering (shared by pins and tracks) ----------
@@ -4282,6 +4507,46 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // NLCD land cover (MRLC WMS, 2025) — full-coverage classified raster, so it sits above
+    // Public/Private Land (which would otherwise be entirely hidden beneath it) but below
+    // Snow Depth (which is mostly transparent/no-data outside snow cover and reads better on
+    // top of land cover than the reverse).
+    if (!map.getSource('nlcd-source')){
+      map.addSource('nlcd-source', {
+        type: 'raster',
+        tiles: [NLCD_TILE_URL],
+        tileSize: 256
+      });
+    }
+    if (!map.getLayer('nlcd-raster')){
+      map.addLayer({
+        id: 'nlcd-raster',
+        type: 'raster',
+        source: 'nlcd-source',
+        layout: { visibility: state.settings.nlcdOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.nlcdOpacity != null ? state.settings.nlcdOpacity : 0.7 }
+      });
+    }
+
+    // NOAA NOHRSC snow depth — mostly-transparent image (no data in snow-free areas is
+    // correct/expected), so it's fine on top of everything else below it.
+    if (!map.getSource('snowdepth-source')){
+      map.addSource('snowdepth-source', {
+        type: 'raster',
+        tiles: [SNOWDEPTH_TILE_URL],
+        tileSize: 256
+      });
+    }
+    if (!map.getLayer('snowdepth-raster')){
+      map.addLayer({
+        id: 'snowdepth-raster',
+        type: 'raster',
+        source: 'snowdepth-source',
+        layout: { visibility: state.settings.snowDepthOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75 }
+      });
+    }
+
     // Wildlife range polygons — one source per category, added first so they render
     // beneath all user-drawn content (pins/tracks/areas/bearings). Sources are seeded
     // from wildlifeCache (in-memory, session-lived) so a style switch doesn't re-fetch.
@@ -4327,6 +4592,87 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         });
       }
     });
+
+    // Migration corridors (P4 proof of concept) — one source/fill/line pair (not one per
+    // category like Wildlife above) since which categories render is just a filter over a
+    // single 'geometry_category' property, same idea as wildlifeActive.codes but applied to
+    // geometry_category instead of species_code. Colors are a nested case expression: violet
+    // family throughout, Corridor further split into Low/High by use_class. Filter/paint
+    // reapplied at the end of this function via updateMigrationMapFilter().
+    if (!map.getSource('migration-source')){
+      map.addSource('migration-source', {
+        type: 'geojson',
+        data: migrationFilteredData()
+      });
+    }
+    if (!map.getLayer('migration-fill')){
+      map.addLayer({
+        id: 'migration-fill',
+        type: 'fill',
+        source: 'migration-source',
+        filter: ['in', ['get', 'geometry_category'], ['literal', []]],
+        paint: {
+          'fill-color': [
+            'case',
+            ['==', ['get', 'geometry_category'], 'Corridor'],
+              ['case', ['==', ['get', 'use_class'], 'HighUse'], MIGRATION_CORRIDOR_HIGH_FILL, MIGRATION_CORRIDOR_LOW_FILL],
+            ['==', ['get', 'geometry_category'], 'Stopover'], MIGRATION_STOPOVER_FILL,
+            ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_FILL,
+            MIGRATION_CORRIDOR_LOW_FILL
+          ],
+          'fill-opacity': 0.22
+        }
+      });
+    }
+    if (!map.getLayer('migration-line')){
+      map.addLayer({
+        id: 'migration-line',
+        type: 'line',
+        source: 'migration-source',
+        filter: ['in', ['get', 'geometry_category'], ['literal', []]],
+        layout: { 'line-join': 'round' },
+        paint: {
+          'line-color': [
+            'case',
+            ['==', ['get', 'geometry_category'], 'Corridor'],
+              ['case', ['==', ['get', 'use_class'], 'HighUse'], MIGRATION_CORRIDOR_HIGH_STROKE, MIGRATION_CORRIDOR_LOW_STROKE],
+            ['==', ['get', 'geometry_category'], 'Stopover'], MIGRATION_STOPOVER_STROKE,
+            ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_STROKE,
+            MIGRATION_CORRIDOR_LOW_STROKE
+          ],
+          'line-width': 1.75,
+          'line-opacity': 0.95
+        }
+      });
+    }
+
+    // Active fire perimeters — fetched live each time the toggle is turned on (see
+    // ensureFirePerimetersLoaded), not cached across the session like the other boundary
+    // layers, since this data is explicitly time-sensitive.
+    if (!map.getSource('fireperimeters-source')){
+      map.addSource('fireperimeters-source', {
+        type: 'geojson',
+        data: fireperimetersCache || { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('fireperimeters-fill')){
+      map.addLayer({
+        id: 'fireperimeters-fill',
+        type: 'fill',
+        source: 'fireperimeters-source',
+        layout: { visibility: state.settings.fireperimetersOn ? 'visible' : 'none' },
+        paint: { 'fill-color': FIRE_FILL_COLOR, 'fill-opacity': state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55 }
+      });
+    }
+    if (!map.getLayer('fireperimeters-line')){
+      map.addLayer({
+        id: 'fireperimeters-line',
+        type: 'line',
+        source: 'fireperimeters-source',
+        layout: { visibility: state.settings.fireperimetersOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': FIRE_STROKE_COLOR, 'line-width': 1.75, 'line-opacity': 0.95 }
+      });
+    }
 
     // GMU boundaries (Arizona) — near-invisible fill for click hit-testing (matches the
     // original Leaflet build's fillOpacity:0.02, kept fixed regardless of the opacity
@@ -4811,6 +5157,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (compassActive) updateCompassMapLines();
     redrawCompassTarget();
     updateWildlifeMapFilter();
+    updateMigrationMapFilter();
   }
 
   function openClusterPanel(members){
@@ -8421,14 +8768,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   //  P2 TOOLS
   // ═══════════════════════════════════════════════
 
-  // ── Snow depth / light pollution / NLCD toggles ──
-  function toggleSimpleLayer(layerVar, stateKey, on){
-    if (!layerVar) return;
-    if (on) layerVar.addTo(map); else if (map.hasLayer(layerVar)) map.removeLayer(layerVar);
-    state.settings[stateKey] = on;
-    scheduleSave();
-  }
-
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
@@ -9170,7 +9509,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.querySelectorAll('.wildlife-tab-btn').forEach(function(btn){
       btn.classList.toggle('active', btn.dataset.category === category);
     });
-    ensureWildlifeCategoryLoaded(category);
+    var isMigration = category === 'migration';
+    document.getElementById('wildlife-standard-body').style.display = isMigration ? 'none' : '';
+    document.getElementById('migration-body').style.display = isMigration ? 'block' : 'none';
+    if (isMigration) ensureMigrationLoaded();
+    else ensureWildlifeCategoryLoaded(category);
   }
 
   function setWildlifeSpecies(category, speciesName, codes){
@@ -9299,6 +9642,153 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .addTo(map);
     popup.on('close', function(){ if (openWildlifePopup === popup) openWildlifePopup = null; });
     openWildlifePopup = popup;
+  }
+
+  // ── Migration corridors (P4 proof of concept) ──
+  // Fetches every file in MIGRATION_DATA_FILES and merges them into one FeatureCollection,
+  // stripping Route features at load time (never rendered, never hit-testable, never in a
+  // popup) rather than just filtering them out in the map layer.
+  function loadMigrationData(cb){
+    if (migrationCache){ cb(migrationCache); return; }
+    if (migrationLoadCallbacks){ migrationLoadCallbacks.push(cb); return; }
+    migrationLoadCallbacks = [cb];
+    Promise.all(MIGRATION_DATA_FILES.map(function(url){
+      return fetch(url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    })).then(function(datasets){
+      var features = [];
+      datasets.forEach(function(fc){
+        (fc.features || []).forEach(function(f){
+          if (f.properties.geometry_category !== 'Route') features.push(f);
+        });
+      });
+      migrationCache = { type: 'FeatureCollection', features: features };
+      var cbs = migrationLoadCallbacks; migrationLoadCallbacks = null;
+      cbs.forEach(function(f){ f(migrationCache); });
+    }).catch(function(err){
+      console.error('[FieldMap] Migration data fetch failed:', err);
+      showToast('Could not load Migration data');
+      var cbs = migrationLoadCallbacks; migrationLoadCallbacks = null;
+      cbs.forEach(function(f){ f(null); });
+    });
+  }
+
+  // Species-based selection model — merges every herd's geometry for the chosen species
+  // (across every file in MIGRATION_DATA_FILES) into one map source, since a hunter needs
+  // every herd passing through their area, not one isolated herd. Distinct species names are
+  // derived from whatever's actually in the merged data, so adding more herd/species files
+  // to MIGRATION_DATA_FILES populates the picker automatically — no picker rework needed.
+  function migrationSpeciesList(){
+    if (!migrationCache) return [];
+    var seen = {}, list = [];
+    migrationCache.features.forEach(function(f){
+      var sp = f.properties.species;
+      if (sp && !seen[sp]){ seen[sp] = true; list.push(sp); }
+    });
+    return list.sort();
+  }
+
+  function ensureMigrationLoaded(){
+    var loadingEl = document.getElementById('wildlife-loading');
+    var selectEl = document.getElementById('migration-species-select');
+    if (migrationCache){ renderMigrationSpeciesDropdown(); return; }
+    loadingEl.style.display = 'block';
+    selectEl.disabled = true;
+    loadMigrationData(function(data){
+      loadingEl.style.display = 'none';
+      selectEl.disabled = false;
+      if (!data) return;
+      if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
+      renderMigrationSpeciesDropdown();
+    });
+  }
+
+  function renderMigrationSpeciesDropdown(){
+    var select = document.getElementById('migration-species-select');
+    var species = migrationSpeciesList();
+    var html = '<option value="">Select a species…</option>';
+    species.forEach(function(sp){ html += '<option value="' + escapeHtml(sp) + '">' + escapeHtml(sp) + '</option>'; });
+    select.innerHTML = html;
+    select.value = migrationActiveSpecies || '';
+    renderMigrationSublayers();
+  }
+
+  function renderMigrationSublayers(){
+    var wrap = document.getElementById('migration-sublayers');
+    if (!migrationActiveSpecies){ wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    document.getElementById('migration-corridor-toggle').checked = !!state.settings.migrationCorridorOn;
+    document.getElementById('migration-stopover-toggle').checked = !!state.settings.migrationStopoverOn;
+    document.getElementById('migration-winterrange-toggle').checked = !!state.settings.migrationWinterRangeOn;
+  }
+
+  function migrationFilteredData(){
+    if (!migrationCache || !migrationActiveSpecies) return { type: 'FeatureCollection', features: [] };
+    return {
+      type: 'FeatureCollection',
+      features: migrationCache.features.filter(function(f){ return f.properties.species === migrationActiveSpecies; })
+    };
+  }
+
+  function migrationActiveCategoryList(){
+    var cats = [];
+    if (state.settings.migrationCorridorOn) cats.push('Corridor');
+    if (state.settings.migrationStopoverOn) cats.push('Stopover');
+    if (state.settings.migrationWinterRangeOn) cats.push('WinterRange');
+    return cats;
+  }
+
+  function setMigrationSpecies(speciesName){
+    migrationActiveSpecies = speciesName || null;
+    state.settings.migrationSpecies = migrationActiveSpecies;
+    scheduleSave();
+    if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
+    updateMigrationMapFilter();
+    renderMigrationSublayers();
+  }
+
+  function clearMigrationSelection(){
+    setMigrationSpecies(null);
+    document.getElementById('migration-species-select').value = '';
+  }
+
+  function setMigrationCategoryOn(category, on){
+    if (category === 'Corridor') state.settings.migrationCorridorOn = on;
+    else if (category === 'Stopover') state.settings.migrationStopoverOn = on;
+    else if (category === 'WinterRange') state.settings.migrationWinterRangeOn = on;
+    scheduleSave();
+    updateMigrationMapFilter();
+  }
+
+  // Re-applies the checked-category filter to the migration layers — called after every
+  // style switch too (see reinitializeLayers), same pattern as updateWildlifeMapFilter.
+  function updateMigrationMapFilter(){
+    if (!map || !map.getLayer('migration-fill')) return;
+    var cats = migrationActiveSpecies ? migrationActiveCategoryList() : [];
+    var filter = ['in', ['get', 'geometry_category'], ['literal', cats]];
+    map.setFilter('migration-fill', filter);
+    map.setFilter('migration-line', filter);
+    if (!cats.length && openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }
+  }
+
+  function migrationPopupHtml(props){
+    var catLabel = MIGRATION_CATEGORY_LABELS[props.geometry_category] || props.geometry_category;
+    var useLabel = (props.geometry_category === 'Corridor' && props.use_class) ? (props.use_class === 'HighUse' ? 'High use' : 'Low use') : '';
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(props.herd_name || 'Migration herd') + '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(catLabel) + (useLabel ? ' · ' + escapeHtml(useLabel) : '') + '</div>' +
+      '</div>';
+  }
+
+  // Migration polygons have no persistent marker/popup object — ad-hoc popup on click,
+  // mirrors openWildlifePopupAt.
+  function openMigrationPopupAt(props, lngLat){
+    if (openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '280px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML(migrationPopupHtml(props))
+      .addTo(map);
+    popup.on('close', function(){ if (openMigrationPopup === popup) openMigrationPopup = null; });
+    openMigrationPopup = popup;
   }
 
   // ── Close all panels helper (updated to include P2 panels) ──
@@ -9485,7 +9975,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
+            if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
+            if (state.settings.nlcdOpacity === undefined) state.settings.nlcdOpacity = 0.7;
+            if (state.settings.fireperimetersOn === undefined) state.settings.fireperimetersOn = false;
+            if (state.settings.fireperimetersOpacity === undefined) state.settings.fireperimetersOpacity = 0.55;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
             if (state.settings.gmuOrOn === undefined) state.settings.gmuOrOn = false;
@@ -9495,6 +9989,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.wildlifeCategory === undefined) state.settings.wildlifeCategory = null;
             if (state.settings.wildlifeSpeciesName === undefined) state.settings.wildlifeSpeciesName = null;
             if (state.settings.wildlifeCodes === undefined) state.settings.wildlifeCodes = null;
+            if (state.settings.migrationSpecies === undefined) state.settings.migrationSpecies = null;
+            if (state.settings.migrationCorridorOn === undefined) state.settings.migrationCorridorOn = false;
+            if (state.settings.migrationStopoverOn === undefined) state.settings.migrationStopoverOn = false;
+            if (state.settings.migrationWinterRangeOn === undefined) state.settings.migrationWinterRangeOn = false;
             // Migrate existing pins to add status field
             (state.pins || []).forEach(function(p){ if (!p.status) p.status = 'escout'; });
             (state.tracks || []).forEach(function(t){ if (!t.status) t.status = 'escout'; });
@@ -9546,6 +10044,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       wildlifeActiveCategory = state.settings.wildlifeCategory || wildlifeActiveCategory;
     }
     wildlifeOn = !!state.settings.wildlifeOn;
+    migrationActiveSpecies = state.settings.migrationSpecies || null;
 
     renderTagChips();
     renderStateChips();
@@ -9757,10 +10256,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
     document.getElementById('snowdepth-toggle').addEventListener('change', function(){
-      toggleSimpleLayer(snowDepthLayer, 'snowDepthOn', this.checked);
+      setSnowDepthOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('snowdepth-opacity').addEventListener('input', function(){
+      state.settings.snowDepthOpacity = this.value / 100;
+      if (map.getLayer('snowdepth-raster')) map.setPaintProperty('snowdepth-raster', 'raster-opacity', state.settings.snowDepthOpacity);
+      scheduleSave();
     });
     document.getElementById('nlcd-toggle').addEventListener('change', function(){
-      toggleSimpleLayer(nlcdLayer, 'nlcdOn', this.checked);
+      setNlcdOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('nlcd-opacity').addEventListener('input', function(){
+      state.settings.nlcdOpacity = this.value / 100;
+      if (map.getLayer('nlcd-raster')) map.setPaintProperty('nlcd-raster', 'raster-opacity', state.settings.nlcdOpacity);
+      scheduleSave();
     });
 
     // ── USFS Forest boundaries ──
@@ -9772,6 +10283,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.usfsBoundariesOpacity = this.value / 100;
       if (map.getLayer('usfs-boundaries-line')) map.setPaintProperty('usfs-boundaries-line', 'line-opacity', state.settings.usfsBoundariesOpacity);
       if (map.getLayer('usfs-boundaries-label')) map.setPaintProperty('usfs-boundaries-label', 'text-opacity', state.settings.usfsBoundariesOpacity);
+      scheduleSave();
+    });
+
+    // ── Active fire perimeters (NIFC WFIGS) ──
+    document.getElementById('fireperimeters-toggle').addEventListener('change', function(){
+      setFirePerimetersOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('fireperimeters-opacity').addEventListener('input', function(){
+      state.settings.fireperimetersOpacity = this.value / 100;
+      if (map.getLayer('fireperimeters-fill')) map.setPaintProperty('fireperimeters-fill', 'fill-opacity', state.settings.fireperimetersOpacity);
       scheduleSave();
     });
 
@@ -9798,10 +10320,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('publicland-opacity-row').classList.toggle('show', !!state.settings.publicLandOn);
     document.getElementById('publicland-legend').classList.toggle('hidden', !state.settings.publicLandOn);
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
+    document.getElementById('snowdepth-opacity').value = Math.round((state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75) * 100);
+    document.getElementById('snowdepth-opacity-row').classList.toggle('show', !!state.settings.snowDepthOn);
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
+    document.getElementById('nlcd-opacity').value = Math.round((state.settings.nlcdOpacity != null ? state.settings.nlcdOpacity : 0.7) * 100);
+    document.getElementById('nlcd-opacity-row').classList.toggle('show', !!state.settings.nlcdOn);
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
     document.getElementById('usfsboundaries-opacity').value = Math.round((state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9) * 100);
     document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', !!state.settings.usfsBoundariesOn);
+    document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
+    document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
+    document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
     document.getElementById('gmu-az-toggle').checked = !!state.settings.gmuAzOn;
     document.getElementById('gmu-or-toggle').checked = !!state.settings.gmuOrOn;
 
@@ -9849,6 +10378,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // immediately — doesn't need the map, just the wildlifeActive/wildlifeOn already set
     // at the top of bindUI().
     updateWildlifeQuickToggleUI();
+
+    // ── Migration corridors (P4 proof of concept) ──
+    document.getElementById('migration-species-select').addEventListener('change', function(){
+      setMigrationSpecies(this.value);
+    });
+    document.getElementById('migration-corridor-toggle').addEventListener('change', function(){
+      setMigrationCategoryOn('Corridor', this.checked);
+    });
+    document.getElementById('migration-stopover-toggle').addEventListener('change', function(){
+      setMigrationCategoryOn('Stopover', this.checked);
+    });
+    document.getElementById('migration-winterrange-toggle').addEventListener('change', function(){
+      setMigrationCategoryOn('WinterRange', this.checked);
+    });
+    document.getElementById('migration-clear-btn').addEventListener('click', function(){
+      clearMigrationSelection();
+    });
 
     // Layer info panel ? buttons — use event delegation
     document.getElementById('layers-panel').addEventListener('click', function(e){
