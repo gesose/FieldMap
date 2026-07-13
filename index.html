@@ -18,6 +18,7 @@
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css">
 <style>
   :root{
+    --sidebar-width:330px;
     --bg:#191f1b;
     --bg-elevated:#222a23;
     --bg-elevated-2:#2c352d;
@@ -82,7 +83,7 @@
 
   /* Sidebar */
   #sidebar{
-    width:330px;flex-shrink:0;height:100%;
+    width:var(--sidebar-width);flex-shrink:0;height:100%;
     background:var(--bg-elevated);border-right:1px solid var(--border);
     display:flex;flex-direction:column;
     z-index:900;position:relative;
@@ -585,11 +586,15 @@
   .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
 
   #wildlife-legend{
-    position:absolute;bottom:14px;left:14px;
+    /* #wildlife-legend is a body-level element (a sibling of <main id="map">, not a child of
+       it), so "left" here is relative to the viewport, not the map — left:14px alone landed
+       inside #sidebar's 0-330px column. Offset past the sidebar's width instead. */
+    position:absolute;bottom:14px;left:calc(var(--sidebar-width) + 14px);
     z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     border:1px solid rgba(255,255,255,0.1);border-radius:10px;
     padding:8px 12px;max-width:220px;
     box-shadow:0 2px 10px rgba(0,0,0,0.4);
+    transition:bottom .25s ease;
   }
   #wildlife-legend.hidden{display:none;}
   .wildlife-tab-btn{
@@ -709,7 +714,12 @@
 
     /* Public land legend: hide on mobile (legend is in layers panel) */
     #publicland-legend{display:none !important;}
-    #wildlife-legend{display:none !important;}
+    /* On mobile the sidebar is a bottom sheet, not a left column, so there's no sidebar-width
+       offset to account for — but it still needs to clear the collapsed bottom bar/sheet
+       handle, and to be pushed further up while the sheet is expanded (same treatment as
+       #scale-bar above). Previously just force-hidden here; now actually shown. */
+    #wildlife-legend{ left:14px; right:auto; bottom:150px; max-width:calc(100% - 28px); }
+    body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 200px); }
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -1384,10 +1394,17 @@
 
   <div class="layer-section-header" style="margin-top:10px;">WILDLIFE</div>
   <div class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;cursor:default;">
-    <input type="checkbox" id="wildlife-quick-toggle">
-    <button class="btn btn-small" id="wildlife-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
-      <span id="wildlife-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
-      <span id="wildlife-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Select species</span>
+    <input type="checkbox" id="habitats-quick-toggle">
+    <button class="btn btn-small" id="habitats-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
+      <span id="habitats-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
+      <span id="habitats-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Habitats: select species</span>
+    </button>
+  </div>
+  <div class="layer-overlay-row" style="margin-top:6px;padding-top:6px;cursor:default;">
+    <input type="checkbox" id="migrations-quick-toggle">
+    <button class="btn btn-small" id="migrations-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
+      <span id="migrations-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
+      <span id="migrations-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Migrations: select species</span>
     </button>
   </div>
 </div>
@@ -1397,11 +1414,18 @@
     <h2 style="margin:0;">Wildlife Layers</h2>
     <button class="link-btn" id="wildlife-close-btn" style="font-size:18px;">×</button>
   </div>
-  <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px;">
+  <!-- Two fully independent top-level categories — Habitats (species range) and Migrations
+       (CMT corridor/stopover/winter-range) each have their own quick-toggle in the Layers
+       panel above and can be on/off independently of each other; this tab bar just switches
+       which one's picker UI is showing, it doesn't drive visibility itself. -->
+  <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:8px;">
+    <button class="wildlife-tab-btn active" data-toplevel="habitats">Habitats</button>
+    <button class="wildlife-tab-btn" data-toplevel="migrations">Migrations</button>
+  </div>
+  <div id="habitats-subtabs" style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px;">
     <button class="wildlife-tab-btn active" data-category="big_game">Big Game</button>
     <button class="wildlife-tab-btn" data-category="upland">Upland Birds</button>
     <button class="wildlife-tab-btn" data-category="small_game">Small Game</button>
-    <button class="wildlife-tab-btn" data-category="migration">Migration</button>
   </div>
   <div id="wildlife-loading" style="font-size:12px;color:var(--text-muted);display:none;margin-bottom:8px;">Loading species data…</div>
   <div id="wildlife-standard-body">
@@ -1937,7 +1961,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.9.0';
+  var APP_VERSION = '2.10.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2007,7 +2031,7 @@
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       gmuOrOn: false,
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
-      migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false,
+      migrationsOn: false, migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false,
       showOfflineBoundaries: true,
       showAreaLabels: true,
       snowDepthOn: false, snowDepthOpacity: 0.75,
@@ -2221,6 +2245,7 @@
   var migrationCache = null; // merged FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
   var migrationLoadCallbacks = null; // array of pending callbacks while the fetch is in flight, or null
   var migrationActiveSpecies = null; // currently selected species name (e.g. 'Elk'), or null
+  var migrationsOn = false; // Migrations' own master on/off — fully independent of wildlifeOn (Habitats')
   var openMigrationPopup = null; // ad-hoc popup, same pattern as openWildlifePopup
 
   var polygonMode = false, polygonPoints = [], polygonMarkers = [];
@@ -3514,7 +3539,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               updateWildlifeLegend();
             }
           });
-          if (migrationActiveSpecies) loadMigrationData(function(data){
+          if (migrationsOn && migrationActiveSpecies) loadMigrationData(function(data){
             if (data && map.getSource('migration-source')){
               map.getSource('migration-source').setData(migrationFilteredData());
               updateMigrationMapFilter();
@@ -3800,12 +3825,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
-        // Dismiss any open floating panel (Layers, Wildlife/Migration, Filter, Settings,
-        // Sunrise, Compass, Weather) on a plain map-background tap. This can't be done via
-        // the document-level "click outside" listener (see below) because MapLibre's canvas
-        // stops the native DOM click event from ever bubbling to document — map taps only
-        // ever reach panels through this map-level click handler, never the document one.
-        closeAllPanels();
+        // Dismiss any open floating panel (Layers, Wildlife/Habitats/Migrations, Filter,
+        // Settings, Sunrise, Compass, Weather) on a plain map-background tap. This can't be
+        // done via the document-level "click outside" listener (see below) because MapLibre's
+        // canvas stops the native DOM click event from ever bubbling to document — map taps
+        // only ever reach panels through this map-level click handler, never the document one.
+        // EXCEPT while compassActive: for Compass, tapping the map IS the input (picking a
+        // bearing target), not a dismiss gesture — closing compass-panel out from under that
+        // flow broke Save/Close entirely. Audited every other tap-is-input mode (elevTapMode,
+        // bearingMode, measureMode, drawMode, polygonMode, addMode) for the same conflict —
+        // none of them are tied to a .floating-panel that's in closeAllPanels()'s list (they
+        // use bars/modals instead), so Compass is the only one that needed an exception here.
+        if (!compassActive) closeAllPanels();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
         if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
         if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4533,10 +4564,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // first so it sits beneath every other overlay/user layer. Raster layers with no
     // beforeId land on TOP of everything if added late, so insertion order here matters.
     if (!map.getSource('publicland-source')){
+      // This BLM tile service's native max zoom is Z14 — without maxzoom here, MapLibre
+      // requested tiles at whatever zoom the map was actually at (Z16+), 404ing against
+      // zoom levels the server doesn't have. Setting maxzoom:14 makes MapLibre stop
+      // requesting past Z14 and instead over-zoom (upscale) the Z14 tile client-side for
+      // closer zoom levels — the standard fix for a capped-zoom raster tile source.
       map.addSource('publicland-source', {
         type: 'raster',
         tiles: ['https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}'],
-        tileSize: 256
+        tileSize: 256,
+        maxzoom: 14
       });
     }
     if (!map.getLayer('publicland-raster')){
@@ -9615,16 +9652,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     infoEl.style.display = 'block';
   }
 
+  // Which top-level tab (Habitats vs Migrations) the picker UI is currently showing — purely
+  // a UI concern, independent of the on/off + selection state of either (see wildlifeOn/
+  // migrationsOn), which is the whole point of the Habitats/Migrations split.
+  var wildlifeActiveTopLevel = 'habitats';
+
+  function setWildlifeTopLevel(topLevel){
+    wildlifeActiveTopLevel = topLevel;
+    document.querySelectorAll('.wildlife-tab-btn[data-toplevel]').forEach(function(btn){
+      btn.classList.toggle('active', btn.dataset.toplevel === topLevel);
+    });
+    var isMigrations = topLevel === 'migrations';
+    document.getElementById('habitats-subtabs').style.display = isMigrations ? 'none' : 'flex';
+    document.getElementById('wildlife-standard-body').style.display = isMigrations ? 'none' : '';
+    document.getElementById('migration-body').style.display = isMigrations ? 'block' : 'none';
+    if (isMigrations) ensureMigrationLoaded();
+    else ensureWildlifeCategoryLoaded(wildlifeActiveCategory);
+  }
+
   function setWildlifeCategory(category){
     wildlifeActiveCategory = category;
-    document.querySelectorAll('.wildlife-tab-btn').forEach(function(btn){
+    document.querySelectorAll('.wildlife-tab-btn[data-category]').forEach(function(btn){
       btn.classList.toggle('active', btn.dataset.category === category);
     });
-    var isMigration = category === 'migration';
-    document.getElementById('wildlife-standard-body').style.display = isMigration ? 'none' : '';
-    document.getElementById('migration-body').style.display = isMigration ? 'block' : 'none';
-    if (isMigration) ensureMigrationLoaded();
-    else ensureWildlifeCategoryLoaded(category);
+    ensureWildlifeCategoryLoaded(category);
   }
 
   function setWildlifeSpecies(category, speciesName, codes){
@@ -9672,9 +9723,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // directions (checkbox change, and picking a species in the full picker) so they can
   // never drift out of sync with each other.
   function updateWildlifeQuickToggleUI(){
-    var checkbox = document.getElementById('wildlife-quick-toggle');
-    var dot = document.getElementById('wildlife-quick-dot');
-    var label = document.getElementById('wildlife-quick-label');
+    var checkbox = document.getElementById('habitats-quick-toggle');
+    var dot = document.getElementById('habitats-quick-dot');
+    var label = document.getElementById('habitats-quick-label');
     if (!checkbox) return;
     checkbox.checked = !!wildlifeOn;
     if (wildlifeActive){
@@ -9682,7 +9733,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       dot.style.display = 'inline-block';
       dot.style.background = WILDLIFE_FILL_COLORS[0];
     } else {
-      label.textContent = 'Select species';
+      label.textContent = 'Habitats: select species';
       dot.style.display = 'none';
     }
   }
@@ -9739,7 +9790,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>');
     }
 
-    var migCats = migrationActiveSpecies ? migrationActiveCategoryList() : [];
+    var migCats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
     if (migCats.length){
       var migSwatches = [];
       if (migCats.indexOf('Corridor') !== -1){
@@ -9875,16 +9926,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function setMigrationSpecies(speciesName){
     migrationActiveSpecies = speciesName || null;
     state.settings.migrationSpecies = migrationActiveSpecies;
-    scheduleSave();
+    // Picking a species auto-enables the quick-toggle — same "sync both directions" pattern
+    // as Habitats (setWildlifeSpecies) — but clearing doesn't force it off; that's
+    // clearMigrationSelection's job.
+    if (migrationActiveSpecies) migrationsOn = true;
+    persistMigrationSettings();
     if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
     updateMigrationMapFilter();
     renderMigrationSublayers();
     updateWildlifeLegend();
+    updateMigrationsQuickToggleUI();
   }
 
   function clearMigrationSelection(){
+    migrationsOn = false;
     setMigrationSpecies(null);
     document.getElementById('migration-species-select').value = '';
+  }
+
+  // Quick-toggle checkbox handler — flips visibility only, mirrors setWildlifeOn.
+  function setMigrationsOn(on){
+    migrationsOn = on;
+    persistMigrationSettings();
+    updateMigrationMapFilter();
+    updateWildlifeLegend();
+    updateMigrationsQuickToggleUI();
+  }
+
+  function persistMigrationSettings(){
+    state.settings.migrationsOn = migrationsOn;
+    scheduleSave();
+  }
+
+  // Mirrors updateWildlifeQuickToggleUI — called from both directions so the Migrations row
+  // in the Layers panel and the actual map state never drift out of sync.
+  function updateMigrationsQuickToggleUI(){
+    var checkbox = document.getElementById('migrations-quick-toggle');
+    var dot = document.getElementById('migrations-quick-dot');
+    var label = document.getElementById('migrations-quick-label');
+    if (!checkbox) return;
+    checkbox.checked = !!migrationsOn;
+    if (migrationActiveSpecies){
+      label.textContent = migrationActiveSpecies;
+      dot.style.display = 'inline-block';
+      dot.style.background = MIGRATION_STOPOVER_FILL;
+    } else {
+      label.textContent = 'Migrations: select species';
+      dot.style.display = 'none';
+    }
   }
 
   function setMigrationCategoryOn(category, on){
@@ -9898,9 +9987,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // Re-applies the checked-category filter to the migration layers — called after every
   // style switch too (see reinitializeLayers), same pattern as updateWildlifeMapFilter.
+  // Gated on migrationsOn now too, fully independent of wildlifeOn (Habitats') — this is what
+  // fixes Migrations staying visible when the (unrelated) Habitats toggle was switched off.
   function updateMigrationMapFilter(){
     if (!map || !map.getLayer('migration-fill')) return;
-    var cats = migrationActiveSpecies ? migrationActiveCategoryList() : [];
+    var cats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
     var filter = ['in', ['get', 'geometry_category'], ['literal', cats]];
     map.setFilter('migration-fill', filter);
     map.setFilter('migration-line', filter);
@@ -10126,6 +10217,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.wildlifeCategory === undefined) state.settings.wildlifeCategory = null;
             if (state.settings.wildlifeSpeciesName === undefined) state.settings.wildlifeSpeciesName = null;
             if (state.settings.wildlifeCodes === undefined) state.settings.wildlifeCodes = null;
+            if (state.settings.migrationsOn === undefined) state.settings.migrationsOn = false;
             if (state.settings.migrationSpecies === undefined) state.settings.migrationSpecies = null;
             if (state.settings.migrationCorridorOn === undefined) state.settings.migrationCorridorOn = false;
             if (state.settings.migrationStopoverOn === undefined) state.settings.migrationStopoverOn = false;
@@ -10182,6 +10274,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     wildlifeOn = !!state.settings.wildlifeOn;
     migrationActiveSpecies = state.settings.migrationSpecies || null;
+    migrationsOn = !!state.settings.migrationsOn;
 
     renderTagChips();
     renderStateChips();
@@ -10471,23 +10564,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('gmu-az-toggle').checked = !!state.settings.gmuAzOn;
     document.getElementById('gmu-or-toggle').checked = !!state.settings.gmuOrOn;
 
-    // ── Wildlife Layers (P3a) ──
-    document.getElementById('wildlife-quick-toggle').addEventListener('change', function(){
+    // ── Wildlife Layers: Habitats + Migrations, two fully independent top-level categories
+    // sharing one panel/picker shell (see setWildlifeTopLevel) — each has its own quick-toggle
+    // here in the Layers panel, and turning one off never touches the other's state. ──
+    document.getElementById('habitats-quick-toggle').addEventListener('change', function(){
       setWildlifeOn(this.checked);
     });
-    document.getElementById('wildlife-layers-open-btn').addEventListener('click', function(){
+    document.getElementById('habitats-layers-open-btn').addEventListener('click', function(){
       var panel = document.getElementById('wildlife-panel');
       closeAllPanels();
       panel.classList.remove('hidden');
+      setWildlifeTopLevel('habitats');
       // Open the picker on whichever category the active selection belongs to (if any),
       // so re-opening the panel doesn't strand the user on a different tab than what's live.
       if (wildlifeActive) setWildlifeCategory(wildlifeActive.category);
       else ensureWildlifeCategoryLoaded(wildlifeActiveCategory);
     });
+    document.getElementById('migrations-quick-toggle').addEventListener('change', function(){
+      setMigrationsOn(this.checked);
+    });
+    document.getElementById('migrations-layers-open-btn').addEventListener('click', function(){
+      var panel = document.getElementById('wildlife-panel');
+      closeAllPanels();
+      panel.classList.remove('hidden');
+      setWildlifeTopLevel('migrations');
+    });
     document.getElementById('wildlife-close-btn').addEventListener('click', function(){
       document.getElementById('wildlife-panel').classList.add('hidden');
     });
-    document.querySelectorAll('.wildlife-tab-btn').forEach(function(btn){
+    document.querySelectorAll('.wildlife-tab-btn[data-toplevel]').forEach(function(btn){
+      btn.addEventListener('click', function(){ setWildlifeTopLevel(btn.dataset.toplevel); });
+    });
+    document.querySelectorAll('.wildlife-tab-btn[data-category]').forEach(function(btn){
       btn.addEventListener('click', function(){ setWildlifeCategory(btn.dataset.category); });
     });
     document.getElementById('wildlife-species-select').addEventListener('change', function(){
@@ -10512,11 +10620,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       clearWildlifeSelection();
     });
     // Reflect whatever was just restored from settings (species name/dot, checked state)
-    // immediately — doesn't need the map, just the wildlifeActive/wildlifeOn already set
-    // at the top of bindUI().
+    // immediately — doesn't need the map, just the wildlifeActive/wildlifeOn/migrationsOn
+    // already set at the top of bindUI().
     updateWildlifeQuickToggleUI();
+    updateMigrationsQuickToggleUI();
 
-    // ── Migration corridors (P4 proof of concept) ──
+    // ── Migrations (CMT corridor/stopover/winter-range) ──
     document.getElementById('migration-species-select').addEventListener('change', function(){
       setMigrationSpecies(this.value);
     });
@@ -10575,8 +10684,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           btn.disabled = false;
           return;
         }
+        // A single fixed-delay "if not installing/waiting after 3s, must be up to date"
+        // check used to live here — but the browser's own fetch-and-byte-compare of
+        // service-worker.js (especially over a slow mobile connection) can genuinely take
+        // longer than that, so the fallback fired and reported "up to date" while a real
+        // update was still silently in flight and installed moments later, unannounced.
+        // Poll for a longer, more patient window instead of one single fixed check —
+        // updateDetected covers the case where updatefound has already fired but the new
+        // worker hasn't reached reg.installing/reg.waiting by the time a given poll runs.
+        var updateDetected = false;
         // Listen for updatefound BEFORE calling update() — iOS Safari fires it synchronously
         reg.addEventListener('updatefound', function(){
+          updateDetected = true;
           var newWorker = reg.installing;
           if (!newWorker) return;
           statusEl.textContent = 'Downloading update…';
@@ -10596,14 +10715,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             setTimeout(function(){ window.location.reload(); }, 800);
             return;
           }
-          // If not installing or waiting after a short delay, we're current
-          setTimeout(function(){
-            if (!reg.installing && !reg.waiting){
+          var pollsLeft = 10; // 10 x 1s = 10s total, well past what a slow mobile fetch needs
+          (function poll(){
+            if (updateDetected || reg.installing || reg.waiting){
+              // A real update is underway — updatefound's own handler (or the reg.waiting
+              // branch above) owns the status text and reload from here on.
+              return;
+            }
+            pollsLeft--;
+            if (pollsLeft <= 0){
               statusEl.textContent = 'Already up to date (v' + APP_VERSION + ')';
               btn.textContent = 'Check for updates';
               btn.disabled = false;
+              return;
             }
-          }, 3000);
+            setTimeout(poll, 1000);
+          })();
         }).catch(function(){
           statusEl.textContent = 'Could not check — make sure you have a network connection.';
           btn.textContent = 'Check for updates';
@@ -11599,7 +11726,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 <script>
   if ('serviceWorker' in navigator){
     window.addEventListener('load', function(){
-      navigator.serviceWorker.register('service-worker.js').then(function(reg){
+      // updateViaCache:'none' — without this, the browser is allowed to apply ordinary HTTP
+      // cache heuristics to service-worker.js itself (neither GitHub Pages nor a plain
+      // static file server sends explicit no-cache headers for it), which can make reg.update()
+      // miss genuinely new content for a while even though it's spec'd to bypass HTTP cache —
+      // this is the actual root cause behind "Check for updates" reporting up to date at an
+      // old version. This forces every fetch of the SW script itself to always hit the network.
+      navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' }).then(function(reg){
         // When a new service worker takes over, reload the page transparently.
         // All state is in localStorage/Firestore so this is safe and instant.
         navigator.serviceWorker.addEventListener('controllerchange', function(){
