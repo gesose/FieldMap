@@ -130,8 +130,6 @@
   .radio-opt input{accent-color:var(--accent);}
   .layer-overlay-row{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
   .layer-overlay-row input{accent-color:var(--accent);}
-  #mvum-opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
-  #mvum-opacity-row input{flex:1;accent-color:var(--accent);}
   .opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
   .opacity-row.show{display:flex;}
   .opacity-row input{flex:1;accent-color:var(--accent);}
@@ -718,8 +716,12 @@
        offset to account for — but it still needs to clear the collapsed bottom bar/sheet
        handle, and to be pushed further up while the sheet is expanded (same treatment as
        #scale-bar above). Previously just force-hidden here; now actually shown. */
-    #wildlife-legend{ left:14px; right:auto; bottom:150px; max-width:calc(100% - 28px); }
-    body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 200px); }
+    /* bottom:150px measured as technically clear of #scale-bar (top:703 vs legend
+       bottom:694 in testing) but only by ~9px — visually reads as touching/overlapping
+       once real border/padding rendering and font-metric variance across devices are
+       accounted for. Pushed up further for real clearance. */
+    #wildlife-legend{ left:14px; right:auto; bottom:195px; max-width:calc(100% - 28px); }
+    body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 245px); }
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -1300,18 +1302,13 @@
       <input type="radio" name="base-layer" id="base-layer-aerial-streets" value="aerial-streets">
       Aerial + topo
     </label>
+    <label class="radio-opt">
+      <input type="radio" name="base-layer" id="base-layer-usgstopo" value="usgstopo">
+      USGS Topo
+    </label>
   </div>
 
   <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
-
-  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="fstopo-overlay-toggle"> Forest Service (USFS topo) <button class="layer-hint-btn" data-layer-id="lh-fstopo" title="About">?</button>
-  </label>
-  <div class="opacity-row" id="fstopo-overlay-opacity-row" style="display:none;"><input type="range" id="fstopo-overlay-opacity" min="10" max="100" value="85"></div>
-  <div class="layer-info-panel" id="lh-fstopo">
-    <div class="layer-info-desc">USFS vector tile overlay — contours, roads, trails, streams, NF boundaries, wilderness, recreation sites. Overlays on any base map. Layer names logged to console.</div>
-    <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service</a>
-  </div>
 
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
     <input type="checkbox" id="hydro-toggle" disabled> Hydrography <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span> <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
@@ -1321,14 +1318,6 @@
     <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset.</div>
     <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
   </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="mvum-toggle" disabled> USFS roads &amp; trails (MVUM) <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span> <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-mvum');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div id="mvum-opacity-row">
-    <input type="range" id="mvum-opacity" min="20" max="100" value="80">
-  </div>
-  <div class="layer-hint-text" id="lh-mvum">Loads live from a federal server; may lag. Only covers National Forest land.</div>
 
   <label class="layer-overlay-row">
     <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
@@ -1961,7 +1950,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.10.0';
+  var APP_VERSION = '2.11.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -1973,6 +1962,29 @@
     topo:            './topo-style.json',
     'topo-dark':     './topo-dark-style.json',
     'aerial-streets':'./aerial-streets-style.json'
+  };
+  // Plain raster basemaps that don't need a full Mapbox Studio style document (sprite/glyphs/
+  // vector sources) — just one raster source + layer, built inline instead of fetched. USGS
+  // Topo is ported as-is from the Leaflet production build's base layer definition
+  // (baseLayers.topo = L.tileLayer('.../USGSTopo/MapServer/tile/{z}/{y}/{x}', {maxNativeZoom:16, ...})).
+  // maxzoom:16 matches that maxNativeZoom — MapLibre over-zooms (client-side upscale) past it
+  // rather than requesting tiles the server doesn't have, same fix as Public/Private Land.
+  var STATIC_RASTER_STYLES = {
+    usgstopo: {
+      version: 8,
+      sources: {
+        'usgstopo-source': {
+          type: 'raster',
+          tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          maxzoom: 16,
+          attribution: 'USGS The National Map'
+        }
+      },
+      layers: [
+        { id: 'usgstopo-layer', type: 'raster', source: 'usgstopo-source' }
+      ]
+    }
   };
 
   // Storage abstraction: prefers window.storage (claude.ai), falls back to localStorage
@@ -2019,14 +2031,12 @@
     settings: {
       layers: {
         aerial: { on:false, opacity:1 },
-        fstopo: { on:false, opacity:1 },
         street: { on:true, opacity:1 },
         opentopo: { on:false, opacity:1 },
         topo: { on:false, opacity:1 },
         relief: { on:false, opacity:1 },
         imagerytopo: { on:false, opacity:1 }
       },
-      mvumOn: false, mvumOpacity: 0.8,
       hydroOn: false, hydroOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       gmuOrOn: false,
@@ -2047,7 +2057,7 @@
     }
   };
 
-  var map, baseLayers = {}, mvumLayer, hydroLayer, fstopoLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
+  var map, baseLayers = {}, hydroLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
   var hillshadeLayer = null;
@@ -3411,14 +3421,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Map setup ----------
-  // MvumTileLayer and CorsFetchTileLayer were Leaflet-specific; replaced by MapLibre in Session 2+
-  var MvumTileLayer = null;
-  var CorsFetchTileLayer = null;
 
   var styleCache = {};
 
   function loadStyle(styleName){
     if (styleCache[styleName]) return Promise.resolve(styleCache[styleName]);
+    if (STATIC_RASTER_STYLES[styleName]){
+      styleCache[styleName] = STATIC_RASTER_STYLES[styleName];
+      return Promise.resolve(styleCache[styleName]);
+    }
 
     var fetchPromise;
     if (LOCAL_STYLE_FILES[styleName]){
@@ -9729,7 +9740,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!checkbox) return;
     checkbox.checked = !!wildlifeOn;
     if (wildlifeActive){
-      label.textContent = wildlifeDisplayName(wildlifeActive.speciesName);
+      // " — Habitat" suffix so this row is never ambiguous with the Migrations row below it
+      // when both show a same-named-ish species (e.g. "Elk (Rocky Mountain)" vs "Elk") —
+      // previously distinguished only by dot color, which isn't legible enough at a glance.
+      label.textContent = wildlifeDisplayName(wildlifeActive.speciesName) + ' — Habitat';
       dot.style.display = 'inline-block';
       dot.style.background = WILDLIFE_FILL_COLORS[0];
     } else {
@@ -9967,7 +9981,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!checkbox) return;
     checkbox.checked = !!migrationsOn;
     if (migrationActiveSpecies){
-      label.textContent = migrationActiveSpecies;
+      // " — Migration" suffix, mirrors the " — Habitat" suffix on the row above — see
+      // updateWildlifeQuickToggleUI for why this needed to be explicit, not just dot color.
+      label.textContent = migrationActiveSpecies + ' — Migration';
       dot.style.display = 'inline-block';
       dot.style.background = MIGRATION_STOPOVER_FILL;
     } else {
@@ -11219,33 +11235,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           document.getElementById('layers-panel').classList.add('hidden');
         }
       });
-    });
-
-    document.getElementById('fstopo-overlay-toggle').addEventListener('change', function(){
-      if (!fstopoLayer){ showToast('FSTopo layer unavailable'); this.checked = false; return; }
-      if (this.checked){ fstopoLayer.addTo(map); }
-      else { if (map.hasLayer(fstopoLayer)) map.removeLayer(fstopoLayer); }
-      var opRow = document.getElementById('fstopo-overlay-opacity-row');
-      if (opRow) opRow.style.display = this.checked ? '' : 'none';
-      state.settings.fstopoOn = this.checked;
-      scheduleSave();
-    });
-    document.getElementById('fstopo-overlay-opacity').addEventListener('input', function(){
-      if (fstopoLayer && fstopoLayer.setOpacity) fstopoLayer.setOpacity(this.value/100);
-    });
-
-    document.getElementById('mvum-toggle').addEventListener('change', function(){
-      if (!mvumLayer){ showToast('MVUM layer is unavailable'); this.checked = false; return; }
-      if (this.checked){ mvumLayer.addTo(map); } else { map.removeLayer(mvumLayer); }
-      document.getElementById('mvum-opacity-row').style.display = this.checked ? 'flex' : 'none';
-      state.settings.mvumOn = this.checked;
-      scheduleSave();
-    });
-    document.getElementById('mvum-opacity').addEventListener('input', function(){
-      var v = this.value / 100;
-      if (mvumLayer) mvumLayer.setOpacity(v);
-      state.settings.mvumOpacity = v;
-      scheduleSave();
     });
 
     document.getElementById('hydro-toggle').addEventListener('change', function(){
