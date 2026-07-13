@@ -919,6 +919,7 @@
       <option value="topo-dark">Topo Dark</option>
       <option value="aerial">Aerial</option>
       <option value="aerial-streets">Aerial + topo</option>
+      <option value="usgstopo">USGS Topo</option>
     </select>
   </div>
   <div style="padding:0 0 10px;">
@@ -948,6 +949,11 @@
     <input type="checkbox" id="settings-area-labels-toggle" class="settings-check" checked>
     <span class="settings-check-pill"></span>
     <span>Area name labels on map</span>
+  </label>
+  <label class="settings-check-row" style="padding-bottom:14px;">
+    <input type="checkbox" id="settings-terrain3d-toggle" class="settings-check">
+    <span class="settings-check-pill"></span>
+    <span>3D Terrain (desktop recommended — uses more data)</span>
   </label>
 </div>
 
@@ -1311,12 +1317,21 @@
   <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
 
   <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="hydro-toggle" disabled> Hydrography <span style="font-size:10px;color:var(--text-muted);">(coming soon)</span> <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
+    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
   </label>
   <div class="opacity-row" id="hydro-opacity-row"><input type="range" id="hydro-opacity" min="10" max="100" value="100"></div>
   <div class="layer-info-panel" id="lh-hydro">
-    <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset.</div>
+    <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset (NHDPlus HR) — live queried for the visible map area, zoom in past Z10 to load. Tap a river, stream, or lake to see its name.</div>
     <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
+  </div>
+
+  <label class="layer-overlay-row">
+    <input type="checkbox" id="gauge-toggle"> Stream gauges <button class="layer-hint-btn" data-layer-id="lh-gauge" title="About this layer">?</button>
+  </label>
+  <div class="opacity-row" id="gauge-opacity-row"><input type="range" id="gauge-opacity" min="10" max="100" value="100"></div>
+  <div class="layer-info-panel" id="lh-gauge">
+    <div class="layer-info-desc">USGS stream gauge stations — live queried for the visible map area, zoom in past Z8 to load. Tap a station for its most recent streamflow, gage height, and water temperature readings.</div>
+    <a class="layer-info-src" href="https://waterdata.usgs.gov/nwis" target="_blank">Source: USGS Water Data</a>
   </div>
 
   <label class="layer-overlay-row">
@@ -1950,7 +1965,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.11.0';
+  var APP_VERSION = '2.12.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2038,6 +2053,7 @@
         imagerytopo: { on:false, opacity:1 }
       },
       hydroOn: false, hydroOpacity: 1,
+      gaugeStationsOn: false, gaugeStationsOpacity: 1,
       publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
       gmuOrOn: false,
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
@@ -2053,11 +2069,12 @@
       maplibreStyle: 'topo',
       gpsFollow: false,
       clusterPins: true,
-      defaultSort: 'chronological'
+      defaultSort: 'chronological',
+      terrain3dOn: false
     }
   };
 
-  var map, baseLayers = {}, hydroLayer, markersById = {}, trackLayersById = {}, clusterLayerGroup;
+  var map, baseLayers = {}, markersById = {}, trackLayersById = {}, clusterLayerGroup;
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
   var hillshadeLayer = null;
@@ -2104,6 +2121,34 @@
   var FIRE_FILL_COLOR = '#e8432b', FIRE_STROKE_COLOR = '#8f1d0e';
   var fireperimetersCache = null; // last-fetched FeatureCollection — only used to reseed the source across a style switch; setFirePerimetersOn always re-fetches fresh on toggle-on since this is live data
   var openFirePerimeterPopup = null;
+  // NHDPlus HR (USGS hydrography) — unlike GMU/USFS/fire, this is a genuinely nationwide,
+  // very-high-feature-count dataset (flowline layer alone caps at maxRecordCount:2000 per
+  // query), so it can't be bulk-fetched once like those — it's queried live for just the
+  // current map viewport (esriGeometryEnvelope bbox) and re-queried on every pan/zoom while
+  // the toggle is on, same idea as a live tile service. Layer 3 = NetworkNHDFlowline
+  // (rivers/streams, polyline), layer 9 = NHDWaterbody (lakes/ponds, polygon) — field names
+  // confirmed live (lowercase, matching the USFS-boundaries lesson): gnis_name.
+  var HYDRO_FLOWLINE_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/3/query';
+  var HYDRO_WATERBODY_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/9/query';
+  var HYDRO_MIN_ZOOM = 10; // below this a bbox query spans too much area and would hit the 2000-feature cap
+  var HYDRO_FILL_COLOR = '#4a9fd8', HYDRO_STROKE_COLOR = '#2a6f97';
+  var hydroRefreshTimer = null;
+  var hydroZoomHintShown = false;
+  var openHydroPopup = null;
+  // USGS stream gauge stations — modernized OGC API Features water data service (GeoJSON-
+  // native), preferred over the legacy XML waterservices.usgs.gov per the task. Same
+  // viewport-bbox live-query pattern as Hydrography (monitoring-locations is nationwide).
+  // Popups use latest-continuous (one "most recent observation per time series" row per
+  // parameter) rather than pulling full historical time series for a map popup.
+  var GAUGE_STATIONS_URL = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items';
+  var GAUGE_LATEST_URL = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items';
+  var GAUGE_MIN_ZOOM = 8;
+  // USGS parameter codes: 00060 discharge (streamflow), 00065 gage height, 00010 water temp.
+  var GAUGE_PARAM_LABELS = { '00060': 'Streamflow', '00065': 'Gage height', '00010': 'Water temp' };
+  var GAUGE_COLOR = '#2dd4d4';
+  var gaugeRefreshTimer = null;
+  var gaugeZoomHintShown = false;
+  var openGaugePopup = null;
   // NOHRSC snow depth — ArcGIS Server dynamic MapServer /export, image (not tiled-cache)
   // service, native SR is 4269 but (confirmed via a live request) it reprojects fine when
   // given a Web Mercator bbox/bboxSR like the MVUM export already does — unlike the
@@ -3750,6 +3795,60 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Hydrography click-to-identify — same mode-aware pass-through pattern.
+      function handleHydroClick(kind){
+        return function(e){
+          if (e.defaultPrevented) return; // see cluster-circles handler above for why
+          e.preventDefault();
+          if (e.originalEvent) e.originalEvent.stopPropagation();
+          var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+            if (bearingMode){ handleBearingMapTap(latlng); return; }
+            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+            if (compassActive){ handleCompassMapTap(latlng); return; }
+            if (measureMode){ handleMeasureClick(latlng); return; }
+            if (drawMode){ handleDrawClick(latlng); return; }
+            if (polygonMode){ handlePolygonClick(latlng); return; }
+            if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+            return;
+          }
+          var feature = e.features && e.features[0];
+          if (!feature) return;
+          openHydroPopupAt(feature.properties, kind, e.lngLat);
+        };
+      }
+      map.on('click', 'hydro-flowline-touch', handleHydroClick('flowline'));
+      map.on('mouseenter', 'hydro-flowline-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'hydro-flowline-touch', function(){ map.getCanvas().style.cursor = ''; });
+      map.on('click', 'hydro-waterbody-fill', handleHydroClick('waterbody'));
+      map.on('mouseenter', 'hydro-waterbody-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'hydro-waterbody-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Gauge station click — same mode-aware pass-through pattern; popup fetches latest
+      // readings asynchronously (see openGaugePopupAt).
+      function handleGaugeClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var gaugeFeature = e.features && e.features[0];
+        if (!gaugeFeature) return;
+        openGaugePopupAt(gaugeFeature.properties, e.lngLat);
+      }
+      map.on('click', 'gauge-stations-circle', handleGaugeClick);
+      map.on('mouseenter', 'gauge-stations-circle', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'gauge-stations-circle', function(){ map.getCanvas().style.cursor = ''; });
+
       // GMU / USFS boundary click — same mode-aware pass-through, read-only reference data.
       function handleGmuFillClick(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
@@ -3865,6 +3964,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('move', updateScaleBar);
       map.on('zoomend', scheduleClusterRefresh);
       map.on('moveend', scheduleClusterRefresh);
+      map.on('zoomend', scheduleHydroRefresh);
+      map.on('moveend', scheduleHydroRefresh);
+      map.on('zoomend', scheduleGaugeRefresh);
+      map.on('moveend', scheduleGaugeRefresh);
       map.on('zoomend', function(){
         var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
         if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
@@ -4352,6 +4455,135 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openFirePerimeterPopup = popup;
   }
 
+  // ── Hydrography (NHDPlus HR) — live viewport-bbox queries, not a bulk fetch (see the
+  // constants block above for why) ──
+  function hydroBboxQueryString(){
+    var b = map.getBounds();
+    return 'geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
+      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=gnis_name&f=geojson';
+  }
+
+  function loadHydrographyForViewport(){
+    if (!state.settings.hydroOn || !map) return;
+    if (map.getZoom() < HYDRO_MIN_ZOOM){
+      if (map.getSource('hydro-flowline-source')) map.getSource('hydro-flowline-source').setData({ type: 'FeatureCollection', features: [] });
+      if (map.getSource('hydro-waterbody-source')) map.getSource('hydro-waterbody-source').setData({ type: 'FeatureCollection', features: [] });
+      if (!hydroZoomHintShown){ showToast('Zoom in to load rivers, streams & lakes'); hydroZoomHintShown = true; }
+      return;
+    }
+    var qs = hydroBboxQueryString();
+    Promise.all([
+      fetch(HYDRO_FLOWLINE_URL + '?' + qs).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
+      fetch(HYDRO_WATERBODY_URL + '?' + qs).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
+    ]).then(function(results){
+      if (!state.settings.hydroOn) return; // toggled off while this was in flight
+      if (results[0] && map.getSource('hydro-flowline-source')) map.getSource('hydro-flowline-source').setData(results[0]);
+      if (results[1] && map.getSource('hydro-waterbody-source')) map.getSource('hydro-waterbody-source').setData(results[1]);
+    });
+  }
+
+  // Debounced re-query on pan/zoom, same idea as scheduleClusterRefresh — only actually
+  // fetches when the toggle is on (loadHydrographyForViewport no-ops otherwise), so this is
+  // safe to call unconditionally from a moveend listener.
+  function scheduleHydroRefresh(){
+    if (hydroRefreshTimer) clearTimeout(hydroRefreshTimer);
+    hydroRefreshTimer = setTimeout(loadHydrographyForViewport, 500);
+  }
+
+  function setHydroLayersVisible(on){
+    ['hydro-flowline-touch', 'hydro-flowline-line', 'hydro-waterbody-fill', 'hydro-waterbody-line'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    document.getElementById('hydro-opacity-row').classList.toggle('show', on);
+    if (!on && openHydroPopup){ openHydroPopup.remove(); openHydroPopup = null; }
+  }
+
+  function setHydroOn(on){
+    state.settings.hydroOn = on;
+    setHydroLayersVisible(on);
+    if (on) loadHydrographyForViewport();
+  }
+
+  function hydroPopupHtml(props, kind){
+    var name = props.gnis_name || (kind === 'waterbody' ? 'Unnamed lake/pond' : 'Unnamed stream');
+    return '<div class="pin-popup-body"><div class="pin-popup-name">' + escapeHtml(name) + '</div></div>';
+  }
+
+  function openHydroPopupAt(props, kind, lngLat){
+    if (openHydroPopup){ openHydroPopup.remove(); openHydroPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(hydroPopupHtml(props, kind)).addTo(map);
+    popup.on('close', function(){ if (openHydroPopup === popup) openHydroPopup = null; });
+    openHydroPopup = popup;
+  }
+
+  // ── USGS stream gauge stations — modernized OGC API Features water data service (see the
+  // constants block above). Same live viewport-bbox pattern as Hydrography, but the query
+  // syntax is OGC API (bbox=west,south,east,north&f=json) rather than ArcGIS REST. ──
+  function loadGaugeStationsForViewport(){
+    if (!state.settings.gaugeStationsOn || !map) return;
+    if (map.getZoom() < GAUGE_MIN_ZOOM){
+      if (map.getSource('gauge-stations-source')) map.getSource('gauge-stations-source').setData({ type: 'FeatureCollection', features: [] });
+      if (!gaugeZoomHintShown){ showToast('Zoom in to load stream gauges'); gaugeZoomHintShown = true; }
+      return;
+    }
+    var b = map.getBounds();
+    var qs = 'bbox=' + b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth() + '&f=json&limit=1000';
+    fetch(GAUGE_STATIONS_URL + '?' + qs).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+      if (!state.settings.gaugeStationsOn || !data) return;
+      if (map.getSource('gauge-stations-source')) map.getSource('gauge-stations-source').setData(data);
+    }).catch(function(){});
+  }
+
+  // Debounced re-query on pan/zoom, same idea as scheduleHydroRefresh.
+  function scheduleGaugeRefresh(){
+    if (gaugeRefreshTimer) clearTimeout(gaugeRefreshTimer);
+    gaugeRefreshTimer = setTimeout(loadGaugeStationsForViewport, 500);
+  }
+
+  function setGaugeStationsLayersVisible(on){
+    if (map && map.getLayer('gauge-stations-circle')) map.setLayoutProperty('gauge-stations-circle', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('gauge-opacity-row').classList.toggle('show', on);
+    if (!on && openGaugePopup){ openGaugePopup.remove(); openGaugePopup = null; }
+  }
+
+  function setGaugeStationsOn(on){
+    state.settings.gaugeStationsOn = on;
+    setGaugeStationsLayersVisible(on);
+    if (on) loadGaugeStationsForViewport();
+  }
+
+  function gaugeReadingsHtml(id){
+    return fetch(GAUGE_LATEST_URL + '?monitoring_location_id=' + encodeURIComponent(id) + '&f=json').then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(data){
+      var feats = (data && data.features) || [];
+      var rows = [];
+      Object.keys(GAUGE_PARAM_LABELS).forEach(function(code){
+        var f = feats.filter(function(f){ return f.properties && f.properties.parameter_code === code; })[0];
+        if (f) rows.push('<div>' + GAUGE_PARAM_LABELS[code] + ': ' + f.properties.value + ' ' + (f.properties.unit_of_measure || '') + '</div>');
+      });
+      return rows.length ? rows.join('') : '<div class="pin-popup-notes">No recent readings available</div>';
+    }).catch(function(){
+      return '<div class="pin-popup-notes">Readings unavailable</div>';
+    });
+  }
+
+  function openGaugePopupAt(props, lngLat){
+    if (openGaugePopup){ openGaugePopup.remove(); openGaugePopup = null; }
+    var name = props.monitoring_location_name || 'Gauge station';
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
+      .setLngLat(lngLat)
+      .setHTML('<div class="pin-popup-body"><div class="pin-popup-name">' + escapeHtml(name) + '</div><div class="pin-popup-notes">Loading latest readings…</div></div>')
+      .addTo(map);
+    popup.on('close', function(){ if (openGaugePopup === popup) openGaugePopup = null; });
+    openGaugePopup = popup;
+    gaugeReadingsHtml(props.id).then(function(html){
+      if (openGaugePopup !== popup) return; // closed or replaced while loading
+      popup.setHTML('<div class="pin-popup-body"><div class="pin-popup-name">' + escapeHtml(name) + '</div>' + html + '</div>');
+    });
+  }
+
   // ── Public/private land (BLM Surface Management Agency, cached tiles) ──
   function setPublicLandOn(on){
     state.settings.publicLandOn = on;
@@ -4451,7 +4683,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(tag.label) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (pin.trip ? ' · ' + escapeHtml(pin.trip) : '') + '</span>' +
       '</div>' +
       notes +
-      '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</div>' +
+      '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) +
+        (pin.elevationFt != null ? ' · ' + pin.elevationFt.toLocaleString() + ' ft' : '') + '</div>' +
       '<div class="pin-popup-actions pin-popup-actions-grid">' +
       '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
@@ -4763,6 +4996,75 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         paint: { 'line-color': FIRE_STROKE_COLOR, 'line-width': 1.75, 'line-opacity': 0.95 }
       });
     }
+
+    // Hydrography (NHDPlus HR) — sources start empty and get populated live by
+    // loadHydrographyForViewport() once the toggle is on (see that function's comment for
+    // why this can't be a one-time bulk fetch like the boundary layers above).
+    if (!map.getSource('hydro-flowline-source')){
+      map.addSource('hydro-flowline-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('hydro-flowline-touch')){
+      map.addLayer({
+        id: 'hydro-flowline-touch',
+        type: 'line',
+        source: 'hydro-flowline-source',
+        layout: { visibility: state.settings.hydroOn ? 'visible' : 'none' },
+        paint: { 'line-width': 14, 'line-opacity': 0 }
+      });
+    }
+    if (!map.getLayer('hydro-flowline-line')){
+      map.addLayer({
+        id: 'hydro-flowline-line',
+        type: 'line',
+        source: 'hydro-flowline-source',
+        layout: { visibility: state.settings.hydroOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': HYDRO_FILL_COLOR, 'line-width': 1.5, 'line-opacity': state.settings.hydroOpacity != null ? state.settings.hydroOpacity : 1 }
+      });
+    }
+    if (!map.getSource('hydro-waterbody-source')){
+      map.addSource('hydro-waterbody-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('hydro-waterbody-fill')){
+      map.addLayer({
+        id: 'hydro-waterbody-fill',
+        type: 'fill',
+        source: 'hydro-waterbody-source',
+        layout: { visibility: state.settings.hydroOn ? 'visible' : 'none' },
+        paint: { 'fill-color': HYDRO_FILL_COLOR, 'fill-opacity': 0.35 * (state.settings.hydroOpacity != null ? state.settings.hydroOpacity : 1) }
+      });
+    }
+    if (!map.getLayer('hydro-waterbody-line')){
+      map.addLayer({
+        id: 'hydro-waterbody-line',
+        type: 'line',
+        source: 'hydro-waterbody-source',
+        layout: { visibility: state.settings.hydroOn ? 'visible' : 'none' },
+        paint: { 'line-color': HYDRO_STROKE_COLOR, 'line-width': 1 }
+      });
+    }
+    if (state.settings.hydroOn) loadHydrographyForViewport();
+
+    // USGS stream gauge stations — same live viewport-bbox pattern as Hydrography above.
+    if (!map.getSource('gauge-stations-source')){
+      map.addSource('gauge-stations-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('gauge-stations-circle')){
+      map.addLayer({
+        id: 'gauge-stations-circle',
+        type: 'circle',
+        source: 'gauge-stations-source',
+        layout: { visibility: state.settings.gaugeStationsOn ? 'visible' : 'none' },
+        paint: {
+          'circle-radius': 6,
+          'circle-color': GAUGE_COLOR,
+          'circle-stroke-color': '#0a3d3d',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': state.settings.gaugeStationsOpacity != null ? state.settings.gaugeStationsOpacity : 1,
+          'circle-stroke-opacity': state.settings.gaugeStationsOpacity != null ? state.settings.gaugeStationsOpacity : 1
+        }
+      });
+    }
+    if (state.settings.gaugeStationsOn) loadGaugeStationsForViewport();
 
     // Offline area boundary outlines — dashed rectangle + label per downloaded area, ported
     // from the old Leaflet L.rectangle/L.marker version (broken since Leaflet was removed —
@@ -5299,6 +5601,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
     renderOfflineBoundaries();
+
+    // 3D Terrain — always add the DEM source (cheap; no tiles fetch until terrain is
+    // actually enabled) so setTerrain3dOn() can just flip it on/off without re-adding
+    // anything. Re-applied here since map.setStyle() wipes terrain along with everything
+    // else. Manually gated only (see settings-terrain3d-toggle) — never auto-enabled by any
+    // device/viewport detection, since desktop-vs-mobile sniffing is unreliable across
+    // tablets/foldables/small windows. Works under any base layer since terrain geometry is
+    // independent of whatever style is draped on top of it.
+    if (!map.getSource('mapbox-dem')){
+      map.addSource('mapbox-dem', {
+        type: 'raster-dem',
+        url: 'https://api.mapbox.com/v4/mapbox.terrain-rgb.json?secure&access_token=' + MAPBOX_TOKEN,
+        tileSize: 512,
+        maxzoom: 14
+      });
+    }
+    if (state.settings.terrain3dOn) map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+  }
+
+  function setTerrain3dOn(on){
+    state.settings.terrain3dOn = on;
+    scheduleSave();
+    if (!map) return;
+    map.setTerrain(on ? { source: 'mapbox-dem', exaggeration: 1.5 } : null);
   }
 
   function openClusterPanel(members){
@@ -5342,6 +5668,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function closeClusterPanel(){
     document.getElementById('cluster-panel').classList.add('hidden');
   }
+  function trackElevationSectionHtml(track){
+    if (track.elevGainFt == null){
+      return '<div class="pin-popup-actions" style="margin-top:2px;">' +
+        '<button class="btn btn-small" onclick="FieldMap.loadTrackElevation(\'' + track.id + '\')" id="track-elev-load-btn">Show elevation profile</button>' +
+        '</div>';
+    }
+    return '<div style="margin-top:8px;">' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">▲ ' + track.elevGainFt.toLocaleString() + ' ft &nbsp; ▼ ' + track.elevLossFt.toLocaleString() + ' ft</div>' +
+      '<canvas id="track-elev-canvas-' + track.id + '" width="268" height="60" style="width:100%;height:60px;display:block;"></canvas>' +
+      '</div>';
+  }
+
   function trackPopupHtml(track){
     var dist = track.distMiles !== undefined ? track.distMiles : trackDistanceMiles(track.points);
     var distLabel = formatDist(dist);
@@ -5350,12 +5688,108 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel +
       (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
       notes +
+      trackElevationSectionHtml(track) +
       '<div class="pin-popup-actions">' +
       '<button class="btn btn-small" onclick="FieldMap.shareTrack(\'' + track.id + '\')">Share</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editTrack(\'' + track.id + '\')">Edit</button>' +
       '<button class="btn btn-small" onclick="FieldMap.editTrackVertices(\'' + track.id + '\')">Edit shape</button>' +
       '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteTrack(\'' + track.id + '\')">Delete</button>' +
       '</div>';
+  }
+
+  // Draws a simple filled line chart of a track's cached elevation profile onto a canvas —
+  // no charting library, this app has zero npm/CDN chart dependencies and a profile is just
+  // a polyline over (distance, elevation) pairs.
+  function drawElevationProfileCanvas(canvas, profile){
+    if (!canvas || !profile || profile.length < 2) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    var elevs = profile.map(function(p){ return p.elevFt; });
+    var minE = Math.min.apply(null, elevs), maxE = Math.max.apply(null, elevs);
+    var maxD = profile[profile.length - 1].distMi || 1;
+    var pad = 4;
+    function x(d){ return pad + (d / maxD) * (w - pad * 2); }
+    function y(e){ return maxE === minE ? h / 2 : (h - pad) - ((e - minE) / (maxE - minE)) * (h - pad * 2); }
+    ctx.beginPath();
+    ctx.moveTo(x(profile[0].distMi), y(profile[0].elevFt));
+    for (var i = 1; i < profile.length; i++) ctx.lineTo(x(profile[i].distMi), y(profile[i].elevFt));
+    ctx.lineTo(x(profile[profile.length - 1].distMi), h);
+    ctx.lineTo(x(profile[0].distMi), h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(194,98,45,0.25)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x(profile[0].distMi), y(profile[0].elevFt));
+    for (var j = 1; j < profile.length; j++) ctx.lineTo(x(profile[j].distMi), y(profile[j].elevFt));
+    ctx.strokeStyle = '#c2622d';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Samples up to maxSamples points evenly by index along a track (simple and good enough
+  // for a visual profile / gain-loss estimate — doesn't need to be every recorded GPS point).
+  function sampleTrackPoints(points, maxSamples){
+    if (points.length <= maxSamples){
+      return points.map(function(p, i){ return { lat: Array.isArray(p) ? p[0] : p.lat, lng: Array.isArray(p) ? p[1] : p.lng, idx: i }; });
+    }
+    var step = (points.length - 1) / (maxSamples - 1);
+    var out = [];
+    for (var i = 0; i < maxSamples; i++){
+      var idx = Math.round(i * step);
+      var p = points[idx];
+      out.push({ lat: Array.isArray(p) ? p[0] : p.lat, lng: Array.isArray(p) ? p[1] : p.lng, idx: idx });
+    }
+    return out;
+  }
+
+  var MAX_ELEV_SAMPLES = 40;
+
+  // Concurrency-limited EPQS lookups (same pattern as the offline tile downloader) across a
+  // sampled subset of the track's points — fetching every single recorded GPS point would be
+  // both slow and unnecessarily hard on the free USGS service for a long track. Result
+  // (gain/loss + the distance/elevation pairs for the chart) is cached on the track object,
+  // so re-opening the popup later doesn't refetch.
+  function computeTrackElevationProfile(track, onDone){
+    var samples = sampleTrackPoints(track.points, MAX_ELEV_SAMPLES);
+    if (samples.length === 0){ onDone(false); return; }
+    var results = new Array(samples.length);
+    var CONCURRENCY = 4;
+    var next = 0, done = 0;
+
+    function finish(){
+      if (done < samples.length) return;
+      var profile = [];
+      var cumMi = 0;
+      for (var i = 0; i < samples.length; i++){
+        if (i > 0) cumMi += trackDistanceMiles(track.points.slice(samples[i - 1].idx, samples[i].idx + 1));
+        if (results[i] != null) profile.push({ distMi: cumMi, elevFt: results[i] });
+      }
+      if (profile.length < 2){ onDone(false); return; }
+      var gain = 0, loss = 0;
+      for (var j = 1; j < profile.length; j++){
+        var d = profile[j].elevFt - profile[j - 1].elevFt;
+        if (d > 0) gain += d; else loss += -d;
+      }
+      track.elevProfile = profile;
+      track.elevGainFt = Math.round(gain);
+      track.elevLossFt = Math.round(loss);
+      scheduleSave();
+      onDone(true);
+    }
+
+    function worker(){
+      if (next >= samples.length) return;
+      var i = next++;
+      fetchElevationFt(samples[i].lat, samples[i].lng)
+        .then(function(ft){ results[i] = ft; })
+        .catch(function(){ results[i] = null; })
+        .then(function(){
+          done++;
+          if (next < samples.length) worker(); else finish();
+        });
+    }
+    for (var k = 0; k < CONCURRENCY && k < samples.length; k++) worker();
   }
 
   // Tracks have no persistent marker/popup object like pins do (ad-hoc popup created on
@@ -5369,6 +5803,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .addTo(map);
     popup.on('close', function(){ if (openTrackPopup === popup) openTrackPopup = null; });
     openTrackPopup = popup;
+    if (track.elevGainFt != null){
+      requestAnimationFrame(function(){
+        drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
+      });
+    }
   }
 
   // Routes render from a single shared GeoJSON source (tracks-source, set up in
@@ -5796,6 +6235,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.pins.push(newPin);
       addMarkerForPin(newPin);
       refreshStateChips();
+      // Auto elevation lookup — no manual Elevation-tool tap required. Fire-and-forget:
+      // the pin is already saved and on the map, this just fills in one more field once
+      // it resolves a moment later (same EPQS endpoint the manual tool uses).
+      fetchElevationFt(newPin.lat, newPin.lng).then(function(ft){
+        if (ft == null) return;
+        newPin.elevationFt = ft;
+        scheduleSave();
+        refreshMarkerPopup(newPin);
+      }).catch(function(){});
     }
     closePinModal();
     renderPinList();
@@ -5864,6 +6312,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     editTrack: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
       if (track) openTrackModal(track);
+    },
+    loadTrackElevation: function(id){
+      var track = state.tracks.find(function(t){ return t.id === id; });
+      if (!track) return;
+      var btn = document.getElementById('track-elev-load-btn');
+      if (btn){ btn.textContent = 'Loading…'; btn.disabled = true; }
+      computeTrackElevationProfile(track, function(ok){
+        if (!ok){
+          if (btn){ btn.textContent = 'No elevation data available'; }
+          return;
+        }
+        if (!openTrackPopup) return; // popup was closed while the lookup was in flight
+        openTrackPopup.setHTML(trackPopupHtml(track));
+        requestAnimationFrame(function(){
+          drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
+        });
+      });
     },
     deleteTrack: function(id){
       if (confirm('Delete this track? This cannot be undone.')) deleteTrackById(id);
@@ -7197,6 +7662,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-cluster-toggle').checked = state.settings.clusterPins !== false;
     document.getElementById('settings-offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries !== false;
     document.getElementById('settings-area-labels-toggle').checked = state.settings.showAreaLabels !== false;
+    document.getElementById('settings-terrain3d-toggle').checked = !!state.settings.terrain3dOn;
   }
 
   function toggleGpsFollow(){
@@ -9245,26 +9711,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (on){ document.getElementById('elev-bar-text').textContent = 'Tap map for elevation'; }
   }
 
-  function fetchElevationAtPoint(latlng){
-    var url = 'https://epqs.nationalmap.gov/v1/json?x=' + latlng.lng.toFixed(6) + '&y=' + latlng.lat.toFixed(6) + '&wkid=4326&includeDate=false&units=Feet';
-    document.getElementById('elev-bar-text').textContent = 'Loading…';
+  // Shared USGS EPQS lookup — used by the manual Elevation tool below, by automatic pin
+  // elevation lookup on creation, and by track elevation profile sampling. Resolves to a
+  // rounded feet value, or null specifically for "no data at this point" (the -1000000
+  // sentinel / null value EPQS itself returns for e.g. offshore points) — network/parse
+  // failures are left to reject so callers can tell the two cases apart if they need to.
+  function fetchElevationFt(lat, lng){
+    var url = 'https://epqs.nationalmap.gov/v1/json?x=' + lng.toFixed(6) + '&y=' + lat.toFixed(6) + '&wkid=4326&includeDate=false&units=Feet';
+    return fetch(url).then(function(r){ return r.json(); }).then(function(data){
+      var elev = data.value;
+      if (elev == null || elev === -1000000) return null;
+      return Math.round(Number(elev));
+    });
+  }
 
-    fetch(url)
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        var elev = data.value;
-        if (elev == null || elev === -1000000){
-          document.getElementById('elev-bar-text').textContent = 'No data at this point';
-          return;
-        }
-        var ft = Math.round(Number(elev));
-        var m  = Math.round(ft * 0.3048);
-        document.getElementById('elev-bar-text').textContent =
-          ft.toLocaleString() + ' ft  (' + m.toLocaleString() + ' m)';
-      })
-      .catch(function(){
-        document.getElementById('elev-bar-text').textContent = 'Elevation unavailable';
-      });
+  function fetchElevationAtPoint(latlng){
+    document.getElementById('elev-bar-text').textContent = 'Loading…';
+    fetchElevationFt(latlng.lat, latlng.lng).then(function(ft){
+      if (ft == null){
+        document.getElementById('elev-bar-text').textContent = 'No data at this point';
+        return;
+      }
+      var m = Math.round(ft * 0.3048);
+      document.getElementById('elev-bar-text').textContent =
+        ft.toLocaleString() + ' ft  (' + m.toLocaleString() + ' m)';
+    }).catch(function(){
+      document.getElementById('elev-bar-text').textContent = 'Elevation unavailable';
+    });
   }
 
   // ── Compass + Bearing/Range ──
@@ -10218,6 +10691,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
+            if (state.settings.terrain3dOn === undefined) state.settings.terrain3dOn = false;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
@@ -10243,6 +10717,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             (state.tracks || []).forEach(function(t){ if (!t.status) t.status = 'escout'; });
             if (state.settings.hydroOn === undefined) state.settings.hydroOn = false;
             if (state.settings.hydroOpacity === undefined) state.settings.hydroOpacity = 1;
+            if (state.settings.gaugeStationsOn === undefined) state.settings.gaugeStationsOn = false;
+            if (state.settings.gaugeStationsOpacity === undefined) state.settings.gaugeStationsOpacity = 1;
             state.pins.forEach(function(p){
               if (!p.tags){ p.tags = p.category ? [p.category] : ['uncategorized']; }
               delete p.category;
@@ -10571,6 +11047,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
     document.getElementById('nlcd-opacity').value = Math.round((state.settings.nlcdOpacity != null ? state.settings.nlcdOpacity : 0.7) * 100);
     document.getElementById('nlcd-opacity-row').classList.toggle('show', !!state.settings.nlcdOn);
+    document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
+    document.getElementById('hydro-opacity').value = Math.round((state.settings.hydroOpacity != null ? state.settings.hydroOpacity : 1) * 100);
+    document.getElementById('hydro-opacity-row').classList.toggle('show', !!state.settings.hydroOn);
+    document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
+    document.getElementById('gauge-opacity').value = Math.round((state.settings.gaugeStationsOpacity != null ? state.settings.gaugeStationsOpacity : 1) * 100);
+    document.getElementById('gauge-opacity-row').classList.toggle('show', !!state.settings.gaugeStationsOn);
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
     document.getElementById('usfsboundaries-opacity').value = Math.round((state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9) * 100);
     document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', !!state.settings.usfsBoundariesOn);
@@ -10814,6 +11296,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.showAreaLabels = this.checked;
       updatePolygonsSource();
       scheduleSave();
+    });
+    document.getElementById('settings-terrain3d-toggle').addEventListener('change', function(){
+      setTerrain3dOn(this.checked);
     });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
       state.settings.defaultBaseLayer = this.value;
@@ -11238,19 +11723,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     document.getElementById('hydro-toggle').addEventListener('change', function(){
-      if (!hydroLayer){ showToast('Hydrography layer is unavailable right now'); this.checked = false; return; }
-      if (this.checked){ hydroLayer.addTo(map); } else { map.removeLayer(hydroLayer); }
-      document.getElementById('hydro-opacity-row').classList.toggle('show', this.checked);
-      state.settings.hydroOn = this.checked;
+      setHydroOn(this.checked);
       scheduleSave();
     });
     document.getElementById('hydro-opacity').addEventListener('input', function(){
-      var v = this.value / 100;
-      if (hydroLayer) hydroLayer.setOpacity(v);
-      state.settings.hydroOpacity = v;
+      state.settings.hydroOpacity = this.value / 100;
+      if (map.getLayer('hydro-flowline-line')) map.setPaintProperty('hydro-flowline-line', 'line-opacity', state.settings.hydroOpacity);
+      if (map.getLayer('hydro-waterbody-fill')) map.setPaintProperty('hydro-waterbody-fill', 'fill-opacity', 0.35 * state.settings.hydroOpacity);
       scheduleSave();
     });
 
+    document.getElementById('gauge-toggle').addEventListener('change', function(){
+      setGaugeStationsOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('gauge-opacity').addEventListener('input', function(){
+      state.settings.gaugeStationsOpacity = this.value / 100;
+      if (map.getLayer('gauge-stations-circle')){
+        map.setPaintProperty('gauge-stations-circle', 'circle-opacity', state.settings.gaugeStationsOpacity);
+        map.setPaintProperty('gauge-stations-circle', 'circle-stroke-opacity', state.settings.gaugeStationsOpacity);
+      }
+      scheduleSave();
+    });
 
 
     // import-btn removed from sidebar — import is now in the +Add sheet
