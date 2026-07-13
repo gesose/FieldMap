@@ -334,7 +334,7 @@
   .link-btn{background:none;border:none;padding:0;font-size:11px;color:var(--text-muted);cursor:pointer;text-decoration:underline;}
   .link-btn:hover{color:var(--text);}
 
-  #map-controls{position:absolute;bottom:24px;right:14px;z-index:1100;display:flex;flex-direction:column;gap:10px;}
+  #map-controls{position:absolute;bottom:24px;right:14px;z-index:1100;display:flex;flex-direction:column;gap:10px;transition:opacity .2s ease;}
   .map-icon-btn{
     width:40px;height:40px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
@@ -657,6 +657,10 @@
 
     /* Map controls: push above bottom sheet */
     #map-controls{bottom:90px;gap:8px;}
+    /* Fade out (not display:none, so the fade transition can run) the side controls
+       — search/layers/filter/locate/download — while the bottom sheet is expanded, so they
+       don't overlap or clutter the expanded pin list. */
+    body.sidebar-open #map-controls{opacity:0;pointer-events:none;}
     .map-icon-btn{width:38px;height:38px;}
 
     /* Floating panels: full-width above bottom sheet */
@@ -1249,6 +1253,19 @@
       <svg viewBox="0 0 18 18" width="18" height="18" style="flex-shrink:0;"><path fill="#4285F4" d="M17.64 9.2a10.34 10.34 0 0 0-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91a8.78 8.78 0 0 0 2.69-6.62z"/><path fill="#34A853" d="M9 18a8.59 8.59 0 0 0 5.96-2.18l-2.91-2.26A5.4 5.4 0 0 1 9 14.83a5.4 5.4 0 0 1-5.08-3.74H.96v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.92 11.09A5.5 5.5 0 0 1 3.63 9c0-.73.13-1.44.29-2.09V4.57H.96A9 9 0 0 0 0 9a9 9 0 0 0 .96 4.43l2.96-2.34z"/><path fill="#EA4335" d="M9 3.58a4.86 4.86 0 0 1 3.44 1.35l2.58-2.58A8.64 8.64 0 0 0 9 0 9 9 0 0 0 .96 4.57l2.96 2.34A5.4 5.4 0 0 1 9 3.58z"/></svg>
       Sign in with Google
     </button>
+    <button class="btn btn-ghost btn-block" id="onboarding-email-toggle-btn" style="font-size:13px;margin-bottom:14px;">Sign in with email instead</button>
+    <div id="onboarding-email-form" class="hidden" style="text-align:left;margin-bottom:14px;">
+      <input id="onboarding-email-input" type="email" placeholder="Email" autocomplete="email"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:6px;">
+      <input id="onboarding-email-pw-input" type="password" placeholder="Password" autocomplete="current-password"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:8px;">
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-primary" id="onboarding-email-signin-btn" style="flex:1;font-size:12px;">Sign in</button>
+        <button class="btn btn-ghost" id="onboarding-email-register-btn" style="flex:1;font-size:12px;">Create account</button>
+      </div>
+      <button class="btn btn-ghost btn-block" id="onboarding-email-forgot-btn" style="font-size:11px;margin-top:4px;opacity:0.7;">Forgot password</button>
+      <div id="onboarding-email-error" class="hidden" style="font-size:11px;color:#e05a3a;margin-top:6px;text-align:center;"></div>
+    </div>
     <button class="link-btn" id="onboarding-guest-btn" style="font-size:13px;color:var(--text-muted);">Continue as guest →</button>
   </div>
 </div>
@@ -1414,7 +1431,7 @@
         <span class="legend-swatch" style="margin-left:auto;background:#5a4a9e;border:1px solid #362a63;color:#fff;font-size:10px;">Winter</span>
       </label>
     </div>
-    <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener">westernmigrations.net</a>.</p>
+    <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener" style="color:var(--accent);">westernmigrations.net</a>.</p>
     <button class="link-btn" id="migration-clear-btn" style="font-size:11px;margin-top:10px;">Clear selection</button>
   </div>
 </div>
@@ -1920,7 +1937,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.8.0';
+  var APP_VERSION = '2.9.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3433,7 +3450,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         doubleClickZoom: false
       });
 
-      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
+      // showCompass:true adds a persistent zoom-button-styled control that live-rotates to
+      // always point true north as the map's bearing changes; visualizePitch:true makes it
+      // also tilt to reflect the current pitch, and — most importantly — makes tapping it
+      // reset BOTH bearing and pitch to 0 in one motion (MapLibre's built-in
+      // resetNorthPitch(), the same easeTo({bearing:0,pitch:0}) pattern Apple/Google Maps
+      // use), rather than only resetting bearing. This also functions as the pitch/tilt
+      // reset, since there's no real 3D terrain loaded yet and a tilted view of a flat plane
+      // is just confusing — no need for a separate control or for disabling the tilt gesture.
+      map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-left');
 
       // Surfaces a one-time toast (instead of letting MapLibre repeat a raw console error per
       // failed tile) if a live third-party raster source can't be reached — e.g. the NLCD WMS
@@ -3451,9 +3476,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Sync radio UI to initial style
       var radio = document.getElementById('base-layer-' + (state.settings.maplibreStyle || 'topo'));
       if (radio) radio.checked = true;
-
-      // Layer group stubs — overlays will be re-wired in later sessions
-      offlineBoundaryLayerGroup = null;
 
       // style.load fires on initial load AND every time map.setStyle() completes.
       // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
@@ -3496,6 +3518,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (data && map.getSource('migration-source')){
               map.getSource('migration-source').setData(migrationFilteredData());
               updateMigrationMapFilter();
+              updateWildlifeLegend();
             }
           });
           if (state.settings.fireperimetersOn) ensureFirePerimetersLoaded(function(data){
@@ -3777,6 +3800,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
+        // Dismiss any open floating panel (Layers, Wildlife/Migration, Filter, Settings,
+        // Sunrise, Compass, Weather) on a plain map-background tap. This can't be done via
+        // the document-level "click outside" listener (see below) because MapLibre's canvas
+        // stops the native DOM click event from ever bubbling to document — map taps only
+        // ever reach panels through this map-level click handler, never the document one.
+        closeAllPanels();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
         if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
         if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4060,10 +4089,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // The source data's AGFDLink field is a full "<a href=\"...\">Unit N</a>" HTML snippet,
+  // not a plain URL — used as-is it got escapeHtml'd whole into an href attribute (i.e. the
+  // href literally became the escaped markup string), producing a link that 404'd on every
+  // tap regardless of platform. Pull just the href out of it instead.
+  function extractHrefFromHtml(html){
+    if (!html) return null;
+    var m = /href\s*=\s*"([^"]+)"/i.exec(String(html));
+    return m ? m[1] : null;
+  }
+
   function gmuPopupHtml(props){
     var label = props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '';
     var region = props.REG_NAME ? '<div class="pin-popup-meta">' + escapeHtml(props.REG_NAME) + '</div>' : '';
-    var link = props.AGFDLink || ('https://www.azgfd.com/location/gmu-' + encodeURIComponent(String(label).toLowerCase()) + '/');
+    // Fallback pattern matches the real azgfd.gov URLs seen in the source data
+    // (azgfd.gov, not .com; /h_f/hunting_units_<unit>.shtml, not /location/gmu-<unit>/) —
+    // only used if AGFDLink is ever missing from a feature, extremely rare in this dataset.
+    var link = extractHrefFromHtml(props.AGFDLink) || ('https://www.azgfd.gov/h_f/hunting_units_' + encodeURIComponent(String(label).toLowerCase()) + '.shtml');
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">GMU ' + escapeHtml(String(label)) + '</div>' +
       region +
@@ -4674,6 +4716,47 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Offline area boundary outlines — dashed rectangle + label per downloaded area, ported
+    // from the old Leaflet L.rectangle/L.marker version (broken since Leaflet was removed —
+    // L was undefined, so this silently never rendered and deleting an area threw). Data is
+    // re-fetched from IndexedDB/localStorage via renderOfflineBoundaries() at the end of this
+    // function rather than cached in a JS variable, since it's small and cheap to reload.
+    if (!map.getSource('offline-boundaries-source')){
+      map.addSource('offline-boundaries-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('offline-boundaries-fill')){
+      map.addLayer({
+        id: 'offline-boundaries-fill',
+        type: 'fill',
+        source: 'offline-boundaries-source',
+        paint: { 'fill-color': '#5a9bd8', 'fill-opacity': 0.04 }
+      });
+    }
+    if (!map.getLayer('offline-boundaries-line')){
+      map.addLayer({
+        id: 'offline-boundaries-line',
+        type: 'line',
+        source: 'offline-boundaries-source',
+        paint: { 'line-color': '#5a9bd8', 'line-width': 2, 'line-dasharray': [6, 5] }
+      });
+    }
+    if (!map.getSource('offline-boundaries-label-source')){
+      map.addSource('offline-boundaries-label-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('offline-boundaries-label')){
+      map.addLayer({
+        id: 'offline-boundaries-label',
+        type: 'symbol',
+        source: 'offline-boundaries-label-source',
+        layout: {
+          'text-field': ['concat', ['get', 'name'], ' (offline)'],
+          'text-size': 11,
+          'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
+        },
+        paint: { 'text-color': '#5a9bd8', 'text-halo-color': '#000', 'text-halo-width': 1.2, 'text-opacity': 0.85 }
+      });
+    }
+
     // GMU boundaries (Arizona) — near-invisible fill for click hit-testing (matches the
     // original Leaflet build's fillOpacity:0.02, kept fixed regardless of the opacity
     // slider since it's not meant to be seen), a visible line, and a label symbol layer
@@ -5116,11 +5199,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
     if (!map.getLayer('compass-dashed-line')){
+      // Same fixed pixel width/dasharray on every viewport made the reference lines look
+      // oversized on a phone screen — scale both down under the app's existing 760px mobile
+      // breakpoint (see the @media rule above).
+      var compassIsMobile = window.innerWidth <= 760;
       map.addLayer({
         id: 'compass-dashed-line',
         type: 'line',
         source: 'compass-dashed-source',
-        paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-dasharray': [8, 5], 'line-opacity': 0.9 }
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': compassIsMobile ? 1.5 : 2.5,
+          'line-dasharray': compassIsMobile ? [5, 3] : [8, 5],
+          'line-opacity': 0.9
+        }
       });
     }
     if (!map.getSource('compass-target-source')){
@@ -5158,6 +5250,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     redrawCompassTarget();
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
+    renderOfflineBoundaries();
   }
 
   function openClusterPanel(members){
@@ -5562,10 +5655,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return ids;
   }
 
+  // "Waypoint · Jul 12, 8:38 AM" — used as the default name for a new pin so a quick save
+  // (tap a category/status, hit Save) never requires typing anything.
+  function defaultWaypointName(ts){
+    var d = new Date(ts);
+    return 'Waypoint · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+      ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
   function openPinModal(pin, latlng){
     editingPinId = pin ? pin.id : null;
     document.getElementById('pin-modal-title').textContent = pin ? 'Edit pin' : 'Add pin';
-    document.getElementById('pin-name').value = pin ? pin.name : '';
+    document.getElementById('pin-name').value = pin ? pin.name : defaultWaypointName(Date.now());
     document.getElementById('pin-notes').value = pin ? pin.notes : '';
     document.getElementById('pin-trip').value = pin ? (pin.trip || '') : '';
     document.getElementById('pin-date').value = tsToDateInputValue(pin ? pin.created : Date.now());
@@ -5577,7 +5678,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-lng').textContent = lng.toFixed(5);
     document.getElementById('pin-delete-btn').classList.toggle('hidden', !pin);
     document.getElementById('pin-modal').classList.remove('hidden');
-    document.getElementById('pin-name').focus();
+    // No auto-focus here on purpose — focusing the Name field immediately pops the mobile
+    // keyboard and pushes the header (title, Save/Cancel) out of view before the user has
+    // even decided what they're creating. The field is pre-filled with a sensible default
+    // (see defaultWaypointName) so a quick save needs no typing; tapping in still renames
+    // normally, and selects the placeholder text on a NEW pin so typing just replaces it.
   }
 
   function closePinModal(){
@@ -8602,30 +8707,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Shows a dashed rectangle + label for every downloaded area, so you can
   // still see roughly where your offline coverage is even when zoomed out
   // past it (e.g. to get your bearings if you've lost track of position).
-  var offlineBoundaryLayerGroup = null;
+  // area.boundsSW/boundsNE are stored as [lat, lng] pairs; maplibregl.LngLatBounds wants
+  // [lng, lat], hence the index-swap below.
+  function boundsFromArea(area){
+    return new maplibregl.LngLatBounds(
+      [area.boundsSW[1], area.boundsSW[0]],
+      [area.boundsNE[1], area.boundsNE[0]]
+    );
+  }
+
+  function offlineAreaToRectangleFeature(area){
+    var sLat = area.boundsSW[0], wLng = area.boundsSW[1], nLat = area.boundsNE[0], eLng = area.boundsNE[1];
+    return {
+      type: 'Feature',
+      properties: { name: area.name },
+      geometry: { type: 'Polygon', coordinates: [[[wLng,sLat],[eLng,sLat],[eLng,nLat],[wLng,nLat],[wLng,sLat]]] }
+    };
+  }
 
   function renderOfflineBoundaries(){
-    if (!offlineBoundaryLayerGroup) return;
-    offlineBoundaryLayerGroup.clearLayers();
-    if (!state.settings.showOfflineBoundaries) return;
+    if (!map || !map.getSource('offline-boundaries-source')) return;
+    if (!state.settings.showOfflineBoundaries){
+      map.getSource('offline-boundaries-source').setData({ type:'FeatureCollection', features:[] });
+      if (map.getSource('offline-boundaries-label-source')) map.getSource('offline-boundaries-label-source').setData({ type:'FeatureCollection', features:[] });
+      return;
+    }
     loadOfflineAreas().then(function(areas){
-      areas.forEach(function(area){
-        var bounds = L.latLngBounds(area.boundsSW, area.boundsNE);
-        var rect = L.rectangle(bounds, {
-          color:'#5a9bd8', weight:2, dashArray:'6,5', fill:true,
-          fillColor:'#5a9bd8', fillOpacity:0.04, interactive:false
-        });
-        offlineBoundaryLayerGroup.addLayer(rect);
-        var label = L.marker(bounds.getCenter(), {
-          icon: L.divIcon({
-            className:'offline-boundary-label',
-            html:'<div>' + escapeHtml(area.name) + ' (offline)</div>',
-            iconSize:[0,0]
-          }),
-          interactive:false
-        });
-        offlineBoundaryLayerGroup.addLayer(label);
-      });
+      if (!map || !map.getSource('offline-boundaries-source')) return; // style may have switched mid-fetch
+      var fc = { type:'FeatureCollection', features: areas.map(offlineAreaToRectangleFeature) };
+      map.getSource('offline-boundaries-source').setData(fc);
+      map.getSource('offline-boundaries-label-source').setData(buildLabelPointFeatureCollection(fc));
     });
   }
 
@@ -8653,7 +8764,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = 'Delete';
         delBtn.addEventListener('click', function(){
           if (!confirm('Delete offline area "' + area.name + '"? This cannot be undone.')) return;
-          var bounds = L.latLngBounds(area.boundsSW, area.boundsNE);
+          var bounds = boundsFromArea(area);
           var tileList = computeTileList(bounds, area.minZoom, area.maxZoom, area.layerIds);
           deleteTileList(tileList).then(function(){
             return loadOfflineAreas();
@@ -9607,18 +9718,42 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Covers both the species-range Wildlife layers (Big Game/Upland/Small Game) and Migration
+  // — the two can be visible at the same time (not mutually exclusive, see setMigrationSpecies)
+  // so each gets its own labeled section here rather than one overwriting the other, and each
+  // label is suffixed with what kind of layer it is ("— range" vs "— migration") so it's never
+  // ambiguous which shape on the map belongs to which when both are showing at once.
   function updateWildlifeLegend(){
     var legend = document.getElementById('wildlife-legend');
-    if (!wildlifeOn || !wildlifeActive || !wildlifeActive.codes.length){ legend.classList.add('hidden'); return; }
-    var name = wildlifeDisplayName(wildlifeActive.speciesName);
-    var multi = wildlifeActive.codes.length > 1;
-    var swatches = wildlifeActive.codes.map(function(code, i){
-      var color = WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length];
-      var border = WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length];
-      return '<span class="legend-swatch" style="background:' + color + ';border:1px solid ' + border + ';color:#fff;">' + (multi ? ('Layer ' + (i + 1)) : escapeHtml(name)) + '</span>';
-    }).join(' ');
-    legend.innerHTML = (multi ? '<div style="font-size:11px;font-weight:600;margin-bottom:4px;">' + escapeHtml(name) + '</div>' : '') +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>';
+    var sections = [];
+
+    if (wildlifeOn && wildlifeActive && wildlifeActive.codes.length){
+      var name = wildlifeDisplayName(wildlifeActive.speciesName);
+      var multi = wildlifeActive.codes.length > 1;
+      var swatches = wildlifeActive.codes.map(function(code, i){
+        var color = WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length];
+        var border = WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length];
+        return '<span class="legend-swatch" style="background:' + color + ';border:1px solid ' + border + ';color:#fff;">' + (multi ? ('Layer ' + (i + 1)) : (escapeHtml(name) + ' — range')) + '</span>';
+      }).join(' ');
+      sections.push((multi ? '<div style="font-size:11px;font-weight:600;margin-bottom:4px;">' + escapeHtml(name) + ' — range</div>' : '') +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>');
+    }
+
+    var migCats = migrationActiveSpecies ? migrationActiveCategoryList() : [];
+    if (migCats.length){
+      var migSwatches = [];
+      if (migCats.indexOf('Corridor') !== -1){
+        migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_CORRIDOR_LOW_FILL + ';border:1px solid ' + MIGRATION_CORRIDOR_LOW_STROKE + ';color:#fff;">Corridor (low)</span>');
+        migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_CORRIDOR_HIGH_FILL + ';border:1px solid ' + MIGRATION_CORRIDOR_HIGH_STROKE + ';color:#fff;">Corridor (high)</span>');
+      }
+      if (migCats.indexOf('Stopover') !== -1) migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_STOPOVER_FILL + ';border:1px solid ' + MIGRATION_STOPOVER_STROKE + ';color:#fff;">Stopover</span>');
+      if (migCats.indexOf('WinterRange') !== -1) migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_WINTERRANGE_FILL + ';border:1px solid ' + MIGRATION_WINTERRANGE_STROKE + ';color:#fff;">Winter Range</span>');
+      sections.push('<div style="font-size:11px;font-weight:600;margin-bottom:4px;' + (sections.length ? 'margin-top:8px;' : '') + '">' + escapeHtml(migrationActiveSpecies) + ' — migration</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + migSwatches.join(' ') + '</div>');
+    }
+
+    if (!sections.length){ legend.classList.add('hidden'); return; }
+    legend.innerHTML = sections.join('');
     legend.classList.remove('hidden');
   }
 
@@ -9744,6 +9879,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
     updateMigrationMapFilter();
     renderMigrationSublayers();
+    updateWildlifeLegend();
   }
 
   function clearMigrationSelection(){
@@ -9757,6 +9893,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     else if (category === 'WinterRange') state.settings.migrationWinterRangeOn = on;
     scheduleSave();
     updateMigrationMapFilter();
+    updateWildlifeLegend();
   }
 
   // Re-applies the checked-category filter to the migration layers — called after every
@@ -10546,6 +10683,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
     document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
+    // Tapping into the Name field on a new (not-yet-named) pin selects the auto-filled
+    // default so typing immediately replaces it, instead of having to manually clear it first.
+    document.getElementById('pin-name').addEventListener('focus', function(){
+      if (!editingPinId) this.select();
+    });
     // Track modal
     document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
@@ -10803,6 +10945,71 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('email-forgot-btn').addEventListener('click', function(){
       var email = document.getElementById('email-auth-input').value.trim();
       var err = document.getElementById('email-auth-error');
+      err.classList.add('hidden');
+      if (!email){ err.textContent = 'Enter your email above first.'; err.classList.remove('hidden'); return; }
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); return; }
+      window.FieldMapSync.sendPasswordReset(email)
+        .then(function(){ showToast('Password reset email sent'); })
+        .catch(function(e){ err.textContent = e.message || 'Could not send reset email.'; err.classList.remove('hidden'); });
+    });
+
+    // Email/password auth — first-run onboarding screen. Same underlying
+    // FieldMapSync.signInWithEmail/registerWithEmail/sendPasswordReset calls as the Settings
+    // panel's email auth above; the shared onAuthStateChanged handler (updateAccountUI)
+    // already closes #onboarding-modal on any successful sign-in, Google or email, so no
+    // extra close-the-modal step is needed here on success.
+    document.getElementById('onboarding-email-toggle-btn').addEventListener('click', function(){
+      var form = document.getElementById('onboarding-email-form');
+      var isHidden = form.classList.contains('hidden');
+      form.classList.toggle('hidden', !isHidden);
+      this.textContent = isHidden ? 'Cancel' : 'Sign in with email instead';
+    });
+
+    function getOnboardingEmailAuthFields(){
+      var email = document.getElementById('onboarding-email-input').value.trim();
+      var pw = document.getElementById('onboarding-email-pw-input').value;
+      var err = document.getElementById('onboarding-email-error');
+      err.classList.add('hidden'); err.textContent = '';
+      if (!email){ err.textContent = 'Enter your email address.'; err.classList.remove('hidden'); return null; }
+      if (!pw || pw.length < 6){ err.textContent = 'Password must be at least 6 characters.'; err.classList.remove('hidden'); return null; }
+      return { email:email, pw:pw, err:err };
+    }
+
+    document.getElementById('onboarding-email-signin-btn').addEventListener('click', function(){
+      var f = getOnboardingEmailAuthFields(); if (!f) return;
+      this.disabled = true; this.textContent = 'Signing in…';
+      var self = this;
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); self.disabled=false; self.textContent='Sign in'; return; }
+      window.FieldMapSync.signInWithEmail(f.email, f.pw)
+        .catch(function(err){
+          var msg = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'Incorrect email or password.' :
+                    err.code === 'auth/user-not-found' ? 'No account found — use Create account.' :
+                    err.code === 'auth/too-many-requests' ? 'Too many attempts — try again later.' :
+                    (err.message || 'Sign-in failed.');
+          f.err.textContent = msg; f.err.classList.remove('hidden');
+        })
+        .finally(function(){ self.disabled=false; self.textContent='Sign in'; });
+    });
+
+    document.getElementById('onboarding-email-register-btn').addEventListener('click', function(){
+      var f = getOnboardingEmailAuthFields(); if (!f) return;
+      this.disabled = true; this.textContent = 'Creating…';
+      var self = this;
+      if (!window.FieldMapSync){ showToast('Sync loading — try again'); self.disabled=false; self.textContent='Create account'; return; }
+      window.FieldMapSync.registerWithEmail(f.email, f.pw)
+        .catch(function(err){
+          var msg = err.code === 'auth/email-already-in-use' ? 'An account already exists — use Sign in.' :
+                    err.code === 'auth/weak-password' ? 'Password too weak — use 6+ characters.' :
+                    err.code === 'auth/invalid-email' ? 'Invalid email address.' :
+                    (err.message || 'Could not create account.');
+          f.err.textContent = msg; f.err.classList.remove('hidden');
+        })
+        .finally(function(){ self.disabled=false; self.textContent='Create account'; });
+    });
+
+    document.getElementById('onboarding-email-forgot-btn').addEventListener('click', function(){
+      var email = document.getElementById('onboarding-email-input').value.trim();
+      var err = document.getElementById('onboarding-email-error');
       err.classList.add('hidden');
       if (!email){ err.textContent = 'Enter your email above first.'; err.classList.remove('hidden'); return; }
       if (!window.FieldMapSync){ showToast('Sync loading — try again'); return; }
