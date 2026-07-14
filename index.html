@@ -1988,7 +1988,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.14.0';
+  var APP_VERSION = '2.14.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -4060,7 +4060,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var centerElevTimer = null;
   function updateCenterReadout(){
     var c = map.getCenter();
-    var coordsText = c.lat.toFixed(5) + ', ' + c.lng.toFixed(5);
+    // Each coordinate formatted independently to a fixed precision (CalTopo convention),
+    // THEN concatenated — not a fixed-precision string truncated by character count
+    // afterward, which used to cut off the tail of whichever coordinate came second
+    // (usually longitude, e.g. producing "45.12756, -119...."). This is a display-only
+    // shortening: copyCoordsText() below reads the live full-precision map center at copy
+    // time rather than this truncated text, so "Copy coords" is unaffected.
+    var coordsText = c.lat.toFixed(3) + ', ' + c.lng.toFixed(3);
     document.getElementById('center-readout-coords').textContent = coordsText;
     document.getElementById('center-readout-mobile-coords').textContent = coordsText;
 
@@ -4922,6 +4928,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     src.setData({ type: 'FeatureCollection', features: features });
   }
 
+  // A pin's marker defaults to visible — the safe fallback for anything we can't currently
+  // prove is clustered (off-screen, tile not yet loaded after a style switch, etc). We only
+  // ever explicitly HIDE a pin, and only once we've positively confirmed it's a member of a
+  // cluster bubble that's actually rendered on screen right now (via
+  // queryRenderedFeatures + getClusterLeaves) — never by inferring "hidden" from an empty
+  // or incomplete query result. That distinction is what previously broke: the old
+  // approach hid a pin whenever a cluster-source lookup came back empty, but
+  // querySourceFeatures() only sees currently loaded tiles, so an off-screen pin (tile not
+  // loaded yet, e.g. right after a style switch) looked indistinguishable from "confirmed
+  // clustered" and got stuck hidden. Querying only currently-RENDERED cluster bubbles and
+  // hiding exactly (and only) their confirmed leaves avoids that failure mode entirely,
+  // while also fixing the actual reported bug: previously individual markers showed
+  // unconditionally at every zoom regardless of clustering, so a cluster bubble and its
+  // member pins' own markers rendered on top of each other across the whole zoom range
+  // below clusterMaxZoom instead of a clean cutover.
   function updateMarkerVisibility(){
     if (!map || !map.isStyleLoaded()) return;
     var clusteringOn = state.settings.clusterPins !== false;
@@ -4931,15 +4952,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.setLayoutProperty('cluster-counts',  'visibility', clusteringOn ? 'visible' : 'none');
     }
 
-    // Always show every pin's HTML marker — querySourceFeatures() only sees features in
-    // currently loaded/rendered tiles, so off-screen pins would get stuck hidden after a
-    // style switch if we used it to decide individual marker visibility. The cluster
-    // source is only used for the cluster-circles/cluster-counts bubble display; a
-    // clustered pin may render its marker underneath the bubble for now — tightening
-    // that overlap is a later-session refinement.
-    state.pins.forEach(function(p){
-      var m = markersById[p.id];
-      if (m) m.getElement().style.display = mapItemVisible(p) ? '' : 'none';
+    function applyVisibility(hiddenIds){
+      state.pins.forEach(function(p){
+        var m = markersById[p.id];
+        if (!m) return;
+        m.getElement().style.display = (mapItemVisible(p) && !hiddenIds[p.id]) ? '' : 'none';
+      });
+    }
+
+    var pinsSrc = map.getSource('pins-source');
+    if (!clusteringOn || !map.getLayer('cluster-circles') || !pinsSrc){ applyVisibility({}); return; }
+
+    var clusterFeatures = map.queryRenderedFeatures({ layers: ['cluster-circles'] });
+    if (clusterFeatures.length === 0){ applyVisibility({}); return; }
+
+    var hiddenIds = {};
+    var pending = clusterFeatures.length;
+    clusterFeatures.forEach(function(f){
+      pinsSrc.getClusterLeaves(f.properties.cluster_id, f.properties.point_count, 0, function(err, leaves){
+        if (!err && leaves){
+          leaves.forEach(function(lf){ hiddenIds[lf.properties.id] = true; });
+        }
+        pending--;
+        if (pending === 0) applyVisibility(hiddenIds);
+      });
     });
   }
 
@@ -11964,12 +12000,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         fallbackCopy();
       }
     }
-    document.getElementById('center-readout-float').addEventListener('click', function(){
-      copyCoordsText(document.getElementById('center-readout-coords').textContent);
-    });
-    document.getElementById('center-readout-mobile').addEventListener('click', function(){
-      copyCoordsText(document.getElementById('center-readout-mobile-coords').textContent);
-    });
+    // Copies the live full-precision center, not the (now intentionally shortened, see
+    // updateCenterReadout) displayed text — the display truncates to 3 decimals for
+    // readability, but what gets copied should still be precise enough to paste into
+    // another app and land on the same spot.
+    function copyMapCenterCoords(){
+      var c = map.getCenter();
+      copyCoordsText(c.lat.toFixed(6) + ', ' + c.lng.toFixed(6));
+    }
+    document.getElementById('center-readout-float').addEventListener('click', copyMapCenterCoords);
+    document.getElementById('center-readout-mobile').addEventListener('click', copyMapCenterCoords);
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
 
     document.getElementById('layers-btn').addEventListener('click', function(e){
