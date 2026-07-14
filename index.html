@@ -1638,6 +1638,7 @@
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="pin-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="pin-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost hidden" id="pin-move-btn">Move</button>
       <button class="btn btn-primary" id="pin-save-btn">Save pin</button>
     </div>
   </div>
@@ -1675,6 +1676,7 @@
     <div class="modal-actions">
       <button class="btn btn-danger" id="track-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="track-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost hidden" id="track-edit-shape-btn">Edit shape</button>
       <button class="btn btn-primary" id="track-save-btn">Save route</button>
     </div>
   </div>
@@ -1712,6 +1714,7 @@
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="polygon-delete-btn">Delete</button>
       <button class="btn btn-ghost" id="polygon-cancel-modal-btn">Cancel</button>
+      <button class="btn btn-ghost hidden" id="polygon-edit-shape-btn">Edit shape</button>
       <button class="btn btn-primary" id="polygon-save-btn">Save area</button>
     </div>
   </div>
@@ -2014,7 +2017,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.15.0';
+  var APP_VERSION = '2.15.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3460,11 +3463,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     polygon: '<polygon points="12,3 21,9 18,20 6,20 3,9"/>',
     bearing: '<line x1="5" y1="19" x2="19" y2="5" stroke-dasharray="4,2"/><polyline points="13,5 19,5 19,11"/>'
   };
-  function renderTypeGlyph(type, sizePx){
+  // color is the glyph's own stroke color (rendered bare, no circle background — see
+  // buildItemRow) rather than white-on-a-colored-circle like the pin treatment.
+  function renderTypeGlyph(type, sizePx, color){
     var g = TYPE_GLYPHS[type];
     if (!g) return '';
     var s = sizePx || 16;
-    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="white" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="display:block;">' + g + '</svg>';
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="' + (color || 'white') + '" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="display:block;">' + g + '</svg>';
   }
 
   // Legacy helper kept for track/polygon coloring
@@ -4866,14 +4871,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     '</div>';
   }
 
-  // Standard geo destination link (Google Maps directions) — one universal URL handed to
-  // window.open() and left to the OS/browser to resolve (Universal Links intercept to the
-  // installed Maps app on iOS/Android when present, otherwise it opens as a normal web
-  // page). No in-app app picker, no installed-app detection, no settings toggle — exactly
-  // one link, always.
+  // Standard geo destination link (Google Maps directions) — one universal URL, left to the
+  // OS/browser to resolve (Universal Links intercept to the installed Maps app on
+  // iOS/Android when present, otherwise it opens as a normal web page). No in-app app
+  // picker, no installed-app detection, no settings toggle — exactly one link, always.
+  //
+  // How it's navigated to differs by context, though: window.open(url,'_blank') is right
+  // for a normal browser tab (opens Maps in a genuinely separate tab, keeps FieldMap's own
+  // tab intact) but wrong for an iOS home-screen "Add to Home Screen" PWA running in
+  // standalone display mode — that has no browser chrome/tab strip at all, so
+  // window.open('_blank') has nowhere sensible to put a "new tab", and WebKit leaves the
+  // original standalone window on a blank about:blank page with a stray address-bar-style
+  // prompt when the user returns from the Maps handoff (reproduced: tap Directions -> Maps
+  // opens correctly -> switch back to FieldMap -> blank white screen, only recoverable by
+  // dismissing that prompt). Same-tab navigation is also the semantically correct choice
+  // for standalone mode regardless of the bug: this is a Universal Link handoff, not really
+  // "opening a new page" — iOS intercepts it before any page load happens, so the
+  // standalone window is simply left exactly as it was underneath once the user returns.
   function openDirectionsTo(lat, lng){
     var url = 'https://www.google.com/maps/dir/?api=1&destination=' + lat.toFixed(6) + ',' + lng.toFixed(6);
-    window.open(url, '_blank', 'noopener');
+    var isStandalonePwa = window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    if (isStandalonePwa){
+      location.href = url;
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
   }
 
   // Unified Share for pin/bearing/area (track keeps its own GPX export — see shareTrack,
@@ -6589,6 +6612,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-date').value = tsToDateInputValue(track.created);
     document.getElementById('track-point-count').textContent = track.points.length + ' points' + (track.state ? ' · ' + track.state : '');
     document.getElementById('track-delete-btn').classList.remove('hidden');
+    document.getElementById('track-edit-shape-btn').classList.remove('hidden');
     selectedTrackStatus = track.status || 'escout';
     renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips(track.tags.slice());
@@ -6606,6 +6630,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-date').value = tsToDateInputValue(Date.now());
     document.getElementById('track-point-count').textContent = points.length + ' points';
     document.getElementById('track-delete-btn').classList.add('hidden');
+    document.getElementById('track-edit-shape-btn').classList.add('hidden');
     selectedTrackStatus = 'escout';
     renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips([]);
@@ -6741,6 +6766,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-lat').textContent = lat.toFixed(5);
     document.getElementById('pin-lng').textContent = lng.toFixed(5);
     document.getElementById('pin-delete-btn').classList.toggle('hidden', !pin);
+    document.getElementById('pin-move-btn').classList.toggle('hidden', !pin);
     document.getElementById('pin-modal').classList.remove('hidden');
     // No auto-focus here on purpose — focusing the Name field immediately pops the mobile
     // keyboard and pushes the header (title, Save/Cancel) out of view before the user has
@@ -7851,6 +7877,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
 
     document.getElementById('polygon-delete-btn').classList.toggle('hidden', !polygon);
+    document.getElementById('polygon-edit-shape-btn').classList.toggle('hidden', !polygon);
     document.getElementById('polygon-modal').classList.remove('hidden');
     // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
     // sensible default (defaultAreaName) on new areas so Save works immediately.
@@ -8673,22 +8700,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       row.appendChild(cb);
     }
 
-    // Same "status-colored circle + white glyph" treatment for all 4 types — track/
-    // polygon/bearing previously used ad-hoc shapes (a bar, a square, a line-with-dot) that
-    // didn't match the glyph already used for that tool everywhere else (the +Add sheet's
-    // Draw route/Draw area/Add bearing buttons); status color-coding itself is unchanged,
-    // this only swaps in the correct glyph.
+    // Pin keeps the colored-circle-with-white-glyph treatment (a circle correctly reads as
+    // a point marker). Route/area/bearing render as a bare colored glyph with no circle —
+    // at a glance the circle was dominating and making all 4 types read as generic pins;
+    // the glyph shape itself (line/pentagon/arrow) is what should be doing the
+    // differentiating. Status color-coding is unchanged either way, just applied as the
+    // glyph's own stroke color instead of a background fill for these 3 types.
     var mark = document.createElement('div');
-    mark.className = 'pin-dot';
     var scItem = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-    mark.style.cssText = 'background:' + scItem.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    if (it.type === 'track'){
-      mark.innerHTML = renderTypeGlyph('track', 16);
-    } else if (it.type === 'polygon'){
-      mark.innerHTML = renderTypeGlyph('polygon', 16);
-    } else if (it.type === 'bearing'){
-      mark.innerHTML = renderTypeGlyph('bearing', 16);
+    if (it.type === 'track' || it.type === 'polygon' || it.type === 'bearing'){
+      mark.style.cssText = 'width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+      mark.innerHTML = renderTypeGlyph(it.type, 20, scItem.bg);
     } else {
+      mark.className = 'pin-dot';
+      mark.style.cssText = 'background:' + scItem.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
       mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 16);
     }
     row.appendChild(mark);
@@ -12126,6 +12151,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
     document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
     document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
+    // Second entry point for the same "Move" action already on the popup's overflow menu —
+    // lets you jump straight into it from the Edit modal instead of closing Edit and
+    // reopening the overflow menu separately.
+    document.getElementById('pin-move-btn').addEventListener('click', function(){
+      var id = editingPinId;
+      closePinModal();
+      if (id) FieldMap.movePin(id);
+    });
     // Tapping into the Name field on a new (not-yet-named) pin selects the auto-filled
     // default so typing immediately replaces it, instead of having to manually clear it first.
     document.getElementById('pin-name').addEventListener('focus', function(){
@@ -12139,6 +12172,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-name').addEventListener('focus', function(){
       if (!editingTrackId) this.select();
     });
+    // Second entry point for the same "Edit shape" action already on the popup's overflow
+    // menu — see the pin-move-btn comment above for why.
+    document.getElementById('track-edit-shape-btn').addEventListener('click', function(){
+      var id = editingTrackId;
+      closeTrackModal();
+      if (id) FieldMap.editTrackVertices(id);
+    });
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
@@ -12146,6 +12186,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('polygon-cancel-btn-top').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-name').addEventListener('focus', function(){
       if (!editingPolygonId) this.select();
+    });
+    // Second entry point for the same "Edit shape" action already on the popup's overflow
+    // menu — see the pin-move-btn comment above for why.
+    document.getElementById('polygon-edit-shape-btn').addEventListener('click', function(){
+      var id = editingPolygonId;
+      closePolygonModal();
+      if (id) FieldMap.editPolygonVertices(id);
     });
     document.getElementById('polygon-delete-btn').addEventListener('click', function(){
       if (!editingPolygonId) return;
