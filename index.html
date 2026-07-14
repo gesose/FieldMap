@@ -53,7 +53,7 @@
      icon column lives), so this is a separate, compact, top-left equivalent. */
   #center-readout-mobile{display:none;}
   #scale-bar{
-    position:absolute;top:50px;right:14px;z-index:1000;
+    position:absolute;top:70px;right:14px;z-index:1000;
     width:150px;box-sizing:border-box;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
     padding:6px 9px;display:flex;flex-direction:column;gap:3px;
@@ -1981,7 +1981,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.13.0';
+  var APP_VERSION = '2.13.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -4008,29 +4008,42 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
-  // Debounced separately from the lat/lng text itself: lat/lng updates instantly on every
-  // pan frame (cheap, local), while the elevation lookup can fall through to a network EPQS
-  // call (see getElevationFt) — debouncing that tier prevents a request storm while the user
-  // is actively dragging the map.
+  function setCenterElevText(text){
+    ['center-readout-elev', 'center-readout-mobile-elev'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      el.classList.toggle('show', !!text);
+    });
+  }
+
+  // lat/lng text updates instantly on every pan frame (cheap, local). Elevation tries the
+  // DEM tier synchronously, unthrottled, on every single tick too — tryDemElevationFt is
+  // just a local read once tiles are loaded, no reason to debounce it, and doing so was
+  // adding a flat 250ms of perceived lag even for the near-instant case. Only the
+  // network-based GPS/EPQS fallback (see getElevationFt) gets debounced, since that's the
+  // tier that would otherwise fire a request storm while the user is actively dragging.
   var centerElevTimer = null;
   function updateCenterReadout(){
     var c = map.getCenter();
     var coordsText = c.lat.toFixed(5) + ', ' + c.lng.toFixed(5);
     document.getElementById('center-readout-coords').textContent = coordsText;
     document.getElementById('center-readout-mobile-coords').textContent = coordsText;
+
+    var demFt = tryDemElevationFt(c.lat, c.lng);
+    if (demFt != null){
+      if (centerElevTimer) clearTimeout(centerElevTimer);
+      setCenterElevText(demFt.toLocaleString() + ' ft');
+      return;
+    }
+
     if (centerElevTimer) clearTimeout(centerElevTimer);
     centerElevTimer = setTimeout(function(){
       getElevationFt(c.lat, c.lng).then(function(ft){
         // Guard against a stale result resolving after the map has since panned elsewhere
         var nowC = map.getCenter();
         if (nowC.lat.toFixed(5) !== c.lat.toFixed(5) || nowC.lng.toFixed(5) !== c.lng.toFixed(5)) return;
-        var text = ft != null ? ft.toLocaleString() + ' ft' : '';
-        ['center-readout-elev', 'center-readout-mobile-elev'].forEach(function(id){
-          var el = document.getElementById(id);
-          if (!el) return;
-          el.textContent = text;
-          el.classList.toggle('show', !!text);
-        });
+        setCenterElevText(ft != null ? ft.toLocaleString() + ' ft' : '');
       });
     }, 250);
   }
@@ -4057,7 +4070,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     var barPx = (barFeet / 3.28084) / metersPerPixel;
     document.getElementById('scale-bar-line').style.width = Math.max(4, Math.round(barPx)) + 'px';
-    document.getElementById('scale-bar-label').textContent = label + ' · Z' + map.getZoom();
+    document.getElementById('scale-bar-label').textContent = label + ' · Z' + map.getZoom().toFixed(1);
   }
 
   function setMaplibreStyle(styleName){
@@ -4623,7 +4636,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var rows = [];
       Object.keys(GAUGE_PARAM_LABELS).forEach(function(code){
         var f = feats.filter(function(f){ return f.properties && f.properties.parameter_code === code; })[0];
-        if (f) rows.push('<div>' + GAUGE_PARAM_LABELS[code] + ': ' + f.properties.value + ' ' + (f.properties.unit_of_measure || '') + '</div>');
+        if (!f) return;
+        var value = f.properties.value, unit = f.properties.unit_of_measure || '';
+        // USGS reports water temp (00010) in Celsius only, no Fahrenheit equivalent at the
+        // source — convert client-side.
+        if (code === '00010' && value != null && !isNaN(value)){
+          value = (Number(value) * 9 / 5 + 32).toFixed(1);
+          unit = '°F';
+        }
+        rows.push('<div>' + GAUGE_PARAM_LABELS[code] + ': ' + value + ' ' + unit + '</div>');
       });
       return rows.length ? rows.join('') : '<div class="pin-popup-notes">No recent readings available</div>';
     }).catch(function(){
@@ -5776,9 +5797,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function trackPopupHtml(track){
     var dist = track.distMiles !== undefined ? track.distMiles : trackDistanceMiles(track.points);
     var distLabel = formatDist(dist);
+    // Gain/loss shown right alongside distance whenever already cached — previously it only
+    // appeared inside trackElevationSectionHtml, i.e. only after the elevation profile had
+    // been loaded at least once, so a track's own info line never reflected it directly.
+    var gainLossLabel = track.elevGainFt != null ? ' · ▲' + track.elevGainFt.toLocaleString() + 'ft ▼' + track.elevLossFt.toLocaleString() + 'ft' : '';
     var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
     return '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
-      '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel +
+      '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel + gainLossLabel +
       (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
       notes +
       trackElevationSectionHtml(track) +
@@ -5838,20 +5863,94 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   var MAX_ELEV_SAMPLES = 40;
 
-  // Concurrency-limited EPQS lookups (same pattern as the offline tile downloader) across a
-  // sampled subset of the track's points — fetching every single recorded GPS point would be
-  // both slow and unnecessarily hard on the free USGS service for a long track. Result
-  // (gain/loss + the distance/elevation pairs for the chart) is cached on the track object,
-  // so re-opening the popup later doesn't refetch.
+  // Batch DEM lookup for the track elevation profile — fetches each *unique* terrain-RGB
+  // tile covering the sampled points exactly once (typically just 1-4 tiles for a normal
+  // recreational track) and decodes every point's elevation locally from that tile's own
+  // pixel data, instead of one EPQS network round-trip per sampled point. This bypasses
+  // map.queryTerrainElevation() entirely (which only has data for whatever's currently
+  // rendered in the visible viewport — a track being profiled may be off-screen or at a
+  // different zoom) by fetching the raw .pngraw terrain-RGB tiles directly.
+  var demTileCache = {}; // "z/x/y" -> decoded ImageData, or null if that tile failed — reused across profile computations within the session
+  function fetchDemTileImageData(z, x, y){
+    var key = z + '/' + x + '/' + y;
+    if (demTileCache.hasOwnProperty(key)) return Promise.resolve(demTileCache[key]);
+    var url = 'https://api.mapbox.com/v4/mapbox.terrain-rgb/' + z + '/' + x + '/' + y + '.pngraw?access_token=' + MAPBOX_TOKEN;
+    return new Promise(function(resolve){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = img.width; canvas.height = img.height;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          var data = ctx.getImageData(0, 0, img.width, img.height);
+          demTileCache[key] = data;
+          resolve(data);
+        } catch(e){ demTileCache[key] = null; resolve(null); }
+      };
+      img.onerror = function(){ demTileCache[key] = null; resolve(null); };
+      img.src = url;
+    });
+  }
+
+  function lngLatToTilePixel(lng, lat, z){
+    var n = Math.pow(2, z);
+    var xtile = (lng + 180) / 360 * n;
+    var latRad = lat * Math.PI / 180;
+    var ytile = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+    var tileX = Math.floor(xtile), tileY = Math.floor(ytile);
+    var tileSize = 256;
+    return {
+      z: z, x: tileX, y: tileY,
+      px: Math.min(tileSize - 1, Math.floor((xtile - tileX) * tileSize)),
+      py: Math.min(tileSize - 1, Math.floor((ytile - tileY) * tileSize))
+    };
+  }
+
+  // Standard Mapbox terrain-RGB decode: elevation(m) = -10000 + (R*256*256 + G*256 + B)*0.1.
+  // Same implausible-value guard as getElevationFt's DEM tier — a void/edge-artifact pixel
+  // decodes to a huge bogus value rather than erroring, so it's rejected here too.
+  function decodeTerrainRgbElevationFt(imageData, px, py){
+    var idx = (py * imageData.width + px) * 4;
+    var r = imageData.data[idx], g = imageData.data[idx + 1], b = imageData.data[idx + 2];
+    var meters = -10000 + (r * 65536 + g * 256 + b) * 0.1;
+    var ft = Math.round(meters / 0.3048);
+    if (ft < DEM_ELEV_MIN_FT || ft > DEM_ELEV_MAX_FT) return null;
+    return ft;
+  }
+
+  var DEM_BATCH_ZOOM = 12;
+  function batchGetElevationFt(points){
+    var tiles = {};
+    var meta = points.map(function(p, i){
+      var t = lngLatToTilePixel(p.lng, p.lat, DEM_BATCH_ZOOM);
+      var key = t.z + '/' + t.x + '/' + t.y;
+      if (!tiles[key]) tiles[key] = { z: t.z, x: t.x, y: t.y, idxs: [] };
+      tiles[key].idxs.push(i);
+      return { px: t.px, py: t.py };
+    });
+    var results = new Array(points.length).fill(null);
+    return Promise.all(Object.keys(tiles).map(function(key){
+      var tile = tiles[key];
+      return fetchDemTileImageData(tile.z, tile.x, tile.y).then(function(imgData){
+        tile.idxs.forEach(function(i){
+          results[i] = imgData ? decodeTerrainRgbElevationFt(imgData, meta[i].px, meta[i].py) : null;
+        });
+      });
+    })).then(function(){ return results; });
+  }
+
+  // Result (gain/loss + the distance/elevation pairs for the chart) is cached on the track
+  // object, so re-opening the popup later doesn't refetch. Primary path is the batch DEM
+  // tile fetch above; any point that comes back null (tile fetch failed, or decoded to an
+  // implausible value) falls back individually to the full DEM(viewport)->GPS->EPQS
+  // hierarchy — usually just a small handful of points, not all of them.
   function computeTrackElevationProfile(track, onDone){
     var samples = sampleTrackPoints(track.points, MAX_ELEV_SAMPLES);
     if (samples.length === 0){ onDone(false); return; }
-    var results = new Array(samples.length);
-    var CONCURRENCY = 4;
-    var next = 0, done = 0;
 
-    function finish(){
-      if (done < samples.length) return;
+    function finalizeProfile(results){
       var profile = [];
       var cumMi = 0;
       for (var i = 0; i < samples.length; i++){
@@ -5871,18 +5970,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       onDone(true);
     }
 
-    function worker(){
-      if (next >= samples.length) return;
-      var i = next++;
-      getElevationFt(samples[i].lat, samples[i].lng)
-        .then(function(ft){ results[i] = ft; })
-        .catch(function(){ results[i] = null; })
-        .then(function(){
-          done++;
-          if (next < samples.length) worker(); else finish();
-        });
-    }
-    for (var k = 0; k < CONCURRENCY && k < samples.length; k++) worker();
+    batchGetElevationFt(samples).then(function(results){
+      var missing = [];
+      results.forEach(function(r, i){ if (r == null) missing.push(i); });
+      if (missing.length === 0) return results;
+      var CONCURRENCY = 4;
+      var next = 0, done = 0;
+      return new Promise(function(resolve){
+        function worker(){
+          if (next >= missing.length) return;
+          var mi = next++, i = missing[mi];
+          getElevationFt(samples[i].lat, samples[i].lng)
+            .then(function(ft){ results[i] = ft; })
+            .catch(function(){ results[i] = null; })
+            .then(function(){
+              done++;
+              if (next < missing.length) worker();
+              if (done === missing.length) resolve(results);
+            });
+        }
+        for (var k = 0; k < CONCURRENCY && k < missing.length; k++) worker();
+      });
+    }).then(finalizeProfile);
   }
 
   // Tracks have no persistent marker/popup object like pins do (ad-hoc popup created on
@@ -6137,7 +6246,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     editingTrackId = null;
     pendingDrawPoints = points;
     document.getElementById('track-modal-title').textContent = 'Save route';
-    document.getElementById('track-name').value = '';
+    document.getElementById('track-name').value = defaultTrackName(Date.now());
     document.getElementById('track-notes').value = '';
     document.getElementById('track-trip').value = '';
     document.getElementById('track-date').value = tsToDateInputValue(Date.now());
@@ -6147,7 +6256,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips([]);
     document.getElementById('track-modal').classList.remove('hidden');
-    document.getElementById('track-name').focus();
+    // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
+    // sensible default (defaultTrackName) so Save works immediately with no typing needed.
   }
 
   function closeTrackModal(){
@@ -6240,6 +6350,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function defaultWaypointName(ts){
     var d = new Date(ts);
     return 'Waypoint · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+      ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  // Same "sensible auto-filled default, no forced focus" pattern as defaultWaypointName —
+  // audited into the track/area creation flows below (bearings already had their own good
+  // default via bearingAutoName).
+  function defaultTrackName(ts){
+    var d = new Date(ts);
+    return 'Route · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+      ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  function defaultAreaName(ts){
+    var d = new Date(ts);
+    return 'Area · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
       ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
 
@@ -6767,12 +6891,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   };
 
+  // Single source of truth for "only one map tool active at a time." Previously each
+  // setXMode(true) independently remembered to turn off some subset of the others — they'd
+  // drifted out of sync (setPolygonMode and setBearingMode/setElevTapMode didn't turn off
+  // ANY other tool at all), so e.g. leaving Elevation active and then starting Draw Route
+  // left elevTapMode's click handler still swallowing clicks ahead of drawMode's, since the
+  // shared per-layer click handlers all check elevTapMode before drawMode. Every tool
+  // activation now funnels through here first instead.
+  function deactivateAllTools(except){
+    if (addMode && except !== 'add') setAddMode(false);
+    if (measureMode && except !== 'measure') setMeasureMode(false);
+    if (drawMode && except !== 'draw') setDrawMode(false);
+    if (polygonMode && except !== 'polygon') setPolygonMode(false);
+    if (bearingMode && except !== 'bearing') setBearingMode(false);
+    if (elevTapMode && except !== 'elev') setElevTapMode(false);
+    if (compassActive && except !== 'compass') closeCompassPanel();
+  }
+
   function setAddMode(on){
     addMode = on;
-    if (on && measureMode) setMeasureMode(false);
-    if (on && drawMode) setDrawMode(false);
-    if (on && polygonMode) setPolygonMode(false);
-    if (on && bearingMode) setBearingMode(false);
+    if (on) deactivateAllTools('add');
     if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('add-mode', on);
     // Visual feedback via cursor
@@ -6818,8 +6956,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setMeasureMode(on){
     measureMode = on;
-    if (on && addMode) setAddMode(false);
-    if (on && drawMode) setDrawMode(false);
+    if (on) deactivateAllTools('measure');
     if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('measure-mode', on);
     // measure-btn was removed from map controls (now in Tools sheet) — no active-state to toggle
@@ -6829,9 +6966,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setDrawMode(on){
     drawMode = on;
-    if (on && addMode) setAddMode(false);
-    if (on && measureMode) setMeasureMode(false);
-    if (on && polygonMode) setPolygonMode(false);
+    if (on) deactivateAllTools('draw');
     if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('add-mode', on);
     document.getElementById('draw-bar').classList.toggle('hidden', !on);
@@ -7096,6 +7231,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ---------- Polygon drawing ----------
   function setPolygonMode(on){
     polygonMode = on;
+    if (on) deactivateAllTools('polygon');
     if (on) closeAllPanels();
     document.getElementById('polygon-bar').classList.toggle('hidden', !on);
     map.getContainer().classList.toggle('polygon-mode', on);
@@ -7253,7 +7389,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     refreshTripSuggestions();
     editingPolygonId = polygon ? polygon.id : null;
     document.getElementById('polygon-modal-title').textContent = polygon ? 'Edit area' : 'New area';
-    document.getElementById('polygon-name').value = polygon ? polygon.name : '';
+    document.getElementById('polygon-name').value = polygon ? polygon.name : defaultAreaName(Date.now());
     document.getElementById('polygon-notes').value = polygon ? (polygon.notes || '') : '';
     document.getElementById('polygon-trip').value = polygon ? (polygon.trip || '') : '';
     document.getElementById('polygon-date').value = polygon
@@ -7273,7 +7409,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.getElementById('polygon-delete-btn').classList.toggle('hidden', !polygon);
     document.getElementById('polygon-modal').classList.remove('hidden');
-    setTimeout(function(){ document.getElementById('polygon-name').focus(); }, 80);
+    // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
+    // sensible default (defaultAreaName) on new areas so Save works immediately.
   }
 
   function renderPolygonTagChips(activeTags){
@@ -7461,7 +7598,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-delete-btn').classList.toggle('hidden', !b);
     document.getElementById('bearing-remap-btn').classList.toggle('hidden', !b);
     document.getElementById('bearing-modal').classList.remove('hidden');
-    setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
+    // No auto-focus on purpose — see openPinModal's comment for why.
   }
 
   function openBearingModalForNew(originLL, targetLL){
@@ -7488,7 +7625,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     modal.dataset.distMiles = dist;
     document.getElementById('bearing-delete-btn').classList.add('hidden');
     document.getElementById('bearing-modal').classList.remove('hidden');
-    setTimeout(function(){ document.getElementById('bearing-name').focus(); }, 80);
+    // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
+    // sensible default (bearingAutoName) so Save works immediately.
   }
 
   function saveBearingFromModal(){
@@ -7554,6 +7692,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('bearing-bar').classList.add('hidden');
       document.getElementById('bearing-bar').style.display = '';
     } else {
+      deactivateAllTools('bearing');
       closeAllPanels();
       document.getElementById('bearing-bar').classList.remove('hidden');
       document.getElementById('bearing-bar').style.display = 'flex';
@@ -9798,6 +9937,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function setElevTapMode(on){
     elevTapMode = on;
+    if (on) deactivateAllTools('elev');
     if (on) closeAllPanels();
     document.getElementById('map').classList.toggle('elev-tap-mode', on);
     document.getElementById('elev-bar').classList.toggle('hidden', !on);
@@ -9845,20 +9985,41 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   //      historical track sample) where it would just be wrong.
   //   3. USGS EPQS network lookup — last resort, for whenever neither of the above has data.
   var GPS_ALT_MAX_DIST_M = 50, GPS_ALT_MAX_AGE_MS = 30000;
+  // Sanity bound on a DEM result, independent of whatever specific glitch produces an
+  // out-of-range value (a tile queried mid-load returning partial/corrupt data, a void or
+  // edge artifact in a specific tile, a point right on a tile boundary — a handful of pins
+  // have shown results like -11,257 ft where the real elevation was ~4,100 ft, while the
+  // overwhelming majority of DEM lookups are correct, which points at something
+  // tile-specific/intermittent rather than a systemic decode bug). -1,500 ft covers Death
+  // Valley/Badwater Basin (-282 ft) with headroom; 20,000 ft clears Denali (20,310 ft is
+  // the only US point above it, and this app's US-focused DEM tileset tops out well under
+  // Everest anyway).
+  var DEM_ELEV_MIN_FT = -1500, DEM_ELEV_MAX_FT = 20000;
+  // Synchronous, local, effectively-free once tiles are loaded — pulled out on its own so
+  // callers that pan/tick continuously (the crosshair readout) can try it on every single
+  // tick with no throttling at all, and only fall through to the network-based GPS/EPQS
+  // tiers (which DO need throttling) when this comes back empty.
+  function tryDemElevationFt(lat, lng){
+    if (!map) return null;
+    try {
+      var demM = map.queryTerrainElevation({ lng: lng, lat: lat });
+      // MapLibre renders a flat elevation-0 placeholder mesh under any DEM tile that hasn't
+      // finished loading yet (for render continuity while panning/zooming), and
+      // queryTerrainElevation reads straight off that placeholder — it returns exactly 0 for
+      // "no data yet", not null. Treating a literal 0 as "no DEM data" and falling through
+      // to GPS/EPQS is a deliberate tradeoff: it costs one unnecessary fallback lookup for
+      // the rare genuine sea-level point, in exchange for never reporting a false "0 ft" for
+      // every point whose tile simply hasn't loaded.
+      if (demM == null || demM === 0 || isNaN(demM)) return null;
+      var demFt = Math.round(demM / 0.3048);
+      if (demFt < DEM_ELEV_MIN_FT || demFt > DEM_ELEV_MAX_FT) return null; // implausible — treat as unavailable
+      return demFt;
+    } catch(e){ return null; }
+  }
+
   function getElevationFt(lat, lng){
-    if (map){
-      try {
-        var demM = map.queryTerrainElevation({ lng: lng, lat: lat });
-        // MapLibre renders a flat elevation-0 placeholder mesh under any DEM tile that
-        // hasn't finished loading yet (for render continuity while panning/zooming), and
-        // queryTerrainElevation reads straight off that placeholder — it returns exactly 0
-        // for "no data yet", not null. Treating a literal 0 as "no DEM data" and falling
-        // through to GPS/EPQS is a deliberate tradeoff: it costs one unnecessary fallback
-        // lookup for the rare genuine sea-level point, in exchange for never reporting a
-        // false "0 ft" for every point whose tile simply hasn't loaded.
-        if (demM != null && demM !== 0 && !isNaN(demM)) return Promise.resolve(Math.round(demM / 0.3048));
-      } catch(e){}
-    }
+    var demFt = tryDemElevationFt(lat, lng);
+    if (demFt != null) return Promise.resolve(demFt);
     if (lastGpsLatLng && lastGpsAltitudeM != null && (Date.now() - lastGpsAltitudeTime) < GPS_ALT_MAX_AGE_MS){
       var distM = haversineMiles(lastGpsLatLng.lat, lastGpsLatLng.lng, lat, lng) * 1609.34;
       if (distM < GPS_ALT_MAX_DIST_M) return Promise.resolve(Math.round(lastGpsAltitudeM / 0.3048));
@@ -9868,7 +10029,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function fetchElevationAtPoint(latlng){
     document.getElementById('elev-bar-text').textContent = 'Loading…';
-    fetchElevationFt(latlng.lat, latlng.lng).then(function(ft){
+    getElevationFt(latlng.lat, latlng.lng).then(function(ft){
       if (ft == null){
         document.getElementById('elev-bar-text').textContent = 'No data at this point';
         return;
@@ -9886,6 +10047,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var currentGpsLatLng = null;
 
   function openCompassPanel(){
+    deactivateAllTools('compass');
     document.getElementById('compass-panel').classList.remove('hidden');
     compassActive = true;
     // Get GPS position and watch it
@@ -11456,11 +11618,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
     document.getElementById('track-save-btn-top').addEventListener('click', saveTrackFromModal);
     document.getElementById('track-cancel-btn-top').addEventListener('click', closeTrackModal);
+    document.getElementById('track-name').addEventListener('focus', function(){
+      if (!editingTrackId) this.select();
+    });
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
     document.getElementById('polygon-save-btn-top').addEventListener('click', savePolygonFromModal);
     document.getElementById('polygon-cancel-btn-top').addEventListener('click', closePolygonModal);
+    document.getElementById('polygon-name').addEventListener('focus', function(){
+      if (!editingPolygonId) this.select();
+    });
     document.getElementById('polygon-delete-btn').addEventListener('click', function(){
       if (!editingPolygonId) return;
       if (!confirm('Delete this area? This cannot be undone.')) return;
@@ -11473,6 +11641,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-cancel-btn').addEventListener('click', closeBearingModal);
     document.getElementById('bearing-save-btn-top').addEventListener('click', saveBearingFromModal);
     document.getElementById('bearing-cancel-btn-top').addEventListener('click', closeBearingModal);
+    document.getElementById('bearing-name').addEventListener('focus', function(){
+      if (!editingBearingId) this.select();
+    });
     document.getElementById('bearing-delete-btn').addEventListener('click', function(){
       if (!editingBearingId) return;
       if (!confirm('Delete this bearing?')) return;
