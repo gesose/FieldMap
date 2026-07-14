@@ -161,8 +161,6 @@
 
   #sidebar-scroll-area{flex:1;display:flex;flex-direction:column;min-height:0;}
   #pin-list{flex:1;overflow-y:auto;padding:8px 0;}
-  .track-mark-wrap{width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
-  .track-mark{border-radius:3px;width:18px;height:4px;position:relative;}
   .pin-row{
     display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;
   }
@@ -295,8 +293,36 @@
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
   .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
-  .pin-popup-actions-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
-  .pin-popup-actions-grid .btn{padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* Unified popup footer (Directions/Share/Edit data) — same 3-button grid across pins,
+     bearings, tracks, and areas. */
+  .pin-popup-footer{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;}
+  .pin-popup-footer .btn{padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* "···" overflow menu — Delete + one type-specific geometry action (Move/Edit
+     endpoints/Edit shape), tucked away from the 3 primary footer actions. Positioned in the
+     name row itself (not absolutely over the popup) so it never collides with MapLibre's
+     own close button, which is reserved space in the top-right of .maplibregl-popup-content. */
+  .pin-popup-name-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;}
+  .pin-popup-name-row .pin-popup-name{margin-bottom:0;}
+  .popup-overflow-wrap{position:relative;flex-shrink:0;}
+  .popup-overflow-btn{
+    background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;
+    cursor:pointer;padding:3px 7px;border-radius:6px;letter-spacing:1px;
+  }
+  .popup-overflow-btn:hover{background:var(--bg-elevated-2);color:var(--text);}
+  .popup-overflow-menu{
+    display:none;position:absolute;top:24px;right:0;background:var(--bg-elevated-2);
+    border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
+    min-width:150px;z-index:20;overflow:hidden;
+  }
+  .popup-overflow-menu.show{display:block;}
+  .popup-overflow-menu button{
+    display:block;width:100%;text-align:left;padding:9px 12px;background:none;border:none;
+    color:var(--text);font-size:13px;cursor:pointer;font-family:var(--font-sans);
+  }
+  .popup-overflow-menu button:hover{background:var(--bg-elevated);}
+  .popup-overflow-menu button.danger{color:#e3897d;}
 
   /* MapLibre popup: library defaults to a white content box, so re-theme it dark to
      match the old Leaflet popup (.leaflet-popup-content-wrapper above) and the rest
@@ -1988,7 +2014,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.14.1';
+  var APP_VERSION = '2.15.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3425,6 +3451,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return '<svg viewBox="' + icon.vb + '" width="' + s + '" height="' + s + '" style="' + style + 'display:block;">' + icon.g + '</svg>';
   }
 
+  // Same stroke glyphs as the +Add sheet's "Draw route"/"Draw area"/"Add bearing" buttons —
+  // reused here (sidebar list icons) so a track/area/bearing row shows the same glyph a
+  // user already associates with that tool, instead of the ad-hoc bar/square/dot shapes
+  // that were there before.
+  var TYPE_GLYPHS = {
+    track: '<path d="M6.7 16.6 10.4 7.9M13.4 7.1 17.3 12.5"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="14" r="2"/>',
+    polygon: '<polygon points="12,3 21,9 18,20 6,20 3,9"/>',
+    bearing: '<line x1="5" y1="19" x2="19" y2="5" stroke-dasharray="4,2"/><polyline points="13,5 19,5 19,11"/>'
+  };
+  function renderTypeGlyph(type, sizePx){
+    var g = TYPE_GLYPHS[type];
+    if (!g) return '';
+    var s = sizePx || 16;
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="white" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="display:block;">' + g + '</svg>';
+  }
+
   // Legacy helper kept for track/polygon coloring
   function tagVisualFor(item){
     var tag = tagById((item.tags && item.tags[0]) || 'uncategorized');
@@ -4800,6 +4842,174 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       renderMarkerIcon(iconKey, iconSize) + '</div>';
   }
 
+  // ── Shared popup footer / overflow menu (pins, bearings, tracks, areas) ──
+  // Footer is always the same 3 actions in the same order; the overflow ("···") menu is
+  // always Delete (styled destructive) plus exactly one type-specific geometry action
+  // (Move for a pin, Edit endpoints for a bearing, Edit shape for a track/area).
+  function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick){
+    return '<div class="pin-popup-footer">' +
+      '<button class="btn btn-small" onclick="' + directionsOnclick + '">Directions</button>' +
+      '<button class="btn btn-small" onclick="' + shareOnclick + '">Share</button>' +
+      '<button class="btn btn-small" onclick="' + editOnclick + '">Edit data</button>' +
+      '</div>';
+  }
+
+  // menuId must be unique per popup instance — pins can have several popups open at once
+  // (one per marker), so a shared/generic id would collide.
+  function popupOverflowHtml(menuId, geometryLabel, geometryOnclick, deleteOnclick){
+    return '<div class="popup-overflow-wrap">' +
+      '<button class="popup-overflow-btn" onclick="FieldMap.toggleOverflowMenu(\'' + menuId + '\')" aria-label="More actions">&#8942;</button>' +
+      '<div class="popup-overflow-menu" id="' + menuId + '">' +
+        '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' +
+        '<button class="danger" onclick="' + deleteOnclick + '">Delete</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Standard geo destination link (Google Maps directions) — one universal URL handed to
+  // window.open() and left to the OS/browser to resolve (Universal Links intercept to the
+  // installed Maps app on iOS/Android when present, otherwise it opens as a normal web
+  // page). No in-app app picker, no installed-app detection, no settings toggle — exactly
+  // one link, always.
+  function openDirectionsTo(lat, lng){
+    var url = 'https://www.google.com/maps/dir/?api=1&destination=' + lat.toFixed(6) + ',' + lng.toFixed(6);
+    window.open(url, '_blank', 'noopener');
+  }
+
+  // Unified Share for pin/bearing/area (track keeps its own GPX export — see shareTrack,
+  // deliberately different since a multi-point line doesn't reduce to one coordinate the
+  // way these three do). Always builds the shared text from the live lat/lng at share time,
+  // at full 6-decimal precision — never a cached or display-truncated value — so "Copy
+  // coordinates" is effectively whatever "Copy" action the OS share sheet itself offers for
+  // shared text. Falls back to copying a Google Maps link when navigator.share isn't
+  // available (e.g. most desktop browsers).
+  function shareLocationText(name, lat, lng, extraLine){
+    var latStr = lat.toFixed(6), lngStr = lng.toFixed(6);
+    var url = 'https://www.google.com/maps?q=' + latStr + ',' + lngStr;
+    var text = name + (extraLine ? '\n' + extraLine : '') + '\n' + latStr + ', ' + lngStr;
+    if (navigator.share){
+      navigator.share({ title: name, text: text, url: url }).catch(function(){});
+    } else if (navigator.clipboard){
+      navigator.clipboard.writeText(url).then(function(){ showToast('Google Maps link copied'); });
+    } else {
+      showToast(latStr + ', ' + lngStr, 5000);
+    }
+  }
+
+  // Bearings and tracks have two natural endpoints and no single "the" location, so
+  // Directions needs to ask which one first. Reuses whichever ad-hoc popup is currently
+  // open (bearing/track popups are singletons — see openBearingPopup/openTrackPopup) by
+  // temporarily swapping its content for a 2-button chooser, then restoring the original
+  // HTML afterward (whether the user picked one or cancelled).
+  var _directionsChoiceCtx = null;
+  function promptDirectionsChoice(popup, restoreHtml, onChoice){
+    if (!popup) return;
+    _directionsChoiceCtx = { restoreHtml: restoreHtml, onChoice: onChoice, popup: popup };
+    popup.setHTML(
+      '<div class="pin-popup-name">Directions to…</div>' +
+      '<div class="pin-popup-actions" style="margin-top:8px;">' +
+      '<button class="btn btn-small" onclick="FieldMap.resolveDirectionsChoice(true)">To start</button>' +
+      '<button class="btn btn-small" onclick="FieldMap.resolveDirectionsChoice(false)">To end</button>' +
+      '</div>' +
+      '<button class="btn btn-small btn-ghost" style="margin-top:6px;width:100%;" onclick="FieldMap.resolveDirectionsChoice(null)">Cancel</button>'
+    );
+  }
+
+  // Pole-of-inaccessibility (Mapbox's polylabel algorithm, ported inline rather than pulled
+  // in as a CDN dependency — this is a PWA that must keep working fully offline via the
+  // service worker cache, and this is the one place in the app that needs it). Finds the
+  // point of maximum distance from the polygon boundary, which — unlike a naive vertex
+  // average — is guaranteed to actually be inside the polygon even for a concave or
+  // crescent-shaped area where a centroid can land outside the shape entirely.
+  function polylabelDistToPolygon(x, y, rings){
+    var inside = false;
+    var minDistSq = Infinity;
+    for (var k = 0; k < rings.length; k++){
+      var ring = rings[k];
+      for (var i = 0, len = ring.length, j = len - 1; i < len; j = i++){
+        var a = ring[i], b = ring[j];
+        if ((a[1] > y) !== (b[1] > y) && (x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0])) inside = !inside;
+        minDistSq = Math.min(minDistSq, polylabelDistToSegSq(x, y, a, b));
+      }
+    }
+    var d = Math.sqrt(minDistSq);
+    return inside ? d : -d;
+  }
+  function polylabelDistToSegSq(px, py, a, b){
+    var x = a[0], y = a[1], dx = b[0] - x, dy = b[1] - y;
+    if (dx !== 0 || dy !== 0){
+      var t = ((px - x) * dx + (py - y) * dy) / (dx * dx + dy * dy);
+      if (t > 1){ x = b[0]; y = b[1]; } else if (t > 0){ x += dx * t; y += dy * t; }
+    }
+    dx = px - x; dy = py - y;
+    return dx * dx + dy * dy;
+  }
+  function polylabelPoint(rings, precision){
+    precision = precision || 0.000001; // ~ well under a meter at typical field-area scales
+    var minX, minY, maxX, maxY;
+    var outer = rings[0];
+    for (var i = 0; i < outer.length; i++){
+      var p = outer[i];
+      if (minX === undefined || p[0] < minX) minX = p[0];
+      if (minY === undefined || p[1] < minY) minY = p[1];
+      if (maxX === undefined || p[0] > maxX) maxX = p[0];
+      if (maxY === undefined || p[1] > maxY) maxY = p[1];
+    }
+    var width = maxX - minX, height = maxY - minY;
+    var cellSize = Math.max(Math.min(width, height), 1e-9);
+    var h = cellSize / 2;
+    function newCell(x, y, h){
+      var d = polylabelDistToPolygon(x, y, rings);
+      return { x: x, y: y, h: h, d: d, max: d + h * Math.SQRT2 };
+    }
+    if (cellSize === 0) return { x: minX, y: minY };
+
+    var cellQueue = [];
+    for (var x = minX; x < maxX; x += cellSize){
+      for (var y = minY; y < maxY; y += cellSize){
+        cellQueue.push(newCell(x + h, y + h, h));
+      }
+    }
+    // Seed with the centroid — usually a good starting bound, and the fallback answer for
+    // a degenerate zero-area ring.
+    var area = 0, cx = 0, cy = 0;
+    for (var pi = 0, plen = outer.length, pj = plen - 1; pi < plen; pj = pi++){
+      var pa = outer[pi], pb = outer[pj];
+      var f = pa[0] * pb[1] - pb[0] * pa[1];
+      cx += (pa[0] + pb[0]) * f;
+      cy += (pa[1] + pb[1]) * f;
+      area += f * 3;
+    }
+    var bestCell = area !== 0 ? newCell(cx / area, cy / area, 0) : newCell(outer[0][0], outer[0][1], 0);
+    var bboxCell = newCell(minX + width / 2, minY + height / 2, 0);
+    if (bboxCell.d > bestCell.d) bestCell = bboxCell;
+
+    cellQueue.sort(function(a, b){ return a.max - b.max; });
+    var guard = 0;
+    while (cellQueue.length && guard++ < 20000){
+      var cell = cellQueue.pop();
+      if (cell.d > bestCell.d) bestCell = cell;
+      if (cell.max - bestCell.d <= precision) continue;
+      var half = cell.h / 2;
+      cellQueue.push(newCell(cell.x - half, cell.y - half, half));
+      cellQueue.push(newCell(cell.x + half, cell.y - half, half));
+      cellQueue.push(newCell(cell.x - half, cell.y + half, half));
+      cellQueue.push(newCell(cell.x + half, cell.y + half, half));
+      cellQueue.sort(function(a, b){ return a.max - b.max; });
+    }
+    return { x: bestCell.x, y: bestCell.y };
+  }
+  // points may be [[lat,lng],...] or [{lat,lng},...] (both formats are used across the
+  // app — see polygonAreaSqMiles) — normalize to [[lng,lat],...] (x,y) for polylabelPoint,
+  // then convert the result back.
+  function polygonInteriorPoint(points){
+    var ring = points.map(function(p){
+      return Array.isArray(p) ? [p[1], p[0]] : [p.lng, p.lat];
+    });
+    var result = polylabelPoint([ring]);
+    return { lat: result.y, lng: result.x };
+  }
+
   function popupHtml(pin){
     var sc = STATUS_COLORS[pin.status || 'escout'] || STATUS_COLORS.escout;
     var tag = tagById((pin.tags && pin.tags[0]) || 'uncategorized');
@@ -4807,7 +5017,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var statusBadge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + sc.bg + '22;border:1px solid ' + sc.bg + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
       '<span style="width:7px;height:7px;border-radius:50%;background:' + sc.bg + ';flex-shrink:0;display:inline-block;"></span>' +
       '<span style="font-size:10px;font-weight:700;color:' + sc.bg + ';">' + sc.label + '</span></span>';
-    return '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
+    return '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
+        popupOverflowHtml('overflow-pin-' + pin.id, 'Move', 'FieldMap.movePin(\'' + pin.id + '\')', 'FieldMap.deletePin(\'' + pin.id + '\')') +
+      '</div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' +
         statusBadge +
         '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(tag.label) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (pin.trip ? ' · ' + escapeHtml(pin.trip) : '') + '</span>' +
@@ -4815,14 +5028,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       notes +
       '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) +
         (pin.elevationFt != null ? ' · ' + pin.elevationFt.toLocaleString() + ' ft' : '') + '</div>' +
-      '<div class="pin-popup-actions pin-popup-actions-grid">' +
-      '<button class="btn btn-small" onclick="FieldMap.sharePin(\'' + pin.id + '\')">Share</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.editPin(\'' + pin.id + '\')">Edit</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.movePin(\'' + pin.id + '\')">Move</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.directionsToPin(\'' + pin.id + '\')">Directions</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.copyPinCoords(\'' + pin.id + '\')">Copy coords</button>' +
-      '<button class="btn btn-small btn-danger" onclick="FieldMap.deletePin(\'' + pin.id + '\')">Delete</button>' +
-      '</div>';
+      popupFooterHtml(
+        'FieldMap.directionsToPin(\'' + pin.id + '\')',
+        'FieldMap.sharePin(\'' + pin.id + '\')',
+        'FieldMap.editPin(\'' + pin.id + '\')'
+      );
   }
 
   // Backfill for pins created before automatic elevation lookup existed — lazy, triggered
@@ -5911,17 +6121,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // been loaded at least once, so a track's own info line never reflected it directly.
     var gainLossLabel = track.elevGainFt != null ? ' · ▲' + track.elevGainFt.toLocaleString() + 'ft ▼' + track.elevLossFt.toLocaleString() + 'ft' : '';
     var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
-    return '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
+    return '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
+        popupOverflowHtml('overflow-track-' + track.id, 'Edit shape', 'FieldMap.editTrackVertices(\'' + track.id + '\')', 'FieldMap.deleteTrack(\'' + track.id + '\')') +
+      '</div>' +
       '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel + gainLossLabel +
       (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
       notes +
       trackElevationSectionHtml(track) +
-      '<div class="pin-popup-actions">' +
-      '<button class="btn btn-small" onclick="FieldMap.shareTrack(\'' + track.id + '\')">Share</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.editTrack(\'' + track.id + '\')">Edit</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.editTrackVertices(\'' + track.id + '\')">Edit shape</button>' +
-      '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteTrack(\'' + track.id + '\')">Delete</button>' +
-      '</div>';
+      popupFooterHtml(
+        'FieldMap.directionsToTrack(\'' + track.id + '\')',
+        'FieldMap.shareTrack(\'' + track.id + '\')',
+        'FieldMap.editTrack(\'' + track.id + '\')'
+      );
   }
 
   // Draws a simple filled line chart of a track's cached elevation profile onto a canvas —
@@ -6645,38 +6857,39 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     sharePin: function(id){
       var pin = state.pins.find(function(p){ return p.id === id; });
       if (!pin) return;
-      var url = 'https://www.google.com/maps?q=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6);
-      var text = pin.name + '\n' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5);
-      if (navigator.share){
-        navigator.share({ title: pin.name, text: text, url: url }).catch(function(){});
-      } else {
-        navigator.clipboard ? navigator.clipboard.writeText(url).then(function(){ showToast('Google Maps link copied'); }) :
-          showToast(pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5), 5000);
-      }
+      shareLocationText(pin.name, pin.lat, pin.lng);
     },
     directionsToPin: function(id){
       var pin = state.pins.find(function(p){ return p.id === id; });
       if (!pin) return;
-      var isAppleDevice = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
-      var url = isAppleDevice
-        ? 'https://maps.apple.com/?daddr=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6) + '&dirflg=d'
-        : 'https://www.google.com/maps/dir/?api=1&destination=' + pin.lat.toFixed(6) + ',' + pin.lng.toFixed(6);
-      window.open(url, '_blank', 'noopener');
+      openDirectionsTo(pin.lat, pin.lng);
     },
-    copyPinCoords: function(id){
-      var pin = state.pins.find(function(p){ return p.id === id; });
-      if (!pin) return;
-      var text = pin.lat.toFixed(6) + ', ' + pin.lng.toFixed(6);
-      if (navigator.clipboard){
-        navigator.clipboard.writeText(text).then(function(){ showToast('Coordinates copied'); })
-          .catch(function(){ showToast(text, 6000); });
-      } else {
-        showToast(text, 6000);
-      }
+    toggleOverflowMenu: function(menuId){
+      var menu = document.getElementById(menuId);
+      if (!menu) return;
+      var wasOpen = menu.classList.contains('show');
+      document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
+      if (!wasOpen) menu.classList.add('show');
+    },
+    resolveDirectionsChoice: function(useStart){
+      var ctx = _directionsChoiceCtx;
+      _directionsChoiceCtx = null;
+      if (!ctx) return;
+      ctx.popup.setHTML(ctx.restoreHtml);
+      if (useStart != null) ctx.onChoice(useStart);
     },
     editTrack: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
       if (track) openTrackModal(track);
+    },
+    directionsToTrack: function(id){
+      var track = state.tracks.find(function(t){ return t.id === id; });
+      if (!track || !track.points || !track.points.length || !openTrackPopup) return;
+      promptDirectionsChoice(openTrackPopup, trackPopupHtml(track), function(useStart){
+        var p = useStart ? track.points[0] : track.points[track.points.length - 1];
+        var lat = Array.isArray(p) ? p[0] : p.lat, lng = Array.isArray(p) ? p[1] : p.lng;
+        openDirectionsTo(lat, lng);
+      });
     },
     loadTrackElevation: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
@@ -6719,6 +6932,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
         openPolygonModal(poly);
       }
+    },
+    directionsToPolygon: function(id){
+      var poly = state.polygons.find(function(p){ return p.id === id; });
+      if (!poly || !poly.points || poly.points.length < 3) return;
+      var pt = polygonInteriorPoint(poly.points);
+      openDirectionsTo(pt.lat, pt.lng);
+    },
+    sharePolygon: function(id){
+      var poly = state.polygons.find(function(p){ return p.id === id; });
+      if (!poly || !poly.points || poly.points.length < 3) return;
+      var pt = polygonInteriorPoint(poly.points);
+      shareLocationText(poly.name, pt.lat, pt.lng, polygonAreaDisplay(poly.points));
     },
     deletePolygon: function(id){
       if (confirm('Delete this area? This cannot be undone.')){
@@ -7041,6 +7266,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
         openBearingModal(b);
       }
+    },
+    editBearingEndpoints: function(id){
+      var b = state.bearings.find(function(x){ return x.id === id; });
+      if (!b) return;
+      if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
+      startBearingEndpointRemap(b);
+    },
+    directionsToBearing: function(id){
+      var b = state.bearings.find(function(x){ return x.id === id; });
+      if (!b || !openBearingPopup) return;
+      promptDirectionsChoice(openBearingPopup, bearingPopupHtml(b), function(useStart){
+        var pt = useStart ? { lat: b.originLat, lng: b.originLng } : { lat: b.targetLat, lng: b.targetLng };
+        openDirectionsTo(pt.lat, pt.lng);
+      });
+    },
+    shareBearing: function(id){
+      var b = state.bearings.find(function(x){ return x.id === id; });
+      if (!b) return;
+      var extra = bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
+      // Skip the extra summary line if it'd just duplicate the name — a bearing's
+      // auto-generated default name (see bearingAutoName) is already this exact string.
+      shareLocationText(b.name, b.originLat, b.originLng, extra === b.name ? null : extra);
     },
     deleteBearing: function(id){
       if (confirm('Delete this bearing? This cannot be undone.')){
@@ -7397,16 +7644,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var area = polygonAreaDisplay(polygon.points);
     var areaLabel = area ? ' · ' + area : '';
     return '<div class="pin-popup-body">' +
-      '<div class="pin-popup-name">' + escapeHtml(polygon.name) + '</div>' +
+      '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(polygon.name) + '</div>' +
+        popupOverflowHtml('overflow-area-' + polygon.id, 'Edit shape', 'FieldMap.editPolygonVertices(\'' + polygon.id + '\')', 'FieldMap.deletePolygon(\'' + polygon.id + '\')') +
+      '</div>' +
       '<div class="pin-popup-meta">' + tagLabelsFor(polygon) + areaLabel +
         (polygon.state ? ' · ' + polygon.state : '') +
         (polygon.trip ? ' · ' + polygon.trip : '') + '</div>' +
       '</div>' +
-      '<div class="pin-popup-actions">' +
-      '<button class="btn btn-small" onclick="FieldMap.editPolygon(\'' + polygon.id + '\')">Edit</button>' +
-      '<button class="btn btn-small" onclick="FieldMap.editPolygonVertices(\'' + polygon.id + '\')">Edit shape</button>' +
-      '<button class="btn btn-small btn-danger" onclick="FieldMap.deletePolygon(\'' + polygon.id + '\')">Delete</button>' +
-      '</div>';
+      popupFooterHtml(
+        'FieldMap.directionsToPolygon(\'' + polygon.id + '\')',
+        'FieldMap.sharePolygon(\'' + polygon.id + '\')',
+        'FieldMap.editPolygon(\'' + polygon.id + '\')'
+      );
   }
 
   // Areas have no persistent marker/popup object like pins do (ad-hoc popup created on
@@ -7685,17 +7935,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var meta = bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
     if (catLabel) meta += ' · ' + catLabel;
     if (b.trip) meta += ' · ' + escapeHtml(b.trip);
-    return '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
+    return '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
+        popupOverflowHtml('overflow-bearing-' + b.id, 'Edit endpoints', 'FieldMap.editBearingEndpoints(\'' + b.id + '\')', 'FieldMap.deleteBearing(\'' + b.id + '\')') +
+      '</div>' +
       '<div class="pin-popup-cat">' + meta + '</div>' +
       notes +
       '<div class="pin-popup-coords">' +
         'Origin: ' + b.originLat.toFixed(5) + ', ' + b.originLng.toFixed(5) + '<br>' +
         'Target: ' + b.targetLat.toFixed(5) + ', ' + b.targetLng.toFixed(5) +
       '</div>' +
-      '<div class="pin-popup-actions">' +
-      '<button class="btn btn-small" onclick="FieldMap.editBearing(\'' + b.id + '\')">Edit</button>' +
-      '<button class="btn btn-small btn-danger" onclick="FieldMap.deleteBearing(\'' + b.id + '\')">Delete</button>' +
-      '</div>';
+      popupFooterHtml(
+        'FieldMap.directionsToBearing(\'' + b.id + '\')',
+        'FieldMap.shareBearing(\'' + b.id + '\')',
+        'FieldMap.editBearing(\'' + b.id + '\')'
+      );
   }
 
   // Bearings have no persistent marker/popup object like pins do (ad-hoc popup created
@@ -7780,6 +8034,81 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-remap-btn').classList.toggle('hidden', !b);
     document.getElementById('bearing-modal').classList.remove('hidden');
     // No auto-focus on purpose — see openPinModal's comment for why.
+  }
+
+  // Drag-to-relocate-endpoints mode for an existing saved bearing. Extracted out of the
+  // bearing-remap-btn modal-button handler so the popup's overflow menu ("Edit endpoints")
+  // can jump straight into this without needing to open+immediately-close the edit modal
+  // first — the modal-button handler still exists for the in-modal entry point, it just
+  // saves the modal's own fields back first, then calls this the same way.
+  function startBearingEndpointRemap(b){
+    // Hide the saved bearing (line + target dot) while its endpoints are being dragged
+    bearingEndpointEditingId = b.id;
+    updateBearingsSource();
+
+    var makeDragEl = function(color){
+      var el = document.createElement('div');
+      el.innerHTML = '<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>';
+      return el;
+    };
+    var oMark = new maplibregl.Marker({ element: makeDragEl('#3A8F45'), anchor:'center', draggable:true }).setLngLat([b.originLng, b.originLat]).addTo(map);
+    var tMark = new maplibregl.Marker({ element: makeDragEl('#D64545'), anchor:'center', draggable:true }).setLngLat([b.targetLng, b.targetLat]).addTo(map);
+
+    // Update the live preview line as the user drags
+    function syncLine(){
+      if (!map.getSource('bearing-endpoint-preview-source')) return;
+      var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
+      map.getSource('bearing-endpoint-preview-source').setData({
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [[oLL.lng, oLL.lat], [tLL.lng, tLL.lat]] }, properties: {} }]
+      });
+    }
+    bearingEndpointSyncFn = syncLine;
+    syncLine();
+    oMark.on('drag', syncLine);
+    tMark.on('drag', syncLine);
+
+    // Confirm bar — reuse bearing bar
+    document.getElementById('bearing-bar-text').textContent = 'Drag endpoints · tap Done to save';
+    document.getElementById('bearing-bar').classList.remove('hidden');
+    document.getElementById('bearing-bar').style.display = 'flex';
+    // Replace cancel button with Done/Cancel pair temporarily
+    var barEl = document.getElementById('bearing-bar');
+    var doneBtn = document.createElement('button');
+    doneBtn.className = 'btn btn-small btn-primary';
+    doneBtn.textContent = 'Done';
+    barEl.appendChild(doneBtn);
+
+    var finish = function(save){
+      oMark.off('drag', syncLine); tMark.off('drag', syncLine);
+      oMark.remove(); tMark.remove();
+      barEl.removeChild(doneBtn);
+      document.getElementById('bearing-bar').classList.add('hidden');
+      document.getElementById('bearing-bar').style.display = '';
+      if (map.getSource('bearing-endpoint-preview-source')){
+        map.getSource('bearing-endpoint-preview-source').setData({ type: 'FeatureCollection', features: [] });
+      }
+      bearingEndpointSyncFn = null;
+      bearingEndpointEditingId = null;
+      if (save){
+        var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
+        b.originLat = oLL.lat; b.originLng = oLL.lng;
+        b.targetLat = tLL.lat; b.targetLng = tLL.lng;
+        b.bearingDeg = bearingBetween(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
+        b.distMiles = haversineMiles(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
+        refreshBearingMap(b);
+        renderPinList();
+        scheduleSave();
+        showToast('Bearing endpoints updated');
+      } else {
+        refreshBearingMap(b);
+      }
+      // Restore cancel button behavior
+      document.getElementById('bearing-bar-cancel').onclick = null;
+    };
+
+    doneBtn.addEventListener('click', function(){ finish(true); });
+    document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
   }
 
   function openBearingModalForNew(originLL, targetLL){
@@ -8344,34 +8673,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       row.appendChild(cb);
     }
 
+    // Same "status-colored circle + white glyph" treatment for all 4 types — track/
+    // polygon/bearing previously used ad-hoc shapes (a bar, a square, a line-with-dot) that
+    // didn't match the glyph already used for that tool everywhere else (the +Add sheet's
+    // Draw route/Draw area/Add bearing buttons); status color-coding itself is unchanged,
+    // this only swaps in the correct glyph.
     var mark = document.createElement('div');
+    mark.className = 'pin-dot';
+    var scItem = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
+    mark.style.cssText = 'background:' + scItem.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
     if (it.type === 'track'){
-      var scTrack = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.className = 'track-mark-wrap';
-      var bar = document.createElement('div');
-      bar.className = 'track-mark';
-      bar.style.background = scTrack.bg;
-      mark.appendChild(bar);
+      mark.innerHTML = renderTypeGlyph('track', 16);
     } else if (it.type === 'polygon'){
-      var scPoly = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.style.cssText = 'width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
-      var sq = document.createElement('div');
-      sq.style.cssText = 'width:12px;height:12px;border-radius:2px;background:' + scPoly.bg + ';';
-      mark.appendChild(sq);
+      mark.innerHTML = renderTypeGlyph('polygon', 16);
     } else if (it.type === 'bearing'){
-      var scBrg = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.style.cssText = 'width:26px;height:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
-      var bLine = document.createElement('div');
-      bLine.style.cssText = 'width:16px;height:2px;border-radius:1px;background:' + scBrg.bg + ';position:relative;';
-      var bDot = document.createElement('div');
-      bDot.style.cssText = 'position:absolute;right:-3px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:' + scBrg.bg + ';';
-      bLine.appendChild(bDot);
-      mark.appendChild(bLine);
+      mark.innerHTML = renderTypeGlyph('bearing', 16);
     } else {
-      // Pin: use status color + tiny SVG icon
-      var sc = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-      mark.className = 'pin-dot';
-      mark.style.cssText = 'background:' + sc.bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;';
       mark.innerHTML = renderMarkerIcon(iconKeyForItem(d), 16);
     }
     row.appendChild(mark);
@@ -11865,74 +12182,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       b.tags = tags.length ? tags : (b.tags || ['uncategorized']);
       scheduleSave();
       closeBearingModal();
-
-      // Hide the saved bearing (line + target dot) while its endpoints are being dragged
-      bearingEndpointEditingId = b.id;
-      updateBearingsSource();
-
-      var makeDragEl = function(color){
-        var el = document.createElement('div');
-        el.innerHTML = '<div style="width:18px;height:18px;border-radius:50%;background:' + color + ';border:3px solid #fff;box-sizing:border-box;cursor:grab;"></div>';
-        return el;
-      };
-      var oMark = new maplibregl.Marker({ element: makeDragEl('#3A8F45'), anchor:'center', draggable:true }).setLngLat([b.originLng, b.originLat]).addTo(map);
-      var tMark = new maplibregl.Marker({ element: makeDragEl('#D64545'), anchor:'center', draggable:true }).setLngLat([b.targetLng, b.targetLat]).addTo(map);
-
-      // Update the live preview line as the user drags
-      function syncLine(){
-        if (!map.getSource('bearing-endpoint-preview-source')) return;
-        var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
-        map.getSource('bearing-endpoint-preview-source').setData({
-          type: 'FeatureCollection',
-          features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [[oLL.lng, oLL.lat], [tLL.lng, tLL.lat]] }, properties: {} }]
-        });
-      }
-      bearingEndpointSyncFn = syncLine;
-      syncLine();
-      oMark.on('drag', syncLine);
-      tMark.on('drag', syncLine);
-
-      // Confirm bar — reuse bearing bar
-      document.getElementById('bearing-bar-text').textContent = 'Drag endpoints · tap Done to save';
-      document.getElementById('bearing-bar').classList.remove('hidden');
-      document.getElementById('bearing-bar').style.display = 'flex';
-      // Replace cancel button with Done/Cancel pair temporarily
-      var barEl = document.getElementById('bearing-bar');
-      var doneBtn = document.createElement('button');
-      doneBtn.className = 'btn btn-small btn-primary';
-      doneBtn.textContent = 'Done';
-      barEl.appendChild(doneBtn);
-
-      var finish = function(save){
-        oMark.off('drag', syncLine); tMark.off('drag', syncLine);
-        oMark.remove(); tMark.remove();
-        barEl.removeChild(doneBtn);
-        document.getElementById('bearing-bar').classList.add('hidden');
-        document.getElementById('bearing-bar').style.display = '';
-        if (map.getSource('bearing-endpoint-preview-source')){
-          map.getSource('bearing-endpoint-preview-source').setData({ type: 'FeatureCollection', features: [] });
-        }
-        bearingEndpointSyncFn = null;
-        bearingEndpointEditingId = null;
-        if (save){
-          var oLL = oMark.getLngLat(), tLL = tMark.getLngLat();
-          b.originLat = oLL.lat; b.originLng = oLL.lng;
-          b.targetLat = tLL.lat; b.targetLng = tLL.lng;
-          b.bearingDeg = bearingBetween(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
-          b.distMiles = haversineMiles(oLL.lat, oLL.lng, tLL.lat, tLL.lng);
-          refreshBearingMap(b);
-          renderPinList();
-          scheduleSave();
-          showToast('Bearing endpoints updated');
-        } else {
-          refreshBearingMap(b);
-        }
-        // Restore cancel button behavior
-        document.getElementById('bearing-bar-cancel').onclick = null;
-      };
-
-      doneBtn.addEventListener('click', function(){ finish(true); });
-      document.getElementById('bearing-bar-cancel').addEventListener('click', function(){ finish(false); }, { once:true });
+      startBearingEndpointRemap(b);
     });
 
     // Bearing draw bar cancel
@@ -12225,6 +12475,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           panel.classList.add('hidden');
         }
       });
+      // Popup "···" overflow menus (pin/bearing/track/area) — same click-outside-closes
+      // pattern as the panels above.
+      document.querySelectorAll('.popup-overflow-menu.show').forEach(function(menu){
+        if (!menu.contains(e.target) && e.target !== menu.previousElementSibling){
+          menu.classList.remove('show');
+        }
+      });
     });
 
     document.querySelectorAll('input[name="base-layer"]').forEach(function(radio){
@@ -12392,6 +12649,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.addEventListener('keydown', function(e){
       if (e.key === 'Escape'){
+        document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
         closePinModal();
         closeTrackModal();
         document.getElementById('import-modal').classList.add('hidden');
