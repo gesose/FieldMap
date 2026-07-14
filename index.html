@@ -137,6 +137,10 @@
   .radio-opt{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;}
   .radio-opt input{accent-color:var(--accent);}
   .layer-overlay-row{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  /* Same visual treatment as .btn:disabled — hints that this overlay has no downloaded data
+     for the current view while offline, without actually disabling the toggle (it still
+     works; there's just nothing to show). See updateOverlayOfflineAvailability(). */
+  .layer-overlay-row.offline-unavailable{opacity:0.45;}
   .layer-overlay-row input{accent-color:var(--accent);}
   .opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
   .opacity-row.show{display:flex;}
@@ -219,6 +223,13 @@
 
   .modal-wide{max-width:540px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;}
   .modal-wide .modal-actions{position:sticky;bottom:0;background:var(--bg-elevated);padding-top:10px;border-top:1px solid var(--border);margin-top:auto;}
+  /* A modal-wide with two .modal-actions rows (e.g. offline-modal's "Download this area"
+     row followed later by its "Close" row) would otherwise both be position:sticky;bottom:0
+     and end up stacked on top of each other once scrolled far enough — the later one in DOM
+     order visually and functionally covers the earlier one, silently eating its clicks. Only
+     the LAST action row (the one that closes the modal) should actually stick; earlier ones
+     flow normally with the content. */
+  .modal-wide .modal-actions.modal-actions-inline{position:static;background:none;border-top:none;padding-top:0;margin-top:16px;}
   #import-pins-section, #import-tracks-section{margin-bottom:14px;}
   #import-item-list{max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px;}
   #import-track-list{max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;}
@@ -1372,6 +1383,7 @@
   </label>
   <div class="layer-info-panel" id="lh-hydro">
     <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset (NHDPlus HR) — live queried for the visible map area, zoom in past Z10 to load. Tap a river, stream, or lake to see its name.</div>
+    <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
     <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
   </div>
 
@@ -1380,6 +1392,7 @@
   </label>
   <div class="layer-info-panel" id="lh-gauge">
     <div class="layer-info-desc">USGS stream gauge stations — live queried for the visible map area, zoom in past Z8 to load. Tap a station for its most recent streamflow, gage height, and water temperature readings.</div>
+    <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
     <a class="layer-info-src" href="https://waterdata.usgs.gov/nwis" target="_blank">Source: USGS Water Data</a>
   </div>
 
@@ -1823,11 +1836,19 @@
         <select id="offline-zoom-max"></select>
       </div>
     </label>
-    <p class="hint" style="margin:-8px 0 14px;">Higher max zoom = more close-up trail detail, but a much bigger download.</p>
+    <p class="hint" style="margin:-8px 0 10px;">Higher max zoom = more close-up trail detail, but a much bigger download.</p>
+    <label class="settings-check-row" style="padding-bottom:14px;">
+      <input type="checkbox" id="offline-detail-boost" class="settings-check">
+      <span class="settings-check-pill"></span>
+      <span>Detail boost (extends max zoom to Z16 — best for small regions)</span>
+    </label>
 
-    <div class="filter-label">Layers to include</div>
-    <div id="offline-layer-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:8px;"></div>
-    <p class="hint" style="margin-bottom:14px;">Street and OpenTopoMap aren't available here — their map providers don't allow bulk offline downloads. They'll still work offline for areas you've already viewed normally.</p>
+    <div class="filter-label">Base layers</div>
+    <div id="offline-baselayer-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
+
+    <div class="filter-label">Additional data</div>
+    <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -1839,7 +1860,7 @@
       <p class="hint" id="offline-progress-text" style="margin-top:6px;"></p>
     </div>
 
-    <div class="modal-actions">
+    <div class="modal-actions modal-actions-inline">
       <button class="btn btn-ghost hidden" id="offline-cancel-download-btn">Cancel download</button>
       <button class="btn btn-primary" id="offline-download-btn">Download this area</button>
     </div>
@@ -2017,7 +2038,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.15.1';
+  var APP_VERSION = '2.16.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2212,7 +2233,8 @@
   // renders the "Snow Depth" group (its Image sub-layer), skipping the Boundary/Footprint
   // reference sub-layers. {bbox-epsg-3857} is a MapLibre/Mapbox GL built-in raster source
   // token — it substitutes each tile's own Web Mercator bounds into the URL, so no manual
-  // per-tile bbox math is needed here (unlike the older Leaflet-era mvumTileUrl).
+  // per-tile bbox math is needed for the live map layer (the offline downloader still needs
+  // it manually for its own tile-by-tile fetch loop — see webMercatorTileBbox).
   var SNOWDEPTH_TILE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/snow/NOHRSC_Snow_Analysis/MapServer/export?' +
     'bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0&f=image';
   // MRLC Annual NLCD Land Cover, 2025 (most recent year in the 1985–2025 series) — confirmed
@@ -4082,6 +4104,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         state.settings.zoom = map.getZoom();
         scheduleSave();
       });
+      map.on('moveend', updateOverlayOfflineAvailability);
+      window.addEventListener('online', updateOverlayOfflineAvailability);
+      window.addEventListener('offline', updateOverlayOfflineAvailability);
     }).catch(function(err){
       console.error('[FieldMap] Style load failed:', err);
       showToast('Map style failed to load — check your connection or Mapbox token', 6000);
@@ -5215,6 +5240,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function reinitializeLayers(){
     if (!map) return;
 
+    // Offline placeholder pattern — replaces whatever flat "background" layer color the
+    // current style defines with a subtle hatch pattern, so any area with no tiles loaded
+    // (base map or raster overlay) reads as "not downloaded" rather than a flat blank color
+    // that looks broken/empty. Real tiles always paint over this once loaded, online or
+    // from the offline cache — this is genuinely just the bottommost layer, so it's only
+    // ever visible where nothing else has rendered. The 3 custom Mapbox Studio styles each
+    // already define their own background layer (repointed here to the pattern instead of
+    // its flat color); styles that don't define one (USGS Topo, Aerial) get one added.
+    // Re-applied on every style.load since map.setStyle() wipes custom images/layers.
+    if (!map.hasImage('offline-placeholder-pattern')){
+      map.addImage('offline-placeholder-pattern', buildOfflinePlaceholderPattern());
+    }
+    var existingBgLayer = map.getStyle().layers.filter(function(l){ return l.type === 'background'; })[0];
+    if (existingBgLayer){
+      map.setPaintProperty(existingBgLayer.id, 'background-pattern', 'offline-placeholder-pattern');
+    } else if (!map.getLayer('offline-placeholder-bg')){
+      var firstLayerId = map.getStyle().layers[0] ? map.getStyle().layers[0].id : undefined;
+      map.addLayer({ id: 'offline-placeholder-bg', type: 'background', paint: { 'background-pattern': 'offline-placeholder-pattern' } }, firstLayerId);
+    }
+
     // Public/private land (BLM Surface Management Agency, nationwide cached tiles) — added
     // first so it sits beneath every other overlay/user layer. Raster layers with no
     // beforeId land on TOP of everything if added late, so insertion order here matters.
@@ -6049,6 +6094,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
     renderOfflineBoundaries();
+    updateOverlayOfflineAvailability();
 
     // 3D Terrain / DEM elevation data — the raster-dem source is always added, under a
     // FieldMap-owned id (FIELDMAP_DEM_SOURCE), and terrain is always "set" on the map at
@@ -8341,6 +8387,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return ctx.getImageData(0, 0, size, size);
   }
 
+  // Subtle diagonal hatch, muted/low-contrast against the app's dark theme — the "no tiles
+  // here" background pattern (see reinitializeLayers). Deliberately quiet rather than a
+  // loud/alarming pattern: it shows briefly during completely normal online tile loading
+  // too, not just genuine offline gaps, so it needs to read as "loading/not here yet" and
+  // not as an error state.
+  function buildOfflinePlaceholderPattern(){
+    var size = 32;
+    var canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#171d1a';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, size); ctx.lineTo(size, 0);
+    ctx.moveTo(-size / 2, size / 2); ctx.lineTo(size / 2, -size / 2);
+    ctx.moveTo(size / 2, size * 1.5); ctx.lineTo(size * 1.5, size / 2);
+    ctx.stroke();
+    return ctx.getImageData(0, 0, size, size);
+  }
+
   // ── GPS Location Dot ──────────────────────────────────────────────────────
   // Ported to maplibregl.Marker with custom HTML element.
 
@@ -9794,18 +9862,45 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var offlineDownloadCancelled = false;
   var offlineDownloadInProgress = false;
 
-  // Street and OpenTopoMap are intentionally excluded — both ride on community-funded
-  // OSM tile infrastructure whose usage policies explicitly prohibit bulk/offline prefetching.
-  // USGS/Esri/BLM/USFS sources below are government or Esri-hosted REST services without
-  // that restriction, and are the same kind of source GIS apps commonly cache for offline use.
+  // Underlying tile SOURCES (not the same thing as the 5 user-facing base layer names —
+  // see BASE_LAYER_SOURCES below for that mapping). Rebuilt against the app's actual current
+  // MapLibre/Mapbox architecture — the previous version of this catalog predated the
+  // Leaflet->MapLibre migration and pointed at tile hosts that don't match any of the
+  // current base layers except USGS Topo (which was already correct and is unchanged
+  // below). Fire perimeters are deliberately never offered here — see the Layers panel
+  // description for why (stale cached fire boundaries would be a real safety risk).
   var DOWNLOAD_LAYERS = {
-    aerial:      { label:'Aerial imagery',              urlTemplate:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:19, avgKB:48 },
-    topo:        { label:'USGS topo / contour',         urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:18 },
-    relief:      { label:'Shaded relief',                urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}', minNativeZoom:10, maxNativeZoom:13, avgKB:15 },
-    imagerytopo: { label:'Imagery + topo',               urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:42 },
-    hydro:       { label:'Hydrography',                  urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:8 },
-    mvum:        { label:'USFS roads & trails (MVUM)',  isMvum:true, minNativeZoom:1, maxNativeZoom:16, avgKB:10 },
-    publicland:  { label:'Public / private land',        urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:9 }
+    // Topo, Topo Dark, and Aerial + Topo all style this exact same Mapbox vector tileset
+    // differently (confirmed identical "composite" source across all 3 style JSON files) —
+    // downloading it once covers all three; BASE_LAYER_SOURCES maps each of them to this
+    // one source id so selecting more than one automatically dedupes via computeTileList.
+    vectorbase: { label:'Topo map data (Topo / Topo Dark / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2,mapbox.mapbox-bathymetry-v2/{z}/{x}/{y}.vector.pbf?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:16, avgKB:35 },
+    // Aerial and Aerial + Topo's satellite backdrop share this same raster tileset too.
+    satellite:  { label:'Satellite imagery (Aerial / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:19, avgKB:45 },
+    usgstopo:   { label:'USGS Topo', urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:18 },
+    // DEM matches FIELDMAP_DEM_SOURCE exactly (mapbox.terrain-rgb, not the style-embedded
+    // mapbox-dem source — see the terrain block in reinitializeLayers for why those two are
+    // deliberately different sources).
+    dem:        { label:'Elevation (DEM)', urlTemplate:'https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.pngraw?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:14, avgKB:22 },
+    // Snow depth and NLCD are WMS/export endpoints keyed by a computed Web Mercator bbox per
+    // tile (matching the {bbox-epsg-3857} MapLibre substitutes at runtime — see
+    // SNOWDEPTH_TILE_URL/NLCD_TILE_URL), not a plain {z}/{x}/{y} path, so they use
+    // bboxUrlBuilder instead of urlTemplate.
+    snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
+    nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
+    publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:9 }
+  };
+
+  // Which underlying source(s) each of the 5 user-facing base layers actually needs.
+  var BASE_LAYER_SOURCES = {
+    topo: ['vectorbase'],
+    'topo-dark': ['vectorbase'],
+    aerial: ['satellite'],
+    'aerial-streets': ['vectorbase', 'satellite'],
+    usgstopo: ['usgstopo']
+  };
+  var BASE_LAYER_DOWNLOAD_LABELS = {
+    topo: 'Topo', 'topo-dark': 'Topo Dark', aerial: 'Aerial', 'aerial-streets': 'Aerial + Topo', usgstopo: 'USGS Topo'
   };
 
   function lonToTileX(lon, z){ return Math.floor((lon+180)/360 * Math.pow(2,z)); }
@@ -9814,7 +9909,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return Math.floor((1 - Math.log(Math.tan(rad) + 1/Math.cos(rad))/Math.PI) / 2 * Math.pow(2,z));
   }
 
-  function mvumTileUrl(z,x,y){
+  // Web Mercator bbox for a given tile — the same math the app already used for the
+  // (now-removed) MVUM export tiles, generalized for any bbox-keyed WMS/export endpoint.
+  function webMercatorTileBbox(z, x, y){
     var n = Math.pow(2, z);
     var worldSize = 40075016.685578488;
     var half = 20037508.342789244;
@@ -9823,15 +9920,37 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var maxX = minX + tileSize;
     var maxY = half - y * tileSize;
     var minY = maxY - tileSize;
-    return 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/export?bbox=' + [minX,minY,maxX,maxY].join(',') +
-      '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0,1,2&f=image';
+    return [minX, minY, maxX, maxY].join(',');
+  }
+  function snowdepthTileUrl(z, x, y){
+    return SNOWDEPTH_TILE_URL.replace('{bbox-epsg-3857}', webMercatorTileBbox(z, x, y));
+  }
+  function nlcdTileUrl(z, x, y){
+    return NLCD_TILE_URL.replace('{bbox-epsg-3857}', webMercatorTileBbox(z, x, y));
   }
 
   function tileUrlForLayer(layerId, z, x, y){
     var def = DOWNLOAD_LAYERS[layerId];
     if (!def) return null;
-    if (def.isMvum) return mvumTileUrl(z, x, y);
+    if (def.bboxUrlBuilder) return def.bboxUrlBuilder(z, x, y);
     return def.urlTemplate.replace('{z}', z).replace('{y}', y).replace('{x}', x);
+  }
+
+  // Maps the user's selections (5 base-layer checkboxes + additional-data checkboxes) down
+  // to the deduplicated set of underlying DOWNLOAD_LAYERS source ids computeTileList
+  // actually needs — e.g. selecting both Topo and Topo Dark resolves to just ['vectorbase'],
+  // not two separate (identical) downloads.
+  function resolveSelectedSourceIds(baseLayerIds, overlayIds){
+    var seen = {}, out = [];
+    baseLayerIds.forEach(function(bl){
+      (BASE_LAYER_SOURCES[bl] || []).forEach(function(sourceId){
+        if (!seen[sourceId]){ seen[sourceId] = true; out.push(sourceId); }
+      });
+    });
+    overlayIds.forEach(function(id){
+      if (!seen[id]){ seen[id] = true; out.push(id); }
+    });
+    return out;
   }
 
   // Computes the deduplicated list of {layerId, z, x, y, url} for a bounds + zoom range + layer set.
@@ -9929,23 +10048,46 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
-  function selectedOfflineLayerIds(){
+  function selectedOfflineBaseLayerIds(){
     var ids = [];
-    document.querySelectorAll('#offline-layer-checks input[type=checkbox]:checked').forEach(function(cb){
-      ids.push(cb.value);
-    });
+    document.querySelectorAll('#offline-baselayer-checks input[type=checkbox]:checked').forEach(function(cb){ ids.push(cb.value); });
     return ids;
   }
+  function selectedOfflineOverlayIds(){
+    var ids = [];
+    document.querySelectorAll('#offline-overlay-checks input[type=checkbox]:checked').forEach(function(cb){ ids.push(cb.value); });
+    return ids;
+  }
+  function selectedOfflineSourceIds(){
+    return resolveSelectedSourceIds(selectedOfflineBaseLayerIds(), selectedOfflineOverlayIds());
+  }
 
-  function renderOfflineLayerChecks(){
-    var wrap = document.getElementById('offline-layer-checks');
+  function renderOfflineBaseLayerChecks(){
+    var wrap = document.getElementById('offline-baselayer-checks');
     wrap.innerHTML = '';
-    Object.keys(DOWNLOAD_LAYERS).forEach(function(id){
-      var def = DOWNLOAD_LAYERS[id];
+    var current = state.settings.maplibreStyle || 'topo';
+    Object.keys(BASE_LAYER_SOURCES).forEach(function(id){
       var label = document.createElement('label');
       label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
       var cb = document.createElement('input');
       cb.type = 'checkbox'; cb.value = id;
+      cb.checked = (id === current); // default: just the currently active base layer
+      cb.addEventListener('change', updateOfflineEstimate);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(BASE_LAYER_DOWNLOAD_LABELS[id]));
+      wrap.appendChild(label);
+    });
+  }
+
+  function renderOfflineOverlayChecks(){
+    var wrap = document.getElementById('offline-overlay-checks');
+    wrap.innerHTML = '';
+    ['dem', 'snowdepth', 'nlcd', 'publicland'].forEach(function(id){
+      var def = DOWNLOAD_LAYERS[id];
+      var label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = id; // unchecked by default — these add real size cost
       cb.addEventListener('change', updateOfflineEstimate);
       label.appendChild(cb);
       label.appendChild(document.createTextNode(def.label));
@@ -9953,17 +10095,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  var OFFLINE_DEFAULT_MIN_ZOOM = 9, OFFLINE_DEFAULT_MAX_ZOOM = 15, OFFLINE_BOOST_MAX_ZOOM = 16;
   function populateOfflineZoomSelects(){
     var minSel = document.getElementById('offline-zoom-min');
     var maxSel = document.getElementById('offline-zoom-max');
+    var boosted = document.getElementById('offline-detail-boost').checked;
+    var hardMax = boosted ? OFFLINE_BOOST_MAX_ZOOM : OFFLINE_DEFAULT_MAX_ZOOM;
+    var prevMin = minSel.value, prevMax = maxSel.value;
     minSel.innerHTML = ''; maxSel.innerHTML = '';
-    for (var z=1; z<=17; z++){
+    for (var z=1; z<=hardMax; z++){
       var o1 = document.createElement('option'); o1.value = z; o1.textContent = 'Z' + z; minSel.appendChild(o1);
       var o2 = document.createElement('option'); o2.value = z; o2.textContent = 'Z' + z; maxSel.appendChild(o2);
     }
-    var current = map.getZoom();
-    minSel.value = Math.max(1, current);
-    maxSel.value = Math.min(17, current + 3);
+    if (prevMin && +prevMin <= hardMax){
+      minSel.value = prevMin;
+      maxSel.value = Math.min(+prevMax || OFFLINE_DEFAULT_MAX_ZOOM, hardMax);
+    } else {
+      minSel.value = OFFLINE_DEFAULT_MIN_ZOOM;
+      maxSel.value = Math.min(OFFLINE_DEFAULT_MAX_ZOOM, hardMax);
+    }
   }
 
   function updateOfflineEstimate(){
@@ -9971,11 +10121,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var minZ = parseInt(document.getElementById('offline-zoom-min').value, 10);
     var maxZ = parseInt(document.getElementById('offline-zoom-max').value, 10);
     if (maxZ < minZ) maxZ = minZ;
-    var layerIds = selectedOfflineLayerIds();
+    var layerIds = selectedOfflineSourceIds();
     var estEl = document.getElementById('offline-estimate');
     var warnEl = document.getElementById('offline-warning');
     if (layerIds.length === 0){
-      estEl.textContent = 'Select at least one layer to see an estimate.';
+      estEl.textContent = 'Select at least one base layer to see an estimate.';
       warnEl.classList.add('hidden');
       document.getElementById('offline-download-btn').disabled = true;
       return;
@@ -9985,7 +10135,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var sizeLabel = sizeMB >= 1024 ? (sizeMB/1024).toFixed(1) + ' GB' : Math.round(sizeMB) + ' MB';
     estEl.textContent = tileList.length.toLocaleString() + ' tiles · approximately ' + sizeLabel;
     document.getElementById('offline-download-btn').disabled = false;
-    if (sizeMB > 600){
+    var boosted = document.getElementById('offline-detail-boost').checked;
+    if (boosted && maxZ >= OFFLINE_BOOST_MAX_ZOOM && tileList.length > 6000){
+      // Tile count roughly quadruples per zoom level — a region large enough to already be
+      // sizable at Z15 becomes a very different (and likely impractical) download at Z16.
+      warnEl.textContent = 'Detail boost on a region this large means a very big download. Consider a smaller area or turning detail boost off.';
+      warnEl.classList.remove('hidden');
+    } else if (sizeMB > 600){
       warnEl.textContent = 'That\'s a large download. Consider a smaller area, fewer layers, or a lower max zoom — this will take a while and use significant storage and data.';
       warnEl.classList.remove('hidden');
     } else {
@@ -10030,6 +10186,45 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Grays out an overlay toggle in the Layers panel (same visual language as .btn:disabled)
+  // while offline, if no downloaded area's bounds fully cover the current viewport for that
+  // overlay's source — a hint that flipping it on won't actually show data right now, not a
+  // hard block (the toggle still works normally; there's just nothing to render). Only the
+  // 3 tile/raster overlays the download system actually covers are checked here — DEM has
+  // no visible Layers-panel toggle of its own, and Hydrography/gauges are always
+  // best-effort live queries (see their own "not included in offline downloads" note) so
+  // graying them the same way would be misleading either way, not just "sometimes covered."
+  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland' };
+  function areaBoundsContainViewport(area, viewportBounds){
+    return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
+           area.boundsSW[1] <= viewportBounds.getWest() && area.boundsNE[1] >= viewportBounds.getEast();
+  }
+  function updateOverlayOfflineAvailability(){
+    if (!map) return;
+    var offline = !navigator.onLine;
+    var toggleIds = Object.keys(OVERLAY_OFFLINE_TOGGLE_SOURCE);
+    if (!offline){
+      toggleIds.forEach(function(toggleId){
+        var input = document.getElementById(toggleId);
+        var row = input && input.closest('.layer-overlay-row');
+        if (row) row.classList.remove('offline-unavailable');
+      });
+      return;
+    }
+    var viewportBounds = map.getBounds();
+    loadOfflineAreas().then(function(areas){
+      toggleIds.forEach(function(toggleId){
+        var input = document.getElementById(toggleId);
+        var row = input && input.closest('.layer-overlay-row');
+        if (!row) return;
+        var sourceId = OVERLAY_OFFLINE_TOGGLE_SOURCE[toggleId];
+        var covered = areas.some(function(area){
+          return area.layerIds.indexOf(sourceId) !== -1 && areaBoundsContainViewport(area, viewportBounds);
+        });
+        row.classList.toggle('offline-unavailable', !covered);
+      });
+    });
+  }
 
   function renderOfflineAreasList(){
     loadOfflineAreas().then(function(areas){
@@ -10063,6 +10258,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             saveOfflineAreas(updated);
             renderOfflineAreasList();
             renderOfflineBoundaries();
+            updateOverlayOfflineAvailability();
             showToast('Deleted offline area "' + area.name + '"');
           });
         });
@@ -10082,7 +10278,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('offline-area-summary').textContent =
       'Area centered near ' + c.lat.toFixed(3) + ', ' + c.lng.toFixed(3) + ' — pan and zoom the map before opening this panel to change it.';
     populateOfflineZoomSelects();
-    renderOfflineLayerChecks();
+    renderOfflineBaseLayerChecks();
+    renderOfflineOverlayChecks();
     document.getElementById('offline-progress-wrap').classList.add('hidden');
     document.getElementById('offline-cancel-download-btn').classList.add('hidden');
     document.getElementById('offline-download-btn').classList.remove('hidden');
@@ -10096,7 +10293,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var minZ = parseInt(document.getElementById('offline-zoom-min').value, 10);
     var maxZ = parseInt(document.getElementById('offline-zoom-max').value, 10);
     if (maxZ < minZ) maxZ = minZ;
-    var layerIds = selectedOfflineLayerIds();
+    var layerIds = selectedOfflineSourceIds();
     if (layerIds.length === 0) return;
 
     var tileList = computeTileList(offlineCaptureBounds, minZ, maxZ, layerIds);
@@ -10144,6 +10341,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         saveOfflineAreas(areas);
         renderOfflineAreasList();
         renderOfflineBoundaries();
+        updateOverlayOfflineAvailability();
         document.getElementById('offline-progress-wrap').classList.add('hidden');
         var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
         showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
@@ -10161,6 +10359,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       saveOfflineAreas([]);
       renderOfflineAreasList();
       renderOfflineBoundaries();
+      updateOverlayOfflineAvailability();
       showToast('All offline map data cleared');
     });
   }
@@ -12314,7 +12513,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var panel = document.getElementById('layers-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
-      if (willOpen) panel.classList.remove('hidden');
+      if (willOpen){ panel.classList.remove('hidden'); updateOverlayOfflineAvailability(); }
     });
 ;
 
@@ -12669,6 +12868,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('offline-zoom-min').addEventListener('change', updateOfflineEstimate);
     document.getElementById('offline-zoom-max').addEventListener('change', updateOfflineEstimate);
+    document.getElementById('offline-detail-boost').addEventListener('change', function(){
+      populateOfflineZoomSelects();
+      updateOfflineEstimate();
+    });
     document.getElementById('offline-download-btn').addEventListener('click', startOfflineDownload);
     document.getElementById('offline-cancel-download-btn').addEventListener('click', cancelOfflineDownload);
     document.getElementById('offline-clear-all-btn').addEventListener('click', clearAllOfflineAreas);

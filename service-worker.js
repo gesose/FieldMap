@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v104';
+var SHELL_CACHE = 'fieldmap-shell-v105';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -80,7 +80,20 @@ var TILE_HOSTS = [
   'api.openrouteservice.org',
   'mapservices.weather.noaa.gov',
   'www.lightpollutionmap.info',
-  'landscape11.arcgis.com'
+  'landscape11.arcgis.com',
+  // Mapbox — vector/raster tiles, style JSON, sprite, and glyph responses for 4 of the 5
+  // base layers (Topo/Topo Dark/Aerial/Aerial+Topo) plus the DEM terrain-rgb source used for
+  // elevation everywhere. Previously missing here entirely, so none of it was covered by
+  // even the opportunistic "cache whatever you've browsed" strategy this list exists for —
+  // found during the offline-mode Phase 1 diagnostic (2026-07-14).
+  'api.mapbox.com',
+  // NHDPlus HR (Hydrography) and the modernized USGS water-data API (gauge stations) — both
+  // are live per-viewport queries (see loadHydrographyForViewport/loadGaugeStationsForViewport
+  // in index.html), not one-time bulk fetches, so this only lets whatever specific
+  // viewport/bbox query has already run stay available if the exact same request recurs —
+  // it doesn't make the whole feature "work offline" the way GMU/USFS boundaries do.
+  'hydro.nationalmap.gov',
+  'api.waterdata.usgs.gov'
 ];
 
 // Hosts we never intercept at all — sign-in and sync traffic passes straight
