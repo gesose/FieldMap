@@ -640,17 +640,24 @@
 
     /* Mobile sort row — Sort only (above scroll area so dropdown isn't clipped) */
 
-    /* Hide desktop coord readout — no room; a compact top-left equivalent replaces it below */
+    /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
+    /* Mobile equivalent lives at the bottom next to the scale bar (same width, stacked
+       just above it) rather than the top — the top-right area is the floating
+       search/layers/filter/locate icon column, and stacking it there previously ended up
+       overlapping the zoom controls. Two-row layout (coords, then elevation below) mirrors
+       #center-readout-float's structure since the bubble is too narrow for one line of both. */
     #center-readout-mobile{
-      display:flex;position:absolute;top:10px;left:10px;z-index:1000;cursor:pointer;
-      font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
-      background:var(--bg-elevated);border:1px solid var(--border);
-      padding:4px 8px;border-radius:8px;gap:6px;align-items:center;
-      max-width:calc(100% - 60px);white-space:nowrap;overflow:hidden;
+      display:block;position:absolute;bottom:152px;left:14px;z-index:1000;cursor:pointer;
+      font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+      background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+      padding:5px 9px;width:130px;box-sizing:border-box;text-align:center;
+      transition:bottom .25s ease;
     }
-    #center-readout-mobile-elev{display:none;}
-    #center-readout-mobile-elev.show{display:inline;opacity:0.8;}
+    #center-readout-mobile-coords{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    #center-readout-mobile-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    #center-readout-mobile-elev.show{display:block;}
+    body.sidebar-open #center-readout-mobile{ bottom:calc(55vh + 204px); }
 
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
     .leaflet-control-zoom{display:none !important;}
@@ -1981,7 +1988,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.13.1';
+  var APP_VERSION = '2.14.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3739,6 +3746,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'bearings-line-touch', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Bearing target-arrow click — same pass-through pattern; the arrowhead is its own
+      // independent click target (matches the old dot marker's always-open-popup behavior),
+      // separate from the line so it never gets shadowed by the line's touch layer.
+      map.on('click', 'bearing-target-arrow', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var arrowFeature = e.features && e.features[0];
+        if (!arrowFeature) return;
+        var arrowBearing = state.bearings.find(function(b){ return b.id === arrowFeature.properties.id; });
+        if (!arrowBearing) return;
+        openBearingPopupAt(arrowBearing, e.lngLat);
+      });
+      map.on('mouseenter', 'bearing-target-arrow', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'bearing-target-arrow', function(){ map.getCanvas().style.cursor = ''; });
+
       // Wildlife range click — mode-aware pass-through, otherwise show that species' popup.
       // Read-only reference data (not part of state.*), so the feature's own properties
       // are used directly rather than looking anything up by id.
@@ -5438,8 +5472,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
 
     // Bearings — GeoJSON source of all saved bearing lines. Wide invisible touch layer +
-    // the actual dashed line; the target-point dot is a separate maplibregl.Marker per
-    // bearing (see updateBearingsSource) since it needs its own independent click target.
+    // the actual dashed line; the target-point arrowhead is a separate data-driven symbol
+    // layer (see updateBearingsSource / bearing-target-source below) since it needs its own
+    // independent click target, same reasoning the old per-bearing dot Marker had.
     if (!map.getSource('bearings-source')){
       map.addSource('bearings-source', {
         type: 'geojson',
@@ -5460,6 +5495,44 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         type: 'line',
         source: 'bearings-source',
         paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': 0.92, 'line-dasharray': [2, 1.5] }
+      });
+    }
+
+    // Bearing target arrowhead — replaces the old static dot marker. A symbol layer with
+    // icon-rotate bound to each bearing's actual bearingDeg is genuine rotation support
+    // (unlike the CSS-transform workarounds a Leaflet DivIcon would have needed, which is
+    // why this was abandoned on the old Leaflet build). icon-rotation-alignment:'map' means
+    // the rotation is relative to true north on the map, not the screen, so it stays correct
+    // as the user rotates/tilts the map. The icon itself is drawn once via canvas as a solid
+    // white silhouette and registered as an SDF image so icon-color can tint each arrow to
+    // match its bearing's status color, same as the dot did.
+    if (!map.hasImage('bearing-arrow')){
+      map.addImage('bearing-arrow', buildBearingArrowIcon(), { sdf: true });
+    }
+    if (!map.getSource('bearing-target-source')){
+      map.addSource('bearing-target-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('bearing-target-arrow')){
+      map.addLayer({
+        id: 'bearing-target-arrow',
+        type: 'symbol',
+        source: 'bearing-target-source',
+        layout: {
+          'icon-image': 'bearing-arrow',
+          'icon-rotate': ['get', 'bearingDeg'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'icon-size': 0.85
+        },
+        paint: {
+          'icon-color': ['get', 'color'],
+          'icon-halo-color': 'rgba(255,255,255,0.85)',
+          'icon-halo-width': 1.2
+        }
       });
     }
 
@@ -5994,6 +6067,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }).then(finalizeProfile);
   }
 
+  // Compacts a results array (which may contain nulls for points a lookup failed on) down
+  // to just the resolved values and sums consecutive deltas — shared by the live gain/loss
+  // preview while drawing (see scheduleDrawBarElevUpdate) and anything else that just needs
+  // a quick gain/loss number without the full distance-keyed profile computeTrackElevationProfile
+  // builds for the chart.
+  function computeGainLossFromValues(values){
+    var vals = values.filter(function(v){ return v != null; });
+    if (vals.length < 2) return null;
+    var gain = 0, loss = 0;
+    for (var i = 1; i < vals.length; i++){
+      var d = vals[i] - vals[i - 1];
+      if (d > 0) gain += d; else loss += -d;
+    }
+    return { gain: Math.round(gain), loss: Math.round(loss) };
+  }
+
   // Tracks have no persistent marker/popup object like pins do (ad-hoc popup created on
   // click) — this keeps a single shared reference so any entry point (map click, sidebar
   // click, Edit shape) can close whichever one is currently open before doing its own thing.
@@ -6003,8 +6092,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .setLngLat(lngLat)
       .setHTML(trackPopupHtml(track))
       .addTo(map);
+    popup._fieldmapTrackId = track.id;
     popup.on('close', function(){ if (openTrackPopup === popup) openTrackPopup = null; });
     openTrackPopup = popup;
+    if (track.elevGainFt != null){
+      requestAnimationFrame(function(){
+        drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
+      });
+    }
+  }
+
+  // Re-renders the currently-open track popup's HTML in place (if it's showing THIS track)
+  // without closing/reopening it — the missing piece that made elevation gain/loss (and
+  // anything else computed async after the popup was already opened) only ever show up
+  // after a manual close/reopen. Pins have the equivalent via refreshMarkerPopup() calling
+  // marker.getPopup().setHTML(); tracks have no persistent marker/popup object, so this is
+  // the ad-hoc-popup version of the same idea.
+  function refreshOpenTrackPopupContent(track){
+    if (!openTrackPopup || openTrackPopup._fieldmapTrackId !== track.id) return;
+    openTrackPopup.setHTML(trackPopupHtml(track));
     if (track.elevGainFt != null){
       requestAnimationFrame(function(){
         drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
@@ -6018,7 +6124,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // current state, mirroring how applyFilterToMarker/scheduleClusterRefresh work for pins.
   function addTrackToMap(track){ scheduleTracksRefresh(); }
   function removeTrackFromMap(id){ scheduleTracksRefresh(); }
-  function refreshTrackPopup(track){ scheduleTracksRefresh(); }
+  function refreshTrackPopup(track){ scheduleTracksRefresh(); refreshOpenTrackPopupContent(track); }
   function applyFilterToTrack(track){ scheduleTracksRefresh(); }
 
   function scheduleTracksRefresh(){
@@ -6298,6 +6404,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.tracks.push(newTrack);
       try { addTrackToMap(newTrack); } catch(e){ console.error('[FieldMap] addTrackToMap failed:', e); }
       refreshStateChips();
+      // Auto elevation profile — mirrors the pin-creation auto-lookup so gain/loss is
+      // already sitting on the track the first time its popup is opened, instead of only
+      // appearing after someone manually taps "Show elevation profile" once.
+      computeTrackElevationProfile(newTrack, function(ok){
+        if (ok) refreshOpenTrackPopupContent(newTrack);
+      });
     }
     closeTrackModal();
     renderPinList();
@@ -6540,15 +6652,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           if (btn){ btn.textContent = 'No elevation data available'; }
           return;
         }
-        if (!openTrackPopup) return; // popup was closed while the lookup was in flight
-        openTrackPopup.setHTML(trackPopupHtml(track));
-        requestAnimationFrame(function(){
-          drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
-        });
+        refreshOpenTrackPopupContent(track);
       });
     },
     deleteTrack: function(id){
-      if (confirm('Delete this track? This cannot be undone.')) deleteTrackById(id);
+      if (confirm('Delete this track? This cannot be undone.')){
+        if (openTrackPopup && openTrackPopup._fieldmapTrackId === id){ openTrackPopup.remove(); openTrackPopup = null; }
+        deleteTrackById(id);
+      }
     },
     shareTrack: function(id){
       var track = state.tracks.find(function(t){ return t.id === id; });
@@ -6865,9 +6976,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           pin.lat = ll.lat; pin.lng = ll.lng;
           pin.state = stateForPoint(ll.lat, ll.lng);
           pin.updatedAt = Date.now();
+          // Elevation is location-dependent — the old value is now wrong for wherever the
+          // pin just moved to. Clear it so the popup doesn't keep showing a stale number
+          // while the fresh lookup is in flight, then re-fetch exactly like pin creation
+          // does, reusing the same refreshMarkerPopup() call so the popup updates live the
+          // moment it resolves.
+          pin.elevationFt = null;
           refreshMarkerPopup(pin);
           scheduleSave();
           showToast('Pin location updated');
+          getElevationFt(pin.lat, pin.lng).then(function(ft){
+            if (ft == null) return;
+            pin.elevationFt = ft;
+            scheduleSave();
+            refreshMarkerPopup(pin);
+          }).catch(function(){});
         } else {
           marker.setLngLat([pin.lng, pin.lat]);
         }
@@ -6979,11 +7102,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     snappedPoints = null;
     drawMarkers.forEach(function(m){ m.remove(); });
     drawMarkers = [];
+    drawBarElevText = '';
+    if (drawBarElevTimer){ clearTimeout(drawBarElevTimer); drawBarElevTimer = null; }
+    drawBarElevRequestId++; // invalidate any in-flight lookup so it can't apply stale text later
     redrawDrawLine();
     updateDrawBar();
   }
 
-  function updateDrawBar(){
+  function renderDrawBarText(){
     var pts = snappedPoints || drawPoints;
     var total = 0;
     for (var i=1;i<pts.length;i++){
@@ -6991,10 +7117,41 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     var distText = total < 0.2 ? Math.round(total*5280) + ' ft' : total.toFixed(2) + ' mi';
     var snapTag = snappedPoints ? ' (snapped)' : '';
-    document.getElementById('draw-bar-text').textContent = drawPoints.length + ' point' + (drawPoints.length===1?'':'s') + (pts.length > 1 ? ' · ' + distText + snapTag : '');
+    document.getElementById('draw-bar-text').textContent = drawPoints.length + ' point' + (drawPoints.length===1?'':'s') + (pts.length > 1 ? ' · ' + distText + snapTag : '') + drawBarElevText;
+  }
+
+  function updateDrawBar(){
+    renderDrawBarText();
     document.getElementById('draw-finish-btn').disabled = drawPoints.length < 2;
     document.getElementById('draw-undo-btn').disabled = drawPoints.length === 0;
     document.getElementById('draw-snap-btn').disabled = drawPoints.length < 2;
+    scheduleDrawBarElevUpdate();
+  }
+
+  // Live gain/loss preview while drawing — useful for evaluating a route's difficulty
+  // before finishing it, not just after. Debounced (points can be added/dragged rapidly)
+  // and DEM-only (no EPQS fallback here): this is a quick in-progress preview, not the
+  // final saved profile computeTrackElevationProfile computes once the route is actually
+  // saved, so it's fine for a point whose tile hasn't loaded to just be skipped rather than
+  // waiting on a slow network fallback while the user is actively drawing.
+  var drawBarElevTimer = null, drawBarElevRequestId = 0, drawBarElevText = '';
+  function scheduleDrawBarElevUpdate(){
+    if (drawBarElevTimer){ clearTimeout(drawBarElevTimer); drawBarElevTimer = null; }
+    var pts = snappedPoints || drawPoints;
+    if (pts.length < 2){
+      if (drawBarElevText){ drawBarElevText = ''; renderDrawBarText(); }
+      return;
+    }
+    drawBarElevTimer = setTimeout(function(){
+      var samples = sampleTrackPoints(snappedPoints || drawPoints, MAX_ELEV_SAMPLES);
+      var requestId = ++drawBarElevRequestId;
+      batchGetElevationFt(samples).then(function(results){
+        if (requestId !== drawBarElevRequestId) return; // superseded by a newer point edit
+        var gl = computeGainLossFromValues(results);
+        drawBarElevText = gl ? (' · ▲' + gl.gain.toLocaleString() + 'ft ▼' + gl.loss.toLocaleString() + 'ft') : '';
+        renderDrawBarText();
+      });
+    }, 400);
   }
 
   function redrawDrawLine(){
@@ -7518,11 +7675,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // Bearings render from a single shared GeoJSON source (bearings-source, set up in
-  // reinitializeLayers) for the dashed line — same architecture as tracks-source. The
-  // target-point dot is a separate maplibregl.Marker per bearing since it needs its own
-  // independent click target (matches the old dotMarker's always-open-popup behavior,
-  // which — unlike the line — never passed clicks through to mode handlers).
-  var bearingTargetMarkersById = {};
+  // reinitializeLayers) for the dashed line, plus bearing-target-source for the rotating
+  // arrowhead — both fully data-driven (no per-item Marker objects to create/track/clean up
+  // like the old dot marker needed), same architecture as tracks-source/polygons-source.
   var bearingsRefreshTimer = null;
 
   function addBearingToMap(b){ scheduleBearingsRefresh(); }
@@ -7537,9 +7692,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function updateBearingsSource(){
     if (!map) return;
     var src = map.getSource('bearings-source');
-    if (!src) return;
+    var targetSrc = map.getSource('bearing-target-source');
+    if (!src || !targetSrc) return;
     var visible = state.bearings.filter(function(b){ return b.id !== bearingEndpointEditingId && mapItemVisible(b); });
-    var features = visible.map(function(b){
+    var lineFeatures = visible.map(function(b){
       var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
       return {
         type: 'Feature',
@@ -7547,30 +7703,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         properties: { id: b.id, color: sc.bg }
       };
     });
-    src.setData({ type: 'FeatureCollection', features: features });
+    src.setData({ type: 'FeatureCollection', features: lineFeatures });
 
-    var seenIds = {};
-    visible.forEach(function(b){
-      seenIds[b.id] = true;
+    var targetFeatures = visible.map(function(b){
       var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
-      var marker = bearingTargetMarkersById[b.id];
-      if (!marker){
-        var el = document.createElement('div');
-        el.style.cssText = 'cursor:pointer;';
-        marker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([b.targetLng, b.targetLat]).addTo(map);
-        el.addEventListener('click', function(e){
-          e.stopPropagation();
-          openBearingPopupAt(b, { lng: b.targetLng, lat: b.targetLat });
-        });
-        bearingTargetMarkersById[b.id] = marker;
-      } else {
-        marker.setLngLat([b.targetLng, b.targetLat]);
-      }
-      marker.getElement().innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:' + sc.bg + ';border:2px solid rgba(255,255,255,0.7);box-sizing:border-box;"></div>';
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [b.targetLng, b.targetLat] },
+        // icon-rotate expects degrees clockwise from north, same convention bearingDeg
+        // already uses (see bearingDegrees/bearingBetween) — no conversion needed.
+        properties: { id: b.id, color: sc.bg, bearingDeg: b.bearingDeg }
+      };
     });
-    Object.keys(bearingTargetMarkersById).forEach(function(id){
-      if (!seenIds[id]){ bearingTargetMarkersById[id].remove(); delete bearingTargetMarkersById[id]; }
-    });
+    targetSrc.setData({ type: 'FeatureCollection', features: targetFeatures });
   }
 
   function renderBearingTagChips(activeTags){
@@ -7783,6 +7928,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }, { enableHighAccuracy:true, timeout:15000 });
   }
 
+
+  // Solid white arrowhead silhouette, tip pointing up (north / bearingDeg 0), registered as
+  // an SDF image so icon-color can tint it per-feature (see the bearing-target-arrow layer
+  // in reinitializeLayers). Drawn once via canvas rather than shipped as a file, consistent
+  // with this being a single-file app with no build/asset pipeline.
+  function buildBearingArrowIcon(){
+    var size = 32;
+    var canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(size * 0.5, size * 0.06);   // tip
+    ctx.lineTo(size * 0.82, size * 0.68);  // right base
+    ctx.lineTo(size * 0.5, size * 0.52);   // inner notch (chevron silhouette)
+    ctx.lineTo(size * 0.18, size * 0.68);  // left base
+    ctx.closePath();
+    ctx.fill();
+    return ctx.getImageData(0, 0, size, size);
+  }
 
   // ── GPS Location Dot ──────────────────────────────────────────────────────
   // Ported to maplibregl.Marker with custom HTML element.
