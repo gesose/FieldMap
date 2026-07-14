@@ -1,6 +1,6 @@
 // FieldMap service worker
 // Strategy:
-//  - App shell (HTML, manifest, icons, Leaflet CSS/JS, Firebase SDK files): cache-first,
+//  - App shell (HTML, manifest, icons, MapLibre GL JS CSS/JS, Firebase SDK files): cache-first,
 //    so the app always loads instantly and works fully offline once installed.
 //  - Map tiles & GMU/public-land data: stale-while-revalidate — serve a cached
 //    tile instantly if we have one, and quietly refresh it in the background
@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v106';
+var SHELL_CACHE = 'fieldmap-shell-v107';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 
 var SHELL_FILES = [
@@ -33,8 +33,16 @@ var SHELL_FILES = [
   './topo-style.json',
   './topo-dark-style.json',
   './aerial-streets-style.json',
-  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
-  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+  // MapLibre GL JS — self-hosted (see index.html's <script>/<link> tags) rather than loaded
+  // from unpkg, specifically so it's guaranteed present on a genuine cold boot. It used to be
+  // a bare unpkg.com CDN <script src> with no SHELL_FILES entry at all: that relied entirely
+  // on the browser's own opportunistic HTTP cache for a cross-origin resource, which is not
+  // durable/guaranteed the way this SW's own precache is (confirmed failing on a real iOS
+  // standalone-PWA cold boot offline — "Can't find variable: maplibregl" — 2026-07-14). Being
+  // same-origin now also means it round-trips through the generic app-shell cache-first
+  // handler below like any other local file, not just this explicit install-time list.
+  './maplibre-gl.js',
+  './maplibre-gl.css',
   'https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js',
@@ -108,8 +116,13 @@ var BYPASS_HOSTS = [
   'firebaseapp.com',
   'api.weather.gov',
   'epqs.nationalmap.gov',
-  'services3.arcgis.com',
-  'unpkg.com'
+  'services3.arcgis.com'
+  // unpkg.com previously listed here — that's what actually caused the MapLibre GL JS
+  // cold-boot failure this file's SHELL_FILES comment above describes: BYPASS_HOSTS skips
+  // the SW entirely and falls back to the browser's native HTTP cache, which is exactly the
+  // "not durable/guaranteed" mechanism this bug proved unsafe for a critical boot dependency.
+  // Removed now that maplibre-gl.js/css are self-hosted (same-origin, so nothing requests
+  // unpkg.com at all anymore).
 ];
 
 function hostMatches(url, list){
