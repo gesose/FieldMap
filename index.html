@@ -293,6 +293,14 @@
   }
   #loading-overlay.hidden{display:none;}
   #loading-overlay p{color:var(--text-muted);font-size:13px;}
+  #loading-overlay-error{display:none;max-width:90vw;width:480px;text-align:left;}
+  #loading-overlay-error.show{display:block;}
+  #loading-overlay-error h3{color:var(--text);font-size:15px;margin:0 0 8px;}
+  #loading-overlay-error-detail{
+    background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-family:monospace;
+    white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;padding:10px;
+    border-radius:8px;margin:0 0 12px;
+  }
 
   /* Popup styling */
   .leaflet-popup-content-wrapper{background:var(--bg-elevated);color:var(--text);border-radius:10px;}
@@ -798,7 +806,12 @@
 </script>
 
 <div id="loading-overlay">
-  <p>Loading your pins…</p>
+  <p id="loading-overlay-text">Loading your pins…</p>
+  <div id="loading-overlay-error">
+    <h3>Something went wrong loading the app</h3>
+    <pre id="loading-overlay-error-detail"></pre>
+    <button class="btn" onclick="location.reload()">Reload</button>
+  </div>
 </div>
 
 <div id="app">
@@ -2038,7 +2051,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.16.0';
+  var APP_VERSION = '2.16.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3520,6 +3533,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     t._timer = setTimeout(function(){ t.classList.remove('show'); }, duration || 2600);
   }
 
+  // Diagnostic instrumentation for cold-boot failures (e.g. iOS standalone PWA, offline,
+  // no remote-debugging tooling available on-device): shows the real caught error's message
+  // and stack directly on the loading screen, persistently, instead of a generic toast that
+  // times out and a hidden overlay that leaves a blank black screen — so a real device failure
+  // is screenshot-able and actionable without needing a Mac + Safari remote debugging.
+  function showBootFailure(err){
+    var detail = 'Unknown error';
+    try {
+      if (err){
+        detail = (err.message || String(err)) + (err.stack ? '\n\n' + err.stack : '');
+      }
+    } catch(e){}
+    var overlay = document.getElementById('loading-overlay');
+    var text = document.getElementById('loading-overlay-text');
+    var errBox = document.getElementById('loading-overlay-error');
+    var errDetail = document.getElementById('loading-overlay-error-detail');
+    if (!overlay || !errBox || !errDetail) return;
+    if (text) text.style.display = 'none';
+    errDetail.textContent = detail;
+    errBox.classList.add('show');
+    overlay.classList.remove('hidden');
+  }
+
   function uid(){
     return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
   }
@@ -4109,8 +4145,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       window.addEventListener('offline', updateOverlayOfflineAvailability);
     }).catch(function(err){
       console.error('[FieldMap] Style load failed:', err);
-      showToast('Map style failed to load — check your connection or Mapbox token', 6000);
-      document.getElementById('loading-overlay').classList.add('hidden');
+      showBootFailure(err);
     });
   }
 
@@ -5240,22 +5275,34 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function reinitializeLayers(){
     if (!map) return;
 
-    // Offline placeholder pattern — replaces whatever flat "background" layer color the
-    // current style defines with a subtle hatch pattern, so any area with no tiles loaded
-    // (base map or raster overlay) reads as "not downloaded" rather than a flat blank color
-    // that looks broken/empty. Real tiles always paint over this once loaded, online or
-    // from the offline cache — this is genuinely just the bottommost layer, so it's only
-    // ever visible where nothing else has rendered. The 3 custom Mapbox Studio styles each
-    // already define their own background layer (repointed here to the pattern instead of
-    // its flat color); styles that don't define one (USGS Topo, Aerial) get one added.
-    // Re-applied on every style.load since map.setStyle() wipes custom images/layers.
+    // Offline placeholder pattern — a subtle hatch background so an area with no raster tiles
+    // loaded (USGS Topo, Aerial) reads as "not downloaded" rather than a flat blank color.
+    // Only added for styles that don't already define their own background layer. The 3 custom
+    // Mapbox Studio styles (Topo, Topo Dark, Aerial+Topo) DO define one ("land") — an earlier
+    // version of this code repointed that existing layer's paint to the hatch pattern instead
+    // of adding a separate one, which was wrong on two counts: (1) MapLibre background layers
+    // paint across the ENTIRE viewport unconditionally, not just where tiles are missing — there
+    // is no way to make one render only for unloaded tiles — and topo-style.json's "land" layer
+    // IS the visible base terrain tone for most of the map (not a hidden fallback color), so the
+    // hatch bled into fully-loaded live tiles everywhere, online or off; (2) it required a
+    // map.getStyle() full-style walk plus a setPaintProperty on an already-populated,
+    // hundreds-of-layers style, synchronously, on every single style.load — but only for Topo
+    // and Topo Dark, whose "land" layer is authored visible (Aerial+Topo's is visibility:none
+    // in aerial-streets-style.json, so the old code's setPaintProperty on it was comparatively
+    // cheap/inert there). That extra synchronous work on exactly those two styles is the prime
+    // suspect for the raster-dem-tile-source "Cannot read properties of undefined (reading
+    // 'send')" crash reported switching into Topo/Topo Dark: it widens the window during which
+    // a still-in-flight DEM tile load callback from the PREVIOUS style can fire after that
+    // style's worker dispatcher has already been torn down by map.setStyle(diff:false) —
+    // MapLibre's Dispatcher#getActor() returns undefined once Dispatcher#remove() has cleared
+    // its actor pool, and the DEM tile source's loadTile callback doesn't guard against that.
+    // Leaving the real "land" layer alone entirely (its flat color already reads fine as an
+    // incomplete/loading indicator on its own) fixes both problems at once.
     if (!map.hasImage('offline-placeholder-pattern')){
       map.addImage('offline-placeholder-pattern', buildOfflinePlaceholderPattern());
     }
-    var existingBgLayer = map.getStyle().layers.filter(function(l){ return l.type === 'background'; })[0];
-    if (existingBgLayer){
-      map.setPaintProperty(existingBgLayer.id, 'background-pattern', 'offline-placeholder-pattern');
-    } else if (!map.getLayer('offline-placeholder-bg')){
+    var styleHasOwnBackground = ['topo', 'topo-dark', 'aerial-streets'].indexOf(state.settings.maplibreStyle || 'topo') !== -1;
+    if (!styleHasOwnBackground && !map.getLayer('offline-placeholder-bg')){
       var firstLayerId = map.getStyle().layers[0] ? map.getStyle().layers[0].id : undefined;
       map.addLayer({ id: 'offline-placeholder-bg', type: 'background', paint: { 'background-pattern': 'offline-placeholder-pattern' } }, firstLayerId);
     }
@@ -12927,9 +12974,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // ---------- Init ----------
-  window.addEventListener('error', function(){
-    var ov = document.getElementById('loading-overlay');
-    if (ov) ov.classList.add('hidden');
+  window.addEventListener('error', function(e){
+    // Only treat this as a boot failure while still in the boot sequence (appIsReady false) —
+    // this listener stays registered for the app's whole lifetime, and an unrelated runtime
+    // error later on shouldn't cover a working map with a full-screen failure notice.
+    if (!appIsReady){
+      showBootFailure(e && (e.error || e.message));
+    } else {
+      var ov = document.getElementById('loading-overlay');
+      if (ov) ov.classList.add('hidden');
+    }
   });
 
   loadState().then(function(){
@@ -12957,9 +13011,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         document.getElementById('onboarding-modal').classList.remove('hidden');
       }, 800);
     }
-  }).catch(function(){
-    document.getElementById('loading-overlay').classList.add('hidden');
-    showToast('Something went wrong loading the app — check the browser console for details', 6000);
+  }).catch(function(err){
+    showBootFailure(err);
   });
 
 })();
