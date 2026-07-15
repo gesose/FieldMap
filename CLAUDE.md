@@ -144,3 +144,15 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   the actual live payloads are 7-23MB per state (not a PowerShell-serialization artifact as previously
   assumed in Session 6's testing). Root-caused the slowness to buildLabelPointFeatureCollection, not network
   or caching (see Architecture notes' "FIXED performance bug" entry for full detail and the fix applied).
+- Session 8: Fixed a bearing-delete persistence bug — deleteBearingById was the only one of the four
+  pin/track/polygon/bearing delete functions NOT calling recordTombstone(id) before scheduleSave(). Confirmed
+  via direct code comparison (deletePinById/deleteTrackById/deletePolygonById all call it; deleteBearingById
+  didn't) and via mergeStates' logic (mergeArray only drops an id if it's in state.tombstones — an untracked
+  delete is indistinguishable from "never existed on this device" during a merge). This meant any Firestore
+  snapshot arriving after a local bearing delete but before that delete's own debounced cloud push completed —
+  performInitialSync on a fast reload, or startLiveSync's onSnapshot on any device — would resurrect the
+  bearing via mergeStates' union-by-id logic, and push that resurrection back to Firestore, undoing the delete
+  permanently. Fix: added the missing recordTombstone(id) call, matching the pin/track/polygon pattern exactly.
+  Verified via localStorage inspection (not just UI state) that state.tombstones now correctly contains a
+  deleted bearing's id and it stays gone after a real page reload; also verified bearing create/edit still
+  work unaffected (single-line, additive fix — no other delete path was touched).
