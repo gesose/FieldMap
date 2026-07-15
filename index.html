@@ -2051,7 +2051,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.16.4';
+  var APP_VERSION = '2.16.5';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -6325,12 +6325,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // map.queryTerrainElevation() entirely (which only has data for whatever's currently
   // rendered in the visible viewport — a track being profiled may be off-screen or at a
   // different zoom) by fetching the raw .pngraw terrain-RGB tiles directly.
-  var demTileCache = {}; // "z/x/y" -> decoded ImageData, or null if that tile failed — reused across profile computations within the session
+  // "z/x/y" -> decoded ImageData or null (once resolved), or the in-flight Promise itself
+  // while still loading — reused across track profile computations AND, since the
+  // queryTerrainElevation() replacement below, crosshair/pin point lookups too, all sharing
+  // one session-lived cache so any of them warming a tile benefits all the others.
+  var demTileCache = {};
   function fetchDemTileImageData(z, x, y){
     var key = z + '/' + x + '/' + y;
-    if (demTileCache.hasOwnProperty(key)) return Promise.resolve(demTileCache[key]);
+    if (demTileCache.hasOwnProperty(key)){
+      var existing = demTileCache[key];
+      return (existing && typeof existing.then === 'function') ? existing : Promise.resolve(existing);
+    }
     var url = 'https://api.mapbox.com/v4/mapbox.terrain-rgb/' + z + '/' + x + '/' + y + '.pngraw?access_token=' + MAPBOX_TOKEN;
-    return new Promise(function(resolve){
+    var promise = new Promise(function(resolve){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){
@@ -6347,6 +6354,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       img.onerror = function(){ demTileCache[key] = null; resolve(null); };
       img.src = url;
     });
+    // Memoize the in-flight promise itself, not just the eventual result — without this, a
+    // caller that re-checks every animation tick (the crosshair) would kick off a fresh
+    // concurrent Image() load for the same tile on every tick until the first one resolves.
+    demTileCache[key] = promise;
+    return promise;
   }
 
   function lngLatToTilePixel(lng, lat, z){
@@ -10795,9 +10807,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // DEM → GPS → EPQS elevation hierarchy, per the same priority order everywhere elevation
   // is looked up (new pins, track profile sampling, the crosshair readout):
-  //   1. map.queryTerrainElevation() against the always-loaded FIELDMAP_DEM_SOURCE (see the
-  //      terrain block in reinitializeLayers) — instant, no network call, works once an
-  //      area's DEM tiles are cached (e.g. via a future offline download).
+  //   1. Direct terrain-RGB tile fetch+decode (see tryDemElevationFt below) — the same method
+  //      computeTrackElevationProfile() already uses and that's confirmed reliable offline.
   //   2. Device GPS altitude — only trustworthy as "the elevation at (lat,lng)" when the
   //      queried point actually IS (approximately) the device's current fix, e.g. placing a
   //      pin or reading the crosshair at your own location. GPS_ALT_MAX_DIST_M / _AGE_MS
@@ -10806,34 +10817,40 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   //   3. USGS EPQS network lookup — last resort, for whenever neither of the above has data.
   var GPS_ALT_MAX_DIST_M = 50, GPS_ALT_MAX_AGE_MS = 30000;
   // Sanity bound on a DEM result, independent of whatever specific glitch produces an
-  // out-of-range value (a tile queried mid-load returning partial/corrupt data, a void or
-  // edge artifact in a specific tile, a point right on a tile boundary — a handful of pins
-  // have shown results like -11,257 ft where the real elevation was ~4,100 ft, while the
-  // overwhelming majority of DEM lookups are correct, which points at something
-  // tile-specific/intermittent rather than a systemic decode bug). -1,500 ft covers Death
-  // Valley/Badwater Basin (-282 ft) with headroom; 20,000 ft clears Denali (20,310 ft is
-  // the only US point above it, and this app's US-focused DEM tileset tops out well under
-  // Everest anyway).
+  // out-of-range value (a void or edge artifact in a specific tile, a point right on a tile
+  // boundary). -1,500 ft covers Death Valley/Badwater Basin (-282 ft) with headroom; 20,000 ft
+  // clears Denali (20,310 ft is the only US point above it, and this app's US-focused DEM
+  // tileset tops out well under Everest anyway).
   var DEM_ELEV_MIN_FT = -1500, DEM_ELEV_MAX_FT = 20000;
-  // Synchronous, local, effectively-free once tiles are loaded — pulled out on its own so
-  // callers that pan/tick continuously (the crosshair readout) can try it on every single
-  // tick with no throttling at all, and only fall through to the network-based GPS/EPQS
-  // tiers (which DO need throttling) when this comes back empty.
+  // Direct terrain-RGB tile fetch+decode — NOT map.queryTerrainElevation(), which this
+  // replaced. Confirmed via direct inspection of MapLibre's internal terrain source cache
+  // (map.terrain.sourceCache._tiles) that a DEM tile can sit at tile.state:'loading' with
+  // tile.dem never populated indefinitely, even once the underlying network fetch has already
+  // completed successfully with correctly-cached, real, readable bytes — i.e.
+  // queryTerrainElevation() cannot be trusted to reliably surface data even when a DEM tile
+  // genuinely is available. That silently sent every affected lookup through the GPS/EPQS
+  // fallback tiers below: EPQS being unavailable offline is why crosshair/pin elevation was
+  // completely blank offline, and EPQS being documented as intermittently slow/hanging (see
+  // fetchElevationFt below) is why the crosshair was slow and variable even online — same
+  // root cause, two symptoms. This reuses fetchDemTileImageData/decodeTerrainRgbElevationFt
+  // (originally written for the track elevation profile, and confirmed working offline) via
+  // the shared demTileCache, so any tile already warmed by a track profile, a downloaded
+  // region, or a previous crosshair/pin lookup anywhere benefits every other caller instantly.
+  // Cache hits are synchronous, so callers that pan/tick continuously (the crosshair readout)
+  // can still call this on every tick with no throttling; a cache miss kicks off the fetch in
+  // the background and returns null just for that one tick, same as before.
   function tryDemElevationFt(lat, lng){
     if (!map) return null;
     try {
-      var demM = map.queryTerrainElevation({ lng: lng, lat: lat });
-      // MapLibre renders a flat elevation-0 placeholder mesh under any DEM tile that hasn't
-      // finished loading yet (for render continuity while panning/zooming), and
-      // queryTerrainElevation reads straight off that placeholder — it returns exactly 0 for
-      // "no data yet", not null. Treating a literal 0 as "no DEM data" and falling through
-      // to GPS/EPQS is a deliberate tradeoff: it costs one unnecessary fallback lookup for
-      // the rare genuine sea-level point, in exchange for never reporting a false "0 ft" for
-      // every point whose tile simply hasn't loaded.
-      if (demM == null || demM === 0 || isNaN(demM)) return null;
-      var demFt = Math.round(demM / 0.3048);
-      if (demFt < DEM_ELEV_MIN_FT || demFt > DEM_ELEV_MAX_FT) return null; // implausible — treat as unavailable
-      return demFt;
+      var t = lngLatToTilePixel(lng, lat, DEM_BATCH_ZOOM);
+      var key = t.z + '/' + t.x + '/' + t.y;
+      var cached = demTileCache[key];
+      if (cached === undefined){
+        fetchDemTileImageData(t.z, t.x, t.y); // warm the cache for the next call; ignore the promise here
+        return null;
+      }
+      if (!cached || (typeof cached.then === 'function')) return null; // failed, or still in flight
+      return decodeTerrainRgbElevationFt(cached, t.px, t.py); // already bounds-checked internally
     } catch(e){ return null; }
   }
 
