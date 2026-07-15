@@ -23,6 +23,25 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 - GPS accuracy circle (gpsAccCircle) — needs MapLibre source/layer
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
   polygons drawn via the (still-Leaflet) offline-boundary rectangles — not in scope, different feature
+- FIXED performance bug (was: every GMU toggle-on, even a cache hit, paid a 20-40+ second synchronous
+  main-thread cost): buildLabelPointFeatureCollection's per-feature pole-of-inaccessibility grid search
+  (bestLabelPointForGeometry) is genuinely expensive on real government boundary data (Idaho: 100 features/
+  558K ring vertices = ~40s; Utah: 152 features/571K vertices = ~40s — confirmed via [GMU-PERF] console.log
+  instrumentation, left in place, in ensureGmuStateLoaded/readGmuDurableCache/showGmuState/
+  buildLabelPointFeatureCollection). Root cause is the agency data being full legal-boundary precision
+  (20+MB/state) rather than web-mapping-simplified — not specific to Idaho, not caused by this session's
+  caching work (which correctly eliminated network latency; it just exposed that label computation, not
+  network, was always the dominant cost). Fix: the computed label-point FeatureCollection is now cached
+  alongside the raw GeoJSON — in-memory (gmuLabelCache) and in the same durable Cache API entry as gmuCache's
+  data (writeGmuDurableCache/readGmuDurableCache now store/read {data, labelFc}, with backward-compat for
+  cache entries written before this — a bare FeatureCollection is treated as "labels not computed yet").
+  showGmuState only invokes buildLabelPointFeatureCollection when labelFc is missing; a genuine one-time
+  computation shows an honest toast ("[State] unit labels — setting up (one-time)…", via showToast/
+  hideToastNow) with a double-requestAnimationFrame yield first so the toast actually paints before the
+  synchronous work blocks the thread. Verified: first-ever toggle for a state still takes the full ~40s with
+  the toast visible throughout; every later toggle (same session, in-memory hit) drops to ~180-300ms sync
+  work (150-230x faster); a toggle after a full page reload (durable-cache hit including labelFc) is
+  ~1-1.5s (just JSON-parsing the larger cached blob, no recomputation) — confirmed for both Idaho and Utah.
 
 ## Architecture notes
 - Single file app: index.html (~9000 lines)
@@ -119,3 +138,9 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   Architecture notes) that the service worker's generic fetch passthrough intercepts GMU requests before
   Playwright's page.route() can, which was the actual cause of an initial "WA fetch never fires" false alarm —
   a test-environment fix (disable SW registration in the test), not an app change.
+- Session 7: Investigated a user report of GMU state loads still being slow (Idaho: 27s first load, 18s on a
+  cached reload) despite Session 6's caching confirming zero network requests. Added [GMU-PERF] timing
+  instrumentation and profiled with real (not trimmed/mocked) live agency data fetched via Node — discovered
+  the actual live payloads are 7-23MB per state (not a PowerShell-serialization artifact as previously
+  assumed in Session 6's testing). Root-caused the slowness to buildLabelPointFeatureCollection, not network
+  or caching (see Architecture notes' "FIXED performance bug" entry for full detail and the fix applied).

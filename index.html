@@ -2165,7 +2165,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.19.0';
+  var APP_VERSION = '2.20.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2297,6 +2297,14 @@
   var USFS_FILL_COLOR = '#7a9b5e';
   var USFS_STROKE_COLOR = '#3f5c2a';
   var gmuCache = {}; // stateKey -> fetched-once (and filtered, see GMU_STATES[key].filterFeature) GeoJSON, cached for the session (re-seeds the source after a style switch)
+  // stateKey -> computed label-point FeatureCollection (bestLabelPointForGeometry's
+  // pole-of-inaccessibility result per feature). Populated alongside gmuCache the first time a
+  // state's data is available (fresh fetch or a durable-cache read that predates this field),
+  // and persisted in the same durable cache entry as gmuCache's data — so the genuinely
+  // expensive part of a GMU load (profiled: 20-40+ seconds on real government boundary data,
+  // see buildLabelPointFeatureCollection) only ever runs once per fetch of a state, not once
+  // per toggle. See ensureGmuStateLoaded/showGmuState.
+  var gmuLabelCache = {};
   // Durable per-state GMU cache — separate from gmuCache (in-memory only, cleared on reload).
   // The Cache API (same mechanism already used for offline map tiles, see TILE_CACHE_NAME)
   // holds each state's fetched GeoJSON body under a synthetic same-origin URL; a plain
@@ -3772,6 +3780,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     t._timer = setTimeout(function(){ t.classList.remove('show'); }, duration || 2600);
   }
 
+  // Dismisses a showToast() immediately — for a toast whose duration was set as a long safety
+  // net around a variable-length blocking task (see the GMU label-point one-time-setup toast in
+  // showGmuState), rather than a fixed-length informational message left to expire on its own.
+  function hideToastNow(){
+    var t = document.getElementById('toast');
+    clearTimeout(t._timer);
+    t.classList.remove('show');
+  }
+
   // Diagnostic instrumentation for cold-boot failures (e.g. iOS standalone PWA, offline,
   // no remote-debugging tooling available on-device): shows the real caught error's message
   // and stack directly on the loading screen, persistently, instead of a generic toast that
@@ -3946,12 +3963,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (!overlayDataRestoredOnInit){
           overlayDataRestoredOnInit = true;
           if (state.settings.gmuOn && state.settings.gmuState && GMU_STATES[state.settings.gmuState]){
-            var activeGmuKey = state.settings.gmuState;
-            ensureGmuStateLoaded(activeGmuKey, function(data){
-              if (!data) return;
-              if (map.getSource('gmu-' + activeGmuKey + '-source')) map.getSource('gmu-' + activeGmuKey + '-source').setData(data);
-              if (map.getSource('gmu-' + activeGmuKey + '-label-source')) map.getSource('gmu-' + activeGmuKey + '-label-source').setData(buildLabelPointFeatureCollection(data));
-            });
+            // reinitializeLayers() already created this state's sources/layers with the
+            // correct visibility (state.settings-driven) but empty data — showGmuState both
+            // populates the data (cache-first, same as a manual toggle) and is a no-op on the
+            // visibility it already set correctly, so reuse it rather than duplicate its logic.
+            showGmuState(state.settings.gmuState, true);
           }
           if (state.settings.usfsBoundariesOn) ensureUsfsBoundariesLoaded(function(data){
             if (!data) return;
@@ -4609,13 +4625,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // FeatureCollection, for use as a dedicated label-only source (see comment above).
   // All original properties pass through unchanged.
   function buildLabelPointFeatureCollection(featureCollection){
+    var __t0 = performance.now();
+    var __vertexCount = 0;
     var points = [];
     (featureCollection && featureCollection.features || []).forEach(function(f){
       if (!f.geometry) return;
+      if (f.geometry.coordinates){
+        var rings = f.geometry.type === 'Polygon' ? f.geometry.coordinates : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates.reduce(function(a,p){return a.concat(p);},[]) : [];
+        rings.forEach(function(r){ __vertexCount += r.length; });
+      }
       var pt = bestLabelPointForGeometry(f.geometry);
       if (!pt) return;
       points.push({ type: 'Feature', geometry: { type: 'Point', coordinates: pt }, properties: f.properties });
     });
+    console.log('[GMU-PERF] buildLabelPointFeatureCollection: ' + (performance.now()-__t0).toFixed(0) + 'ms for ' + (featureCollection && featureCollection.features ? featureCollection.features.length : 0) + ' features, ' + __vertexCount + ' total ring vertices');
     return { type: 'FeatureCollection', features: points };
   }
 
@@ -4645,17 +4668,37 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     } catch(e){}
   }
 
+  // Resolves { data, labelFc } — labelFc is null if this cache entry predates label-point
+  // caching (see gmuLabelCache above) and still needs computing once.
   function readGmuDurableCache(stateKey){
     if (!window.caches) return Promise.resolve(null);
+    var __t0 = performance.now();
     return caches.open(GMU_DATA_CACHE_NAME)
-      .then(function(cache){ return cache.match(gmuCacheEntryUrl(stateKey)); })
-      .then(function(resp){ return resp ? resp.json() : null; })
+      .then(function(cache){
+        var __t1 = performance.now();
+        console.log('[GMU-PERF] ' + stateKey + ' caches.open: ' + (__t1-__t0).toFixed(0) + 'ms');
+        return cache.match(gmuCacheEntryUrl(stateKey)).then(function(resp){
+          console.log('[GMU-PERF] ' + stateKey + ' cache.match: ' + (performance.now()-__t1).toFixed(0) + 'ms, hit=' + !!resp);
+          return resp;
+        });
+      })
+      .then(function(resp){
+        if (!resp) return null;
+        var __t2 = performance.now();
+        return resp.json().then(function(parsed){
+          console.log('[GMU-PERF] ' + stateKey + ' cached Response.json() parse: ' + (performance.now()-__t2).toFixed(0) + 'ms');
+          // Backward-compat: entries written before label-point caching are a bare
+          // FeatureCollection, not {data, labelFc} — treat those as "labels not computed yet".
+          if (parsed && parsed.type === 'FeatureCollection') return { data: parsed, labelFc: null };
+          return { data: parsed.data, labelFc: parsed.labelFc || null };
+        });
+      })
       .catch(function(){ return null; });
   }
-  function writeGmuDurableCache(stateKey, data){
+  function writeGmuDurableCache(stateKey, data, labelFc){
     if (!window.caches) return;
     caches.open(GMU_DATA_CACHE_NAME).then(function(cache){
-      var resp = new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+      var resp = new Response(JSON.stringify({ data: data, labelFc: labelFc || null }), { headers: { 'Content-Type': 'application/json' } });
       return cache.put(gmuCacheEntryUrl(stateKey), resp);
     }).then(function(){
       setGmuCacheTimestamp(stateKey, Date.now());
@@ -4668,19 +4711,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // fetchedAt timestamp only ever drives the freshness text/nudge (see updateGmuFreshnessUI),
   // never whether a live re-fetch happens — that's what the explicit Refresh button is for.
   // forceRefresh (from refreshGmuState) skips straight to a live fetch, bypassing both caches.
+  // cb receives (data, labelFc) — labelFc is null whenever it hasn't been computed for this
+  // exact data yet (fresh fetch, or an old-format cache entry); showGmuState computes+caches it
+  // exactly once in that case, never on a toggle that already has both cached.
   function ensureGmuStateLoaded(stateKey, cb, forceRefresh){
-    if (gmuCache[stateKey] && !forceRefresh){ cb(gmuCache[stateKey]); return; }
+    var __tCall = performance.now();
+    if (gmuCache[stateKey] && !forceRefresh){
+      console.log('[GMU-PERF] ' + stateKey + ' in-memory gmuCache hit, 0ms, labelsCached=' + !!gmuLabelCache[stateKey]);
+      cb(gmuCache[stateKey], gmuLabelCache[stateKey] || null); return;
+    }
     var def = GMU_STATES[stateKey];
 
     function fetchLive(){
-      fetch(def.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      var __tFetch = performance.now();
+      fetch(def.url).then(function(r){
+        console.log('[GMU-PERF] ' + stateKey + ' fetch() headers: ' + (performance.now()-__tFetch).toFixed(0) + 'ms');
+        if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+      })
         .then(function(data){
+          console.log('[GMU-PERF] ' + stateKey + ' fetch()+body .json(): ' + (performance.now()-__tFetch).toFixed(0) + 'ms total, featureCount=' + (data && data.features ? data.features.length : 0));
+          var __tFilter = performance.now();
           if (def.filterFeature && data && data.features){
             data = { type: data.type, features: data.features.filter(function(f){ return def.filterFeature(f.properties || {}); }) };
           }
+          console.log('[GMU-PERF] ' + stateKey + ' filterFeature: ' + (performance.now()-__tFilter).toFixed(0) + 'ms');
           gmuCache[stateKey] = data;
-          writeGmuDurableCache(stateKey, data);
-          cb(data);
+          delete gmuLabelCache[stateKey]; // fresh geometry — any previously computed label points are stale
+          cb(data, null); // caller computes + caches label points once, then writeGmuDurableCache
         })
         .catch(function(err){
           console.error('[FieldMap] GMU ' + stateKey + ' fetch failed:', err);
@@ -4699,9 +4756,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (forceRefresh){ fetchLive(); return; }
 
     readGmuDurableCache(stateKey).then(function(cached){
+      console.log('[GMU-PERF] ' + stateKey + ' readGmuDurableCache total: ' + (performance.now()-__tCall).toFixed(0) + 'ms, hit=' + !!cached + ', labelsCached=' + !!(cached && cached.labelFc));
       if (cached){
-        gmuCache[stateKey] = cached;
-        cb(cached);
+        gmuCache[stateKey] = cached.data;
+        if (cached.labelFc) gmuLabelCache[stateKey] = cached.labelFc;
+        cb(cached.data, cached.labelFc);
       } else {
         fetchLive();
       }
@@ -4720,15 +4779,56 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // single source of truth now that only one state can be active at a time).
   function showGmuState(stateKey, on, forceRefresh){
     if (!on){ setGmuStateLayersVisible(stateKey, false); return; }
-    ensureGmuStateLoaded(stateKey, function(data){
+    var __tShow = performance.now();
+    ensureGmuStateLoaded(stateKey, function(data, labelFc){
       if (!data){
         setGmuOn(false); // fetch failed — fall back to fully off rather than a stuck-on toggle
         return;
       }
+      console.log('[GMU-PERF] ' + stateKey + ' data ready (ensureGmuStateLoaded returned): ' + (performance.now()-__tShow).toFixed(0) + 'ms, labelsCached=' + !!labelFc);
+      var __tSetData = performance.now();
       if (map && map.getSource('gmu-' + stateKey + '-source')) map.getSource('gmu-' + stateKey + '-source').setData(data);
-      if (map && map.getSource('gmu-' + stateKey + '-label-source')) map.getSource('gmu-' + stateKey + '-label-source').setData(buildLabelPointFeatureCollection(data));
-      setGmuStateLayersVisible(stateKey, true);
-      updateGmuFreshnessUI(stateKey);
+      console.log('[GMU-PERF] ' + stateKey + ' fill/line source.setData() call (sync return, worker tiling not included): ' + (performance.now()-__tSetData).toFixed(0) + 'ms');
+
+      function finishWithLabels(fc){
+        var __tLabelSet = performance.now();
+        if (map && map.getSource('gmu-' + stateKey + '-label-source')) map.getSource('gmu-' + stateKey + '-label-source').setData(fc);
+        console.log('[GMU-PERF] ' + stateKey + ' label source.setData() call: ' + (performance.now()-__tLabelSet).toFixed(0) + 'ms');
+        setGmuStateLayersVisible(stateKey, true);
+        updateGmuFreshnessUI(stateKey);
+        console.log('[GMU-PERF] ' + stateKey + ' TOTAL sync work (showGmuState call to visibility flip): ' + (performance.now()-__tShow).toFixed(0) + 'ms');
+        var __tIdle = performance.now();
+        if (map) map.once('idle', function(){
+          console.log('[GMU-PERF] ' + stateKey + ' map "idle" (actual tiling+paint complete) after setData: ' + (performance.now()-__tIdle).toFixed(0) + 'ms — GRAND TOTAL from showGmuState call: ' + (performance.now()-__tShow).toFixed(0) + 'ms');
+        });
+      }
+
+      if (labelFc){
+        // Already computed — either earlier this session or a prior durable-cache write.
+        // Skips the expensive pole-of-inaccessibility pass entirely (see buildLabelPointFeatureCollection).
+        finishWithLabels(labelFc);
+        return;
+      }
+
+      // First time this exact fetch of this state's data has needed label points — genuinely
+      // expensive (profiled: 20-40+ seconds on real government boundary data — see
+      // buildLabelPointFeatureCollection). Show an honest one-time notice, yield a frame so it
+      // actually paints before the synchronous work blocks the thread, then compute once and
+      // cache the result (in-memory + durable) so every later toggle of this state, within its
+      // cache window, skips straight to finishWithLabels above.
+      var def = GMU_STATES[stateKey];
+      showToast((def ? def.label : stateKey) + ' unit labels — setting up (one-time)…', 60000);
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          var __tLabelBuild = performance.now();
+          var fc = buildLabelPointFeatureCollection(data);
+          console.log('[GMU-PERF] ' + stateKey + ' buildLabelPointFeatureCollection (one-time): ' + (performance.now()-__tLabelBuild).toFixed(0) + 'ms');
+          gmuLabelCache[stateKey] = fc;
+          writeGmuDurableCache(stateKey, data, fc);
+          hideToastNow();
+          finishWithLabels(fc);
+        });
+      });
     }, forceRefresh);
   }
 
