@@ -61,9 +61,29 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   functions, infoLabel/infoUrl, optional filterFeature) — adding a state is one catalog entry, not bespoke code.
   Generic shared functions: ensureGmuStateLoaded/showGmuState/setGmuStateLayersVisible/gmuPopupHtml/
   openGmuPopupAt/setGmuOn/setGmuActiveState. Click handlers registered once in createMap() via a loop over
-  Object.keys(GMU_STATES). Currently built: az, or, ut, id, nv (see gmuCache/GMU_STATES near the top of the
-  script for full source URLs/field notes/research findings per state). Washington researched and confirmed
-  live (WDFW ArcGIS FeatureServer) but deliberately not yet wired in — pending go-ahead.
+  Object.keys(GMU_STATES). Currently built: az, or, ut, id, nv, wa (see gmuCache/GMU_STATES near the top of
+  the script for full source URLs/field notes/research findings per state).
+- GMU per-state durable cache: each state's fetched (and filtered) GeoJSON is written to the Cache API under
+  GMU_DATA_CACHE_NAME ('fieldmap-gmu-data-v1', synthetic same-origin key per state via gmuCacheEntryUrl) with
+  a fetch timestamp in a separate localStorage entry (GMU_CACHE_META_KEY, deliberately NOT part of
+  state.settings/Firestore sync — cache freshness is a local-storage fact, not a synced preference).
+  ensureGmuStateLoaded reads the durable cache first and uses it unconditionally at any age (instant,
+  offline-capable); the timestamp only drives the "Unit boundaries as of [date]" text in the state picker and
+  a non-blocking "consider refreshing" nudge past GMU_CACHE_STALE_DAYS (180) — never a forced re-fetch or
+  dialog. refreshGmuState() is the only path that bypasses the cache. IMPORTANT: service-worker.js's activate
+  handler whitelist (SHELL_CACHE/TILE_CACHE/GMU_DATA_CACHE) must keep GMU_DATA_CACHE's literal string in sync
+  with index.html's GMU_DATA_CACHE_NAME — otherwise every SHELL_CACHE bump wipes the GMU cache, since Cache
+  Storage is shared per-origin regardless of which context (page vs. SW) created an entry.
+- GMU liability disclaimer: identical text in two places — a persistent line under the GMU row in the Layers
+  panel (always visible, not dismissible) and a `.gmu-disclaimer`-classed line appended in every GMU popup
+  (gmuPopupHtml), regardless of whether that state has an info link.
+- Known test-environment gotcha (not an app bug): both IDFG (Idaho) and WDFW (Washington) self-hosted ArcGIS
+  servers intermittently reject automated-browser (Playwright) fetches — confirmed via matching non-browser
+  requests succeeding reliably, and confirmed NOT CORS/header-related. Also confirmed the app's own service
+  worker intercepts cross-origin fetches not in its BYPASS_HOSTS list and issues its own pass-through fetch
+  from the SW execution context, which Playwright's page.route() does not reliably intercept — disable SW
+  registration in any test that needs to mock a GMU state's live endpoint (see verify_gmu_cache_mechanics.js
+  pattern in scratch test history). Real end-user browsers are not expected to hit either issue.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -88,3 +108,14 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   IDFG's self-hosted ArcGIS server rejecting automated-browser traffic (403, headed and headless) while
   identical non-browser requests succeeded — likely bot/WAF detection on their end, not a FieldMap bug, but
   unconfirmed whether real end-user browsers ever hit the same wall.
+- Session 6: Washington wired into GMU_STATES (WDFW ArcGIS FeatureServer, 162 features, GMU_Num/GMU_Name
+  fields, per-unit PDF info link) — all 6 states now built. Added durable per-state GMU boundary caching
+  (Cache API + localStorage timestamp, see Architecture notes) with an unobtrusive freshness indicator and
+  manual refresh in the state picker, and a persistent liability disclaimer in both the Layers panel and every
+  GMU popup. Verified end-to-end via Playwright: WA renders/pops up correctly, single-select confirmed across
+  all 5 non-Idaho states, durable cache confirmed to load instantly with zero network requests on a page
+  reload, manual refresh confirmed to force exactly one live re-fetch and update the timestamp, and the
+  180-day stale nudge confirmed to render as inline text with no blocking dialog. Also discovered (see
+  Architecture notes) that the service worker's generic fetch passthrough intercepts GMU requests before
+  Playwright's page.route() can, which was the actual cause of an initial "WA fetch never fires" false alarm —
+  a test-environment fix (disable SW registration in the test), not an app change.

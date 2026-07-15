@@ -401,6 +401,8 @@
   .layer-hint-btn:hover{color:var(--text);}
   .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
   .layer-hint-text.show{display:block;}
+  .gmu-disclaimer{font-size:11px;color:var(--text-muted);line-height:1.4;margin:6px 0 0;padding-top:6px;border-top:1px solid var(--border);}
+  #gmu-freshness-text.gmu-freshness-stale{color:var(--accent);}
   .layer-section-header{margin:4px 0 2px;}
   .layer-section{margin-top:12px;}
   .layer-section:first-child{margin-top:0;}
@@ -1474,6 +1476,7 @@
           <span class="layer-compact-chevron">›</span>
         </button>
       </div>
+      <p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>
     </div>
   </div>
 
@@ -1587,8 +1590,14 @@
     <option value="nv">Nevada</option>
     <option value="or">Oregon</option>
     <option value="ut">Utah</option>
+    <option value="wa">Washington</option>
   </select>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;">
+    <p class="hint" id="gmu-freshness-text" style="margin:0;flex:1;"></p>
+    <button type="button" class="link-btn" id="gmu-refresh-btn" style="flex-shrink:0;white-space:nowrap;">Refresh</button>
+  </div>
   <p class="hint" style="margin-top:10px;">Only one state's GMU boundaries can be shown at a time.</p>
+  <p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>
 </div>
 
 <div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
@@ -2156,7 +2165,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.18.0';
+  var APP_VERSION = '2.19.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2288,6 +2297,16 @@
   var USFS_FILL_COLOR = '#7a9b5e';
   var USFS_STROKE_COLOR = '#3f5c2a';
   var gmuCache = {}; // stateKey -> fetched-once (and filtered, see GMU_STATES[key].filterFeature) GeoJSON, cached for the session (re-seeds the source after a style switch)
+  // Durable per-state GMU cache — separate from gmuCache (in-memory only, cleared on reload).
+  // The Cache API (same mechanism already used for offline map tiles, see TILE_CACHE_NAME)
+  // holds each state's fetched GeoJSON body under a synthetic same-origin URL; a plain
+  // localStorage entry (device-local, deliberately NOT part of state.settings/Firestore sync —
+  // cache freshness is a local-storage fact, not a user preference) holds each state's fetch
+  // timestamp. A state with a durable cache entry loads instantly on toggle, at any age — the
+  // timestamp only ever affects the freshness text/nudge, never whether the cache is used.
+  var GMU_DATA_CACHE_NAME = 'fieldmap-gmu-data-v1';
+  var GMU_CACHE_META_KEY = 'field-map-gmu-cache-meta-v1';
+  var GMU_CACHE_STALE_DAYS = 180; // past this age, show a gentle (non-blocking) refresh nudge
   var usfsBoundariesCache = null; // same pattern, for the national forest boundary layer
   var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt — shared across every GMU state (only one GMU popup open at a time, regardless of which state it came from)
   var openUsfsBoundaryPopup = null;
@@ -2401,6 +2420,18 @@
       // hunt units from exactly 5 closed/special areas (Sheldon NWR, Death Valley NP, Nellis
       // AFR/Nevada Test Site, Great Basin NP, Indian Springs AFAF) — all is_open:"false".
       filterFeature: function(props){ return props.is_open === 'true'; }
+    },
+    wa: {
+      label: 'Washington',
+      url: 'https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/HOReferenceService/MapServer/0/query?where=1%3D1&outFields=*&f=geojson',
+      labelField: 'GMU_Num',
+      popupTitle: function(props){ return props.GMU_Name ? 'GMU ' + props.GMU_Num + ' — ' + props.GMU_Name : (props.GMU_Num != null ? 'GMU ' + props.GMU_Num : ''); },
+      popupMeta: function(props){ return props.In_Effect_Desc || null; },
+      infoLabel: 'WDFW unit info',
+      // Confirmed live per-unit PDF pattern (verified against GMU 568 "Washougal" — 200,
+      // application/pdf), keyed off the numeric GMU_Num field.
+      infoUrl: function(props){ return props.GMU_Num != null ? 'https://wdfw.wa.gov/sites/default/files/webmaps/gmu/GMU_' + props.GMU_Num + '.pdf' : null; },
+      filterFeature: null
     }
   };
   // Administrative (current, not "original proclaimed") National Forest boundary — confirmed
@@ -4595,22 +4626,86 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // functions replaces what used to be a hand-duplicated copy per state (ensureGmuAzLoaded/
   // ensureGmuOrLoaded, setGmuAzOn/setGmuOrOn, gmuPopupHtml/gmuOrPopupHtml, etc.) — see
   // GMU_STATES above for what a new state needs to plug in here.
-  function ensureGmuStateLoaded(stateKey, cb){
-    if (gmuCache[stateKey]){ cb(gmuCache[stateKey]); return; }
+  // Cache API key for a state's durable GMU cache entry — a synthetic same-origin URL, never
+  // actually requested over the network, just used as the Cache API's lookup key.
+  function gmuCacheEntryUrl(stateKey){ return location.origin + '/__gmu-cache__/' + stateKey + '.geojson'; }
+
+  function loadGmuCacheMeta(){
+    try { return JSON.parse(localStorage.getItem(GMU_CACHE_META_KEY) || '{}'); } catch(e){ return {}; }
+  }
+  function getGmuCacheTimestamp(stateKey){
+    var meta = loadGmuCacheMeta();
+    return (meta[stateKey] && meta[stateKey].fetchedAt) || null;
+  }
+  function setGmuCacheTimestamp(stateKey, ts){
+    try {
+      var meta = loadGmuCacheMeta();
+      meta[stateKey] = { fetchedAt: ts };
+      localStorage.setItem(GMU_CACHE_META_KEY, JSON.stringify(meta));
+    } catch(e){}
+  }
+
+  function readGmuDurableCache(stateKey){
+    if (!window.caches) return Promise.resolve(null);
+    return caches.open(GMU_DATA_CACHE_NAME)
+      .then(function(cache){ return cache.match(gmuCacheEntryUrl(stateKey)); })
+      .then(function(resp){ return resp ? resp.json() : null; })
+      .catch(function(){ return null; });
+  }
+  function writeGmuDurableCache(stateKey, data){
+    if (!window.caches) return;
+    caches.open(GMU_DATA_CACHE_NAME).then(function(cache){
+      var resp = new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+      return cache.put(gmuCacheEntryUrl(stateKey), resp);
+    }).then(function(){
+      setGmuCacheTimestamp(stateKey, Date.now());
+      updateGmuFreshnessUI(stateKey);
+    }).catch(function(){});
+  }
+
+  // stateKey -> GeoJSON, at any age, always wins over a live fetch: the whole point of the
+  // durable cache is that toggling a previously-seen state is instant and works offline. The
+  // fetchedAt timestamp only ever drives the freshness text/nudge (see updateGmuFreshnessUI),
+  // never whether a live re-fetch happens — that's what the explicit Refresh button is for.
+  // forceRefresh (from refreshGmuState) skips straight to a live fetch, bypassing both caches.
+  function ensureGmuStateLoaded(stateKey, cb, forceRefresh){
+    if (gmuCache[stateKey] && !forceRefresh){ cb(gmuCache[stateKey]); return; }
     var def = GMU_STATES[stateKey];
-    fetch(def.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(data){
-        if (def.filterFeature && data && data.features){
-          data = { type: data.type, features: data.features.filter(function(f){ return def.filterFeature(f.properties || {}); }) };
-        }
-        gmuCache[stateKey] = data;
-        cb(data);
-      })
-      .catch(function(err){
-        console.error('[FieldMap] GMU ' + stateKey + ' fetch failed:', err);
-        showToast(def.label + ' GMU boundaries failed to load — check your connection');
-        cb(null);
-      });
+
+    function fetchLive(){
+      fetch(def.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(data){
+          if (def.filterFeature && data && data.features){
+            data = { type: data.type, features: data.features.filter(function(f){ return def.filterFeature(f.properties || {}); }) };
+          }
+          gmuCache[stateKey] = data;
+          writeGmuDurableCache(stateKey, data);
+          cb(data);
+        })
+        .catch(function(err){
+          console.error('[FieldMap] GMU ' + stateKey + ' fetch failed:', err);
+          if (forceRefresh){
+            showToast(def.label + ' GMU boundaries failed to refresh — check your connection');
+            cb(null);
+          } else {
+            // No live data and no durable cache (readGmuDurableCache already came back empty
+            // to get here) — genuinely nothing to show.
+            showToast(def.label + ' GMU boundaries failed to load — check your connection');
+            cb(null);
+          }
+        });
+    }
+
+    if (forceRefresh){ fetchLive(); return; }
+
+    readGmuDurableCache(stateKey).then(function(cached){
+      if (cached){
+        gmuCache[stateKey] = cached;
+        cb(cached);
+      } else {
+        fetchLive();
+      }
+    });
   }
 
   function setGmuStateLayersVisible(stateKey, on){
@@ -4623,7 +4718,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Pure "show/hide this state's layers, loading data if needed" helper — doesn't write
   // settings itself (gmuOn/gmuState, written by setGmuOn/setGmuActiveState below, are the
   // single source of truth now that only one state can be active at a time).
-  function showGmuState(stateKey, on){
+  function showGmuState(stateKey, on, forceRefresh){
     if (!on){ setGmuStateLayersVisible(stateKey, false); return; }
     ensureGmuStateLoaded(stateKey, function(data){
       if (!data){
@@ -4633,7 +4728,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map && map.getSource('gmu-' + stateKey + '-source')) map.getSource('gmu-' + stateKey + '-source').setData(data);
       if (map && map.getSource('gmu-' + stateKey + '-label-source')) map.getSource('gmu-' + stateKey + '-label-source').setData(buildLabelPointFeatureCollection(data));
       setGmuStateLayersVisible(stateKey, true);
-    });
+      updateGmuFreshnessUI(stateKey);
+    }, forceRefresh);
+  }
+
+  // Manual refresh — always available regardless of cache age, bypasses both the in-memory
+  // and durable caches for this one state only (every other cached state is untouched).
+  function refreshGmuState(stateKey){
+    var def = GMU_STATES[stateKey];
+    showToast('Refreshing ' + (def ? def.label : stateKey) + ' GMU boundaries…');
+    showGmuState(stateKey, true, true);
+  }
+
+  function formatGmuCacheDate(ts){
+    var d = new Date(ts);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  // Unobtrusive "as of [date]" line in the state picker, plus a quiet (never blocking) nudge
+  // once a state's cache passes GMU_CACHE_STALE_DAYS. Reads localStorage only — safe to call
+  // any time the panel is open or the selected state changes, with no network/data dependency.
+  function updateGmuFreshnessUI(stateKey){
+    var el = document.getElementById('gmu-freshness-text');
+    if (!el) return;
+    var ts = getGmuCacheTimestamp(stateKey);
+    if (!ts){ el.textContent = ''; el.classList.remove('gmu-freshness-stale'); return; }
+    var ageDays = (Date.now() - ts) / 86400000;
+    var stale = ageDays > GMU_CACHE_STALE_DAYS;
+    el.textContent = 'Unit boundaries as of ' + formatGmuCacheDate(ts) + (stale ? ' — consider refreshing' : '');
+    el.classList.toggle('gmu-freshness-stale', stale);
   }
 
   // Some source data's link fields are a full "<a href=\"...\">Unit N</a>" HTML snippet, not
@@ -4660,7 +4783,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<div class="pin-popup-name">' + escapeHtml(String(title)) + '</div>' +
       metaHtml +
       '</div>' +
-      actionsHtml;
+      actionsHtml +
+      '<p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>';
   }
 
   function openGmuPopupAt(stateKey, props, lngLat){
@@ -4694,6 +4818,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // layers exist on the map at all times (see reinitializeLayers), only visibility toggles.
       if (prevState) setGmuStateLayersVisible(prevState, false);
       showGmuState(stateKey, true);
+    } else {
+      updateGmuFreshnessUI(stateKey); // reads localStorage only, safe even when the layer itself is off
     }
     updateGmuQuickToggleUI();
   }
@@ -12404,12 +12530,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeAllPanels();
       document.getElementById('gmu-state-panel').classList.remove('hidden');
       updateGmuQuickToggleUI();
+      updateGmuFreshnessUI(state.settings.gmuState || 'az');
     });
     document.getElementById('gmu-state-close-btn').addEventListener('click', function(){
       document.getElementById('gmu-state-panel').classList.add('hidden');
     });
     document.getElementById('gmu-state-select').addEventListener('change', function(){
       setGmuActiveState(this.value);
+    });
+    document.getElementById('gmu-refresh-btn').addEventListener('click', function(){
+      refreshGmuState(state.settings.gmuState || 'az');
     });
 
     initLayerSections();
