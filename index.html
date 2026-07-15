@@ -2051,7 +2051,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.16.3';
+  var APP_VERSION = '2.16.4';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -6158,11 +6158,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // failed on exactly those 3 styles while working fine on Aerial/USGS Topo (neither of
     // which defines that source). Using our own distinct id sidesteps the collision
     // entirely on every style.
+    // Static tiles:[...] array, NOT a url:'...terrain-rgb.json' TileJSON descriptor — this is
+    // the actual fix for crosshair/pin elevation being missing offline while track elevation
+    // (which reads the identical tiles via its own direct fetch, see fetchDemTileImageData)
+    // worked fine. Root cause, confirmed: a TileJSON descriptor makes MapLibre resolve the
+    // real tile URL template dynamically from the server's response, and Mapbox's real
+    // terrain-rgb TileJSON injects a "sku" usage-tracking query param into that template (a
+    // documented, real Mapbox v4 API behavior) — meaning the actual URLs the terrain engine's
+    // own tile loader requests are NOT the same URLs (different query string = different Cache
+    // API key) as the sku-less, hardcoded pattern the download step and
+    // fetchDemTileImageData() both use. A tile cached by either of those — even genuinely,
+    // correctly cached with real readable bytes — could never satisfy the terrain engine's own
+    // lookup, since it was never asking for that exact URL to begin with. tileSize:256 (down
+    // from 512) also matches the standard slippy-tile addressing every other DEM consumer in
+    // this app already uses (computeTileList's lonToTileX/latToTileY, fetchDemTileImageData's
+    // lngLatToTilePixel), so the same real-world tile now maps to the same z/x/y everywhere,
+    // not just the same URL template — the download, the track profile, and
+    // queryTerrainElevation() are now provably requesting byte-identical URLs for the same
+    // ground point.
     if (!map.getSource(FIELDMAP_DEM_SOURCE)){
       map.addSource(FIELDMAP_DEM_SOURCE, {
         type: 'raster-dem',
-        url: 'https://api.mapbox.com/v4/mapbox.terrain-rgb.json?secure&access_token=' + MAPBOX_TOKEN,
-        tileSize: 512,
+        tiles: ['https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.pngraw?access_token=' + MAPBOX_TOKEN],
+        tileSize: 256,
         maxzoom: 14
       });
     }
@@ -13044,7 +13062,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
   import {
     initializeFirestore, doc, getDoc, setDoc, onSnapshot,
-    persistentLocalCache, persistentMultipleTabManager
+    persistentLocalCache, persistentMultipleTabManager,
+    enableNetwork, disableNetwork
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
   var firebaseConfig = {
@@ -13065,6 +13084,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // is ever open in more than one browser tab at once.
   var db = initializeFirestore(fbApp, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+
+  // Force a clean reconnect whenever the browser regains connectivity. Confirmed via a real
+  // two-device Firestore test (offline device creates an item, reconnects, waits — a second,
+  // already-online device signed into the same account never received it; only reconnecting
+  // device's own FULL PAGE RESTART finally got the write through): Firestore's WebChannel
+  // transport does not reliably resume on its own after a genuine offline->online transition
+  // within any reasonable time — its queued writes and live listener both stayed stuck even
+  // though the SDK's own "Synced" status optimistically reported success (that status reflects
+  // the local write resolving, not the server actually receiving it). A full reload works
+  // because it tears down and recreates the whole Firestore client. disableNetwork() followed
+  // by enableNetwork() does the same thing to the SDK's network layer specifically, without
+  // needing to reload the page — this is Firestore's own documented mechanism for forcing a
+  // fresh connection, and directly addresses the actual reconnection failure rather than the
+  // page-reload-interrupts-sync race fixed last round (which was a real, separate bug, but not
+  // this one — this reproduces even with zero page reload involved at all).
+  window.addEventListener('online', function(){
+    disableNetwork(db).then(function(){ return enableNetwork(db); }).catch(function(err){
+      console.warn('[FieldMap] Network reconnect cycle failed:', err);
+    });
   });
 
   var currentUid = null;
