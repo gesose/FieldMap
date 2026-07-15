@@ -1583,7 +1583,10 @@
   </div>
   <select id="gmu-state-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
     <option value="az">Arizona</option>
+    <option value="id">Idaho</option>
+    <option value="nv">Nevada</option>
     <option value="or">Oregon</option>
+    <option value="ut">Utah</option>
   </select>
   <p class="hint" style="margin-top:10px;">Only one state's GMU boundaries can be shown at a time.</p>
 </div>
@@ -2153,8 +2156,8 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.17.1';
-  var APP_RELEASE_DATE = 'June 2026';
+  var APP_VERSION = '2.18.0';
+  var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
   // Deliberately NOT named "mapbox-dem" — our 3 custom Mapbox Studio styles already embed a
@@ -2284,10 +2287,9 @@
   // layers' orange/blue and (once built) hydrography's blue.
   var USFS_FILL_COLOR = '#7a9b5e';
   var USFS_STROKE_COLOR = '#3f5c2a';
-  var gmuAzCache = null; // fetched-once GeoJSON, cached for the session (re-seeds the source after a style switch)
-  var gmuOrCache = null; // same, for Oregon
-  var usfsBoundariesCache = null; // same, for the national forest boundary layer
-  var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt — shared by AZ and OR (only one GMU popup open at a time)
+  var gmuCache = {}; // stateKey -> fetched-once (and filtered, see GMU_STATES[key].filterFeature) GeoJSON, cached for the session (re-seeds the source after a style switch)
+  var usfsBoundariesCache = null; // same pattern, for the national forest boundary layer
+  var openGmuPopup = null; // ad-hoc popup, mirrors openPolygonPopupAt/openWildlifePopupAt — shared across every GMU state (only one GMU popup open at a time, regardless of which state it came from)
   var openUsfsBoundaryPopup = null;
   // Sun-path arc: sun-arc-source (colored day/golden/twilight segments) + sun-dash-source
   // (dashed line from map center to the sun dot), plus 3 reused maplibregl.Marker instances
@@ -2300,9 +2302,106 @@
   var compassTargetLatLng = null;
   var compassUseCenter = false; // false = GPS location, true = map center
   var sunDate = null; // date currently shown in sunrise panel
-  var GMU_SOURCES = {
-    az: { url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson', label: 'Arizona' },
-    or: { url: 'data/oregon-gmu.geojson', label: 'Oregon' }
+  // GMU boundaries — one entry per state, each confirmed live against the real agency/ArcGIS
+  // endpoint before being added here (not guessed at). Every entry funnels through the same
+  // generic ensureGmuStateLoaded/showGmuState/gmuPopupHtml/openGmuPopupAt machinery — a new
+  // state only needs an entry here plus a matching source/layer set in reinitializeLayers().
+  //   url          — direct f=geojson query (or a local vendored file, like Oregon, when the
+  //                  live source needs offline reprojection work f=geojson can't do for us).
+  //   labelField   — raw GeoJSON property name read directly by the on-map label's MapLibre
+  //                  text-field expression (short text — usually a unit number).
+  //   popupTitle/popupMeta — functions(props) building the popup's headline/subtitle text.
+  //   infoLabel/infoUrl    — the "<Agency> unit info" button text + link function(props); either
+  //                  can be null/omitted if a state has no matching link (see Oregon).
+  //   filterFeature — optional function(props) returning true to KEEP a feature; used to drop
+  //                  non-huntable/closed entries a raw agency layer includes (see Nevada).
+  var GMU_STATES = {
+    az: {
+      label: 'Arizona',
+      url: 'https://services8.arcgis.com/KyZIQDOsXnGaTxj2/ArcGIS/rest/services/AZ_Game_and_Fish_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson',
+      labelField: 'GMU',
+      popupTitle: function(props){ return 'GMU ' + (props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || ''); },
+      popupMeta: function(props){ return props.REG_NAME || null; },
+      infoLabel: 'AZGFD unit info',
+      // The source data's AGFDLink field is a full "<a href=\"...\">Unit N</a>" HTML snippet,
+      // not a plain URL — used as-is it got escapeHtml'd whole into an href attribute (i.e.
+      // the href literally became the escaped markup string), producing a link that 404'd on
+      // every tap regardless of platform. Pull just the href out of it instead (see
+      // extractHrefFromHtml). Fallback pattern matches the real azgfd.gov URLs seen in the
+      // source data (azgfd.gov, not .com; /h_f/hunting_units_<unit>.shtml, not
+      // /location/gmu-<unit>/) — only used if AGFDLink is ever missing, extremely rare here.
+      infoUrl: function(props){
+        var label = props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '';
+        return extractHrefFromHtml(props.AGFDLink) || ('https://www.azgfd.gov/h_f/hunting_units_' + encodeURIComponent(String(label).toLowerCase()) + '.shtml');
+      },
+      filterFeature: null
+    },
+    or: {
+      label: 'Oregon',
+      // Local vendored GeoJSON (data/oregon-gmu.geojson, 69 features, properties: unit_num,
+      // unit_name) instead of a remote ArcGIS query — ODFW's live source needed a Lambert
+      // reprojection f=geojson auto-reprojection can't do, so this was fetched and
+      // pre-processed once rather than live-queried like every other state here.
+      url: 'data/oregon-gmu.geojson',
+      labelField: 'unit_num',
+      popupTitle: function(props){ return props.unit_name || ''; },
+      popupMeta: function(props){ return props.unit_num != null ? 'Unit ' + props.unit_num : null; },
+      infoLabel: null, // no ODFW per-unit link source confirmed
+      infoUrl: null,
+      filterFeature: null
+    },
+    ut: {
+      label: 'Utah',
+      url: 'https://services.arcgis.com/ZzrwjTRez6FJiOq4/arcgis/rest/services/Utah_Big_Game_Hunt_Boundaries_2025/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson',
+      // Utah has no simple numeric unit code the way AZ/ID/NV do — hunters reference units by
+      // name (e.g. "Beaver", "Cache"), so Boundary_Name is used for both the on-map label and
+      // the popup title, unlike every other state here.
+      labelField: 'Boundary_Name',
+      popupTitle: function(props){ return props.Boundary_Name || ''; },
+      popupMeta: function(){ return null; }, // Description is a long legal-boundary paragraph, not a good popup subtitle
+      infoLabel: 'UDWR unit info',
+      // No confirmed per-unit deep link exists — Utah's Hunt Planner (dwrapps.utah.gov) is an
+      // interactive map/JS app with no per-unit URL pattern found. Links to the general tool
+      // rather than guessing at a URL structure.
+      infoUrl: function(){ return 'https://dwrapps.utah.gov/huntboundary/hbstart'; },
+      // IMPORTANT, confirmed via live data inspection (not the original research pass's
+      // assumption): this dataset has NO "CWMU" tag or subunit/parent boolean field at all.
+      // The apparent duplication (e.g. "Beaver" alongside "Beaver, East"/"Beaver, West") is a
+      // real general-unit/subunit hierarchy Utah DWR itself publishes as distinct named
+      // boundaries — not erroneous duplicates. Filtering these out risks silently dropping
+      // real, valid hunt boundaries with no safe way to tell which entries are "redundant"
+      // from the data alone, so this deliberately renders all 152 as-is rather than guess.
+      filterFeature: null
+    },
+    id: {
+      label: 'Idaho',
+      url: 'https://gisportal-idfg.idaho.gov/hosting/rest/services/Hunting/MapServer/3/query?where=1%3D1&outFields=*&f=geojson',
+      labelField: 'NAME',
+      popupTitle: function(props){ return props.NAME ? 'Unit ' + props.NAME : ''; },
+      popupMeta: function(props){ return props.Elk_Zone || null; },
+      infoLabel: 'IDFG unit info',
+      infoUrl: function(props){
+        return extractHrefFromHtml(props.gmu_wtd_url) || extractHrefFromHtml(props.regular_deer_url) || extractHrefFromHtml(props.elkZone_url_1) || null;
+      },
+      filterFeature: null
+    },
+    nv: {
+      label: 'Nevada',
+      url: 'https://services.arcgis.com/RyxlXSfFi87rAosq/arcgis/rest/services/NDOW_Hunt_Units/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson',
+      labelField: 'display_name',
+      popupTitle: function(props){ return props.display_name ? 'Unit ' + props.display_name : ''; },
+      popupMeta: function(){ return null; },
+      infoLabel: 'NDOW unit info',
+      // No confirmed per-unit deep link — NDOW's per-unit PDFs found in research were
+      // depredation-hunt-specific with no reliable {number} URL pattern for a general unit.
+      // Links to the general hunt-planning tool instead of guessing.
+      infoUrl: function(){ return 'https://www.ndow.org/get-outside/plan-your-hunt/'; },
+      // Confirmed via live data (all 129 features sampled): is_active is "true" on every row
+      // (not a useful filter on its own) but is_open cleanly separates 124 real numbered
+      // hunt units from exactly 5 closed/special areas (Sheldon NWR, Death Valley NP, Nellis
+      // AFR/Nevada Test Site, Great Basin NP, Indian Springs AFAF) — all is_open:"false".
+      filterFeature: function(props){ return props.is_open === 'true'; }
+    }
   };
   // Administrative (current, not "original proclaimed") National Forest boundary — confirmed
   // via research: direct f=geojson query support, inSR=4269 works, no min-zoom/scale gating
@@ -3815,16 +3914,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // trigger has to happen here, once, after the map is real.
         if (!overlayDataRestoredOnInit){
           overlayDataRestoredOnInit = true;
-          if (state.settings.gmuOn && state.settings.gmuState === 'az') ensureGmuAzLoaded(function(data){
-            if (!data) return;
-            if (map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
-            if (map.getSource('gmu-az-label-source')) map.getSource('gmu-az-label-source').setData(buildLabelPointFeatureCollection(data));
-          });
-          if (state.settings.gmuOn && state.settings.gmuState === 'or') ensureGmuOrLoaded(function(data){
-            if (!data) return;
-            if (map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
-            if (map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
-          });
+          if (state.settings.gmuOn && state.settings.gmuState && GMU_STATES[state.settings.gmuState]){
+            var activeGmuKey = state.settings.gmuState;
+            ensureGmuStateLoaded(activeGmuKey, function(data){
+              if (!data) return;
+              if (map.getSource('gmu-' + activeGmuKey + '-source')) map.getSource('gmu-' + activeGmuKey + '-source').setData(data);
+              if (map.getSource('gmu-' + activeGmuKey + '-label-source')) map.getSource('gmu-' + activeGmuKey + '-label-source').setData(buildLabelPointFeatureCollection(data));
+            });
+          }
           if (state.settings.usfsBoundariesOn) ensureUsfsBoundariesLoaded(function(data){
             if (!data) return;
             if (map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
@@ -4118,52 +4215,34 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'gauge-stations-circle', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'gauge-stations-circle', function(){ map.getCanvas().style.cursor = ''; });
 
-      // GMU / USFS boundary click — same mode-aware pass-through, read-only reference data.
-      function handleGmuFillClick(e){
-        if (e.defaultPrevented) return; // see cluster-circles handler above for why
-        e.preventDefault();
-        if (e.originalEvent) e.originalEvent.stopPropagation();
-        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
-          if (bearingMode){ handleBearingMapTap(latlng); return; }
-          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
-          if (compassActive){ handleCompassMapTap(latlng); return; }
-          if (measureMode){ handleMeasureClick(latlng); return; }
-          if (drawMode){ handleDrawClick(latlng); return; }
-          if (polygonMode){ handlePolygonClick(latlng); return; }
-          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
-          return;
-        }
-        var gmuFeature = e.features && e.features[0];
-        if (!gmuFeature) return;
-        openGmuPopupAt(gmuFeature.properties, e.lngLat);
-      }
-      map.on('click', 'gmu-az-fill', handleGmuFillClick);
-      map.on('mouseenter', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'gmu-az-fill', function(){ map.getCanvas().style.cursor = ''; });
-
-      function handleGmuOrFillClick(e){
-        if (e.defaultPrevented) return; // see cluster-circles handler above for why
-        e.preventDefault();
-        if (e.originalEvent) e.originalEvent.stopPropagation();
-        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
-          if (bearingMode){ handleBearingMapTap(latlng); return; }
-          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
-          if (compassActive){ handleCompassMapTap(latlng); return; }
-          if (measureMode){ handleMeasureClick(latlng); return; }
-          if (drawMode){ handleDrawClick(latlng); return; }
-          if (polygonMode){ handlePolygonClick(latlng); return; }
-          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
-          return;
-        }
-        var gmuOrFeature = e.features && e.features[0];
-        if (!gmuOrFeature) return;
-        openGmuOrPopupAt(gmuOrFeature.properties, e.lngLat);
-      }
-      map.on('click', 'gmu-or-fill', handleGmuOrFillClick);
-      map.on('mouseenter', 'gmu-or-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'gmu-or-fill', function(){ map.getCanvas().style.cursor = ''; });
+      // GMU boundary click — same mode-aware pass-through, read-only reference data. One
+      // generic handler registered per GMU_STATES entry (was two hand-duplicated copies, one
+      // per state, before GMU boundaries scaled past AZ/OR) — adding a new state's fill layer
+      // to this loop is all a future state needs to become clickable.
+      Object.keys(GMU_STATES).forEach(function(gmuKey){
+        var fillLayerId = 'gmu-' + gmuKey + '-fill';
+        map.on('click', fillLayerId, function(e){
+          if (e.defaultPrevented) return; // see cluster-circles handler above for why
+          e.preventDefault();
+          if (e.originalEvent) e.originalEvent.stopPropagation();
+          var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+            if (bearingMode){ handleBearingMapTap(latlng); return; }
+            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+            if (compassActive){ handleCompassMapTap(latlng); return; }
+            if (measureMode){ handleMeasureClick(latlng); return; }
+            if (drawMode){ handleDrawClick(latlng); return; }
+            if (polygonMode){ handlePolygonClick(latlng); return; }
+            if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+            return;
+          }
+          var gmuFeature = e.features && e.features[0];
+          if (!gmuFeature) return;
+          openGmuPopupAt(gmuKey, gmuFeature.properties, e.lngLat);
+        });
+        map.on('mouseenter', fillLayerId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', fillLayerId, function(){ map.getCanvas().style.cursor = ''; });
+      });
 
       function handleUsfsBoundaryFillClick(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
@@ -4200,7 +4279,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('click', function(e){
         // Registered last, so this only runs for clicks that didn't already land on (and
         // get fully handled by) cluster-circles/tracks-line-touch/polygons-fill/
-        // bearings-line-touch/wildlife-*-fill/gmu-az-fill/gmu-or-fill/usfs-boundaries-fill/
+        // bearings-line-touch/wildlife-*-fill/gmu-*-fill/usfs-boundaries-fill/
         // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
@@ -4509,126 +4588,98 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return { type: 'FeatureCollection', features: points };
   }
 
-  // ── GMU boundaries (Arizona) ── GeoJSON source + fill (hit-test only)/line/label layers,
-  // matching the wildlife-layer pattern: fetch once, cache in memory, re-seed the source
-  // from cache on every style switch instead of re-fetching. Label visibility is scale-gated
-  // via the layer's own minzoom/maxzoom rather than a manual zoomend listener.
-  function ensureGmuAzLoaded(cb){
-    if (gmuAzCache){ cb(gmuAzCache); return; }
-    fetch(GMU_SOURCES.az.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(data){ gmuAzCache = data; cb(data); })
+  // ── GMU boundaries — GeoJSON source + fill (hit-test only)/line/label layers per state,
+  // matching the wildlife-layer pattern: fetch once, cache in memory, re-seed the source from
+  // cache on every style switch instead of re-fetching. Label visibility is scale-gated via
+  // the layer's own minzoom/maxzoom rather than a manual zoomend listener. One generic set of
+  // functions replaces what used to be a hand-duplicated copy per state (ensureGmuAzLoaded/
+  // ensureGmuOrLoaded, setGmuAzOn/setGmuOrOn, gmuPopupHtml/gmuOrPopupHtml, etc.) — see
+  // GMU_STATES above for what a new state needs to plug in here.
+  function ensureGmuStateLoaded(stateKey, cb){
+    if (gmuCache[stateKey]){ cb(gmuCache[stateKey]); return; }
+    var def = GMU_STATES[stateKey];
+    fetch(def.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){
+        if (def.filterFeature && data && data.features){
+          data = { type: data.type, features: data.features.filter(function(f){ return def.filterFeature(f.properties || {}); }) };
+        }
+        gmuCache[stateKey] = data;
+        cb(data);
+      })
       .catch(function(err){
-        console.error('[FieldMap] GMU AZ fetch failed:', err);
-        showToast(GMU_SOURCES.az.label + ' GMU boundaries failed to load — check your connection');
+        console.error('[FieldMap] GMU ' + stateKey + ' fetch failed:', err);
+        showToast(def.label + ' GMU boundaries failed to load — check your connection');
         cb(null);
       });
   }
 
-  function setGmuAzLayersVisible(on){
-    ['gmu-az-fill', 'gmu-az-line', 'gmu-az-label'].forEach(function(id){
+  function setGmuStateLayersVisible(stateKey, on){
+    ['gmu-' + stateKey + '-fill', 'gmu-' + stateKey + '-line', 'gmu-' + stateKey + '-label'].forEach(function(id){
       if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
     });
     if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
   }
 
-  // Pure "show/hide this state's layers" helper — no longer writes settings itself (the
-  // unified gmuOn/gmuState fields, written by setGmuOn/setGmuActiveState below, are the single
-  // source of truth now that only one state can be active at a time).
-  function setGmuAzOn(on){
-    if (!on){ setGmuAzLayersVisible(false); return; }
-    ensureGmuAzLoaded(function(data){
+  // Pure "show/hide this state's layers, loading data if needed" helper — doesn't write
+  // settings itself (gmuOn/gmuState, written by setGmuOn/setGmuActiveState below, are the
+  // single source of truth now that only one state can be active at a time).
+  function showGmuState(stateKey, on){
+    if (!on){ setGmuStateLayersVisible(stateKey, false); return; }
+    ensureGmuStateLoaded(stateKey, function(data){
       if (!data){
         setGmuOn(false); // fetch failed — fall back to fully off rather than a stuck-on toggle
         return;
       }
-      if (map && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
-      if (map && map.getSource('gmu-az-label-source')) map.getSource('gmu-az-label-source').setData(buildLabelPointFeatureCollection(data));
-      setGmuAzLayersVisible(true);
+      if (map && map.getSource('gmu-' + stateKey + '-source')) map.getSource('gmu-' + stateKey + '-source').setData(data);
+      if (map && map.getSource('gmu-' + stateKey + '-label-source')) map.getSource('gmu-' + stateKey + '-label-source').setData(buildLabelPointFeatureCollection(data));
+      setGmuStateLayersVisible(stateKey, true);
     });
   }
 
-  // The source data's AGFDLink field is a full "<a href=\"...\">Unit N</a>" HTML snippet,
-  // not a plain URL — used as-is it got escapeHtml'd whole into an href attribute (i.e. the
-  // href literally became the escaped markup string), producing a link that 404'd on every
-  // tap regardless of platform. Pull just the href out of it instead.
+  // Some source data's link fields are a full "<a href=\"...\">Unit N</a>" HTML snippet, not
+  // a plain URL — used as-is it got escapeHtml'd whole into an href attribute (i.e. the href
+  // literally became the escaped markup string), producing a link that 404'd on every tap
+  // regardless of platform. Pull just the href out of it instead.
   function extractHrefFromHtml(html){
     if (!html) return null;
     var m = /href\s*=\s*"([^"]+)"/i.exec(String(html));
     return m ? m[1] : null;
   }
 
-  function gmuPopupHtml(props){
-    var label = props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '';
-    var region = props.REG_NAME ? '<div class="pin-popup-meta">' + escapeHtml(props.REG_NAME) + '</div>' : '';
-    // Fallback pattern matches the real azgfd.gov URLs seen in the source data
-    // (azgfd.gov, not .com; /h_f/hunting_units_<unit>.shtml, not /location/gmu-<unit>/) —
-    // only used if AGFDLink is ever missing from a feature, extremely rare in this dataset.
-    var link = extractHrefFromHtml(props.AGFDLink) || ('https://www.azgfd.gov/h_f/hunting_units_' + encodeURIComponent(String(label).toLowerCase()) + '.shtml');
+  function gmuPopupHtml(stateKey, props){
+    var def = GMU_STATES[stateKey];
+    var title = (def.popupTitle ? def.popupTitle(props) : '') || '';
+    var meta = def.popupMeta ? def.popupMeta(props) : null;
+    var metaHtml = meta ? '<div class="pin-popup-meta">' + escapeHtml(String(meta)) + '</div>' : '';
+    var actionsHtml = '';
+    if (def.infoLabel && def.infoUrl){
+      var link = def.infoUrl(props);
+      if (link) actionsHtml = '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(def.infoLabel) + '</a></div>';
+    }
     return '<div class="pin-popup-body">' +
-      '<div class="pin-popup-name">GMU ' + escapeHtml(String(label)) + '</div>' +
-      region +
+      '<div class="pin-popup-name">' + escapeHtml(String(title)) + '</div>' +
+      metaHtml +
       '</div>' +
-      '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(link) + '" target="_blank" rel="noopener">AZGFD unit info</a></div>';
+      actionsHtml;
   }
 
-  function openGmuPopupAt(props, lngLat){
+  function openGmuPopupAt(stateKey, props, lngLat){
     if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
     var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat).setHTML(gmuPopupHtml(props)).addTo(map);
+      .setLngLat(lngLat).setHTML(gmuPopupHtml(stateKey, props)).addTo(map);
     popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
     openGmuPopup = popup;
   }
 
-  // ── GMU boundaries (Oregon) ── local GeoJSON file (data/oregon-gmu.geojson, 69 features,
-  // properties: unit_num, unit_name) instead of a remote ArcGIS query, but otherwise an
-  // exact mirror of the Arizona GMU pattern above — same fill/line/label treatment, same
-  // opacity slider, same ad-hoc popup mechanics (shares openGmuPopup with AZ so only one
-  // GMU popup is ever open at a time, regardless of which state it came from).
-  function ensureGmuOrLoaded(cb){
-    if (gmuOrCache){ cb(gmuOrCache); return; }
-    fetch(GMU_SOURCES.or.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(data){ gmuOrCache = data; cb(data); })
-      .catch(function(err){
-        console.error('[FieldMap] GMU OR fetch failed:', err);
-        showToast(GMU_SOURCES.or.label + ' GMU boundaries failed to load — check your connection');
-        cb(null);
-      });
-  }
-
-  function setGmuOrLayersVisible(on){
-    ['gmu-or-fill', 'gmu-or-line', 'gmu-or-label'].forEach(function(id){
-      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-    });
-    if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
-  }
-
-  // Same "pure show/hide" contract as setGmuAzOn above.
-  function setGmuOrOn(on){
-    if (!on){ setGmuOrLayersVisible(false); return; }
-    ensureGmuOrLoaded(function(data){
-      if (!data){
-        setGmuOn(false); // fetch failed — fall back to fully off rather than a stuck-on toggle
-        return;
-      }
-      if (map && map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
-      if (map && map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
-      setGmuOrLayersVisible(true);
-    });
-  }
-
-  // ── Unified GMU on/off + single-state-select — replaces the old independent
-  // gmuAzOn/gmuOrOn checkboxes with one toggle + a state picker (gmu-state-panel), matching
-  // the Habitats/Migrations quick-toggle + popout pattern above.
-  var GMU_STATE_LABELS = { az: 'Arizona', or: 'Oregon' };
-
+  // ── Unified GMU on/off + single-state-select — one toggle + a state picker
+  // (gmu-state-panel), matching the Habitats/Migrations quick-toggle + popout pattern above.
   function setGmuOn(on){
     state.settings.gmuOn = on;
     scheduleSave();
     if (on){
-      if (state.settings.gmuState === 'or') setGmuOrOn(true); else setGmuAzOn(true);
+      showGmuState(state.settings.gmuState || 'az', true);
     } else {
-      setGmuAzLayersVisible(false);
-      setGmuOrLayersVisible(false);
+      Object.keys(GMU_STATES).forEach(function(key){ setGmuStateLayersVisible(key, false); });
     }
     updateGmuQuickToggleUI();
   }
@@ -4639,10 +4690,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.settings.gmuState = stateKey;
     scheduleSave();
     if (state.settings.gmuOn){
-      // Hide whichever state was showing before switching to the new one — both states'
+      // Hide whichever state was showing before switching to the new one — every state's
       // layers exist on the map at all times (see reinitializeLayers), only visibility toggles.
-      if (prevState === 'az') setGmuAzLayersVisible(false); else setGmuOrLayersVisible(false);
-      if (stateKey === 'or') setGmuOrOn(true); else setGmuAzOn(true);
+      if (prevState) setGmuStateLayersVisible(prevState, false);
+      showGmuState(stateKey, true);
     }
     updateGmuQuickToggleUI();
   }
@@ -4652,26 +4703,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var value = document.getElementById('gmu-quick-value');
     if (!checkbox) return;
     checkbox.checked = !!state.settings.gmuOn;
-    if (value) value.textContent = GMU_STATE_LABELS[state.settings.gmuState] || 'Arizona';
+    var def = GMU_STATES[state.settings.gmuState] || GMU_STATES.az;
+    if (value) value.textContent = def.label;
     var select = document.getElementById('gmu-state-select');
     if (select) select.value = state.settings.gmuState || 'az';
-  }
-
-  function gmuOrPopupHtml(props){
-    var name = props.unit_name || '';
-    var num = props.unit_num;
-    return '<div class="pin-popup-body">' +
-      '<div class="pin-popup-name">' + escapeHtml(String(name)) + '</div>' +
-      (num != null ? '<div class="pin-popup-meta">Unit ' + escapeHtml(String(num)) + '</div>' : '') +
-      '</div>';
-  }
-
-  function openGmuOrPopupAt(props, lngLat){
-    if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat).setHTML(gmuOrPopupHtml(props)).addTo(map);
-    popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
-    openGmuPopup = popup;
   }
 
   // ── USFS National Forest administrative boundaries ── same pattern as GMU above.
@@ -5766,121 +5801,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // GMU boundaries (Arizona) — near-invisible fill for click hit-testing (matches the
-    // original Leaflet build's fillOpacity:0.02, kept fixed regardless of the opacity
-    // slider since it's not meant to be seen), a visible line, and a label symbol layer
-    // gated to the same zoom 7-11 range the old permanent-tooltip logic used, now handled
-    // natively via minzoom/maxzoom instead of a manual zoomend listener.
-    if (!map.getSource('gmu-az-source')){
-      map.addSource('gmu-az-source', {
-        type: 'geojson',
-        data: gmuAzCache || { type: 'FeatureCollection', features: [] }
-      });
-    }
-    if (!map.getLayer('gmu-az-fill')){
-      map.addLayer({
-        id: 'gmu-az-fill',
-        type: 'fill',
-        source: 'gmu-az-source',
-        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none' },
-        paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
-      });
-    }
-    if (!map.getLayer('gmu-az-line')){
-      map.addLayer({
-        id: 'gmu-az-line',
-        type: 'line',
-        source: 'gmu-az-source',
-        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none', 'line-join': 'round' },
-        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
-      });
-    }
-    // Dedicated point source for the label — one feature per polygon (see
-    // buildLabelPointFeatureCollection comment above) instead of placing the symbol layer
-    // directly on the polygon source, which repeated the label once per tile a large unit
-    // spans.
-    if (!map.getSource('gmu-az-label-source')){
-      map.addSource('gmu-az-label-source', {
-        type: 'geojson',
-        data: buildLabelPointFeatureCollection(gmuAzCache || { type: 'FeatureCollection', features: [] })
-      });
-    }
-    if (!map.getLayer('gmu-az-label')){
-      map.addLayer({
-        id: 'gmu-az-label',
-        type: 'symbol',
-        source: 'gmu-az-label-source',
-        minzoom: 7,
-        maxzoom: 12,
-        layout: {
-          visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none',
-          'text-field': ['get', 'GMU'],
-          'text-size': 12,
-          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
-        },
-        paint: {
-          'text-color': GMU_LINE_COLOR,
-          'text-halo-color': '#000',
-          'text-halo-width': 1.5,
-          'text-opacity': 0.9
-        }
-      });
-    }
-
-    // GMU boundaries (Oregon) — exact mirror of the Arizona block above (unit_num is the
-    // on-map label, matching AZ's role of showing the short numeric code on the map while
-    // the full unit_name shows in the popup — see gmuOrPopupHtml).
-    if (!map.getSource('gmu-or-source')){
-      map.addSource('gmu-or-source', {
-        type: 'geojson',
-        data: gmuOrCache || { type: 'FeatureCollection', features: [] }
-      });
-    }
-    if (!map.getLayer('gmu-or-fill')){
-      map.addLayer({
-        id: 'gmu-or-fill',
-        type: 'fill',
-        source: 'gmu-or-source',
-        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none' },
-        paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
-      });
-    }
-    if (!map.getLayer('gmu-or-line')){
-      map.addLayer({
-        id: 'gmu-or-line',
-        type: 'line',
-        source: 'gmu-or-source',
-        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none', 'line-join': 'round' },
-        paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
-      });
-    }
-    if (!map.getSource('gmu-or-label-source')){
-      map.addSource('gmu-or-label-source', {
-        type: 'geojson',
-        data: buildLabelPointFeatureCollection(gmuOrCache || { type: 'FeatureCollection', features: [] })
-      });
-    }
-    if (!map.getLayer('gmu-or-label')){
-      map.addLayer({
-        id: 'gmu-or-label',
-        type: 'symbol',
-        source: 'gmu-or-label-source',
-        minzoom: 7,
-        maxzoom: 12,
-        layout: {
-          visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none',
-          'text-field': ['get', 'unit_num'],
-          'text-size': 12,
-          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
-        },
-        paint: {
-          'text-color': GMU_LINE_COLOR,
-          'text-halo-color': '#000',
-          'text-halo-width': 1.5,
-          'text-opacity': 0.9
-        }
-      });
-    }
+    // GMU boundaries — near-invisible fill for click hit-testing (matches the original
+    // Leaflet build's fillOpacity:0.02, kept fixed regardless of the opacity slider since it's
+    // not meant to be seen), a visible line, and a label symbol layer gated to the same zoom
+    // 7-11 range the old permanent-tooltip logic used, now handled natively via
+    // minzoom/maxzoom instead of a manual zoomend listener. One source/layer set per
+    // GMU_STATES entry — was two hand-duplicated copies (AZ, OR) before GMU boundaries scaled
+    // past those two; a new state only needs an entry in GMU_STATES to get its own layers here.
+    Object.keys(GMU_STATES).forEach(function(gmuKey){
+      var gmuDef = GMU_STATES[gmuKey];
+      var srcId = 'gmu-' + gmuKey + '-source';
+      var fillId = 'gmu-' + gmuKey + '-fill';
+      var lineId = 'gmu-' + gmuKey + '-line';
+      var labelSrcId = 'gmu-' + gmuKey + '-label-source';
+      var labelId = 'gmu-' + gmuKey + '-label';
+      var visibility = (state.settings.gmuOn && state.settings.gmuState === gmuKey) ? 'visible' : 'none';
+      if (!map.getSource(srcId)){
+        map.addSource(srcId, { type: 'geojson', data: gmuCache[gmuKey] || { type: 'FeatureCollection', features: [] } });
+      }
+      if (!map.getLayer(fillId)){
+        map.addLayer({ id: fillId, type: 'fill', source: srcId, layout: { visibility: visibility }, paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 } });
+      }
+      if (!map.getLayer(lineId)){
+        map.addLayer({ id: lineId, type: 'line', source: srcId, layout: { visibility: visibility, 'line-join': 'round' }, paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 } });
+      }
+      // Dedicated point source for the label — one feature per polygon (see
+      // buildLabelPointFeatureCollection comment above) instead of placing the symbol layer
+      // directly on the polygon source, which repeated the label once per tile a large unit
+      // spans.
+      if (!map.getSource(labelSrcId)){
+        map.addSource(labelSrcId, { type: 'geojson', data: buildLabelPointFeatureCollection(gmuCache[gmuKey] || { type: 'FeatureCollection', features: [] }) });
+      }
+      if (!map.getLayer(labelId)){
+        map.addLayer({
+          id: labelId,
+          type: 'symbol',
+          source: labelSrcId,
+          minzoom: 7,
+          maxzoom: 12,
+          layout: {
+            visibility: visibility,
+            'text-field': ['get', gmuDef.labelField],
+            'text-size': 12,
+            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+          },
+          paint: {
+            'text-color': GMU_LINE_COLOR,
+            'text-halo-color': '#000',
+            'text-halo-width': 1.5,
+            'text-opacity': 0.9
+          }
+        });
+      }
+    });
 
     // USFS National Forest administrative boundaries — light olive-green fill (visible this
     // time, not just a hit-test sliver like GMU's — Forest Boundaries is the one boundary

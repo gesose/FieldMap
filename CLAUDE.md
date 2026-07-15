@@ -19,7 +19,7 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 - Draw/measure tools other than route/area drawing (the standalone "measure" ruler tool, elevation tap,
   compass bearing lines, GPX search-result marker) — still L.circleMarker/L.polyline based
 - All overlay toggles (FSTopo, MVUM, public land, hydro, snow depth, NLCD)
-- GMU boundaries, sun-path arc, offline-area boundary rectangles — still L.geoJSON/L.rectangle based
+- Sun-path arc, offline-area boundary rectangles — still L.geoJSON/L.rectangle based
 - GPS accuracy circle (gpsAccCircle) — needs MapLibre source/layer
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
   polygons drawn via the (still-Leaflet) offline-boundary rectangles — not in scope, different feature
@@ -56,6 +56,14 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   filter-panel mapItemVisible() check); no longer hides markers based on cluster-source query results, since
   querySourceFeatures() only sees currently rendered/loaded tiles and was hiding off-screen pins after a style
   switch. A clustered pin may render its marker underneath the cluster bubble for now.
+- GMU boundaries: MapLibre-based, single-select state picker (#gmu-state-select), one state's fill/line/label
+  layers visible at a time. Table-driven via a GMU_STATES catalog object (url, labelField, popupTitle/popupMeta
+  functions, infoLabel/infoUrl, optional filterFeature) — adding a state is one catalog entry, not bespoke code.
+  Generic shared functions: ensureGmuStateLoaded/showGmuState/setGmuStateLayersVisible/gmuPopupHtml/
+  openGmuPopupAt/setGmuOn/setGmuActiveState. Click handlers registered once in createMap() via a loop over
+  Object.keys(GMU_STATES). Currently built: az, or, ut, id, nv (see gmuCache/GMU_STATES near the top of the
+  script for full source URLs/field notes/research findings per state). Washington researched and confirmed
+  live (WDFW ArcGIS FeatureServer) but deliberately not yet wired in — pending go-ahead.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -69,3 +77,14 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 - Session 4: Draw Area and Bearing tool fully ported to MapLibre, following the same pattern as Draw Route —
   polygons-source/bearings-source, draw previews, vertex editing (areas) and endpoint remap (bearings). No
   more L.* calls remain anywhere in the pin/route/area/bearing code paths.
+- Session 5: GMU boundaries refactored from bespoke 2-state (AZ/OR) code to a table-driven GMU_STATES catalog
+  + generic shared functions (see Architecture notes). Added Utah, Idaho, Nevada as fully-built, verified
+  states. Researched and confirmed Washington's live source (WDFW ArcGIS FeatureServer) but left it out of
+  GMU_STATES pending go-ahead, per explicit instruction not to build on a guess. Verified AZ/OR/UT/NV
+  end-to-end (load, single-select, click-to-popup with correct title/link) via Playwright; root-caused a
+  string of false "broken popup" test failures back to test-harness bugs (canvas-vs-page coordinate offset
+  from the sidebar, naive polygon-centroid misses on concave shapes) rather than app bugs. Idaho's data/fields
+  independently confirmed correct via direct API calls, but in-browser Playwright verification was blocked by
+  IDFG's self-hosted ArcGIS server rejecting automated-browser traffic (403, headed and headless) while
+  identical non-browser requests succeeded — likely bot/WAF detection on their end, not a FieldMap bug, but
+  unconfirmed whether real end-user browsers ever hit the same wall.
