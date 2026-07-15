@@ -118,7 +118,21 @@
   #bulk-bar #bulk-count{flex:1;color:var(--text-muted);}
   .bulk-checkbox{margin-right:2px;accent-color:var(--accent);flex-shrink:0;}
 
-  .group-header{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);background:var(--bg);}
+  /* Section/group header prominence — shared convention: a header must read louder than the
+     content rows beneath it (bigger, bolder, full-brightness text), not quieter. Previously
+     every one of these (sidebar groups, Layers panel sections, Settings ACCOUNT/MAP headers,
+     duplicate-pins group headers, bottom-sheet section labels) independently used a small
+     muted style more consistent with a de-emphasized caption than an actual header — backwards,
+     and duplicated per-location. Fixed once here instead of patching each one separately;
+     the section-specific rules below only carry layout (padding/gap/etc.), not typography. */
+  .group-header,
+  .layer-section-header,
+  .layer-section-toggle,
+  .dupe-group-header,
+  .bottom-sheet-section{
+    font-size:14px;font-weight:700;color:var(--text);letter-spacing:0.3px;
+  }
+  .group-header{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;background:var(--bg);}
   .group-header:hover{color:var(--text);}
   .group-chevron{font-size:10px;width:10px;}
   .group-label{flex:1;}
@@ -239,7 +253,7 @@
   .import-item-row.import-dupe{background:rgba(180,140,0,0.08);}
   .dupe-badge{display:inline-block;margin-left:7px;font-size:10px;color:#c9a227;font-weight:600;vertical-align:middle;}
   .dupe-group{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;}
-  .dupe-group-header{background:var(--bg);padding:7px 12px;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.3px;}
+  .dupe-group-header{background:var(--bg);padding:7px 12px;}
   .dupe-group-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--border);}
   .dupe-group-row label{flex:1;font-size:13px;cursor:pointer;display:flex;flex-direction:column;gap:2px;}
   .dupe-row-meta{font-size:11px;color:var(--text-muted);}
@@ -363,6 +377,16 @@
   .pin-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip{border-left-color:var(--bg-elevated);}
   .draw-point-popup .maplibregl-popup-content{padding:6px 8px;}
 
+  /* Scrim behind popover panels (Layers/Filter/Settings/Weather/Wildlife/GMU picker + the
+     sort/export dropdown menus — see PANEL_SCRIM_IDS) — sits above the map and sidebar
+     (z-index 900/auto) so it physically intercepts clicks/drags before they reach map
+     elements underneath, but below #map-controls (1100) and the panels themselves (1500) so
+     the trigger buttons stay clickable, letting a tap on a different icon switch panels
+     directly rather than requiring two taps to close-then-reopen. Deliberately excludes
+     compass-panel/sunrise-panel, which need the map itself still interactive while open — see
+     PANEL_SCRIM_IDS for why. */
+  #panel-scrim{position:fixed;inset:0;z-index:1050;background:rgba(10,12,10,0.35);}
+  #panel-scrim.hidden{display:none;}
   .floating-panel{
     position:absolute;bottom:24px;right:64px;z-index:1500;width:260px;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
@@ -377,15 +401,17 @@
   .layer-hint-btn:hover{color:var(--text);}
   .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
   .layer-hint-text.show{display:block;}
-  .layer-section-header{font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);margin:4px 0 2px;}
+  .layer-section-header{margin:4px 0 2px;}
   .layer-section{margin-top:12px;}
   .layer-section:first-child{margin-top:0;}
   .layer-section-toggle{
-    display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;padding:4px 0;
-    cursor:pointer;font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);text-align:left;
+    display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;padding:6px 0;
+    cursor:pointer;text-align:left;
   }
-  .layer-section-toggle:hover{color:var(--text);}
-  .layer-section-toggle .layer-section-chevron{font-size:10px;width:10px;flex-shrink:0;}
+  .layer-section-toggle:hover{color:var(--accent);}
+  /* Chevron bumped up from the original 10px — too small to register as a tap target/affordance
+     on mobile or desktop. Width widened to match so the label text stays aligned. */
+  .layer-section-toggle .layer-section-chevron{font-size:16px;width:14px;flex-shrink:0;}
   .layer-section-toggle .layer-section-title{flex:1;}
   .layer-section-body{border-top:1px solid var(--border);margin-top:4px;}
   .layer-section-body.collapsed{display:none;}
@@ -442,7 +468,6 @@
     margin:10px auto 4px;
   }
   .bottom-sheet-section{
-    font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);
     padding:8px 16px 4px;text-transform:uppercase;
   }
   .bottom-sheet-grid{
@@ -1992,6 +2017,8 @@
   </div>
 </div>
 
+<div id="panel-scrim" class="hidden"></div>
+
 <div id="toast"></div>
 
 <!-- Tag management modal -->
@@ -2126,7 +2153,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.17.0';
+  var APP_VERSION = '2.17.1';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2240,6 +2267,13 @@
   };
 
   var map, baseLayers = {}, markersById = {}, trackLayersById = {}, clusterLayerGroup;
+  // pin id -> last-applied marker display value ('' or 'none') — lets applyVisibility() (see
+  // updateMarkerVisibility) skip re-writing a DOM style that hasn't actually changed. Confirmed
+  // via profiling a continuous drag gesture that updateMarkerVisibility itself is already
+  // correctly throttled (fires exactly once per MapLibre 'idle' event, ~3x/sec, not every
+  // frame) — but each firing unconditionally touched EVERY pin's marker DOM element even
+  // though only a handful actually cross the cluster/unclustered boundary on a given move.
+  var lastMarkerDisplayState = {};
   var clusterRefreshTimer = null;
   var tracksRefreshTimer = null;
   var hillshadeLayer = null;
@@ -5299,6 +5333,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (markersById[id]){
       markersById[id].remove();
       delete markersById[id];
+      // A rebuilt marker's fresh DOM element has no inline display style yet — without
+      // clearing this, applyVisibility()'s "skip if unchanged" check could wrongly think a
+      // brand-new element already has 'none' applied (left over from before this pin's old
+      // marker was removed) and skip writing it, leaving a pin that should be cluster-hidden
+      // visible after a style switch or merge rebuild.
+      delete lastMarkerDisplayState[id];
       scheduleClusterRefresh();
     }
   }
@@ -5364,7 +5404,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.pins.forEach(function(p){
         var m = markersById[p.id];
         if (!m) return;
-        m.getElement().style.display = (mapItemVisible(p) && !hiddenIds[p.id]) ? '' : 'none';
+        var newDisplay = (mapItemVisible(p) && !hiddenIds[p.id]) ? '' : 'none';
+        if (lastMarkerDisplayState[p.id] === newDisplay) return; // unchanged — skip the DOM write
+        lastMarkerDisplayState[p.id] = newDisplay;
+        m.getElement().style.display = newDisplay;
       });
     }
 
@@ -6023,8 +6066,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // Cluster circle layer
+    // Cluster circle layer — radius steps mirror buildPinMarkerHtml()'s own mobile/desktop
+    // pin-circle sizing (34px desktop / 28px mobile, same window.innerWidth<=600 breakpoint),
+    // scaled down proportionally for mobile so the base cluster bubble's diameter still lines
+    // up with an individual pin marker's diameter on mobile the same way it already does on
+    // desktop (16px radius = 32px diameter against a 34px pin) — previously this was one fixed
+    // expression regardless of viewport, so on mobile (pins shrink to 28px, cluster bubbles
+    // didn't) the cluster visibly outgrew the pins it represents.
     if (!map.getLayer('cluster-circles')){
+      var clusterIsMobile = window.innerWidth <= 600;
       map.addLayer({
         id: 'cluster-circles',
         type: 'circle',
@@ -6032,7 +6082,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         filter: ['has', 'point_count'],
         paint: {
           'circle-color': 'rgba(194,98,45,0.9)',
-          'circle-radius': ['step', ['get', 'point_count'], 16, 10, 20, 100, 24],
+          'circle-radius': clusterIsMobile
+            ? ['step', ['get', 'point_count'], 14, 10, 18, 100, 22]
+            : ['step', ['get', 'point_count'], 16, 10, 20, 100, 24],
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff'
         }
@@ -10874,9 +10926,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
 
+  // Canonical list of floating popover panels — shared by closeAllPanels/closeAllPanels_except
+  // so a panel only has to be added in one place to get consistent close-on-switch behavior.
+  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel'];
+  // Scrim is scoped to pure configuration/selection popovers that actually overlay the map —
+  // deliberately EXCLUDES sunrise-panel and compass-panel, both of which need the map itself
+  // still interactive while open (sunrise-panel's sun-arc preview updates live as you pan the
+  // map underneath it; compass-panel's bearing/range mode requires tapping the map directly).
+  // A scrim blocking map clicks/drags for either would break the very feature the panel exists
+  // for. Also deliberately EXCLUDES sort-menu/export-menu/mobile-sort-menu: those live inside
+  // #sidebar, which establishes its own stacking context (z-index:900, see #sidebar's own
+  // rule) — no z-index a descendant declares can escape that to render above a sibling
+  // full-screen scrim outside #sidebar's subtree, so a scrim covering them would just swallow
+  // their own clicks with no way to fix it short of restructuring the DOM. They don't overlay
+  // the map anyway (they render inside the sidebar's own header), so they don't need one.
+  var PANEL_SCRIM_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel'];
+  // Broader list for the outside-click-dismiss listener, which isn't affected by the stacking
+  // issue above (it's a plain event listener, not a DOM element competing for paint order) —
+  // this keeps the dropdown menus' existing dismiss-on-outside-click behavior.
+  var OUTSIDE_CLICK_DISMISS_IDS = PANEL_SCRIM_IDS.concat(['sort-menu', 'export-menu', 'mobile-sort-menu']);
+
   function closeAllPanels_except(keepId){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel','gmu-state-panel'].forEach(function(id){
+    FLOATING_PANEL_IDS.forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
     if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); sunriseDockClose(); }
@@ -11750,7 +11822,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Close all panels helper (updated to include P2 panels) ──
   function closeAllPanels(){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel','gmu-state-panel'].forEach(function(id){
+    FLOATING_PANEL_IDS.forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
@@ -11810,6 +11882,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
+    lastMarkerDisplayState = {}; // see removeMarkerForPin — this rebuild bypasses it directly
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
     state.polygons.forEach(addPolygonToMap);
@@ -12040,6 +12113,39 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // ---------- Panel scrim ----------
+  // Shows/hides #panel-scrim based on whether any PANEL_SCRIM_IDS element is currently
+  // visible. Driven by a MutationObserver on each panel's class attribute rather than hooking
+  // every individual "open this panel" call site (there are ~10, scattered across bindUI) —
+  // this way a panel just has to be added to PANEL_SCRIM_IDS to get scrim behavior, nothing
+  // else has to change at its own open/close call sites.
+  function updatePanelScrimVisibility(){
+    var anyOpen = PANEL_SCRIM_IDS.some(function(id){
+      var el = document.getElementById(id);
+      return el && !el.classList.contains('hidden');
+    });
+    var scrim = document.getElementById('panel-scrim');
+    if (scrim) scrim.classList.toggle('hidden', !anyOpen);
+  }
+
+  function initPanelScrim(){
+    var scrim = document.getElementById('panel-scrim');
+    if (!scrim) return;
+    scrim.addEventListener('click', function(){
+      PANEL_SCRIM_IDS.forEach(function(id){
+        var el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+      });
+      updatePanelScrimVisibility();
+    });
+    var observer = new MutationObserver(updatePanelScrimVisibility);
+    PANEL_SCRIM_IDS.forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    });
+    updatePanelScrimVisibility();
+  }
+
   // ---------- Panels ----------
   // ---------- Wire up UI ----------
   function bindUI(){
@@ -12252,7 +12358,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       openBearingModalForNew(fromPt, compassTargetLatLng);
     });
 
-    document.getElementById('sheet-weather-btn').addEventListener('click', function(){
+    document.getElementById('sheet-weather-btn').addEventListener('click', function(e){
+      // stopPropagation matters now that weather-panel is in PANEL_SCRIM_IDS/
+      // OUTSIDE_CLICK_DISMISS_IDS (it wasn't before the panel-scrim work) — without it, this
+      // same click bubbles to the document-level outside-click listener, which sees
+      // weather-panel now open and e.target (this button, outside weather-panel) as "outside
+      // it", and immediately re-hides the panel this exact click just opened.
+      e.stopPropagation();
       document.getElementById('tools-sheet').classList.add('hidden');
       openWeatherPanel();
     });
@@ -12313,7 +12425,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('gmu-quick-toggle').addEventListener('change', function(){
       setGmuOn(this.checked);
     });
-    document.getElementById('gmu-layers-open-btn').addEventListener('click', function(){
+    document.getElementById('gmu-layers-open-btn').addEventListener('click', function(e){
+      // See sheet-weather-btn's handler above for why stopPropagation is required here.
+      e.stopPropagation();
       closeAllPanels();
       document.getElementById('gmu-state-panel').classList.remove('hidden');
       updateGmuQuickToggleUI();
@@ -12326,6 +12440,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     initLayerSections();
+    initPanelScrim();
 
     // Restore layer toggle states. This runs before the map/style has actually loaded
     // (createMap() kicks off an async fetch chain that bindUI() doesn't wait on), so only
@@ -12357,7 +12472,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('habitats-quick-toggle').addEventListener('change', function(){
       setWildlifeOn(this.checked);
     });
-    document.getElementById('habitats-layers-open-btn').addEventListener('click', function(){
+    document.getElementById('habitats-layers-open-btn').addEventListener('click', function(e){
+      // See sheet-weather-btn's handler above for why stopPropagation is required here.
+      e.stopPropagation();
       var panel = document.getElementById('wildlife-panel');
       closeAllPanels();
       panel.classList.remove('hidden');
@@ -12370,7 +12487,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('migrations-quick-toggle').addEventListener('change', function(){
       setMigrationsOn(this.checked);
     });
-    document.getElementById('migrations-layers-open-btn').addEventListener('click', function(){
+    document.getElementById('migrations-layers-open-btn').addEventListener('click', function(e){
+      // See sheet-weather-btn's handler above for why stopPropagation is required here.
+      e.stopPropagation();
       var panel = document.getElementById('wildlife-panel');
       closeAllPanels();
       panel.classList.remove('hidden');
@@ -12965,9 +13084,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         searchBar.classList.remove('search-open');
         document.getElementById('map-search-results').innerHTML = '';
       }
-      ['layers-panel','filter-panel','settings-panel','sort-menu','export-menu','mobile-sort-menu'].forEach(function(id){
+      OUTSIDE_CLICK_DISMISS_IDS.forEach(function(id){
         var panel = document.getElementById(id);
-        if (!panel.classList.contains('hidden') && !panel.contains(e.target)){
+        if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target)){
           panel.classList.add('hidden');
         }
       });
