@@ -378,6 +378,31 @@
   .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
   .layer-hint-text.show{display:block;}
   .layer-section-header{font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);margin:4px 0 2px;}
+  .layer-section{margin-top:12px;}
+  .layer-section:first-child{margin-top:0;}
+  .layer-section-toggle{
+    display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;padding:4px 0;
+    cursor:pointer;font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text-muted);text-align:left;
+  }
+  .layer-section-toggle:hover{color:var(--text);}
+  .layer-section-toggle .layer-section-chevron{font-size:10px;width:10px;flex-shrink:0;}
+  .layer-section-toggle .layer-section-title{flex:1;}
+  .layer-section-body{border-top:1px solid var(--border);margin-top:4px;}
+  .layer-section-body.collapsed{display:none;}
+  .layer-section-body > *:first-child{margin-top:6px;padding-top:0;border-top:none;}
+  /* Compact single-line rows (GMU boundaries, Habitats, Migrations) — checkbox, label,
+     current-selection value, and a chevron-right all in one row, distinct from the
+     slider-based overlay rows which keep their existing multi-line .layer-overlay-row look. */
+  .layer-compact-row{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .layer-compact-row input{accent-color:var(--accent);flex-shrink:0;}
+  .layer-compact-open-btn{
+    flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;
+    background:none;border:none;color:var(--text);cursor:pointer;padding:0;font-size:13px;
+  }
+  .layer-compact-open-btn:hover{color:var(--accent);}
+  .layer-compact-label{flex-shrink:0;white-space:nowrap;}
+  .layer-compact-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;color:var(--text-muted);text-align:right;}
+  .layer-compact-chevron{flex-shrink:0;color:var(--text-muted);font-size:14px;line-height:1;}
   .filter-label{font-size:11px;color:var(--text-muted);margin:12px 0 6px;}
   .filter-label:first-of-type{margin-top:0;}
   .filter-label-row{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--text-muted);margin:12px 0 6px;}
@@ -1365,127 +1390,177 @@
 
 <div id="layers-panel" class="floating-panel hidden">
 
-  <div class="layer-section-header">BASE LAYERS</div>
-  <div class="radio-row" style="margin-top:6px;">
-    <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-topo" value="topo" checked>
-      Topo
-    </label>
-    <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-topo-dark" value="topo-dark">
-      Topo Dark
-    </label>
-    <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-aerial" value="aerial">
-      Aerial
-    </label>
-    <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-aerial-streets" value="aerial-streets">
-      Aerial + topo
-    </label>
-    <label class="radio-opt">
-      <input type="radio" name="base-layer" id="base-layer-usgstopo" value="usgstopo">
-      USGS Topo
-    </label>
-  </div>
-
-  <div class="layer-section-header" style="margin-top:10px;">OVERLAYS</div>
-
-  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
-  </label>
-  <div class="layer-info-panel" id="lh-hydro">
-    <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset (NHDPlus HR) — live queried for the visible map area, zoom in past Z10 to load. Tap a river, stream, or lake to see its name.</div>
-    <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
-    <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
-  </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="gauge-toggle"> Stream gauges <button class="layer-hint-btn" data-layer-id="lh-gauge" title="About this layer">?</button>
-  </label>
-  <div class="layer-info-panel" id="lh-gauge">
-    <div class="layer-info-desc">USGS stream gauge stations — live queried for the visible map area, zoom in past Z8 to load. Tap a station for its most recent streamflow, gage height, and water temperature readings.</div>
-    <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
-    <a class="layer-info-src" href="https://waterdata.usgs.gov/nwis" target="_blank">Source: USGS Water Data</a>
-  </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
-  </label>
-  <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
-  <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="snowdepth-toggle"> Snow depth
-    <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
-  </label>
-  <div class="opacity-row" id="snowdepth-opacity-row"><input type="range" id="snowdepth-opacity" min="20" max="100" value="75"></div>
-  <div class="layer-info-panel" id="lh-snow">
-    <div class="layer-info-desc">NOAA daily snow depth analysis, updated ~4x/day. Image overlay from a live federal server; shows no data in snow-free areas (correct behavior).</div>
-    <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
-  </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
-    <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
-  </label>
-  <div class="opacity-row" id="nlcd-opacity-row"><input type="range" id="nlcd-opacity" min="20" max="100" value="70"></div>
-  <div class="layer-info-panel" id="lh-nlcd">
-    <div class="layer-info-desc">USGS Annual National Land Cover Database, 2025 — habitat types across the contiguous US.</div>
-    <div class="layer-info-legend">
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
-        <span class="legend-swatch" style="background:#5CA65C;color:#fff;">Forest</span>
-        <span class="legend-swatch" style="background:#C8A478;color:#000;">Shrubland</span>
-        <span class="legend-swatch" style="background:#A8D08A;color:#000;">Grass</span>
-        <span class="legend-swatch" style="background:#4682B4;color:#fff;">Water</span>
-        <span class="legend-swatch" style="background:#CC3300;color:#fff;">Developed</span>
+  <div class="layer-section" data-section="base">
+    <button type="button" class="layer-section-toggle" data-section-toggle="base">
+      <span class="layer-section-chevron">▾</span>
+      <span class="layer-section-title">BASE LAYER</span>
+    </button>
+    <div class="layer-section-body" id="layer-section-body-base">
+      <div class="radio-row" style="margin-top:6px;">
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-topo" value="topo" checked>
+          Topo
+        </label>
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-topo-dark" value="topo-dark">
+          Topo Dark
+        </label>
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-aerial" value="aerial">
+          Aerial
+        </label>
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-aerial-streets" value="aerial-streets">
+          Aerial + topo
+        </label>
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-usgstopo" value="usgstopo">
+          USGS Topo
+        </label>
       </div>
     </div>
-    <a class="layer-info-src" href="https://www.mrlc.gov/" target="_blank">Source: USGS MRLC NLCD</a>
   </div>
 
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="usfsboundaries-toggle"> USFS Forest boundaries <button class="layer-hint-btn" data-layer-id="lh-usfsboundaries" title="About">?</button>
-  </label>
-  <div class="opacity-row" id="usfsboundaries-opacity-row"><input type="range" id="usfsboundaries-opacity" min="20" max="100" value="90"></div>
-  <div class="layer-info-panel" id="lh-usfsboundaries">
-    <div class="layer-info-desc">Current administrative boundary of each National Forest (not the roads/trails MVUM layer). Fetched once and cached for the session.</div>
-    <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service EDW</a>
-  </div>
-
-  <label class="layer-overlay-row">
-    <input type="checkbox" id="fireperimeters-toggle"> Active fire perimeters <button class="layer-hint-btn" data-layer-id="lh-fireperimeters" title="About">?</button>
-  </label>
-  <div class="opacity-row" id="fireperimeters-opacity-row"><input type="range" id="fireperimeters-opacity" min="20" max="100" value="55"></div>
-  <div class="layer-info-panel" id="lh-fireperimeters">
-    <div class="layer-info-desc">Current/active wildland fire perimeters — re-fetched live each time this layer is turned on. Contained and stale small fires are dropped by the source service automatically.</div>
-    <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about" target="_blank">Source: NIFC WFIGS</a>
-  </div>
-
-
-  <div class="layer-section-header" style="margin-top:10px;">GMU BOUNDARIES</div>
-  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="gmu-az-toggle"> Arizona
-  </label>
-  <label class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;">
-    <input type="checkbox" id="gmu-or-toggle"> Oregon
-  </label>
-
-  <div class="layer-section-header" style="margin-top:10px;">WILDLIFE</div>
-  <div class="layer-overlay-row" style="margin-top:6px;padding-top:0;border-top:none;cursor:default;">
-    <input type="checkbox" id="habitats-quick-toggle">
-    <button class="btn btn-small" id="habitats-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
-      <span id="habitats-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
-      <span id="habitats-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Habitats: select species</span>
+  <div class="layer-section" data-section="landboundaries">
+    <button type="button" class="layer-section-toggle" data-section-toggle="landboundaries">
+      <span class="layer-section-chevron">▸</span>
+      <span class="layer-section-title">LAND AND BOUNDARIES</span>
     </button>
+    <div class="layer-section-body collapsed" id="layer-section-body-landboundaries">
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="usfsboundaries-toggle"> USFS Forest boundaries <button class="layer-hint-btn" data-layer-id="lh-usfsboundaries" title="About">?</button>
+      </label>
+      <div class="layer-info-panel" id="lh-usfsboundaries">
+        <div class="layer-info-desc">Current administrative boundary of each National Forest (not the roads/trails MVUM layer). Fetched once and cached for the session.</div>
+        <a class="layer-info-src" href="https://www.fs.usda.gov/tools-technology/gis-spatial-analysis/gis-data" target="_blank">Source: USDA Forest Service EDW</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
+      </label>
+      <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
+      <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
+
+      <div class="layer-compact-row">
+        <input type="checkbox" id="gmu-quick-toggle">
+        <button type="button" class="layer-compact-open-btn" id="gmu-layers-open-btn">
+          <span class="layer-compact-label">GMU boundaries</span>
+          <span class="layer-compact-value" id="gmu-quick-value">Arizona</span>
+          <span class="layer-compact-chevron">›</span>
+        </button>
+      </div>
+    </div>
   </div>
-  <div class="layer-overlay-row" style="margin-top:6px;padding-top:6px;cursor:default;">
-    <input type="checkbox" id="migrations-quick-toggle">
-    <button class="btn btn-small" id="migrations-layers-open-btn" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;text-align:left;">
-      <span id="migrations-quick-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:none;"></span>
-      <span id="migrations-quick-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">Migrations: select species</span>
+
+  <div class="layer-section" data-section="environmental">
+    <button type="button" class="layer-section-toggle" data-section-toggle="environmental">
+      <span class="layer-section-chevron">▸</span>
+      <span class="layer-section-title">ENVIRONMENTAL</span>
     </button>
+    <div class="layer-section-body collapsed" id="layer-section-body-environmental">
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="snowdepth-toggle"> Snow depth
+        <button class="layer-hint-btn" data-layer-id="lh-snow" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="snowdepth-opacity-row"><input type="range" id="snowdepth-opacity" min="20" max="100" value="75"></div>
+      <div class="layer-info-panel" id="lh-snow">
+        <div class="layer-info-desc">NOAA daily snow depth analysis, updated ~4x/day. Image overlay from a live federal server; shows no data in snow-free areas (correct behavior).</div>
+        <a class="layer-info-src" href="https://www.nohrsc.noaa.gov/" target="_blank">Source: NOAA NOHRSC</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
+        <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="nlcd-opacity-row"><input type="range" id="nlcd-opacity" min="20" max="100" value="70"></div>
+      <div class="layer-info-panel" id="lh-nlcd">
+        <div class="layer-info-desc">USGS Annual National Land Cover Database, 2025 — habitat types across the contiguous US.</div>
+        <div class="layer-info-legend">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#5CA65C;color:#fff;">Forest</span>
+            <span class="legend-swatch" style="background:#C8A478;color:#000;">Shrubland</span>
+            <span class="legend-swatch" style="background:#A8D08A;color:#000;">Grass</span>
+            <span class="legend-swatch" style="background:#4682B4;color:#fff;">Water</span>
+            <span class="legend-swatch" style="background:#CC3300;color:#fff;">Developed</span>
+          </div>
+        </div>
+        <a class="layer-info-src" href="https://www.mrlc.gov/" target="_blank">Source: USGS MRLC NLCD</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="fireperimeters-toggle"> Active fire perimeters <button class="layer-hint-btn" data-layer-id="lh-fireperimeters" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="fireperimeters-opacity-row"><input type="range" id="fireperimeters-opacity" min="20" max="100" value="55"></div>
+      <div class="layer-info-panel" id="lh-fireperimeters">
+        <div class="layer-info-desc">Current/active wildland fire perimeters — re-fetched live each time this layer is turned on. Contained and stale small fires are dropped by the source service automatically.</div>
+        <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about" target="_blank">Source: NIFC WFIGS</a>
+      </div>
+    </div>
   </div>
+
+  <div class="layer-section" data-section="water">
+    <button type="button" class="layer-section-toggle" data-section-toggle="water">
+      <span class="layer-section-chevron">▸</span>
+      <span class="layer-section-title">WATER</span>
+    </button>
+    <div class="layer-section-body collapsed" id="layer-section-body-water">
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
+      </label>
+      <div class="layer-info-panel" id="lh-hydro">
+        <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset (NHDPlus HR) — live queried for the visible map area, zoom in past Z10 to load. Tap a river, stream, or lake to see its name.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
+        <a class="layer-info-src" href="https://www.usgs.gov/national-hydrography" target="_blank">Source: USGS NHD</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="gauge-toggle"> Stream gauges <button class="layer-hint-btn" data-layer-id="lh-gauge" title="About this layer">?</button>
+      </label>
+      <div class="layer-info-panel" id="lh-gauge">
+        <div class="layer-info-desc">USGS stream gauge stations — live queried for the visible map area, zoom in past Z8 to load. Tap a station for its most recent streamflow, gage height, and water temperature readings.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Reflects recently browsed areas — not included in offline downloads.</div>
+        <a class="layer-info-src" href="https://waterdata.usgs.gov/nwis" target="_blank">Source: USGS Water Data</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="layer-section" data-section="wildlife">
+    <button type="button" class="layer-section-toggle" data-section-toggle="wildlife">
+      <span class="layer-section-chevron">▸</span>
+      <span class="layer-section-title">WILDLIFE</span>
+    </button>
+    <div class="layer-section-body collapsed" id="layer-section-body-wildlife">
+      <div class="layer-compact-row">
+        <input type="checkbox" id="habitats-quick-toggle">
+        <button type="button" class="layer-compact-open-btn" id="habitats-layers-open-btn">
+          <span class="layer-compact-label">Habitats</span>
+          <span class="layer-compact-value" id="habitats-quick-label">Select species</span>
+          <span class="layer-compact-chevron">›</span>
+        </button>
+      </div>
+      <div class="layer-compact-row">
+        <input type="checkbox" id="migrations-quick-toggle">
+        <button type="button" class="layer-compact-open-btn" id="migrations-layers-open-btn">
+          <span class="layer-compact-label">Migrations</span>
+          <span class="layer-compact-value" id="migrations-quick-label">Select species</span>
+          <span class="layer-compact-chevron">›</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="gmu-state-panel" class="floating-panel hidden" style="width:260px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <h2 style="margin:0;">GMU Boundaries</h2>
+    <button class="link-btn" id="gmu-state-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <select id="gmu-state-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
+    <option value="az">Arizona</option>
+    <option value="or">Oregon</option>
+  </select>
+  <p class="hint" style="margin-top:10px;">Only one state's GMU boundaries can be shown at a time.</p>
 </div>
 
 <div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
@@ -2051,7 +2126,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.16.5';
+  var APP_VERSION = '2.17.0';
   var APP_RELEASE_DATE = 'June 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2144,8 +2219,8 @@
       },
       hydroOn: false,
       gaugeStationsOn: false,
-      publicLandOn: false, publicLandOpacity: 0.55, gmuAzOn: false,
-      gmuOrOn: false,
+      publicLandOn: false, publicLandOpacity: 0.55,
+      gmuOn: false, gmuState: 'az',
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
       migrationsOn: false, migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false,
       showOfflineBoundaries: true,
@@ -3706,12 +3781,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // trigger has to happen here, once, after the map is real.
         if (!overlayDataRestoredOnInit){
           overlayDataRestoredOnInit = true;
-          if (state.settings.gmuAzOn) ensureGmuAzLoaded(function(data){
+          if (state.settings.gmuOn && state.settings.gmuState === 'az') ensureGmuAzLoaded(function(data){
             if (!data) return;
             if (map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
             if (map.getSource('gmu-az-label-source')) map.getSource('gmu-az-label-source').setData(buildLabelPointFeatureCollection(data));
           });
-          if (state.settings.gmuOrOn) ensureGmuOrLoaded(function(data){
+          if (state.settings.gmuOn && state.settings.gmuState === 'or') ensureGmuOrLoaded(function(data){
             if (!data) return;
             if (map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
             if (map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
@@ -4422,13 +4497,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
   }
 
+  // Pure "show/hide this state's layers" helper — no longer writes settings itself (the
+  // unified gmuOn/gmuState fields, written by setGmuOn/setGmuActiveState below, are the single
+  // source of truth now that only one state can be active at a time).
   function setGmuAzOn(on){
-    state.settings.gmuAzOn = on;
     if (!on){ setGmuAzLayersVisible(false); return; }
     ensureGmuAzLoaded(function(data){
       if (!data){
-        document.getElementById('gmu-az-toggle').checked = false;
-        state.settings.gmuAzOn = false;
+        setGmuOn(false); // fetch failed — fall back to fully off rather than a stuck-on toggle
         return;
       }
       if (map && map.getSource('gmu-az-source')) map.getSource('gmu-az-source').setData(data);
@@ -4492,19 +4568,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!on && openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
   }
 
+  // Same "pure show/hide" contract as setGmuAzOn above.
   function setGmuOrOn(on){
-    state.settings.gmuOrOn = on;
     if (!on){ setGmuOrLayersVisible(false); return; }
     ensureGmuOrLoaded(function(data){
       if (!data){
-        document.getElementById('gmu-or-toggle').checked = false;
-        state.settings.gmuOrOn = false;
+        setGmuOn(false); // fetch failed — fall back to fully off rather than a stuck-on toggle
         return;
       }
       if (map && map.getSource('gmu-or-source')) map.getSource('gmu-or-source').setData(data);
       if (map && map.getSource('gmu-or-label-source')) map.getSource('gmu-or-label-source').setData(buildLabelPointFeatureCollection(data));
       setGmuOrLayersVisible(true);
     });
+  }
+
+  // ── Unified GMU on/off + single-state-select — replaces the old independent
+  // gmuAzOn/gmuOrOn checkboxes with one toggle + a state picker (gmu-state-panel), matching
+  // the Habitats/Migrations quick-toggle + popout pattern above.
+  var GMU_STATE_LABELS = { az: 'Arizona', or: 'Oregon' };
+
+  function setGmuOn(on){
+    state.settings.gmuOn = on;
+    scheduleSave();
+    if (on){
+      if (state.settings.gmuState === 'or') setGmuOrOn(true); else setGmuAzOn(true);
+    } else {
+      setGmuAzLayersVisible(false);
+      setGmuOrLayersVisible(false);
+    }
+    updateGmuQuickToggleUI();
+  }
+
+  function setGmuActiveState(stateKey){
+    if (state.settings.gmuState === stateKey) return;
+    var prevState = state.settings.gmuState;
+    state.settings.gmuState = stateKey;
+    scheduleSave();
+    if (state.settings.gmuOn){
+      // Hide whichever state was showing before switching to the new one — both states'
+      // layers exist on the map at all times (see reinitializeLayers), only visibility toggles.
+      if (prevState === 'az') setGmuAzLayersVisible(false); else setGmuOrLayersVisible(false);
+      if (stateKey === 'or') setGmuOrOn(true); else setGmuAzOn(true);
+    }
+    updateGmuQuickToggleUI();
+  }
+
+  function updateGmuQuickToggleUI(){
+    var checkbox = document.getElementById('gmu-quick-toggle');
+    var value = document.getElementById('gmu-quick-value');
+    if (!checkbox) return;
+    checkbox.checked = !!state.settings.gmuOn;
+    if (value) value.textContent = GMU_STATE_LABELS[state.settings.gmuState] || 'Arizona';
+    var select = document.getElementById('gmu-state-select');
+    if (select) select.value = state.settings.gmuState || 'az';
   }
 
   function gmuOrPopupHtml(props){
@@ -4540,7 +4656,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     ['usfs-boundaries-fill', 'usfs-boundaries-line', 'usfs-boundaries-label'].forEach(function(id){
       if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
     });
-    document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', on);
     if (!on && openUsfsBoundaryPopup){ openUsfsBoundaryPopup.remove(); openUsfsBoundaryPopup = null; }
   }
 
@@ -5624,7 +5739,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: 'gmu-az-fill',
         type: 'fill',
         source: 'gmu-az-source',
-        layout: { visibility: state.settings.gmuAzOn ? 'visible' : 'none' },
+        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none' },
         paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
       });
     }
@@ -5633,7 +5748,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: 'gmu-az-line',
         type: 'line',
         source: 'gmu-az-source',
-        layout: { visibility: state.settings.gmuAzOn ? 'visible' : 'none', 'line-join': 'round' },
+        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none', 'line-join': 'round' },
         paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
       });
     }
@@ -5655,7 +5770,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         minzoom: 7,
         maxzoom: 12,
         layout: {
-          visibility: state.settings.gmuAzOn ? 'visible' : 'none',
+          visibility: (state.settings.gmuOn && state.settings.gmuState === 'az') ? 'visible' : 'none',
           'text-field': ['get', 'GMU'],
           'text-size': 12,
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
@@ -5683,7 +5798,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: 'gmu-or-fill',
         type: 'fill',
         source: 'gmu-or-source',
-        layout: { visibility: state.settings.gmuOrOn ? 'visible' : 'none' },
+        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none' },
         paint: { 'fill-color': GMU_LINE_COLOR, 'fill-opacity': 0.02 }
       });
     }
@@ -5692,7 +5807,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: 'gmu-or-line',
         type: 'line',
         source: 'gmu-or-source',
-        layout: { visibility: state.settings.gmuOrOn ? 'visible' : 'none', 'line-join': 'round' },
+        layout: { visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none', 'line-join': 'round' },
         paint: { 'line-color': GMU_LINE_COLOR, 'line-width': 1.5, 'line-opacity': 0.9 }
       });
     }
@@ -5710,7 +5825,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         minzoom: 7,
         maxzoom: 12,
         layout: {
-          visibility: state.settings.gmuOrOn ? 'visible' : 'none',
+          visibility: (state.settings.gmuOn && state.settings.gmuState === 'or') ? 'visible' : 'none',
           'text-field': ['get', 'unit_num'],
           'text-size': 12,
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
@@ -10761,7 +10876,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closeAllPanels_except(keepId){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel'].forEach(function(id){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel','gmu-state-panel'].forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
     if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); sunriseDockClose(); }
@@ -11348,21 +11463,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // never drift out of sync with each other.
   function updateWildlifeQuickToggleUI(){
     var checkbox = document.getElementById('habitats-quick-toggle');
-    var dot = document.getElementById('habitats-quick-dot');
     var label = document.getElementById('habitats-quick-label');
     if (!checkbox) return;
     checkbox.checked = !!wildlifeOn;
-    if (wildlifeActive){
-      // " — Habitat" suffix so this row is never ambiguous with the Migrations row below it
-      // when both show a same-named-ish species (e.g. "Elk (Rocky Mountain)" vs "Elk") —
-      // previously distinguished only by dot color, which isn't legible enough at a glance.
-      label.textContent = wildlifeDisplayName(wildlifeActive.speciesName) + ' — Habitat';
-      dot.style.display = 'inline-block';
-      dot.style.background = WILDLIFE_FILL_COLORS[0];
-    } else {
-      label.textContent = 'Habitats: select species';
-      dot.style.display = 'none';
-    }
+    // The compact row's own fixed "Habitats" label (see the layers-panel markup) already
+    // disambiguates this from the Migrations row below it, so the value here is just the
+    // species name or a placeholder — no " — Habitat" suffix needed anymore.
+    label.textContent = wildlifeActive ? wildlifeDisplayName(wildlifeActive.speciesName) : 'Select species';
   }
 
   // Reapplies the active species' filter/color to whichever category layer it belongs to,
@@ -11589,20 +11696,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // in the Layers panel and the actual map state never drift out of sync.
   function updateMigrationsQuickToggleUI(){
     var checkbox = document.getElementById('migrations-quick-toggle');
-    var dot = document.getElementById('migrations-quick-dot');
     var label = document.getElementById('migrations-quick-label');
     if (!checkbox) return;
     checkbox.checked = !!migrationsOn;
-    if (migrationActiveSpecies){
-      // " — Migration" suffix, mirrors the " — Habitat" suffix on the row above — see
-      // updateWildlifeQuickToggleUI for why this needed to be explicit, not just dot color.
-      label.textContent = migrationActiveSpecies + ' — Migration';
-      dot.style.display = 'inline-block';
-      dot.style.background = MIGRATION_STOPOVER_FILL;
-    } else {
-      label.textContent = 'Migrations: select species';
-      dot.style.display = 'none';
-    }
+    // See updateWildlifeQuickToggleUI — the row's own fixed "Migrations" label already
+    // disambiguates this from the Habitats row, so no suffix needed on the value itself.
+    label.textContent = migrationActiveSpecies || 'Select species';
   }
 
   function setMigrationCategoryOn(category, on){
@@ -11651,7 +11750,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Close all panels helper (updated to include P2 panels) ──
   function closeAllPanels(){
     var wasSunriseOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel'].forEach(function(id){
+    ['layers-panel','filter-panel','settings-panel','sunrise-panel','compass-panel','weather-panel','wildlife-panel','gmu-state-panel'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
@@ -11841,7 +11940,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.fireperimetersOpacity === undefined) state.settings.fireperimetersOpacity = 0.55;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
-            if (state.settings.gmuOrOn === undefined) state.settings.gmuOrOn = false;
+            // GMU boundaries migrated from two independent per-state checkboxes to one
+            // single-select state — only run once, when the new fields have never been set.
+            // Old data could technically have both gmuAzOn/gmuOrOn true at once; Arizona wins
+            // that tie since it was always listed/loaded first.
+            if (state.settings.gmuOn === undefined){
+              if (state.settings.gmuAzOn){ state.settings.gmuOn = true; state.settings.gmuState = 'az'; }
+              else if (state.settings.gmuOrOn){ state.settings.gmuOn = true; state.settings.gmuState = 'or'; }
+              else { state.settings.gmuOn = false; state.settings.gmuState = 'az'; }
+            }
+            delete state.settings.gmuAzOn;
+            delete state.settings.gmuOrOn;
             delete state.settings.gmuAzOpacity; // removed — GMU is outline+label only, no opacity slider
             delete state.settings.gmuOrOpacity;
             if (state.settings.wildlifeOn === undefined) state.settings.wildlifeOn = false;
@@ -11883,6 +11992,51 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
     }).catch(function(){
       // No saved state yet — that's fine, we start fresh.
+    });
+  }
+
+  // ---------- Layers panel collapsible sections ----------
+  // Open/closed state is per-device UI preference, not app data — stored directly in
+  // localStorage under its own key rather than state.settings, so it's never synced via
+  // Firestore (a section collapsed on desktop shouldn't collapse it on mobile too).
+  var LAYER_SECTION_IDS = ['base', 'landboundaries', 'environmental', 'water', 'wildlife'];
+  var LAYER_SECTION_DEFAULT_OPEN = { base: true, landboundaries: false, environmental: false, water: false, wildlife: false };
+  var LAYER_SECTION_STORAGE_KEY = 'field-map-layer-sections-v1';
+
+  function loadLayerSectionState(){
+    try {
+      var raw = localStorage.getItem(LAYER_SECTION_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch(e){ return {}; }
+  }
+  var layerSectionOpenState = loadLayerSectionState();
+
+  function isLayerSectionOpen(id){
+    if (layerSectionOpenState.hasOwnProperty(id)) return !!layerSectionOpenState[id];
+    return !!LAYER_SECTION_DEFAULT_OPEN[id];
+  }
+
+  function applyLayerSectionUI(id){
+    var body = document.getElementById('layer-section-body-' + id);
+    var toggle = document.querySelector('.layer-section-toggle[data-section-toggle="' + id + '"]');
+    if (!body || !toggle) return;
+    var open = isLayerSectionOpen(id);
+    body.classList.toggle('collapsed', !open);
+    var chev = toggle.querySelector('.layer-section-chevron');
+    if (chev) chev.textContent = open ? '▾' : '▸';
+  }
+
+  function setLayerSectionOpen(id, open){
+    layerSectionOpenState[id] = open;
+    try { localStorage.setItem(LAYER_SECTION_STORAGE_KEY, JSON.stringify(layerSectionOpenState)); } catch(e){}
+    applyLayerSectionUI(id);
+  }
+
+  function initLayerSections(){
+    LAYER_SECTION_IDS.forEach(function(id){
+      applyLayerSectionUI(id);
+      var toggle = document.querySelector('.layer-section-toggle[data-section-toggle="' + id + '"]');
+      if (toggle) toggle.addEventListener('click', function(){ setLayerSectionOpen(id, !isLayerSectionOpen(id)); });
     });
   }
 
@@ -12135,15 +12289,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
-    // ── USFS Forest boundaries ──
+    // ── USFS Forest boundaries ── checkbox only, no opacity slider (fixed at
+    // usfsBoundariesOpacity's default, no longer user-adjustable — the underlying
+    // fill/opacity itself is unaffected, only the UI control was removed).
     document.getElementById('usfsboundaries-toggle').addEventListener('change', function(){
       setUsfsBoundariesOn(this.checked);
-      scheduleSave();
-    });
-    document.getElementById('usfsboundaries-opacity').addEventListener('input', function(){
-      state.settings.usfsBoundariesOpacity = this.value / 100;
-      if (map.getLayer('usfs-boundaries-line')) map.setPaintProperty('usfs-boundaries-line', 'line-opacity', state.settings.usfsBoundariesOpacity);
-      if (map.getLayer('usfs-boundaries-label')) map.setPaintProperty('usfs-boundaries-label', 'text-opacity', state.settings.usfsBoundariesOpacity);
       scheduleSave();
     });
 
@@ -12158,17 +12308,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
-    // ── GMU boundaries (Arizona) ── outline+label only, no opacity slider
-    document.getElementById('gmu-az-toggle').addEventListener('change', function(){
-      setGmuAzOn(this.checked);
-      scheduleSave();
+    // ── GMU boundaries — single on/off toggle + a state picker popout (gmu-state-panel),
+    // same pattern as the Habitats/Migrations quick-toggle + wildlife-panel below.
+    document.getElementById('gmu-quick-toggle').addEventListener('change', function(){
+      setGmuOn(this.checked);
+    });
+    document.getElementById('gmu-layers-open-btn').addEventListener('click', function(){
+      closeAllPanels();
+      document.getElementById('gmu-state-panel').classList.remove('hidden');
+      updateGmuQuickToggleUI();
+    });
+    document.getElementById('gmu-state-close-btn').addEventListener('click', function(){
+      document.getElementById('gmu-state-panel').classList.add('hidden');
+    });
+    document.getElementById('gmu-state-select').addEventListener('change', function(){
+      setGmuActiveState(this.value);
     });
 
-    // ── GMU boundaries (Oregon) ── same, no opacity slider
-    document.getElementById('gmu-or-toggle').addEventListener('change', function(){
-      setGmuOrOn(this.checked);
-      scheduleSave();
-    });
+    initLayerSections();
 
     // Restore layer toggle states. This runs before the map/style has actually loaded
     // (createMap() kicks off an async fetch chain that bindUI() doesn't wait on), so only
@@ -12189,13 +12346,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
     document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
-    document.getElementById('usfsboundaries-opacity').value = Math.round((state.settings.usfsBoundariesOpacity != null ? state.settings.usfsBoundariesOpacity : 0.9) * 100);
-    document.getElementById('usfsboundaries-opacity-row').classList.toggle('show', !!state.settings.usfsBoundariesOn);
     document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
     document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
     document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
-    document.getElementById('gmu-az-toggle').checked = !!state.settings.gmuAzOn;
-    document.getElementById('gmu-or-toggle').checked = !!state.settings.gmuOrOn;
+    updateGmuQuickToggleUI();
 
     // ── Wildlife Layers: Habitats + Migrations, two fully independent top-level categories
     // sharing one panel/picker shell (see setWildlifeTopLevel) — each has its own quick-toggle
