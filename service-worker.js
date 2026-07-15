@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v117';
+var SHELL_CACHE = 'fieldmap-shell-v118';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it

@@ -93,6 +93,28 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   handler whitelist (SHELL_CACHE/TILE_CACHE/GMU_DATA_CACHE) must keep GMU_DATA_CACHE's literal string in sync
   with index.html's GMU_DATA_CACHE_NAME — otherwise every SHELL_CACHE bump wipes the GMU cache, since Cache
   Storage is shared per-origin regardless of which context (page vs. SW) created an entry.
+- GMU lightweight change-check layer (sits in front of the 60/180-day time-based cache above, doesn't replace
+  it): GMU_STATES[key].changeCheck describes a tiny (~1-2KB, no geometry) request that reveals whether a
+  state's source data has actually changed — 'editingInfo' (AZ/UT/NV: FeatureServer/0?f=json's
+  editingInfo.dataLastEditDate), 'maxEditStat' (ID: no layer-level editingInfo on this self-hosted server, so
+  an outStatistics MAX(last_edited_date) query is used instead — same idea, different mechanism), or
+  'featureCount' (WA: no edit-date field exists at all, so returnCountOnly is the only signal — deliberately
+  weaker, only catches units being added/removed, not a redrawn-but-same-count boundary). Oregon's
+  changeCheck is null — no live check is possible or built, since the app never queries ODFW at runtime (see
+  the "url" comment on GMU_STATES.or above). runGmuChangeChecks() fires all 5 checkable states' checks in
+  parallel (Object.keys().forEach, nothing awaited sequentially) when the state picker opens, throttled to
+  roughly once/day via the in-memory gmuChangeChecksLastRunAt. Each state's last-known signal + check
+  timestamp live in the same GMU_CACHE_META_KEY localStorage entry as fetchedAt (now merged via
+  updateGmuStateMeta, not overwritten). A check confirming no change costs nothing further. A detected change
+  either calls refreshGmuState() immediately (if that state is the one currently on screen — the normal full
+  pipeline: live refetch, durable cache write, one-time label recompute with its toast) or calls
+  invalidateGmuStateCache() (if not — drops the in-memory + durable cache and clears fetchedAt, so the next
+  real toggle-on for that state naturally falls into ensureGmuStateLoaded's cache-miss path, without paying
+  for a refetch of something nobody's looking at). updateGmuFreshnessUI prefers a check-confirmed result over
+  the plain fetchedAt-based text when one exists and is itself recent — "Verified current as of [date]" for
+  the three editingInfo/maxEditStat states, "Checked as of [date]" for Washington's honestly-weaker signal —
+  falling back to the original "Unit boundaries as of [date]" (+ stale nudge) for Oregon, any state whose
+  check hasn't run yet, or once a check result itself goes stale.
 - GMU liability disclaimer: identical text in two places — a persistent line under the GMU row in the Layers
   panel (always visible, not dismissible) and a `.gmu-disclaimer`-classed line appended in every GMU popup
   (gmuPopupHtml), regardless of whether that state has an info link.
@@ -156,3 +178,17 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   Verified via localStorage inspection (not just UI state) that state.tombstones now correctly contains a
   deleted bearing's id and it stays gone after a real page reload; also verified bearing create/edit still
   work unaffected (single-line, additive fix — no other delete path was touched).
+- Session 9: Researched (research-only turn) then built a lightweight "has this GMU state's data actually
+  changed" check layer in front of the 60/180-day time-based cache — see Architecture notes' "GMU lightweight
+  change-check layer" entry for the full design. Confirmed via direct live queries (PowerShell, not browser,
+  matching the established pattern for ID/WA) that AZ/UT/NV expose editingInfo.dataLastEditDate, Idaho's
+  self-hosted server doesn't but its per-feature last_edited_date field supports an equivalent
+  outStatistics MAX() query, Washington has no edit-date signal of any kind (returnCountOnly is the only
+  option, an intentionally-disclosed weaker check), and Oregon has no live source to check against at all
+  (static vendored file). Verified via Playwright with mocked check+geometry endpoints: all 5 checkable
+  states' requests land within a 14ms window (genuinely parallel); a confirmed-unchanged result triggers zero
+  geometry requests and zero label recomputation; a simulated changed result correctly triggers
+  refreshGmuState's full pipeline when that state is the one on screen, or a cache-invalidate-only (no
+  immediate refetch) when it isn't; Washington's freshness text reads "Checked as of" versus AZ/UT/NV/ID's
+  "Verified current as of"; Oregon fired exactly one network request total (its static file) with no
+  changeSignal/lastCheckedAt ever written to its meta entry.
