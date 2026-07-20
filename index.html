@@ -2224,7 +2224,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.23.0';
+  var APP_VERSION = '2.23.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -9380,7 +9380,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function computeTripsPresent(){
     var set = {};
     var hasNoTrip = false;
-    state.pins.concat(state.tracks).forEach(function(it){
+    state.pins.concat(state.tracks, state.polygons || [], state.bearings || []).forEach(function(it){
       if (it.trip) set[it.trip] = true; else hasNoTrip = true;
     });
     var list = Object.keys(set).sort();
