@@ -2165,7 +2165,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.21.0';
+  var APP_VERSION = '2.22.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5451,10 +5451,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var isMobile = window.innerWidth <= 600;
     var circleSize = isMobile ? 28 : 34;
     var iconSize   = isMobile ? 18 : 22;
-    return '<div style="width:' + circleSize + 'px;height:' + circleSize + 'px;border-radius:50%;' +
+    // Small amber dot, upper-right of the circle, when this pin has edits not yet
+    // confirmed synced to the cloud (see isPendingSync) — deliberately tiny/unobtrusive,
+    // just enough to make a stuck or offline-created item visible instead of looking
+    // identical to a fully-synced one.
+    var pendingDot = isPendingSync(pin)
+      ? '<div title="Not yet synced to the cloud" style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:var(--yellow);border:1.5px solid rgba(255,255,255,0.9);"></div>'
+      : '';
+    return '<div style="position:relative;width:' + circleSize + 'px;height:' + circleSize + 'px;border-radius:50%;' +
       'background:' + color + ';border:2px solid rgba(255,255,255,0.9);' +
       'box-shadow:0 2px 5px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;">' +
-      renderMarkerIcon(iconKey, iconSize) + '</div>';
+      renderMarkerIcon(iconKey, iconSize) + pendingDot + '</div>';
   }
 
   // ── Shared popup footer / overflow menu (pins, bearings, tracks, areas) ──
@@ -9386,6 +9393,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
 
+    if (isPendingSync(d)){
+      var pendingDot = document.createElement('span');
+      pendingDot.title = 'Not yet synced to the cloud';
+      pendingDot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:var(--yellow);flex-shrink:0;margin-left:4px;';
+      row.appendChild(pendingDot);
+    }
+
     row.addEventListener('click', function(e){
       if (bulkMode && it.type !== 'polygon'){
         if (e.target === cb) return;
@@ -12177,6 +12191,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var cloudPushTimer = null;
   var isSignedIn = false;
   var initialSyncComplete = false; // guards against pushing a not-yet-merged local state during the brief window while initial sync (in the Firebase module) is still in flight
+  // Watermark: local edits at or before this ms are confirmed written to the signed-in
+  // account's Firestore doc. Advanced only by the Firebase module's setLastSyncedAtMs
+  // bridge call, on an actually-successful write (performInitialSync/startLiveSync's
+  // merge-push/pushNow) — never optimistically. Reset to 0 on sign-out/sign-in (see
+  // clearLocalDataForSignOut/resetSyncWatermark) so a fresh account starts with nothing
+  // assumed synced. Drives isPendingSync()'s per-item "hasn't synced yet" indicator.
+  var lastSyncedAtMs = 0;
   var appIsReady = false;
   var appReadyCallbacks = [];
 
@@ -12266,6 +12287,58 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
+  // Whether a pin/track/polygon/bearing has local edits newer than lastSyncedAtMs — i.e.
+  // it exists on this device but isn't confirmed written to the cloud yet. Only meaningful
+  // while signed in (no account means nothing is "pending" a sync that isn't happening);
+  // items saved before the updatedAt field existed can't be judged, so they're treated as
+  // synced rather than permanently flagged pending.
+  function isPendingSync(item){
+    return isSignedIn && !!(item && item.updatedAt) && item.updatedAt > lastSyncedAtMs;
+  }
+
+  // Re-renders exactly the bits of the UI that show the pending-sync indicator, without a
+  // full marker/list teardown-and-rebuild — called whenever lastSyncedAtMs moves (a push
+  // just confirmed) so a dot can disappear the moment its item is actually synced.
+  function refreshPendingSyncIndicators(){
+    state.pins.forEach(function(pin){
+      var marker = markersById[pin.id];
+      if (marker) marker.getElement().innerHTML = buildPinMarkerHtml(pin);
+    });
+    renderPinList();
+  }
+
+  // Sign-out data clear (see window.FieldMapSync.signOut in the Firebase module for the
+  // full flush-or-warn sequencing this is the final step of). Wipes every piece of this
+  // account's data — pins/tracks/polygons/bearings/tags/tombstones — from both the live
+  // map/sidebar and durable storage, so nothing survives into a subsequently signed-in
+  // account's merge. Deliberately leaves state.settings untouched: layer toggles, map
+  // position, units etc. are device preferences, never synced to Firestore in the first
+  // place (see getSyncableState), so they're not account-scoped data to begin with.
+  function clearLocalDataForSignOut(){
+    clearTimeout(saveTimer);
+    clearTimeout(cloudPushTimer); cloudPushTimer = null;
+    Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
+    markersById = {};
+    lastMarkerDisplayState = {};
+    if (openTrackPopup){ openTrackPopup.remove(); openTrackPopup = null; }
+    if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
+    if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
+    state.pins = [];
+    state.tracks = [];
+    state.polygons = [];
+    state.bearings = [];
+    state.tags = SEED_TAGS.slice();
+    state.tombstones = {};
+    state.lastLocalEditAt = 0;
+    updatePinClusterSource();
+    updateTracksSource();
+    updatePolygonsSource();
+    updateBearingsSource();
+    refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
+    renderDateChips(); renderPinList(); refreshAllVisibility();
+    persist();
+  }
+
   // Exposed for the Firebase module (loaded later in the file) to call into.
   window.FieldMapApp = {
     getSyncableState: getSyncableState,
@@ -12277,7 +12350,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     markInitialSyncComplete: function(){ initialSyncComplete = true; },
     resetInitialSyncComplete: function(){ initialSyncComplete = false; },
     isSafeMode: function(){ return SAFE_MODE; },
-    hasPendingCloudPush: function(){ return !!cloudPushTimer; }
+    hasPendingCloudPush: function(){ return !!cloudPushTimer; },
+    getLastSyncedAtMs: function(){ return lastSyncedAtMs; },
+    setLastSyncedAtMs: function(ms){
+      lastSyncedAtMs = Math.max(lastSyncedAtMs, ms || 0);
+      refreshPendingSyncIndicators();
+    },
+    resetSyncWatermark: function(){ lastSyncedAtMs = 0; refreshPendingSyncIndicators(); },
+    clearLocalDataForSignOut: clearLocalDataForSignOut
   };
 
   // ---------- Persistence ----------
@@ -13742,6 +13822,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   });
 
   var currentUid = null;
+  // True once onAuthStateChanged has seen a real signed-in user this page-load. Lets the
+  // null branch tell "an account session just ended" apart from "this device has never
+  // signed in" (onAuthStateChanged always fires once on load, with user===null for a
+  // brand-new/guest device too) — see the wasSignedIn check below, the safety-net clear
+  // must never run for the latter case or it would wipe legitimate local-only guest data.
+  var wasSignedIn = false;
   var remoteUnsubscribe = null;
   var applyingRemote = false; // true briefly while we apply our own or a remote write, to avoid feedback loops
   // True for the duration of any in-flight Firestore write (performInitialSync's merge-push,
@@ -13831,6 +13917,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!snap.exists()){
         return setDoc(ref, serializeForFirestore(local)).then(function(){
           syncInFlight = false;
+          window.FieldMapApp.setLastSyncedAtMs(local.lastLocalEditAt || Date.now());
           window.FieldMapApp.updateSyncStatusUI('Synced', null);
           window.FieldMapApp.markInitialSyncComplete();
         });
@@ -13842,6 +13929,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         window.FieldMapApp.applyMergedState(merged);
         applyingRemote = false;
         syncInFlight = false;
+        window.FieldMapApp.setLastSyncedAtMs(merged.lastLocalEditAt);
         window.FieldMapApp.updateSyncStatusUI('Synced', null);
         window.FieldMapApp.markInitialSyncComplete();
       });
@@ -13872,6 +13960,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         window.FieldMapApp.applyMergedState(merged);
         applyingRemote = false;
         syncInFlight = false;
+        window.FieldMapApp.setLastSyncedAtMs(merged.lastLocalEditAt);
       }).catch(function(err){
         console.error('Live sync merge-push failed', err);
         // Still apply the merge locally even if writing it back to the
@@ -13887,15 +13976,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Returns a promise that always resolves (never rejects) once the attempt settles, success
+  // or failure — callers that need to know which happened (e.g. signOut's flush-before-clear)
+  // check hasUnsyncedChanges() afterward, since lastSyncedAtMs only advances on real success.
   function pushNow(localState){
-    if (!currentUid) return;
+    if (!currentUid) return Promise.resolve();
     window.FieldMapApp.updateSyncStatusUI('Syncing…', 'syncing');
     var ref = doc(db, 'users', currentUid);
     applyingRemote = true;
     syncInFlight = true;
-    setDoc(ref, serializeForFirestore(localState)).then(function(){
+    return setDoc(ref, serializeForFirestore(localState)).then(function(){
       applyingRemote = false;
       syncInFlight = false;
+      window.FieldMapApp.setLastSyncedAtMs(localState.lastLocalEditAt);
       window.FieldMapApp.updateSyncStatusUI('Synced', null);
     }).catch(function(err){
       applyingRemote = false;
@@ -13923,21 +14016,51 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       console.warn('[FieldMap] SAFE MODE active — ignoring auth state change, no Firestore reads/writes will occur.');
       return;
     }
+    // Stop any listener tied to whichever account was previously active BEFORE doing
+    // anything else with the new state — closes the window where a live snapshot from the
+    // old account could still land (and get merge-pushed) after a new account has taken
+    // over currentUid.
     if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
     window.FieldMapApp.resetInitialSyncComplete();
     window.FieldMapApp.whenReady(function(){
       if (user){
         currentUid = user.uid;
+        wasSignedIn = true;
         window.FieldMapApp.updateAccountUI(user);
         performInitialSync(user.uid).then(function(){
           startLiveSync(user.uid);
         });
       } else {
         currentUid = null;
+        // Safety net for an account session ending some way other than our own
+        // FieldMapSync.signOut() below (token revoked/expired remotely, account deleted,
+        // etc) — that path already clears local data itself before this fires, so this is
+        // a harmless no-op in the normal case. The wasSignedIn guard is required: this
+        // branch also runs on a fresh page load for a device that has never signed in at
+        // all (user is null then too), and clearing there would destroy real never-synced
+        // local-only data instead of protecting anything.
+        if (wasSignedIn){
+          window.FieldMapApp.clearLocalDataForSignOut();
+          window.FieldMapApp.resetSyncWatermark();
+        }
+        wasSignedIn = false;
         window.FieldMapApp.updateAccountUI(null);
       }
     });
   });
+
+  // True when this account has local edits not yet confirmed written to Firestore: a
+  // write actually in flight, a debounced push still waiting to fire (scheduleCloudPush's
+  // timer), or local edits made since the last confirmed push (lastSyncedAtMs watermark —
+  // see setLastSyncedAtMs). Used by signOut below to decide whether it needs to flush or
+  // warn before it's safe to clear local data.
+  function hasUnsyncedChanges(){
+    if (!currentUid) return false;
+    if (syncInFlight) return true;
+    if (window.FieldMapApp.hasPendingCloudPush()) return true;
+    var local = window.FieldMapApp.getSyncableState();
+    return (local.lastLocalEditAt || 0) > window.FieldMapApp.getLastSyncedAtMs();
+  }
 
   window.FieldMapSync = {
     signIn: function(){
@@ -13958,8 +14081,43 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         });
       });
     },
+    // Fixes cross-account contamination: signing out used to leave every pin/track/area/
+    // bearing sitting in local storage, which the next signed-in account's initial merge
+    // (performInitialSync) treated as this device's own unsynced work and pushed straight
+    // into that account's Firestore doc — one account's data permanently bleeding into a
+    // different one. Order matters here and mirrors the bug report exactly: flush (or
+    // warn about) anything genuinely unsynced FIRST, only THEN clear local data, only
+    // THEN actually sign out of Firebase — never clear before a flush that could still
+    // succeed, and never sign out while a cancellable warning is still pending.
     signOut: function(){
-      signOut(auth);
+      if (!currentUid){
+        return signOut(auth); // not signed in (or already signing out) — nothing to flush/clear
+      }
+      function finishSignOut(){
+        if (remoteUnsubscribe){ remoteUnsubscribe(); remoteUnsubscribe = null; }
+        currentUid = null;
+        window.FieldMapApp.clearLocalDataForSignOut();
+        window.FieldMapApp.resetSyncWatermark();
+        return signOut(auth);
+      }
+      if (!hasUnsyncedChanges()){
+        return finishSignOut();
+      }
+      if (navigator.onLine){
+        return pushNow(window.FieldMapApp.getSyncableState()).then(function(){
+          // pushNow always resolves, success or failure — re-check afterward rather than
+          // trusting resolution alone, since a failed push (network blip, permission
+          // error) still resolves and must not silently discard data.
+          if (hasUnsyncedChanges()){
+            if (!confirm('Some changes could not be synced to the cloud. Sign out anyway and permanently lose them?')) return;
+          }
+          return finishSignOut();
+        });
+      }
+      if (!confirm('You have changes that haven\'t synced to the cloud yet, and you appear to be offline. Signing out now will permanently discard them. Sign out anyway?')){
+        return; // cancelled — stay signed in, nothing cleared
+      }
+      return finishSignOut();
     },
     signInWithEmail: function(email, password){
       return signInWithEmailAndPassword(auth, email, password);

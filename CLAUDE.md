@@ -192,3 +192,36 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   immediate refetch) when it isn't; Washington's freshness text reads "Checked as of" versus AZ/UT/NV/ID's
   "Verified current as of"; Oregon fired exactly one network request total (its static file) with no
   changeSignal/lastCheckedAt ever written to its meta entry.
+- Session 10: Fixed a critical cross-account data contamination bug — signing out never cleared local
+  durable storage (pins/tracks/polygons/bearings/tags/tombstones), so the old account's data stayed on
+  screen and in localStorage after sign-out, and a subsequently signed-in (different) account's
+  performInitialSync merge treated it as this device's own unsynced local work and pushed it straight into
+  that account's Firestore doc — permanently bleeding one account's data into another's. Fix, in
+  window.FieldMapSync.signOut() (index.html, ES module script near the bottom): if genuinely unsynced local
+  changes exist (new hasUnsyncedChanges() — checks syncInFlight, a pending debounced cloud-push timer, and
+  local.lastLocalEditAt against a new lastSyncedAtMs watermark), flush them via pushNow() first when online
+  (re-checking hasUnsyncedChanges() afterward since pushNow always resolves even on failure — a failed push
+  now falls through to the same confirm() warning as the offline case rather than silently discarding data);
+  if offline, confirm() before proceeding. Only after that does it unsubscribe the live Firestore listener,
+  call the new clearLocalDataForSignOut() (classic script — wipes pins/tracks/polygons/bearings/tags/
+  tombstones and every associated marker/popup/source, deliberately leaves state.settings alone since
+  settings were never synced/account-scoped to begin with — see getSyncableState), reset the sync
+  watermark, and only then actually call Firebase's signOut(auth). Also added a wasSignedIn-guarded safety
+  net directly in onAuthStateChanged's null branch — clears local data on ANY account-session-ending auth
+  transition, not just ones that went through the app's own Sign Out button (e.g. a remotely revoked/expired
+  token) — guarded specifically so it never fires on a fresh/guest device that has never signed in (that
+  case is also user===null but must not wipe real local-only data). Because sign-out now always fully
+  clears before any subsequent sign-in's merge runs, re-signing into the same account also now correctly
+  pulls a complete fresh copy from Firestore rather than re-merging anything local-storage-stale, without
+  needing to special-case sign-in itself. Separately, added a small amber pending-sync indicator (dot) on
+  pin markers (buildPinMarkerHtml) and on every item's sidebar row (buildItemRow, all 4 types) — computed
+  from a new isPendingSync(item) = isSignedIn && item.updatedAt > lastSyncedAtMs, so a stuck-syncing or
+  offline-created item is visibly distinguishable from a confirmed-synced one instead of looking identical.
+  lastSyncedAtMs only ever advances via the new window.FieldMapApp.setLastSyncedAtMs() bridge call, and only
+  on an actually-successful write (performInitialSync's two branches, startLiveSync's merge-push success
+  path, pushNow's success path) — never optimistically, and never on a failed push. Verified both classic
+  and ES-module script blocks still parse cleanly (node --check) after the edits; UI/end-to-end sign-out/
+  sign-in behavior itself not yet verified in-browser this session — recommend a manual or Playwright pass
+  next session covering: sign-out with no pending changes, sign-out with unsynced changes online, sign-out
+  with unsynced changes offline (confirm the warning appears and cancelling it keeps data intact), and
+  signing into a second account afterward to confirm zero bleed-through in either direction.
