@@ -323,19 +323,21 @@
   .draw-point-popup .leaflet-popup-content{margin:6px 8px;}
   .pin-popup-name{font-weight:600;font-size:14px;margin-bottom:2px;color:var(--text);}
   .pin-popup-cat{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
+  .pin-popup-meta{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
   .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
 
-  /* Unified popup footer (Directions/Share/Edit data) — same 3-button grid across pins,
-     bearings, tracks, and areas. */
-  .pin-popup-footer{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;}
-  .pin-popup-footer .btn{padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* Unified popup footer (Directions/Share/Edit data + overflow) — one row, same shape
+     across pins, bearings, tracks, and areas. The overflow button used to live separately in
+     the name row (see pin-popup-name-row below) to stay clear of MapLibre's own popup close
+     button; now that every view lives in #view-drawer with its own close button, all 4
+     actions share one row. */
+  .pin-popup-footer{display:flex;align-items:stretch;gap:6px;margin-top:6px;}
+  .pin-popup-footer .btn{flex:1;padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pin-popup-footer .popup-overflow-wrap{flex-shrink:0;}
+  .pin-popup-footer .popup-overflow-btn{height:100%;}
 
-  /* "···" overflow menu — Delete + one type-specific geometry action (Move/Edit
-     endpoints/Edit shape), tucked away from the 3 primary footer actions. Positioned in the
-     name row itself (not absolutely over the popup) so it never collides with MapLibre's
-     own close button, which is reserved space in the top-right of .maplibregl-popup-content. */
   .pin-popup-name-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;}
   .pin-popup-name-row .pin-popup-name{margin-bottom:0;}
   .popup-overflow-wrap{position:relative;flex-shrink:0;}
@@ -344,8 +346,12 @@
     cursor:pointer;padding:3px 7px;border-radius:6px;letter-spacing:1px;
   }
   .popup-overflow-btn:hover{background:var(--bg-elevated-2);color:var(--text);}
+  /* Opens upward (bottom:calc(100% + 4px), not top:24px) — the overflow button now sits in
+     the footer row at the bottom of the drawer's content (see .pin-popup-footer), not the
+     name row at the top, so a menu dropping down would either get clipped by the drawer's
+     own overflow:auto edge or spill past the viewport bottom. */
   .popup-overflow-menu{
-    display:none;position:absolute;top:24px;right:0;background:var(--bg-elevated-2);
+    display:none;position:absolute;bottom:calc(100% + 4px);right:0;background:var(--bg-elevated-2);
     border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
     min-width:150px;z-index:20;overflow:hidden;
   }
@@ -376,6 +382,40 @@
   .pin-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip{border-right-color:var(--bg-elevated);}
   .pin-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip{border-left-color:var(--bg-elevated);}
   .draw-point-popup .maplibregl-popup-content{padding:6px 8px;}
+
+  /* Bottom drawer — shared view surface for pin/bearing/track/area popups plus GMU/USFS/
+     wildlife/migration info cards (see showViewDrawer/closeViewDrawer). Replaces the old
+     per-type anchored-callout maplibregl.Popup, which could render clipped or occluded near
+     screen edges. Deliberately has NO blocking scrim sibling (contrast #panel-scrim below) —
+     the map must stay visible and interactive behind it; dismissal is only its own × button
+     or a plain tap elsewhere on the map (see closeAllPanels/the map's final click handler).
+     Checked visually at 1400px and 1920px: an early flush-bottom/full-width version read fine
+     at 1400px but stretched into an oddly sparse, edge-to-edge bar at 1920px, and even capped
+     to a max-width it still overlapped #map-controls' icon column sitting in that same bottom
+     right corner — so desktop instead gets exactly .floating-panel's own positioning
+     (bottom:24px;right:64px, already clear of #map-controls, already proven at every desktop
+     width since nothing here is new) just wider, to comfortably fit the 4-button footer row.
+     Mobile override below replaces this with a true edge-to-edge bottom sheet instead — full
+     width, lifted above the collapsed mobile sidebar bar the same way .floating-panel already
+     is on mobile too. Either way this stays screen-anchored, never click-point-anchored, so
+     the near-edge occlusion bug this replaces can't recur regardless of viewport size. */
+  @keyframes view-drawer-slide-up{ from{ transform:translateY(12px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+  #view-drawer{
+    position:fixed;left:auto;bottom:24px;right:64px;z-index:1300;
+    width:380px;max-width:calc(100vw - var(--sidebar-width) - 90px);
+    background:var(--bg-elevated);border:1px solid var(--border);
+    border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
+    max-height:60vh;overflow-y:auto;
+    padding:8px 16px 14px;
+    animation:view-drawer-slide-up .18s ease-out;
+  }
+  #view-drawer.hidden{display:none;}
+  #view-drawer-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:2px auto 10px;}
+  #view-drawer-close-btn{
+    position:absolute;top:10px;right:12px;background:none;border:none;color:var(--text-muted);
+    font-size:20px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:6px;
+  }
+  #view-drawer-close-btn:hover{background:var(--bg-elevated-2);color:var(--text);}
 
   /* Scrim behind popover panels (Layers/Filter/Settings/Weather/Wildlife/GMU picker + the
      sort/export dropdown menus — see PANEL_SCRIM_IDS) — sits above the map and sidebar
@@ -793,6 +833,19 @@
       width:auto;max-width:none;
     }
     #filter-panel,#layers-panel{max-height:48vh;}
+
+    /* View drawer: on mobile this becomes the true edge-to-edge bottom sheet the feature is
+       named for — desktop's small anchored card (see the base #view-drawer rule) would be
+       cramped at phone widths, and .floating-panel already establishes "full width, lifted
+       above the collapsed mobile sidebar bar" as this app's mobile pattern for exactly this
+       situation. All 4 corners rounded (not flush against any real screen edge, floating
+       88px above the bottom the same way .floating-panel does here). */
+    #view-drawer{
+      left:14px;right:14px;bottom:88px;
+      width:auto;max-width:none;
+      border-radius:14px;border:1px solid var(--border);
+      max-height:48vh;
+    }
 
     /* Sunrise panel: docked above the sidebar bar on mobile */
     #sunrise-panel.sunrise-docked-panel{
@@ -2031,6 +2084,12 @@
 
 <div id="panel-scrim" class="hidden"></div>
 
+<div id="view-drawer" class="hidden">
+  <div id="view-drawer-handle"></div>
+  <button id="view-drawer-close-btn" aria-label="Close">&times;</button>
+  <div id="view-drawer-content"></div>
+</div>
+
 <div id="toast"></div>
 
 <!-- Tag management modal -->
@@ -2165,7 +2224,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.22.0';
+  var APP_VERSION = '2.23.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5027,12 +5086,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>';
   }
 
-  function openGmuPopupAt(stateKey, props, lngLat){
-    if (openGmuPopup){ openGmuPopup.remove(); openGmuPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat).setHTML(gmuPopupHtml(stateKey, props)).addTo(map);
-    popup.on('close', function(){ if (openGmuPopup === popup) openGmuPopup = null; });
-    openGmuPopup = popup;
+  function openGmuPopupAt(stateKey, props){
+    showViewDrawer('gmu', stateKey, gmuPopupHtml(stateKey, props));
+    openGmuPopup = { remove: viewDrawerRemoveShim };
   }
 
   // ── Unified GMU on/off + single-state-select — one toggle + a state picker
@@ -5146,12 +5202,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       (url ? '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">Forest info (fs.usda.gov)</a></div>' : '');
   }
 
-  function openUsfsBoundaryPopupAt(props, lngLat){
-    if (openUsfsBoundaryPopup){ openUsfsBoundaryPopup.remove(); openUsfsBoundaryPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat).setHTML(usfsBoundaryPopupHtml(props)).addTo(map);
-    popup.on('close', function(){ if (openUsfsBoundaryPopup === popup) openUsfsBoundaryPopup = null; });
-    openUsfsBoundaryPopup = popup;
+  function openUsfsBoundaryPopupAt(props){
+    showViewDrawer('usfs', props.forestname || 'usfs', usfsBoundaryPopupHtml(props));
+    openUsfsBoundaryPopup = { remove: viewDrawerRemoveShim };
   }
 
   // ── Active fire perimeters (NIFC WFIGS) ── same shape as USFS boundaries above, except
@@ -5464,29 +5517,96 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       renderMarkerIcon(iconKey, iconSize) + pendingDot + '</div>';
   }
 
-  // ── Shared popup footer / overflow menu (pins, bearings, tracks, areas) ──
-  // Footer is always the same 3 actions in the same order; the overflow ("···") menu is
-  // always Delete (styled destructive) plus exactly one type-specific geometry action
-  // (Move for a pin, Edit endpoints for a bearing, Edit shape for a track/area).
-  function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick){
+  // ── Shared popup footer (pins, bearings, tracks, areas) ──
+  // One row: 3 labeled actions (Directions/Share/Edit data) + a 4th icon-only overflow
+  // (Delete, styled destructive, plus exactly one type-specific geometry action — Move for
+  // a pin, Edit endpoints for a bearing, Edit shape for a track/area). Used to be split
+  // across two locations — the overflow button lived in the name row instead, specifically
+  // to stay clear of MapLibre's own popup close button (reserved top-right corner of
+  // .maplibregl-popup-content). Now that every view lives in #view-drawer, which has its
+  // own close button, that constraint is gone — all 4 actions share one row.
+  // menuId must be unique per open instance — kept even though only one item's drawer can
+  // be open at a time now, so a stale id from a previous drawer content swap never collides.
+  function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick, menuId, geometryLabel, geometryOnclick, deleteOnclick){
     return '<div class="pin-popup-footer">' +
       '<button class="btn btn-small" onclick="' + directionsOnclick + '">Directions</button>' +
       '<button class="btn btn-small" onclick="' + shareOnclick + '">Share</button>' +
       '<button class="btn btn-small" onclick="' + editOnclick + '">Edit data</button>' +
-      '</div>';
-  }
-
-  // menuId must be unique per popup instance — pins can have several popups open at once
-  // (one per marker), so a shared/generic id would collide.
-  function popupOverflowHtml(menuId, geometryLabel, geometryOnclick, deleteOnclick){
-    return '<div class="popup-overflow-wrap">' +
-      '<button class="popup-overflow-btn" onclick="FieldMap.toggleOverflowMenu(\'' + menuId + '\')" aria-label="More actions">&#8942;</button>' +
-      '<div class="popup-overflow-menu" id="' + menuId + '">' +
-        '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' +
-        '<button class="danger" onclick="' + deleteOnclick + '">Delete</button>' +
+      '<div class="popup-overflow-wrap">' +
+        '<button class="popup-overflow-btn" onclick="FieldMap.toggleOverflowMenu(\'' + menuId + '\')" aria-label="More actions">&#8942;</button>' +
+        '<div class="popup-overflow-menu" id="' + menuId + '">' +
+          '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' +
+          '<button class="danger" onclick="' + deleteOnclick + '">Delete</button>' +
+        '</div>' +
       '</div>' +
     '</div>';
   }
+
+  // Shared, muted-monospace "Created <date>" fragment — surfaced in the compact drawer view
+  // for pin/track/area/bearing (previously only visible after opening the Edit form).
+  function formatCreatedDate(ts){
+    return ts ? new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  }
+
+  // ── Bottom drawer (shared view surface) ──
+  // Replaces the old per-type anchored-callout maplibregl.Popup for pin/bearing/track/area
+  // view popups plus the GMU/USFS/wildlife/migration read-only info cards — that style could
+  // render clipped or occluded near screen edges (confirmed bug on mobile). One shared
+  // bottom-anchored #view-drawer element instead; see its CSS comment for the positioning
+  // rationale. Only one item can be "open" at a time, matching the one-drawer reality.
+  //
+  // The 7 legacy "openXPopup" singleton variables (openTrackPopup, openPolygonPopup,
+  // openBearingPopup, openGmuPopup, openUsfsBoundaryPopup, openWildlifePopup,
+  // openMigrationPopup — declared near the top of the file) are kept rather than removed:
+  // many existing call sites (Directions' start/end endpoint chooser, Delete, Edit
+  // shape/vertices, GMU/USFS toggle-off cleanup, sign-out's local-data clear) check or call
+  // them directly — `.remove()` everywhere, and for track/bearing also `.setHTML()` (see
+  // promptDirectionsChoice). Each open*PopupAt function below assigns its type's variable a
+  // small shim object backed by the shared drawer instead of a real maplibregl.Popup, so all
+  // of those call sites keep working completely unchanged. showViewDrawer() resets every one
+  // of the 7 vars on each open, preserving the invariant that at most one is ever non-null —
+  // whichever matches what the drawer is actually currently showing.
+  var viewDrawerOpenRef = null; // { type, id } — id is a string key unique within that type
+
+  function isViewDrawerShowing(type, id){
+    return !!viewDrawerOpenRef && viewDrawerOpenRef.type === type && viewDrawerOpenRef.id === id;
+  }
+
+  function setViewDrawerContent(html){
+    var content = document.getElementById('view-drawer-content');
+    if (content) content.innerHTML = html;
+  }
+
+  function resetOpenPopupRefs(){
+    openTrackPopup = null;
+    openPolygonPopup = null;
+    openBearingPopup = null;
+    openGmuPopup = null;
+    openUsfsBoundaryPopup = null;
+    openWildlifePopup = null;
+    openMigrationPopup = null;
+  }
+
+  function closeViewDrawer(){
+    var el = document.getElementById('view-drawer');
+    if (!viewDrawerOpenRef && el && el.classList.contains('hidden')) return; // already closed — skip redundant DOM writes (this runs on every plain map tap)
+    resetOpenPopupRefs();
+    viewDrawerOpenRef = null;
+    if (el) el.classList.add('hidden');
+    document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
+  }
+
+  function showViewDrawer(type, id, html){
+    resetOpenPopupRefs();
+    viewDrawerOpenRef = { type: type, id: id };
+    setViewDrawerContent(html);
+    var el = document.getElementById('view-drawer');
+    if (el) el.classList.remove('hidden'); // no-op (and no animation replay) if already open — see the CSS comment on #view-drawer's slide-up keyframe
+  }
+
+  // Shared .remove() shim for the 4 read-only reference-data types (GMU/USFS/wildlife/
+  // migration), which only ever need "close if open" — never a live-content swap.
+  function viewDrawerRemoveShim(){ closeViewDrawer(); }
 
   // Standard geo destination link (Google Maps directions) — one universal URL, left to the
   // OS/browser to resolve (Universal Links intercept to the installed Maps app on
@@ -5659,7 +5779,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<span style="font-size:10px;font-weight:700;color:' + sc.bg + ';">' + sc.label + '</span></span>';
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(pin.name) + '</div>' +
-        popupOverflowHtml('overflow-pin-' + pin.id, 'Move', 'FieldMap.movePin(\'' + pin.id + '\')', 'FieldMap.deletePin(\'' + pin.id + '\')') +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' +
         statusBadge +
@@ -5667,18 +5786,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>' +
       notes +
       '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) +
-        (pin.elevationFt != null ? ' · ' + pin.elevationFt.toLocaleString() + ' ft' : '') + '</div>' +
+        (pin.elevationFt != null ? ' · ' + pin.elevationFt.toLocaleString() + ' ft' : '') +
+        (pin.created ? ' · Created ' + formatCreatedDate(pin.created) : '') + '</div>' +
       popupFooterHtml(
         'FieldMap.directionsToPin(\'' + pin.id + '\')',
         'FieldMap.sharePin(\'' + pin.id + '\')',
-        'FieldMap.editPin(\'' + pin.id + '\')'
+        'FieldMap.editPin(\'' + pin.id + '\')',
+        'overflow-pin-' + pin.id, 'Move', 'FieldMap.movePin(\'' + pin.id + '\')', 'FieldMap.deletePin(\'' + pin.id + '\')'
       );
   }
 
   // Backfill for pins created before automatic elevation lookup existed — lazy, triggered
-  // the first time that pin's popup is actually opened (see addMarkerForPin's popup 'open'
-  // listener) rather than all at once on load, so it doesn't fire a burst of lookups for
-  // every pin in a large dataset that the user may never even look at.
+  // the first time that pin's drawer is actually opened (see openPinDrawer) rather than all
+  // at once on load, so it doesn't fire a burst of lookups for every pin in a large dataset
+  // that the user may never even look at.
   var pinElevBackfillPending = {};
   function backfillPinElevation(pin){
     if (pin.elevationFt != null || pinElevBackfillPending[pin.id]) return;
@@ -5690,6 +5811,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
       refreshMarkerPopup(pin);
     }).catch(function(){ delete pinElevBackfillPending[pin.id]; });
+  }
+
+  // Pins have no ad-hoc-popup singleton var like tracks/polygons/bearings do — they used to
+  // have a real, persistent maplibregl.Popup per marker instead, so "is this pin's popup
+  // open" was never a question that needed answering elsewhere. Routed through the shared
+  // #view-drawer now, same as every other type.
+  function openPinDrawer(pin){
+    showViewDrawer('pin', pin.id, popupHtml(pin));
+    backfillPinElevation(pin);
   }
 
   function addMarkerForPin(pin){
@@ -5714,24 +5844,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (polygonMode){ handlePolygonClick(latlng); return; }
         if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
       }
-      // No special mode active — let the click bubble up so MapLibre's own Marker
-      // click handling (bound on the map container) can toggle the popup open,
-      // matching the sidebar's click-to-open-popup behavior.
+      // No special mode active — open this pin's drawer. Marker elements are DOM children
+      // within the map's container, so an unstopped click still bubbles into MapLibre's own
+      // 'click' event on the Map instance (confirmed via testing — this used to be relied on
+      // deliberately, to let MapLibre's built-in Marker+Popup click-toggle handle opening the
+      // popup). Now that this listener opens the drawer directly instead, that bubble only
+      // causes harm: the map's final generic click handler (registered last, runs for any
+      // click not already claimed by a layer feature) calls closeAllPanels(), which also
+      // closes #view-drawer — immediately undoing the open this same click just did.
+      e.stopPropagation();
+      openPinDrawer(pin);
     });
-
-    var popup = new maplibregl.Popup({ offset: 17, maxWidth: '300px', className: 'pin-popup' })
-      .setHTML(popupHtml(pin));
-    popup.on('open', function(){ backfillPinElevation(pin); });
 
     var marker = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([pin.lng, pin.lat])
-      .setPopup(popup)
       .addTo(map);
 
     // Polyfill openPopup() for code that calls markersById[id].openPopup()
-    marker.openPopup = function(){
-      if (!popup.isOpen()) marker.togglePopup();
-    };
+    marker.openPopup = function(){ openPinDrawer(pin); };
 
     markersById[pin.id] = marker;
     scheduleClusterRefresh();
@@ -5753,9 +5883,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function refreshMarkerPopup(pin){
     var marker = markersById[pin.id];
-    if (!marker) return;
-    marker.getElement().innerHTML = buildPinMarkerHtml(pin);
-    if (marker.getPopup()) marker.getPopup().setHTML(popupHtml(pin));
+    if (marker) marker.getElement().innerHTML = buildPinMarkerHtml(pin);
+    if (isViewDrawerShowing('pin', pin.id)) setViewDrawerContent(popupHtml(pin));
   }
 
   function applyFilterToMarker(pin){
@@ -6768,18 +6897,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // been loaded at least once, so a track's own info line never reflected it directly.
     var gainLossLabel = track.elevGainFt != null ? ' · ▲' + track.elevGainFt.toLocaleString() + 'ft ▼' + track.elevLossFt.toLocaleString() + 'ft' : '';
     var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
+    var createdLabel = track.created ? '<div class="pin-popup-coords">Created ' + formatCreatedDate(track.created) + '</div>' : '';
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
-        popupOverflowHtml('overflow-track-' + track.id, 'Edit shape', 'FieldMap.editTrackVertices(\'' + track.id + '\')', 'FieldMap.deleteTrack(\'' + track.id + '\')') +
       '</div>' +
       '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel + gainLossLabel +
       (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
       notes +
+      createdLabel +
       trackElevationSectionHtml(track) +
       popupFooterHtml(
         'FieldMap.directionsToTrack(\'' + track.id + '\')',
         'FieldMap.shareTrack(\'' + track.id + '\')',
-        'FieldMap.editTrack(\'' + track.id + '\')'
+        'FieldMap.editTrack(\'' + track.id + '\')',
+        'overflow-track-' + track.id, 'Edit shape', 'FieldMap.editTrackVertices(\'' + track.id + '\')', 'FieldMap.deleteTrack(\'' + track.id + '\')'
       );
   }
 
@@ -6990,18 +7121,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return { gain: Math.round(gain), loss: Math.round(loss) };
   }
 
-  // Tracks have no persistent marker/popup object like pins do (ad-hoc popup created on
-  // click) — this keeps a single shared reference so any entry point (map click, sidebar
-  // click, Edit shape) can close whichever one is currently open before doing its own thing.
-  function openTrackPopupAt(track, lngLat){
-    if (openTrackPopup){ openTrackPopup.remove(); openTrackPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat)
-      .setHTML(trackPopupHtml(track))
-      .addTo(map);
-    popup._fieldmapTrackId = track.id;
-    popup.on('close', function(){ if (openTrackPopup === popup) openTrackPopup = null; });
-    openTrackPopup = popup;
+  // Tracks have no persistent marker object like pins do — routed through the shared
+  // #view-drawer, same as every other non-pin type. openTrackPopup is kept as a shim (not a
+  // real maplibregl.Popup anymore) purely because several other call sites — Directions'
+  // start/end chooser, Delete, Edit shape — check/call it directly; see the #view-drawer
+  // comment above popupFooterHtml for the full rationale.
+  function openTrackPopupAt(track){
+    showViewDrawer('track', track.id, trackPopupHtml(track));
+    openTrackPopup = {
+      _fieldmapTrackId: track.id,
+      remove: viewDrawerRemoveShim,
+      setHTML: function(html){ if (isViewDrawerShowing('track', track.id)) setViewDrawerContent(html); }
+    };
     if (track.elevGainFt != null){
       requestAnimationFrame(function(){
         drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
@@ -7009,15 +7140,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
-  // Re-renders the currently-open track popup's HTML in place (if it's showing THIS track)
+  // Re-renders the currently-open track drawer's HTML in place (if it's showing THIS track)
   // without closing/reopening it — the missing piece that made elevation gain/loss (and
-  // anything else computed async after the popup was already opened) only ever show up
-  // after a manual close/reopen. Pins have the equivalent via refreshMarkerPopup() calling
-  // marker.getPopup().setHTML(); tracks have no persistent marker/popup object, so this is
-  // the ad-hoc-popup version of the same idea.
+  // anything else computed async after the drawer was already opened) only ever show up
+  // after a manual close/reopen. Pins have the equivalent via refreshMarkerPopup().
   function refreshOpenTrackPopupContent(track){
-    if (!openTrackPopup || openTrackPopup._fieldmapTrackId !== track.id) return;
-    openTrackPopup.setHTML(trackPopupHtml(track));
+    if (!isViewDrawerShowing('track', track.id)) return;
+    setViewDrawerContent(trackPopupHtml(track));
     if (track.elevGainFt != null){
       requestAnimationFrame(function(){
         drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
@@ -7873,9 +8002,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!pin) return;
       var marker = markersById[pin.id];
       if (!marker) return;
-      // Popups are per-instance in MapLibre (no map.closePopup()) — close this marker's own.
-      var openPopup = marker.getPopup();
-      if (openPopup && openPopup.isOpen()) openPopup.remove();
+      // Pins have no per-marker popup object anymore (see addMarkerForPin) — close this
+      // pin's drawer if it's the one currently open, same as every other type.
+      if (isViewDrawerShowing('pin', pin.id)) closeViewDrawer();
       // Make draggable
       marker.setDraggable(true);
       marker.getElement().style.opacity = '0.7';
@@ -8305,32 +8434,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function polygonPopupHtml(polygon){
     var area = polygonAreaDisplay(polygon.points);
     var areaLabel = area ? ' · ' + area : '';
+    var createdLabel = polygon.created ? '<div class="pin-popup-coords">Created ' + formatCreatedDate(polygon.created) + '</div>' : '';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(polygon.name) + '</div>' +
-        popupOverflowHtml('overflow-area-' + polygon.id, 'Edit shape', 'FieldMap.editPolygonVertices(\'' + polygon.id + '\')', 'FieldMap.deletePolygon(\'' + polygon.id + '\')') +
       '</div>' +
       '<div class="pin-popup-meta">' + tagLabelsFor(polygon) + areaLabel +
         (polygon.state ? ' · ' + polygon.state : '') +
         (polygon.trip ? ' · ' + polygon.trip : '') + '</div>' +
+      createdLabel +
       '</div>' +
       popupFooterHtml(
         'FieldMap.directionsToPolygon(\'' + polygon.id + '\')',
         'FieldMap.sharePolygon(\'' + polygon.id + '\')',
-        'FieldMap.editPolygon(\'' + polygon.id + '\')'
+        'FieldMap.editPolygon(\'' + polygon.id + '\')',
+        'overflow-area-' + polygon.id, 'Edit shape', 'FieldMap.editPolygonVertices(\'' + polygon.id + '\')', 'FieldMap.deletePolygon(\'' + polygon.id + '\')'
       );
   }
 
-  // Areas have no persistent marker/popup object like pins do (ad-hoc popup created on
-  // click) — mirrors openTrackPopupAt.
-  function openPolygonPopupAt(polygon, lngLat){
-    if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat)
-      .setHTML(polygonPopupHtml(polygon))
-      .addTo(map);
-    popup.on('close', function(){ if (openPolygonPopup === popup) openPolygonPopup = null; });
-    openPolygonPopup = popup;
+  // Areas have no persistent marker object like pins do — routed through the shared
+  // #view-drawer, same as tracks. openPolygonPopup kept as a shim; see the #view-drawer
+  // comment above popupFooterHtml for why.
+  function openPolygonPopupAt(polygon){
+    showViewDrawer('polygon', polygon.id, polygonPopupHtml(polygon));
+    openPolygonPopup = { remove: viewDrawerRemoveShim };
   }
 
   // ---------- Polygon drawing ----------
@@ -8600,31 +8727,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (b.trip) meta += ' · ' + escapeHtml(b.trip);
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
-        popupOverflowHtml('overflow-bearing-' + b.id, 'Edit endpoints', 'FieldMap.editBearingEndpoints(\'' + b.id + '\')', 'FieldMap.deleteBearing(\'' + b.id + '\')') +
       '</div>' +
       '<div class="pin-popup-cat">' + meta + '</div>' +
       notes +
       '<div class="pin-popup-coords">' +
         'Origin: ' + b.originLat.toFixed(5) + ', ' + b.originLng.toFixed(5) + '<br>' +
         'Target: ' + b.targetLat.toFixed(5) + ', ' + b.targetLng.toFixed(5) +
+        (b.created ? '<br>Created ' + formatCreatedDate(b.created) : '') +
       '</div>' +
       popupFooterHtml(
         'FieldMap.directionsToBearing(\'' + b.id + '\')',
         'FieldMap.shareBearing(\'' + b.id + '\')',
-        'FieldMap.editBearing(\'' + b.id + '\')'
+        'FieldMap.editBearing(\'' + b.id + '\')',
+        'overflow-bearing-' + b.id, 'Edit endpoints', 'FieldMap.editBearingEndpoints(\'' + b.id + '\')', 'FieldMap.deleteBearing(\'' + b.id + '\')'
       );
   }
 
-  // Bearings have no persistent marker/popup object like pins do (ad-hoc popup created
-  // on click) — mirrors openTrackPopupAt/openPolygonPopupAt.
-  function openBearingPopupAt(bearing, lngLat){
-    if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat)
-      .setHTML(bearingPopupHtml(bearing))
-      .addTo(map);
-    popup.on('close', function(){ if (openBearingPopup === popup) openBearingPopup = null; });
-    openBearingPopup = popup;
+  // Bearings have no persistent marker object like pins do — routed through the shared
+  // #view-drawer, same as tracks/areas. openBearingPopup kept as a shim, including .setHTML
+  // (Directions' start/end chooser swaps content the same way it does for tracks — see
+  // promptDirectionsChoice); see the #view-drawer comment above popupFooterHtml for why.
+  function openBearingPopupAt(bearing){
+    showViewDrawer('bearing', bearing.id, bearingPopupHtml(bearing));
+    openBearingPopup = {
+      remove: viewDrawerRemoveShim,
+      setHTML: function(html){ if (isViewDrawerShowing('bearing', bearing.id)) setViewDrawerContent(html); }
+    };
   }
 
   // Bearings render from a single shared GeoJSON source (bearings-source, set up in
@@ -11978,16 +12106,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
-  // Wildlife ranges have no persistent marker/popup object — ad-hoc popup on click,
-  // mirrors openPolygonPopupAt/openBearingPopupAt.
-  function openWildlifePopupAt(props, lngLat){
-    if (openWildlifePopup){ openWildlifePopup.remove(); openWildlifePopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '300px', className: 'pin-popup' })
-      .setLngLat(lngLat)
-      .setHTML(wildlifePopupHtml(props))
-      .addTo(map);
-    popup.on('close', function(){ if (openWildlifePopup === popup) openWildlifePopup = null; });
-    openWildlifePopup = popup;
+  // Wildlife ranges have no persistent marker object — routed through the shared
+  // #view-drawer, mirrors openPolygonPopupAt/openBearingPopupAt.
+  function openWildlifePopupAt(props){
+    showViewDrawer('wildlife', props.species_common_name || 'wildlife', wildlifePopupHtml(props));
+    openWildlifePopup = { remove: viewDrawerRemoveShim };
   }
 
   // ── Migration corridors (P4 proof of concept) ──
@@ -12161,16 +12284,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
-  // Migration polygons have no persistent marker/popup object — ad-hoc popup on click,
-  // mirrors openWildlifePopupAt.
-  function openMigrationPopupAt(props, lngLat){
-    if (openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }
-    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '280px', className: 'pin-popup' })
-      .setLngLat(lngLat)
-      .setHTML(migrationPopupHtml(props))
-      .addTo(map);
-    popup.on('close', function(){ if (openMigrationPopup === popup) openMigrationPopup = null; });
-    openMigrationPopup = popup;
+  // Migration polygons have no persistent marker object — routed through the shared
+  // #view-drawer, mirrors openWildlifePopupAt.
+  function openMigrationPopupAt(props){
+    showViewDrawer('migration', props.herd_name || 'migration', migrationPopupHtml(props));
+    openMigrationPopup = { remove: viewDrawerRemoveShim };
   }
 
   // ── Close all panels helper (updated to include P2 panels) ──
@@ -12181,6 +12299,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (el) el.classList.add('hidden');
     });
     if (wasSunriseOpen){ clearSunArc(); sunriseDockClose(); }
+    // #view-drawer isn't in FLOATING_PANEL_IDS (different dismiss model — no scrim, map
+    // stays interactive), but should still close whenever something else is about to take
+    // over the screen. This one hook point covers both required dismiss paths: a plain
+    // map-background tap (the map's final click handler already calls closeAllPanels()
+    // unconditionally) and every other panel/sheet's own open handler, which already calls
+    // closeAllPanels() first as a matter of course.
+    closeViewDrawer();
   }
 
   // ---------- Cloud sync bridge ----------
@@ -12320,9 +12445,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
     lastMarkerDisplayState = {};
-    if (openTrackPopup){ openTrackPopup.remove(); openTrackPopup = null; }
-    if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
-    if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
+    closeViewDrawer(); // covers whichever of the 7 types (if any) happened to be open
     state.pins = [];
     state.tracks = [];
     state.polygons = [];
@@ -12866,6 +12989,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     initLayerSections();
     initPanelScrim();
+    document.getElementById('view-drawer-close-btn').addEventListener('click', closeViewDrawer);
 
     // Restore layer toggle states. This runs before the map/style has actually loaded
     // (createMap() kicks off an async fetch chain that bindUI() doesn't wait on), so only

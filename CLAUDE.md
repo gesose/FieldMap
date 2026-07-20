@@ -18,6 +18,12 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 ## What's broken (expected, to be fixed in later sessions)
 - Draw/measure tools other than route/area drawing (the standalone "measure" ruler tool, elevation tap,
   compass bearing lines, GPX search-result marker) — still L.circleMarker/L.polyline based
+- Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
+  NOT converted to the new #view-drawer — deliberately out of scope for the drawer-unification batch (not
+  named in that spec's list of 6 replaced popup types), not a bug
+- Batch 2 of the drawer-unification work (tap-anywhere-on-item to open + expand-in-place editing, replacing
+  "Edit data" opening the separate centered modal) is explicitly not started — "Edit data" still opens the
+  existing centered-modal Edit form unchanged, on purpose, for this batch
 - All overlay toggles (FSTopo, MVUM, public land, hydro, snow depth, NLCD)
 - Sun-path arc, offline-area boundary rectangles — still L.geoJSON/L.rectangle based
 - GPS accuracy circle (gpsAccCircle) — needs MapLibre source/layer
@@ -50,7 +56,9 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 - GPS dot: 3-state machine (off/following/free) using gpsDotState + maplibregl.Marker
 - Base layer switching: loadStyle(styleName) fetches (topo-style.json locally, others via MAPBOX_STYLES URLs) + strips name + rewrites mapbox:// refs, then map.setStyle(styleObj, {diff:false}) — diff:false forces a full teardown-and-rebuild on every switch; MapLibre's incremental diff path was silently failing to carry over reinitializeLayers()'s custom layers on repaint
 - mapbox:// source URLs resolved via https://api.mapbox.com/v4/{id}.json?secure&access_token=TOKEN
-- Pin markers: maplibregl.Marker + custom HTML (buildPinMarkerHtml), maplibregl.Popup, openPopup() polyfill
+- Pin markers: maplibregl.Marker + custom HTML (buildPinMarkerHtml); view content renders in the shared
+  #view-drawer (see below), not a per-marker maplibregl.Popup anymore — openPopup() polyfill on the marker
+  now opens the drawer directly
 - pins-source (GeoJSON, cluster:true) + cluster-circles/cluster-counts layers still exist and are re-added by
   reinitializeLayers(), but only drive the aggregated bubble count display now
 - Routes: tracks-source (GeoJSON LineStrings) + tracks-line/tracks-line-touch layers. Areas: polygons-source
@@ -60,9 +68,28 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   (needs its own independent click target). All three use the same addXToMap/removeXFromMap/refreshXMap →
   scheduleXRefresh() → updateXSource() debounced-rebuild pattern as pins-source, and all skip a per-item
   Leaflet layer object entirely (trackLayersById-style dicts were removed once nothing populated them)
-- Ad-hoc popups (openTrackPopupAt/openPolygonPopupAt/openBearingPopupAt) since these item types have no
-  persistent marker/popup object like pins do — each keeps a single shared module-level "currently open"
-  reference so any entry point (map click, sidebar click, Edit shape/Edit endpoints) can close whichever is open
+- Bottom drawer (#view-drawer, showViewDrawer/closeViewDrawer/isViewDrawerShowing/setViewDrawerContent) is
+  the single shared view surface for pin/bearing/track/area popups AND the GMU/USFS/wildlife/migration
+  read-only info cards — replaces the old per-type anchored-callout maplibregl.Popup (occlusion bug near
+  screen edges). Screen-anchored, not click-point-anchored: desktop gets a small card at .floating-panel's
+  own position (bottom:24px;right:64px, just wider); mobile gets a true full-width edge-to-edge sheet lifted
+  above the collapsed mobile sidebar bar. No blocking scrim — the map stays interactive behind it; dismissed
+  via its own × or a plain map-background tap (closeAllPanels() calls closeViewDrawer(), and the map's final
+  click handler already calls closeAllPanels() for exactly this case). Only one item is ever "open" at a
+  time (single shared element). openTrackPopupAt/openPolygonPopupAt/openBearingPopupAt/openGmuPopupAt/
+  openUsfsBoundaryPopupAt/openWildlifePopupAt/openMigrationPopupAt all route through it now — pins go
+  through openPinDrawer instead, since they never had one of these ad-hoc-popup singleton vars to begin
+  with. The 7 legacy openXPopup singleton vars are kept (not removed) as lightweight shims over the shared
+  drawer (`{ remove, setHTML? }`) rather than real maplibregl.Popup instances, purely because many existing
+  call sites (Directions' start/end endpoint chooser via promptDirectionsChoice, Delete, Edit shape/Edit
+  endpoints, GMU/USFS toggle-off cleanup, sign-out's local-data clear) check/call them directly — this let
+  every one of those call sites keep working completely unchanged. GOTCHA (cost real debugging time this
+  session): a pin marker's own click listener must call e.stopPropagation() before opening the drawer —
+  marker elements are DOM children within the map's container, so an unstopped click still bubbles into
+  MapLibre's own 'click' event on the Map instance, which reaches the map's final generic click handler
+  (closeAllPanels → closeViewDrawer) and immediately undoes the open. The 6 non-pin types don't need this:
+  their map.on('click', layerId, ...) handlers already call e.preventDefault() + e.originalEvent.
+  stopPropagation(), which the final handler's `if (e.defaultPrevented) return;` guard already respects.
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -225,3 +252,32 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   next session covering: sign-out with no pending changes, sign-out with unsynced changes online, sign-out
   with unsynced changes offline (confirm the warning appears and cancelling it keeps data intact), and
   signing into a second account afterward to confirm zero bleed-through in either direction.
+- Session 11: Batch 1 of 2 of the bottom-drawer popup unification (Batch 2 — tap-anywhere-to-open +
+  expand-in-place editing — explicitly not started). Built the shared #view-drawer component (see
+  Architecture notes for the full design) and converted all 7 existing ad-hoc/per-marker popups to it: pin,
+  bearing, track, area, GMU boundary info, USFS forest boundary info, and wildlife/migration habitat info.
+  Footer for pin/bearing/track/area is now one row of 4 (Directions/Share/Edit data/⋮ overflow) instead of
+  the old split layout (overflow lived in the name row specifically to dodge MapLibre's built-in popup close
+  button, which #view-drawer's own custom close button makes unnecessary) — popupFooterHtml and
+  popupOverflowHtml were merged into one function, the old popupOverflowHtml deleted outright. Added a
+  "Created <date>" line to all 4 of those types' compact view (formatCreatedDate), previously only visible
+  after opening the Edit form. "Edit data" still opens the existing centered-modal Edit form unchanged, on
+  purpose. Desktop vs. mobile treatment was checked visually (Playwright + real screenshots, not assumed):
+  an initial flush-bottom/full-width design read fine at 1400px but stretched into a sparse edge-to-edge bar
+  at 1920px and overlapped #map-controls' icon column even after capping its width, so desktop instead
+  reuses .floating-panel's own exact position (bottom:24px;right:64px) just wider; mobile keeps the true
+  full-width edge-to-edge bottom sheet. Verified end-to-end via Playwright at both 390px and 1400/1920px:
+  all dismiss paths (× button, plain map-background tap), map-stays-interactive-behind-it, pin/track/area
+  creation → tap → correct footer + Created date, GPX export (Share on a track) still triggers a real .gpx
+  download unaffected, and — the actual point of this batch — a pin placed 15px from the very top and very
+  bottom of a 390×844 mobile viewport both produced a drawer fully within the viewport (old anchored-callout
+  style would have clipped at least one of these). GMU/USFS/wildlife/migration were verified by code review
+  only (identical showViewDrawer/shim pattern to the already-tested types, content builders untouched) —
+  not live-tested, since this sandbox has no network access to their real data sources; same for bearing's
+  live creation flow (compass mode wasn't automated this session), though its code is line-for-line the same
+  shim pattern as track's, which was tested. Root-caused and fixed one real regression found only through
+  this testing, not visible from reading the diff alone: a pin marker's click handler must call
+  e.stopPropagation() before opening the drawer, or the click bubbles into MapLibre's own Map-level 'click'
+  handler and its closeAllPanels() call immediately re-closes the drawer this same click just opened (see
+  Architecture notes' #view-drawer entry for the full mechanism — this doesn't affect the other 6 types,
+  whose layer-click handlers already call e.preventDefault()/stopPropagation() for an unrelated reason).
