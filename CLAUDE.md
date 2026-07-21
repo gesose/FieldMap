@@ -19,11 +19,12 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
 - Draw/measure tools other than route/area drawing (the standalone "measure" ruler tool, elevation tap,
   compass bearing lines, GPX search-result marker) — still L.circleMarker/L.polyline based
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
-  NOT converted to the new #view-drawer — deliberately out of scope for the drawer-unification batch (not
-  named in that spec's list of 6 replaced popup types), not a bug
-- Batch 2 of the drawer-unification work (tap-anywhere-on-item to open + expand-in-place editing, replacing
-  "Edit data" opening the separate centered modal) is explicitly not started — "Edit data" still opens the
-  existing centered-modal Edit form unchanged, on purpose, for this batch
+  NOT converted to the new #view-drawer — deliberately out of scope for both drawer-unification batches (not
+  named in either batch's spec), not a bug
+- New-item creation flows (Add pin via +Add sheet, Draw Route/Area "Finish", compass "Save bearing") still
+  use their classic centered modal — only EDITING an existing item (or continuing to refine a just-quick-
+  saved tap-anywhere pin) expands the drawer in place; this was a deliberate scope line in the expand-in-
+  place batch, not an oversight — see Architecture notes' #view-drawer entry
 - All overlay toggles (FSTopo, MVUM, public land, hydro, snow depth, NLCD)
 - Sun-path arc, offline-area boundary rectangles — still L.geoJSON/L.rectangle based
 - GPS accuracy circle (gpsAccCircle) — needs MapLibre source/layer
@@ -90,6 +91,63 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   (closeAllPanels → closeViewDrawer) and immediately undoes the open. The 6 non-pin types don't need this:
   their map.on('click', layerId, ...) handlers already call e.preventDefault() + e.originalEvent.
   stopPropagation(), which the final handler's `if (e.defaultPrevented) return;` guard already respects.
+- Tap-anywhere (openTapAnywhereDrawer, hooked into the map's final click handler — fires only when nothing
+  else claimed the click, no tool mode is active, AND no panel/drawer was already open before this tap, so a
+  tap that just dismissed something doesn't also start something new): drops a temp maplibregl.Marker (same
+  construction as addMarkerForPin, so it looks/sizes identically) and opens #view-drawer showing a live
+  title input, auto-detected category chips (detectCategoryTagIds — matches each tag's FIRST WORD against
+  the typed text, not the whole label, so multi-word labels like "Water source"/"Turkey strut zone" still
+  fire from natural phrasing; deliberately loose since a wrong chip costs one tap to remove), coords +
+  elevation (getElevationFt, placeholder text until it resolves), and a current-conditions mini-card. The
+  title input's DOM node is never recreated after first render — every later update (elevation resolving,
+  conditions resolving, a chip added/removed) patches its own specific sub-element (#tap-anywhere-elev/
+  #tap-anywhere-conditions/#tap-anywhere-chips) instead of re-rendering the whole drawer content, so focus/
+  cursor position survives while actively typing. Current conditions use a NEW dedicated cache
+  (getCurrentConditions/currentConditionsCache, 30min TTL, keyed to a ~0.1°-rounded grid cell) — separate
+  from the full Tools > Weather panel's own always-fresh fetchWeather, since no caching existed anywhere in
+  the weather integration before this. Offline shows "Unavailable offline" (grayed) without even attempting
+  a fetch; an online fetch failure shows "Conditions unavailable" instead — same styling, different wording,
+  so it's never confused with "no connection." Save creates a real pin immediately (name typed or
+  defaultWaypointName, detected tags or 'uncategorized', status always 'escout', trip deliberately left ''
+  — Active Trip auto-attribution is a separate not-yet-built feature) and swaps the SAME drawer element to
+  that pin's normal popupHtml view via showViewDrawer('pin', ...) — "continuing to refine" it via Edit data
+  afterward is thus indistinguishable from editing any other pin. Dismissing without saving (× / background
+  tap / opening something else) removes the temp marker and drops the draft entirely — wired into
+  closeViewDrawer itself (gated on viewDrawerOpenRef.type === 'tap'), not a separate cleanup path.
+- Expand-in-place editing (expandDrawerForEdit/collapseDrawerFromEdit/returnExpandedModalHome/
+  refreshCompactViewForCurrentDrawerItem): "Edit data" (and continuing to refine a just-quick-saved
+  tap-anywhere pin) grows #view-drawer into a full edit form instead of handing off to the old centered
+  modal. Implemented as a DOM re-parent, not a rebuilt form: expandDrawerForEdit moves the SAME .modal
+  element pin/track/polygon/bearing already use for their classic Edit modal (#pin-modal/#track-modal/
+  #polygon-modal/#bearing-modal) out of its home overlay and into #view-drawer-content; every field id,
+  event listener, and save/delete function (savePinFromModal, deletePolygonById, etc) keeps working
+  completely unchanged, since it's the identical DOM node, just relocated. Only ever invoked for an EXISTING
+  item — new-item creation flows (Add pin via +Add sheet, Draw Route/Area "Finish", compass "Save bearing")
+  are untouched and still show the classic centered modal; openPinModal/openPolygonModal branch on whether a
+  real item was passed, openTrackModal/openBearingModal are edit-only to begin with (openTrackModalForNew/
+  openBearingModalForNew are the separate new-item entry points and were not touched). Cancel/Save/Delete
+  all funnel through each type's existing close*Modal function, which now also calls
+  collapseDrawerFromEdit(type) — a no-op when that type isn't the one currently expanded, so the classic
+  modal's own close path is completely unaffected. closeViewDrawer() refuses to close at all while
+  drawerExpandedType is set (the ONLY way out is Cancel/Save/Delete) — Batch 1 deliberately gave the compact
+  view no blocking scrim so the map stays interactive behind it, which the edit state inherits; without this
+  guard a stray background tap could silently discard an in-progress, unsaved edit, something the old
+  centered modal's backdrop made structurally impossible. The × button becomes Cancel's alias while
+  expanded (calls the right type's close*Modal instead of the now-refusing closeViewDrawer) so it doesn't
+  look like a dead button. isViewDrawerShowing() also returns false while expanded, regardless of type/id
+  match, so a background content refresh (elevation backfill resolving, a live-sync merge) can't overwrite
+  an in-progress edit form out from under the user. GOTCHA (cost real debugging time, found only via
+  testing, not code review): editPolygon/editBearing had a pre-Batch-1 leftover `openPolygonPopup.remove()`/
+  `openBearingPopup.remove()` call immediately before opening the edit modal — harmless in Batch 1 (just
+  closed the drawer before a fully separate centered modal appeared) but actively broken once editing
+  expands that SAME drawer: `.remove()` is the shim for closeViewDrawer, which nulls viewDrawerOpenRef, so
+  Save's later collapse-and-refresh had nothing to collapse back to and left the drawer content blank.
+  editPin/editTrack never had this call (which is why only polygon/bearing showed the bug) — fixed by
+  deleting it from both, matching editPin/editTrack's pattern. Also found and fixed while wiring this up:
+  pin-delete-btn and track-delete-btn had markup and even a matching (dead) deletePinFromModal function in
+  pin's case, but were never actually connected to a click handler at all — Delete inside those two modals
+  did nothing, silently, pre-existing and unrelated to this batch's own changes, only surfaced because this
+  batch is what finally exercises those buttons in a place they'd get used.
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -281,3 +339,38 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   handler and its closeAllPanels() call immediately re-closes the drawer this same click just opened (see
   Architecture notes' #view-drawer entry for the full mechanism — this doesn't affect the other 6 types,
   whose layer-click handlers already call e.preventDefault()/stopPropagation() for an unrelated reason).
+- Session 12: Batch 2 of 2 of the bottom-drawer work — tap-anywhere quick-capture (new feature) and
+  expand-in-place editing (replaces the 4 centered Edit modals). See Architecture notes' "Tap-anywhere" and
+  "Expand-in-place editing" entries for the full design; summary here is what it took to get there working.
+  Tap-anywhere: added a 30-minute current-conditions cache (getCurrentConditions) since none existed
+  anywhere in the weather integration before, a category auto-detector (detectCategoryTagIds) matching
+  typed text against the live tag vocabulary by first-word rather than whole-label (needed for multi-word
+  labels like "Water source" to fire from natural phrasing — confirmed via testing that whole-label matching
+  missed these entirely), and the drop-a-temp-marker/live-title/Save-creates-a-real-pin flow itself. Expand-
+  in-place: re-parents each type's existing centered-modal .modal element into #view-drawer-content instead
+  of rebuilding an equivalent form, reusing 100% of existing save/delete logic unchanged; added
+  drawerExpandedType tracking so closeViewDrawer refuses to close (and isViewDrawerShowing returns false)
+  while an edit is in progress, protecting unsaved edits now that the drawer has no blocking scrim. Verified
+  end-to-end via Playwright: tap-anywhere trigger only fires on a genuinely empty/mode-less/panel-less tap;
+  temp marker drops with correct pin-marker styling and clears on dismiss; category chips detect and are
+  removable; Save produces a real pin with correct name/tags/Escout status/empty trip and the SAME drawer
+  swaps to that pin's normal view in place; current-conditions cache confirmed NOT refetching on a second
+  tap at the same spot (fetch call count unchanged) and confirmed showing "Unavailable offline" (not stale
+  data) when actually offline; Edit data confirmed expanding the same drawer in place for all 4 types with
+  no centered modal ever appearing, Cancel discarding changes, Save persisting them, Delete working, and a
+  background map tap confirmed NOT closing/discarding an in-progress edit; GPX export (Share on a track)
+  confirmed still working through the expanded-then-collapsed drawer. Root-caused and fixed 3 real bugs
+  found only through this testing (not visible from reading the diff alone) — see Architecture notes'
+  "Expand-in-place editing" entry for full detail on each: (1) editPolygon/editBearing's pre-Batch-1
+  `.remove()` call before opening the edit modal was silently wiping viewDrawerOpenRef, breaking Save's
+  collapse-back-to-compact-view for exactly those two types (pin/track were unaffected and worked first
+  try); (2) pin-delete-btn and track-delete-btn were markup-only, never wired to any click handler at all,
+  pre-existing and unrelated to this batch, only surfaced because this batch is what finally exercises them
+  in a reachable place; (3) the tap-anywhere temp marker was built differently from addMarkerForPin's own
+  construction and ended up missing the pin-marker class entirely. Also confirmed via direct in-page fetch
+  and curl that api.weather.gov is genuinely reachable from this dev sandbox — an earlier false read of "no
+  conditions ever load" during testing turned out to be Playwright's page.route() interfering with the
+  service worker's own fetch interception (the same documented GMU/SW testing gotcha, same root cause,
+  different feature) rather than a real app or network problem; switching the test to an in-page
+  window.fetch monkey-patch (no page.route) resolved it. GMU/USFS/wildlife/migration popups and bearing's
+  live creation flow were not re-tested this session (unchanged since Session 11, already covered there).

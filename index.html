@@ -336,6 +336,32 @@
   .pin-popup-footer{display:flex;align-items:stretch;gap:6px;margin-top:6px;}
   .pin-popup-footer .btn{flex:1;padding:9px 4px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .pin-popup-footer .popup-overflow-wrap{flex-shrink:0;}
+
+  /* Tap-anywhere (quick-capture drawer, not-yet-saved state) */
+  .tap-anywhere-title-input{
+    width:100%;background:none;border:none;border-bottom:1px solid var(--border);
+    font-weight:600;font-size:14px;color:var(--text);padding:2px 0 6px;margin-bottom:8px;
+    font-family:var(--font-sans);
+  }
+  .tap-anywhere-title-input:focus{outline:none;border-bottom-color:var(--accent);}
+  .tap-anywhere-title-input::placeholder{color:var(--text-muted);font-weight:400;}
+  .tap-detected-chip{
+    display:inline-flex;align-items:center;gap:4px;border-radius:20px;padding:3px 4px 3px 10px;
+    font-size:12px;color:#fff;margin:0 6px 6px 0;
+  }
+  .tap-detected-chip button{
+    background:rgba(0,0,0,0.2);border:none;color:inherit;border-radius:50%;
+    width:16px;height:16px;line-height:1;cursor:pointer;font-size:12px;padding:0;
+  }
+  .tap-conditions-row{
+    display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);
+    margin:4px 0 8px;padding:6px 0;border-top:1px solid var(--border);
+  }
+  .tap-conditions-row.tap-conditions-loading,
+  .tap-conditions-row.tap-conditions-unavailable{color:var(--text-muted);font-style:italic;opacity:0.7;}
+  .tap-conditions-icon{font-size:18px;line-height:1;}
+  .tap-conditions-temp{font-weight:600;font-family:var(--font-mono);}
+  .tap-conditions-desc{color:var(--text-muted);flex:1;}
   .pin-popup-footer .popup-overflow-btn{height:100%;}
 
   .pin-popup-name-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;}
@@ -416,6 +442,30 @@
     font-size:20px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:6px;
   }
   #view-drawer-close-btn:hover{background:var(--bg-elevated-2);color:var(--text);}
+
+  /* Expanded (edit) state — grows taller to fit a full form (see expandDrawerForEdit).
+     Width/position are untouched, only height/scroll grow, so it stays anchored exactly
+     where the compact view was. */
+  #view-drawer.expanded{max-height:85vh;width:380px;max-width:calc(100vw - var(--sidebar-width) - 90px);}
+
+  /* One shared expanded-edit form, not four: expandDrawerForEdit re-parents the SAME
+     .modal element pin/track/polygon/bearing already use for their centered Edit modal (see
+     #pin-modal/#track-modal/#polygon-modal/#bearing-modal) into #view-drawer-content rather
+     than rebuilding an equivalent form — every field id, event listener, and save/delete
+     function keeps working completely unchanged; only where that markup currently lives in
+     the DOM (and how it's framed visually) changes. These overrides strip the modal's own
+     card chrome (background/border/padding/shadow/its own independent scroll) since
+     #view-drawer now provides all of that — without them the moved content would render as
+     a card-inside-a-card with two competing scroll containers. The top header row's
+     duplicate Save/Cancel (.modal-header-actions) is hidden too: #view-drawer's own bottom
+     .modal-actions row (Delete/Cancel/Save, already part of the same moved markup) is the
+     only action row now, matching the batch spec's footer. */
+  #view-drawer-content .modal{
+    background:none;border:none;border-radius:0;width:auto;max-width:none;
+    padding:0;max-height:none;overflow-y:visible;box-shadow:none;position:static;
+  }
+  #view-drawer-content .modal-header-actions{display:none;}
+  #view-drawer-content .modal-actions{margin-left:0;margin-right:0;padding-left:0;padding-right:0;}
 
   /* Scrim behind popover panels (Layers/Filter/Settings/Weather/Wildlife/GMU picker + the
      sort/export dropdown menus — see PANEL_SCRIM_IDS) — sits above the map and sidebar
@@ -2224,7 +2274,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.23.1';
+  var APP_VERSION = '2.24.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2770,6 +2820,30 @@
 
   function sortedTags(){
     return state.tags.slice().sort(function(a,b){ return a.label.localeCompare(b.label); });
+  }
+
+  // Tap-anywhere's live category auto-detect: matches typed text against the real, current
+  // tag vocabulary (state.tags — SEED_TAGS plus anything the user has added), not a
+  // hardcoded list, so custom tags participate too. Case-insensitive match against each
+  // tag's FIRST word — "4 turkeys" matches "Turkey" (plurals/suffixes fall out for free) as
+  // well as "Turkey strut zone" (first word "turkey"), "near water" matches "Water source"
+  // (first word "water"). Deliberately loose rather than requiring a tag's whole multi-word
+  // label verbatim — most of the real vocabulary IS single-word (Camp, Elk, Fish, Bear...),
+  // where this is identical to a full-label match anyway, but a handful of tags (Water
+  // source, Turkey strut zone, Elk shed, Upland (general)) would otherwise almost never
+  // fire from natural phrasing. A false-positive extra chip costs one tap to remove — always
+  // visible, always reversible, never silent — so erring toward more matches over fewer is
+  // the right tradeoff here. Deliberately excludes "uncategorized" — never a real concept.
+  function detectCategoryTagIds(text){
+    var hay = (text || '').toLowerCase();
+    if (!hay.trim()) return [];
+    var ids = [];
+    sortedTags().forEach(function(t){
+      if (t.id === 'uncategorized') return;
+      var firstWord = t.label.toLowerCase().split(/[\s(]/)[0];
+      if (firstWord && hay.indexOf(firstWord) !== -1) ids.push(t.id);
+    });
+    return ids;
   }
 
   // ─────────────────────────────────────────────
@@ -4416,6 +4490,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
         closeClusterPanel();
+        // Captured BEFORE closeAllPanels() runs below — tap-anywhere (see the addMode-less
+        // branch at the bottom) must not fire on a tap whose only job was dismissing
+        // something that was already open (a floating panel or the view drawer), per its
+        // "no panel open" trigger condition.
+        var anyPanelWasOpen = FLOATING_PANEL_IDS.some(function(id){
+          var el = document.getElementById(id);
+          return el && !el.classList.contains('hidden');
+        }) || !document.getElementById('view-drawer').classList.contains('hidden');
         // Dismiss any open floating panel (Layers, Wildlife/Habitats/Migrations, Filter,
         // Settings, Sunrise, Compass, Weather) on a plain map-background tap. This can't be
         // done via the document-level "click outside" listener (see below) because MapLibre's
@@ -4435,9 +4517,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (measureMode){ handleMeasureClick(latlng); return; }
         if (drawMode){ handleDrawClick(latlng); return; }
         if (polygonMode){ handlePolygonClick(latlng); return; }
-        if (!addMode) return;
-        pendingLatLng = latlng;
-        openPinModal(null, latlng);
+        if (addMode){
+          pendingLatLng = latlng;
+          openPinModal(null, latlng);
+          return;
+        }
+        // Tap-anywhere: a genuinely plain tap on empty map space — nothing else claimed
+        // this click (defaultPrevented false, checked above), no tool mode active (every
+        // branch above returned), and this tap didn't just dismiss something that was open.
+        if (anyPanelWasOpen) return;
+        openTapAnywhereDrawer(latlng);
       });
 
       map.on('dragstart', _onMapDragStart);
@@ -5567,9 +5656,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // of the 7 vars on each open, preserving the invariant that at most one is ever non-null —
   // whichever matches what the drawer is actually currently showing.
   var viewDrawerOpenRef = null; // { type, id } — id is a string key unique within that type
+  // Set while the drawer is showing a full edit form (expandDrawerForEdit) instead of its
+  // compact view, to one of 'pin'/'track'/'polygon'/'bearing'; null the rest of the time.
+  // viewDrawerOpenRef itself does NOT change across an expand/collapse — the drawer never
+  // stops "being" that item's view, it just temporarily shows more of it — so this is a
+  // separate flag, not folded into viewDrawerOpenRef.
+  var drawerExpandedType = null;
 
   function isViewDrawerShowing(type, id){
-    return !!viewDrawerOpenRef && viewDrawerOpenRef.type === type && viewDrawerOpenRef.id === id;
+    // False while expanded: background content refreshes (a pin's elevation backfill
+    // resolving, a track's elevation profile finishing, a live-sync merge) must not
+    // overwrite an in-progress edit form out from under the user.
+    return !drawerExpandedType && !!viewDrawerOpenRef && viewDrawerOpenRef.type === type && viewDrawerOpenRef.id === id;
   }
 
   function setViewDrawerContent(html){
@@ -5588,8 +5686,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function closeViewDrawer(){
+    // Mid-edit, the ONLY way out is Cancel/Save/Delete (collapseDrawerFromEdit, reached via
+    // close*Modal — never this function). Batch 1 deliberately gave the compact view no
+    // blocking scrim so the map stays interactive behind it; the expanded edit form inherits
+    // that same interactive map, which would otherwise let a stray background tap silently
+    // discard an in-progress, unsaved edit — something the old centered modal's backdrop
+    // made structurally impossible. This guard restores that same safety for the edit state
+    // specifically, without bringing back a blocking scrim for the (harmless) compact view.
+    if (drawerExpandedType) return;
     var el = document.getElementById('view-drawer');
     if (!viewDrawerOpenRef && el && el.classList.contains('hidden')) return; // already closed — skip redundant DOM writes (this runs on every plain map tap)
+    // Tap-anywhere's temp marker/draft only outlives the drawer showing it — discard it on
+    // any close that isn't a successful save (a save already retargets viewDrawerOpenRef to
+    // a normal 'pin' type before this could ever run, see FieldMap.tapAnywhereSave).
+    if (viewDrawerOpenRef && viewDrawerOpenRef.type === 'tap') discardTapAnywhereDraft();
     resetOpenPopupRefs();
     viewDrawerOpenRef = null;
     if (el) el.classList.add('hidden');
@@ -5607,6 +5717,78 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Shared .remove() shim for the 4 read-only reference-data types (GMU/USFS/wildlife/
   // migration), which only ever need "close if open" — never a live-content swap.
   function viewDrawerRemoveShim(){ closeViewDrawer(); }
+
+  // ── Expand-in-place editing (Batch 2) ──
+  // Re-parents an existing centered-modal's fields into the drawer instead of rebuilding an
+  // equivalent form — every field id, event listener, and save/delete function (savePinFrom
+  // Modal, deletePolygonById, etc) keeps working completely unchanged; only where that
+  // markup currently lives in the DOM (and how it's framed visually, see the
+  // #view-drawer-content .modal CSS) changes. Only ever called for an EXISTING item's "Edit
+  // data" (or continuing to refine a just-quick-saved tap-anywhere pin, which by the time
+  // this runs already exists in state.pins too — see FieldMap.tapAnywhereSave) — new-item
+  // creation flows (Add pin via +Add sheet, Draw Route/Area finish, compass Save bearing)
+  // are unaffected and keep using their classic centered modal exactly as before.
+  function expandDrawerForEdit(type){
+    var modalOverlay = document.getElementById(type + '-modal');
+    var modalInner = modalOverlay && modalOverlay.querySelector('.modal');
+    if (!modalInner) return;
+    var content = document.getElementById('view-drawer-content');
+    content.innerHTML = '';
+    content.appendChild(modalInner);
+    var drawerEl = document.getElementById('view-drawer');
+    drawerEl.classList.remove('hidden'); // defensive — every current caller only ever runs this while the drawer's compact view is already open, but don't depend on that holding forever
+    drawerEl.classList.add('expanded');
+    drawerExpandedType = type;
+  }
+
+  // Moves the type's fields back to their home overlay — so the classic new-item flow
+  // (which populates the same elements fresh each time, e.g. openTrackModalForNew) still
+  // finds them there next time — and clears the expanded flag. Does NOT touch
+  // viewDrawerOpenRef or re-render anything; collapseDrawerFromEdit (the Cancel/Save/Delete
+  // path) does that part itself, right after calling this.
+  function returnExpandedModalHome(){
+    if (!drawerExpandedType) return;
+    var modalOverlay = document.getElementById(drawerExpandedType + '-modal');
+    var modalInner = document.getElementById('view-drawer-content').querySelector('.modal');
+    if (modalOverlay && modalInner) modalOverlay.appendChild(modalInner);
+    drawerExpandedType = null;
+  }
+
+  // Re-renders the compact view for whichever item viewDrawerOpenRef still points at (it
+  // never changes across an expand/collapse — the drawer never stops "being" that item's
+  // view, it just temporarily shows more of it) — used after Cancel or a successful Save.
+  // Delete paths call closeViewDrawer directly instead (nothing left to show a compact view
+  // of), so they never reach this.
+  function refreshCompactViewForCurrentDrawerItem(){
+    if (!viewDrawerOpenRef) return;
+    var type = viewDrawerOpenRef.type, id = viewDrawerOpenRef.id, item;
+    if (type === 'pin') item = state.pins.find(function(p){ return p.id === id; });
+    else if (type === 'track') item = state.tracks.find(function(t){ return t.id === id; });
+    else if (type === 'polygon') item = state.polygons.find(function(p){ return p.id === id; });
+    else if (type === 'bearing') item = state.bearings.find(function(b){ return b.id === id; });
+    if (!item){ closeViewDrawer(); return; } // deleted through some other path while this was open — shouldn't normally happen, but don't show a view of nothing
+    setViewDrawerContent(
+      type === 'pin' ? popupHtml(item) :
+      type === 'track' ? trackPopupHtml(item) :
+      type === 'polygon' ? polygonPopupHtml(item) :
+      bearingPopupHtml(item)
+    );
+    if (type === 'pin'){
+      var marker = markersById[item.id];
+      if (marker) marker.getElement().innerHTML = buildPinMarkerHtml(item);
+    }
+  }
+
+  // Called by each type's close*Modal (Cancel/Save/Delete all funnel through it) — routes to
+  // the drawer-collapse path when this modal's content is currently living inside the
+  // drawer, otherwise a complete no-op so the classic centered-modal path (new-item flows)
+  // is entirely unaffected by this function's existence.
+  function collapseDrawerFromEdit(type){
+    if (drawerExpandedType !== type) return;
+    returnExpandedModalHome();
+    document.getElementById('view-drawer').classList.remove('expanded');
+    refreshCompactViewForCurrentDrawerItem();
+  }
 
   // Standard geo destination link (Google Maps directions) — one universal URL, left to the
   // OS/browser to resolve (Universal Links intercept to the installed Maps app on
@@ -7381,7 +7563,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     selectedTrackStatus = track.status || 'escout';
     renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips(track.tags.slice());
-    document.getElementById('track-modal').classList.remove('hidden');
+    expandDrawerForEdit('track');
   }
 
   function openTrackModalForNew(points){
@@ -7406,6 +7588,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closeTrackModal(){
     document.getElementById('track-modal').classList.add('hidden');
+    collapseDrawerFromEdit('track');
     editingTrackId = null;
     pendingDrawPoints = null;
   }
@@ -7532,7 +7715,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-lng').textContent = lng.toFixed(5);
     document.getElementById('pin-delete-btn').classList.toggle('hidden', !pin);
     document.getElementById('pin-move-btn').classList.toggle('hidden', !pin);
-    document.getElementById('pin-modal').classList.remove('hidden');
+    if (pin){
+      // Editing an existing pin — expand the drawer in place (Batch 2) rather than the
+      // classic centered modal.
+      expandDrawerForEdit('pin');
+    } else {
+      // Brand-new pin (Add pin via +Add sheet / addMode map tap) — unaffected by Batch 2,
+      // keeps the classic centered modal exactly as before.
+      document.getElementById('pin-modal').classList.remove('hidden');
+    }
     // No auto-focus here on purpose — focusing the Name field immediately pops the mobile
     // keyboard and pushes the header (title, Save/Cancel) out of view before the user has
     // even decided what they're creating. The field is pre-filled with a sensible default
@@ -7542,6 +7733,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closePinModal(){
     document.getElementById('pin-modal').classList.add('hidden');
+    collapseDrawerFromEdit('pin');
     editingPinId = null; pendingLatLng = null;
     setAddMode(false);
   }
@@ -7655,6 +7847,77 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!pin) return;
       openDirectionsTo(pin.lat, pin.lng);
     },
+    // Fires on every keystroke in the tap-anywhere title input. Deliberately additive-only
+    // (see detectCategoryTagIds) — typing further text can add more matched chips but never
+    // silently removes one already added, even if the triggering word gets deleted again;
+    // FieldMap.tapAnywhereRemoveTag below is the only way a chip goes away, by design ("never
+    // silent").
+    tapAnywhereTitleInput: function(value){
+      if (!tapAnywhereState) return;
+      tapAnywhereState.name = value;
+      var matched = detectCategoryTagIds(value);
+      var changed = false;
+      matched.forEach(function(id){
+        if (tapAnywhereState.detectedTagIds.indexOf(id) === -1){ tapAnywhereState.detectedTagIds.push(id); changed = true; }
+      });
+      if (changed){ updateTapAnywhereChips(); updateTapAnywhereMarkerIcon(); }
+    },
+    tapAnywhereRemoveTag: function(tagId){
+      if (!tapAnywhereState) return;
+      tapAnywhereState.detectedTagIds = tapAnywhereState.detectedTagIds.filter(function(id){ return id !== tagId; });
+      updateTapAnywhereChips();
+      updateTapAnywhereMarkerIcon();
+    },
+    tapAnywhereDirections: function(){
+      if (!tapAnywhereState) return;
+      openDirectionsTo(tapAnywhereState.latlng.lat, tapAnywhereState.latlng.lng);
+    },
+    tapAnywhereShare: function(){
+      if (!tapAnywhereState) return;
+      shareLocationText(tapAnywhereState.name.trim() || 'Location', tapAnywhereState.latlng.lat, tapAnywhereState.latlng.lng);
+    },
+    tapAnywhereOpenForecast: function(){
+      if (!tapAnywhereState) return;
+      openWeatherPanel(tapAnywhereState.latlng); // closes this drawer itself (see openWeatherPanel) — discards the draft, same as any other dismiss
+    },
+    // Immediate save, no full-form detour — name/category from what's been typed/detected so
+    // far (or sensible defaults), status always Escout, trip deliberately left blank (Active
+    // Trip auto-attribution is a separate, not-yet-built feature — see the batch spec). The
+    // drawer swaps in place to the normal saved pin view via showViewDrawer('pin', ...),
+    // reusing popupHtml exactly as any other pin popup would — "continuing to refine" this
+    // item afterward (Edit data) is thus indistinguishable from editing any other pin.
+    tapAnywhereSave: function(){
+      if (!tapAnywhereState) return;
+      var latlng = tapAnywhereState.latlng;
+      var name = tapAnywhereState.name.trim() || defaultWaypointName(Date.now());
+      var tags = tapAnywhereState.detectedTagIds.length ? tapAnywhereState.detectedTagIds.slice() : ['uncategorized'];
+      var elevationFt = tapAnywhereState.elevationFt;
+      var newPin = {
+        id: uid(), lat: latlng.lat, lng: latlng.lng,
+        name: name, tags: tags, notes: '', trip: '', status: 'escout',
+        created: Date.now(), updatedAt: Date.now(), source: 'tap-anywhere',
+        state: stateForPoint(latlng.lat, latlng.lng)
+      };
+      if (elevationFt != null) newPin.elevationFt = elevationFt;
+      state.pins.push(newPin);
+      if (tapAnywhereMarker){ tapAnywhereMarker.remove(); tapAnywhereMarker = null; }
+      tapAnywhereState = null;
+      addMarkerForPin(newPin);
+      refreshStateChips(); renderPinList(); refreshTripSuggestions(); renderTripChips(); renderDateChips();
+      scheduleSave();
+      showViewDrawer('pin', newPin.id, popupHtml(newPin));
+      showToast('Saved · Escout');
+      if (elevationFt == null){
+        // Mirrors savePinFromModal's own fallback — elevation hadn't resolved yet by the
+        // time Save was tapped, so fill it in the moment it does.
+        getElevationFt(newPin.lat, newPin.lng).then(function(ft){
+          if (ft == null) return;
+          newPin.elevationFt = ft;
+          scheduleSave();
+          refreshMarkerPopup(newPin);
+        }).catch(function(){});
+      }
+    },
     toggleOverflowMenu: function(menuId){
       var menu = document.getElementById(menuId);
       if (!menu) return;
@@ -7719,10 +7982,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     },
     editPolygon: function(id){
       var poly = state.polygons.find(function(p){ return p.id === id; });
-      if (poly){
-        if (openPolygonPopup){ openPolygonPopup.remove(); openPolygonPopup = null; }
-        openPolygonModal(poly);
-      }
+      // No openPolygonPopup.remove() here (unlike deletePolygon/editPolygonVertices below) —
+      // that was a pre-Batch-1 leftover from when the edit form was a fully separate
+      // centered modal and closing the ad-hoc popup first was just tidiness. Now that
+      // editing expands the SAME drawer in place (expandDrawerForEdit), calling .remove()
+      // first would close the drawer and wipe viewDrawerOpenRef out from under it, leaving
+      // Save/Cancel with nothing to collapse back to. openPolygonModal below repopulates
+      // this exact popup's content anyway, so there's nothing to clean up beforehand.
+      if (poly) openPolygonModal(poly);
     },
     directionsToPolygon: function(id){
       var poly = state.polygons.find(function(p){ return p.id === id; });
@@ -8053,10 +8320,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     },
     editBearing: function(id){
       var b = state.bearings.find(function(x){ return x.id === id; });
-      if (b){
-        if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
-        openBearingModal(b);
-      }
+      // See the matching comment on editPolygon above — same pre-Batch-1 leftover, same fix.
+      if (b) openBearingModal(b);
     },
     editBearingEndpoints: function(id){
       var b = state.bearings.find(function(x){ return x.id === id; });
@@ -8641,7 +8906,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.getElementById('polygon-delete-btn').classList.toggle('hidden', !polygon);
     document.getElementById('polygon-edit-shape-btn').classList.toggle('hidden', !polygon);
-    document.getElementById('polygon-modal').classList.remove('hidden');
+    if (polygon){
+      // Editing an existing area — expand the drawer in place (Batch 2).
+      expandDrawerForEdit('polygon');
+    } else {
+      // Brand-new area (draw-finish flow) — unaffected by Batch 2, classic centered modal.
+      document.getElementById('polygon-modal').classList.remove('hidden');
+    }
     // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
     // sensible default (defaultAreaName) on new areas so Save works immediately.
   }
@@ -8705,6 +8976,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closePolygonModal(){
     document.getElementById('polygon-modal').classList.add('hidden');
+    collapseDrawerFromEdit('polygon');
     editingPolygonId = null;
   }
 
@@ -8823,7 +9095,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     document.getElementById('bearing-delete-btn').classList.toggle('hidden', !b);
     document.getElementById('bearing-remap-btn').classList.toggle('hidden', !b);
-    document.getElementById('bearing-modal').classList.remove('hidden');
+    if (b){
+      // Editing an existing bearing — expand the drawer in place (Batch 2).
+      expandDrawerForEdit('bearing');
+    } else {
+      // Defensive — openBearingModal is only ever called with a real bearing in practice
+      // (new bearings go through openBearingModalForNew instead), but keep the classic
+      // centered-modal fallback consistent with pin/polygon above just in case.
+      document.getElementById('bearing-modal').classList.remove('hidden');
+    }
     // No auto-focus on purpose — see openPinModal's comment for why.
   }
 
@@ -8979,6 +9259,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function closeBearingModal(){
     document.getElementById('bearing-modal').classList.add('hidden');
+    collapseDrawerFromEdit('bearing');
     editingBearingId = null;
   }
 
@@ -11711,10 +11992,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Weather (NWS free API) ──
   var lastWeatherPoint = null;
 
-  function openWeatherPanel(){
+  // Optional latlng override ({lat,lng}) — used by the tap-anywhere drawer's "10-day
+  // forecast" link so the full panel opens for the actually-tapped point rather than
+  // whatever the map happens to be centered on; every other call site omits it and keeps
+  // the original map-center behavior.
+  function openWeatherPanel(latlng){
     document.getElementById('weather-panel').classList.remove('hidden');
     closeAllPanels_except('weather-panel');
-    var center = map.getCenter();
+    closeViewDrawer();
+    var center = latlng || map.getCenter();
     var key = Math.round(center.lat * 10) + ',' + Math.round(center.lng * 10);
     document.getElementById('weather-location').textContent = center.lat.toFixed(3) + '°N, ' + Math.abs(center.lng).toFixed(3) + '°W';
     document.getElementById('weather-loading').classList.remove('hidden');
@@ -11807,6 +12093,191 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (f.includes('cloud') || f.includes('overcast')) return '☁️';
     if (f.includes('wind')) return '💨';
     return '🌡️';
+  }
+
+  // ── Current conditions cache (tap-anywhere) ──
+  // Separate from fetchWeather/renderWeather above (the full Tools > Weather panel, always
+  // fetched fresh on open) — this is specifically for the tap-anywhere drawer's compact
+  // conditions mini-card, which must NOT refetch on every tap. No caching existed anywhere
+  // in the weather integration before this (lastWeatherPoint above was never actually wired
+  // to anything). Keyed to a ~0.1°-rounded grid cell — weather doesn't vary meaningfully
+  // within that radius, and NWS's own grid cells are coarser than this anyway.
+  var currentConditionsCache = {}; // key -> { data, fetchedAt } | { pending: Promise }
+  var CURRENT_CONDITIONS_CACHE_MS = 30 * 60 * 1000;
+
+  function currentConditionsCacheKey(lat, lng){
+    return Math.round(lat * 10) + ',' + Math.round(lng * 10);
+  }
+
+  // Resolves to { temp, tempUnit, shortForecast, icon } on success, or null on failure.
+  // Callers are responsible for checking navigator.onLine THEMSELVES before calling this and
+  // showing "Unavailable offline" instead — this function doesn't special-case offline, it
+  // just lets fetch() fail naturally, so it stays a plain online-conditions fetcher either way.
+  function getCurrentConditions(lat, lng){
+    var key = currentConditionsCacheKey(lat, lng);
+    var cached = currentConditionsCache[key];
+    if (cached && cached.fetchedAt && (Date.now() - cached.fetchedAt) < CURRENT_CONDITIONS_CACHE_MS){
+      return Promise.resolve(cached.data);
+    }
+    if (cached && cached.pending) return cached.pending;
+    var pending = fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lng.toFixed(4))
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){ return fetch(data.properties.forecastHourly); })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){
+        var cur = (data.properties && data.properties.periods && data.properties.periods[0]) || {};
+        var result = {
+          temp: cur.temperature != null ? cur.temperature : null,
+          tempUnit: cur.temperatureUnit || 'F',
+          shortForecast: cur.shortForecast || '',
+          icon: weatherIcon(cur.shortForecast)
+        };
+        currentConditionsCache[key] = { data: result, fetchedAt: Date.now() };
+        return result;
+      })
+      .catch(function(err){
+        console.error('[FieldMap] Current conditions fetch failed:', err);
+        delete currentConditionsCache[key]; // don't cache a failure — the next tap should retry, not stay stuck
+        return null;
+      });
+    currentConditionsCache[key] = { pending: pending };
+    return pending;
+  }
+
+  // ── Tap-anywhere (quick-capture at any empty map point) ──
+  // Trigger lives in the map's final click handler (see createMap) — a plain tap that
+  // nothing else claimed, with no tool mode active and no panel/drawer already open, opens
+  // this instead of doing nothing. tapAnywhereState is null whenever the drawer isn't
+  // currently showing an in-progress (not-yet-saved) tap-anywhere draft — including once
+  // Save has run, at which point the drawer has already transitioned to a normal 'pin' type
+  // (see FieldMap.tapAnywhereSave) and this feature's own state is no longer relevant.
+  var tapAnywhereMarker = null;
+  var tapAnywhereState = null; // { latlng, name, detectedTagIds, elevationFt, conditions }
+
+  // Mirrors addMarkerForPin's own element construction exactly (wrapper gets the
+  // pin-marker class + cursor styling, buildPinMarkerHtml's output goes inside it as
+  // innerHTML) so this temp marker looks and behaves like a real one until Save swaps it
+  // for one. No click handler — tapping it isn't a defined interaction for a not-yet-saved
+  // point, so it's deliberately inert (cursor:default, not :pointer).
+  function buildTapAnywhereMarkerEl(){
+    var el = document.createElement('div');
+    el.className = 'pin-marker';
+    el.style.cssText = 'cursor:default;';
+    el.innerHTML = buildPinMarkerHtml({ tags: tapAnywhereState ? tapAnywhereState.detectedTagIds : [], status: 'escout' });
+    return el;
+  }
+
+  function updateTapAnywhereMarkerIcon(){
+    if (!tapAnywhereMarker || !tapAnywhereState) return;
+    tapAnywhereMarker.getElement().innerHTML = buildPinMarkerHtml({ tags: tapAnywhereState.detectedTagIds, status: 'escout' });
+  }
+
+  function tapAnywhereChipsHtml(){
+    if (!tapAnywhereState || !tapAnywhereState.detectedTagIds.length) return '';
+    return tapAnywhereState.detectedTagIds.map(function(tid){
+      var t = tagById(tid);
+      return '<span class="tap-detected-chip" style="background:' + t.color + ';">' + escapeHtml(t.label) +
+        '<button type="button" onclick="FieldMap.tapAnywhereRemoveTag(\'' + tid + '\')" aria-label="Remove ' + escapeHtml(t.label) + '">&times;</button></span>';
+    }).join('');
+  }
+
+  function updateTapAnywhereChips(){
+    var el = document.getElementById('tap-anywhere-chips');
+    if (el) el.innerHTML = tapAnywhereChipsHtml();
+  }
+
+  function tapAnywhereElevText(){
+    if (!tapAnywhereState) return '';
+    return tapAnywhereState.elevationFt != null ? tapAnywhereState.elevationFt.toLocaleString() + ' ft' : 'Loading elevation…';
+  }
+
+  function updateTapAnywhereElevDisplay(){
+    var el = document.getElementById('tap-anywhere-elev');
+    if (el) el.textContent = tapAnywhereElevText();
+  }
+
+  function tapAnywhereConditionsHtml(){
+    if (!tapAnywhereState) return '';
+    var c = tapAnywhereState.conditions;
+    if (c === undefined){
+      return '<div class="tap-conditions-row tap-conditions-loading">Loading conditions…</div>';
+    }
+    if (c === null){
+      var text = navigator.onLine ? 'Conditions unavailable' : 'Unavailable offline';
+      return '<div class="tap-conditions-row tap-conditions-unavailable">' + text + '</div>';
+    }
+    return '<div class="tap-conditions-row">' +
+      '<span class="tap-conditions-icon">' + c.icon + '</span>' +
+      '<span class="tap-conditions-temp">' + c.temp + '°' + c.tempUnit + '</span>' +
+      '<span class="tap-conditions-desc">' + escapeHtml(c.shortForecast) + '</span>' +
+      '<button type="button" class="link-btn" onclick="FieldMap.tapAnywhereOpenForecast()">10-day forecast →</button>' +
+    '</div>';
+  }
+
+  function updateTapAnywhereConditionsDisplay(){
+    var el = document.getElementById('tap-anywhere-conditions');
+    if (el) el.innerHTML = tapAnywhereConditionsHtml();
+  }
+
+  // Compact (not-yet-saved) drawer content — footer is Save/Directions/Share only, no
+  // overflow: nothing exists yet to Move/Edit shape/Delete. Title input keeps a stable DOM
+  // identity across re-renders of ITS OWN container (see FieldMap.tapAnywhereTitleInput) —
+  // this top-level render only ever runs once per tap, on open; every later update
+  // (elevation resolving, conditions resolving, a chip being added/removed) patches its own
+  // specific sub-element instead of rebuilding this whole block, so the title input never
+  // loses focus/cursor position while the user is actively typing.
+  function tapAnywhereDrawerHtml(){
+    var latlng = tapAnywhereState.latlng;
+    return '<div class="pin-popup-name-row">' +
+        '<input type="text" id="tap-anywhere-title" class="tap-anywhere-title-input" ' +
+        'placeholder="Name this spot… (e.g. 4 turkeys)" autocomplete="off" maxlength="60" ' +
+        'value="' + escapeHtml(tapAnywhereState.name) + '" ' +
+        'oninput="FieldMap.tapAnywhereTitleInput(this.value)">' +
+      '</div>' +
+      '<div id="tap-anywhere-chips">' + tapAnywhereChipsHtml() + '</div>' +
+      '<div class="pin-popup-coords">' + latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5) +
+        ' · <span id="tap-anywhere-elev">' + tapAnywhereElevText() + '</span></div>' +
+      '<div id="tap-anywhere-conditions">' + tapAnywhereConditionsHtml() + '</div>' +
+      '<div class="pin-popup-footer">' +
+        '<button class="btn btn-small btn-primary" onclick="FieldMap.tapAnywhereSave()">Save</button>' +
+        '<button class="btn btn-small" onclick="FieldMap.tapAnywhereDirections()">Directions</button>' +
+        '<button class="btn btn-small" onclick="FieldMap.tapAnywhereShare()">Share</button>' +
+      '</div>';
+  }
+
+  // Removes the temp marker and drops the in-progress draft — called whenever the drawer
+  // closes without a save (× button, background tap, opening something else). Does NOT run
+  // after a successful save: by then the drawer has already transitioned to a normal 'pin'
+  // view (see FieldMap.tapAnywhereSave), so closeViewDrawer's type check no longer matches.
+  function discardTapAnywhereDraft(){
+    if (tapAnywhereMarker){ tapAnywhereMarker.remove(); tapAnywhereMarker = null; }
+    tapAnywhereState = null;
+  }
+
+  function openTapAnywhereDrawer(latlng){
+    discardTapAnywhereDraft(); // defensive — should already be null, but never leave two temp markers around
+    tapAnywhereState = { latlng: latlng, name: '', detectedTagIds: [], elevationFt: null, conditions: undefined };
+    tapAnywhereMarker = new maplibregl.Marker({ element: buildTapAnywhereMarkerEl(), anchor: 'center' })
+      .setLngLat([latlng.lng, latlng.lat])
+      .addTo(map);
+    showViewDrawer('tap', 'new', tapAnywhereDrawerHtml());
+
+    getElevationFt(latlng.lat, latlng.lng).then(function(ft){
+      if (!tapAnywhereState || tapAnywhereState.latlng !== latlng) return; // dismissed/superseded since
+      tapAnywhereState.elevationFt = ft;
+      updateTapAnywhereElevDisplay();
+    }).catch(function(){});
+
+    if (!navigator.onLine){
+      tapAnywhereState.conditions = null;
+      updateTapAnywhereConditionsDisplay();
+    } else {
+      getCurrentConditions(latlng.lat, latlng.lng).then(function(result){
+        if (!tapAnywhereState || tapAnywhereState.latlng !== latlng) return;
+        tapAnywhereState.conditions = result; // null on failure — same "unavailable" display, different wording
+        updateTapAnywhereConditionsDisplay();
+      });
+    }
   }
 
   // ── Wildlife Layers (P3a) ──
@@ -12989,7 +13460,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     initLayerSections();
     initPanelScrim();
-    document.getElementById('view-drawer-close-btn').addEventListener('click', closeViewDrawer);
+    document.getElementById('view-drawer-close-btn').addEventListener('click', function(){
+      // While expanded (editing), × means the same thing its Cancel button does — closeView
+      // Drawer refuses to close mid-edit at all (see its own comment), so route through the
+      // right type's Cancel instead of leaving this button looking dead.
+      if (drawerExpandedType === 'pin') closePinModal();
+      else if (drawerExpandedType === 'track') closeTrackModal();
+      else if (drawerExpandedType === 'polygon') closePolygonModal();
+      else if (drawerExpandedType === 'bearing') closeBearingModal();
+      else closeViewDrawer();
+    });
 
     // Restore layer toggle states. This runs before the map/style has actually loaded
     // (createMap() kicks off an async fetch chain that bindUI() doesn't wait on), so only
@@ -13276,6 +13756,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closePinModal();
       if (id) FieldMap.movePin(id);
     });
+    // deletePinFromModal already existed (confirm + deletePinById + closePinModal) but was
+    // never actually wired to this button — found while building expand-in-place editing
+    // (Batch 2), which surfaces this modal's Delete button in a place it'll actually get
+    // used now. Fixed here rather than left dead.
+    document.getElementById('pin-delete-btn').addEventListener('click', deletePinFromModal);
     // Tapping into the Name field on a new (not-yet-named) pin selects the auto-filled
     // default so typing immediately replaces it, instead of having to manually clear it first.
     document.getElementById('pin-name').addEventListener('focus', function(){
@@ -13295,6 +13780,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var id = editingTrackId;
       closeTrackModal();
       if (id) FieldMap.editTrackVertices(id);
+    });
+    // Same gap as pin-delete-btn above (also found while building expand-in-place editing)
+    // — track-delete-btn had markup and a matching id but no click handler at all.
+    document.getElementById('track-delete-btn').addEventListener('click', function(){
+      if (!editingTrackId) return;
+      if (!confirm('Delete this track? This cannot be undone.')) return;
+      deleteTrackById(editingTrackId);
+      closeTrackModal();
     });
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
