@@ -72,6 +72,10 @@
   #active-trip-chip:hover{border-color:var(--accent);}
   #active-trip-chip::before{content:'●';color:var(--accent);font-size:9px;}
   #active-trip-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* No-active-trip state — same chip, same tap target (still opens the switcher), just muted
+     styling so it doesn't read as "a trip named No active trip" is currently active. */
+  #active-trip-chip.no-active-trip{color:var(--text-muted);font-weight:500;}
+  #active-trip-chip.no-active-trip::before{color:var(--text-muted);}
 
   /* Trip picker panel's list rows (Stage 2) */
   .trip-picker-row{
@@ -1117,8 +1121,10 @@
 
 <!-- Active Trip persistent indicator (Stage 2 of the Active Trip project) — top-left, the one
      corner with no existing map chrome (bottom/right host #map-controls, top-right hosts
-     #center-readout-float, top-center hosts #map-search-bar). Hidden entirely when no trip is
-     active — see updateActiveTripIndicator(). -->
+     #center-readout-float, top-center hosts #map-search-bar). Starts "hidden" here only as a
+     pre-JS default (avoids a flash of an unstyled/empty button before boot runs) —
+     updateActiveTripIndicator() always removes it, in both the active and no-active-trip
+     state; see that function's own comment for why this is always-visible now, unlike Stage 2. -->
 <button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
   <span id="active-trip-chip-label"></span>
 </button>
@@ -2389,7 +2395,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.26.0';
+  var APP_VERSION = '2.26.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -4253,12 +4259,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     scheduleSave();
   }
 
+  // Always visible, regardless of active-trip state (fix for a Stage 2 design gap: with no
+  // trip ever active, there was no indicator AND no startup prompt — since the prompt itself
+  // only ever fires when a trip is already active — leaving no way to reach the trip switcher
+  // at all from a fresh account). The "No active trip" state is just as tappable as the
+  // active state; only the styling (muted vs. accent) and label text change.
   function updateActiveTripIndicator(){
     var chip = document.getElementById('active-trip-chip');
     if (!chip) return;
     var trip = getActiveTrip();
-    if (!trip){ chip.classList.add('hidden'); return; }
-    document.getElementById('active-trip-chip-label').textContent = trip.name;
+    document.getElementById('active-trip-chip-label').textContent = trip ? trip.name : 'No active trip';
+    chip.classList.toggle('no-active-trip', !trip);
     chip.classList.remove('hidden');
   }
 
