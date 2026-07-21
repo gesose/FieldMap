@@ -21,8 +21,13 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   marker visibility (see Architecture notes) — proper clustering to be implemented in a later session
 - Trip is now a real entity (state.trips), not a free-text string — Stage 1 of 3 of the Active Trip project
   (Session 16). Every pin/track/polygon/bearing references it via .tripId; see Architecture notes' "Trips"
-  entry for the full design. Stage 2 (Active Trip UI — startup prompt, persistent indicator, trip switcher)
-  and Stage 3 (tap-anywhere integration) are separate, not-yet-started follow-on sessions.
+  entry for the full design.
+- Active Trip UI is built — Stage 2 of 3 (Session 18): a device-only "what am I working on right now"
+  concept (state.settings.activeTripId) with a startup prompt, a persistent map indicator, a shared trip
+  picker (search/list/+New, reused for both switching the device's active trip AND setting one specific
+  item's trip from Edit data), and auto-tagging new pins/tracks/areas/bearings with the active trip at
+  creation. See Architecture notes' "Active Trip UI" entry for the full design. Stage 3 (wiring tap-anywhere's
+  quick-save to inherit the active trip) is a separate, not-yet-started follow-on session.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -259,6 +264,62 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   confirmed a trip deleted on one device is correctly dropped by the merge even when a second, not-yet-synced
   device still has it locally, confirmed the tombstone carries forward correctly, and confirmed an unrelated
   brand-new trip created on the stale device survives the same merge untouched.
+- Active Trip UI (Stage 2 of 3 — Session 18): a device-only "what am I working on right now" concept —
+  state.settings.activeTripId, a plain string|null living inside state.settings, never synced (settings are
+  never part of getSyncableState's payload — this is what makes it correctly per-device: two devices can have
+  different active trips at once, exactly per spec). getActiveTrip() resolves it to a real trip, defensively
+  clearing a dangling reference (the active trip having been deleted through some other path) rather than
+  ever showing a broken indicator/prompt for a trip that no longer exists. setActiveTrip(tripId) is the only
+  writer — updates the indicator and schedules a save.
+  - Startup prompt (#trip-startup-modal, maybeShowTripStartupPrompt): a plain `.modal-overlay`/`.modal` —
+    the same centered-dimmed-backdrop pattern used by all 12 other modals in this file (onboarding-modal,
+    pin-modal, etc.) — deliberately NOT in the Escape-key handler's hidden-modal list and with no
+    backdrop-click-to-dismiss (neither exists for ANY modal in this file, not just this one), so all 3
+    buttons are real, explicit decisions. Hooked into the boot sequence right after the onboarding-modal
+    check, gated on `!shouldShowOnboarding()` — not because the two conditions can ever really coexist (a
+    genuinely first-ever install can't have an activeTripId set yet — every path that sets one requires a
+    usable, past-onboarding app), but as cheap insurance against ever stacking two centered modals with no
+    arbitration between them.
+  - Persistent indicator (#active-trip-chip): a small pill, top-left of the map — the one corner with no
+    existing map chrome (bottom/right host #map-controls, top-right hosts #center-readout-float, top-center
+    hosts #map-search-bar). GOTCHA (caught via a screenshot, not code review): #active-trip-chip is a
+    body-level sibling of `<main id="map">`, same as #wildlife-legend — "left"/"top" are relative to the
+    whole viewport, not the map, so a naive `left:14px` landed inside #sidebar's 0-330px column on desktop
+    (exactly the bug #wildlife-legend's own CSS comment already documents and works around), and even after
+    offsetting past `var(--sidebar-width)`, `top:14px` collided with MapLibre's own NavigationControl
+    (zoom +/-/compass-reset, added at 'top-left' in createMap()) — fixed with
+    `left:calc(var(--sidebar-width) + 14px)` and `top:130px` (clearing the nav control stack), plus the same
+    mobile override pattern #wildlife-legend already uses (sidebar collapses to a bottom bar on mobile, so
+    plain `left:14px` is correct there).
+  - Trip picker (#trip-picker-panel): ONE shared `.floating-panel` — not #view-drawer — for two modes.
+    'device' (opened via the indicator chip or the startup prompt's "Start a new trip"): picking a trip calls
+    setActiveTrip(). 'form' (opened via any of the 4 item modals' trip-picker-btn): picking a trip only calls
+    back into that specific button (stages tripId on `button.dataset.tripId`, updates its displayed text) —
+    the real commit happens later via that modal's own save*FromModal, exactly like every other field in the
+    same form (name/notes/tags/date) never writes until Save. This split mattered concretely: the item-level
+    picker must be reachable from INSIDE an already-expanded Edit-data form (#view-drawer.expanded), and
+    showViewDrawer() now refuses to overwrite content while drawerExpandedType is set (see the Session 17
+    fix) — routing the item picker through #view-drawer at all would have made it unopenable mid-edit. Using
+    a plain `.floating-panel` sidesteps that class of conflict entirely and gets scrim/outside-click/Escape
+    dismiss behavior for free by simply adding 'trip-picker-panel' to the existing FLOATING_PANEL_IDS/
+    PANEL_SCRIM_IDS arrays — no new dismiss mechanism needed. Search substring-filters computeTripsPresent()'s
+    real trips (case-insensitive, the NO_TRIP_LABEL sentinel excluded and offered as its own separate
+    "No trip"/"End trip" row instead) — typing can only filter, never create; "+ New trip" is a real inline
+    mini-form (name input + Cancel/Create — modeled on the tag manager's tag-editor-form, not quickAddTag's
+    bare prompt()), dedup-safe via the existing findOrCreateTripByName. relativeTimeLabel(ts) ("today"/
+    "N days/weeks/months/years ago") is new — no relative-time formatter existed anywhere in this file before
+    (dateLabelFor/formatCreatedDate are both absolute-date only).
+  - Auto-tagging on creation: every one of the 4 "new item" modal-open functions (openPinModal(null,...),
+    openTrackModalForNew, openPolygonModal(null), openBearingModalForNew) now pre-fills its trip-picker-btn
+    with state.settings.activeTripId instead of leaving it blank — since the object doesn't actually get
+    created until Save is clicked, "auto-tag at creation time" and "pre-fill the field Save will read" are
+    the same thing, and the pre-fill is still visibly overridable via the same picker before saving (active
+    trip is a default, never a lock, per spec).
+  - The old free-text `<input id="X-trip" list="trip-suggestions">` in all 4 item modals is now a
+    `<button class="trip-picker-btn" id="X-trip-btn" data-trip-id="">` — opening the picker in 'form' mode on
+    click. The `trip-suggestions` datalist itself and refreshTripSuggestions() are NOT removed — bulk-edit
+    (#bulk-trip) and CSV/GPX import (#import-trip) still use the old free-text+datalist pattern unchanged
+    (not named in the Stage 2 spec, deliberately left alone).
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -613,3 +674,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   scheduleSave's 700ms persist debounce elapsed — a test-timing artifact, not an app bug — confirmed by
   re-running with a longer wait). `node --check` on all 4 extracted inline `<script>` blocks confirmed clean
   syntax.
+- Session 18: Stage 2 of 3 of the Active Trip project — built the Active Trip UI on top of Stage 1's tripId
+  foundation (startup prompt, persistent indicator, trip switcher, auto-tag-on-creation, and the Edit-data
+  trip field replaced with a real picker). See Architecture notes' "Active Trip UI" entry for the complete
+  design. Key decision made before writing code: the item-level trip picker (opened from inside an already-
+  expanded Edit-data form) can't reuse #view-drawer — showViewDrawer() now refuses to overwrite content while
+  drawerExpandedType is set (the Session 17 fix) — so it needed its own container; chose a plain
+  `.floating-panel` (shared with the device-level switcher via a mode flag) over building a second bespoke
+  drawer component, since it gets scrim/outside-click/Escape dismiss for free just by joining the existing
+  FLOATING_PANEL_IDS/PANEL_SCRIM_IDS arrays. Verified via a battery of from-scratch Playwright runs against
+  realistic seeded pre-Stage-2 data (multiple pins/tracks/areas/bearings with real Stage-1 tripId references,
+  a real active trip already set): startup prompt shows every load with an active trip (centered, correct
+  name, all 3 buttons — Continue leaves state untouched, Start-new opens the switcher, End-trip clears
+  activeTripId) and correctly does NOT show with no active trip; indicator chip shows/hides correctly and is
+  tappable at any time, not just at startup; search substring-filters the trip list live and typing a
+  non-matching query creates nothing; "+ New trip" creates exactly one entity (confirmed via
+  findOrCreateTripByName's own dedup) and immediately activates it; creating a brand-new pin, track, area,
+  and bearing while a trip is active all correctly pre-filled and saved with that tripId (all four types
+  individually confirmed, not just one); "End trip" clears activeTripId while leaving a previously-auto-tagged
+  item's own tripId completely untouched; Edit data's picker correctly reassigns just that one item's tripId
+  (confirmed it does NOT touch state.settings.activeTripId) and correctly supports clearing an existing
+  assignment back to "No trip"; Stage 1's sidebar grouping and trip filter chips still resolve real names
+  with zero regression. Root-caused and fixed one real layout bug found only via a screenshot (not visible
+  from DOM-state assertions alone): the indicator chip, being a body-level sibling of `<main id="map">`
+  rather than a map-scoped child, initially rendered inside #sidebar's own column (same class of bug
+  #wildlife-legend's CSS comment already documents) and then, once corrected, collided with MapLibre's own
+  NavigationControl — both fixed with position offsets, the second confirmed visually via a second
+  screenshot. Several rounds of test-harness-only failures along the way (all fixed in the test, not the
+  app, per the actual root cause found each time): an empty `{}` test seed crashed on a real, separate,
+  pre-existing gap in loadState's fixup chain (center/zoom aren't defaulted if entirely missing — never
+  reachable for a real account, which always has them from initial boot); the shared `boot()` helper tried
+  to click a `Continue as guest` link that was correctly absent/hidden once `fieldmap-onboarded` was
+  pre-seeded; and two more instances of the same scheduleSave-debounce-timing mistake identified and fixed in
+  Session 17 (reading localStorage inside the 700ms window before persist() actually runs). `node --check` on
+  all 4 extracted inline `<script>` blocks confirmed clean syntax after every batch of edits.

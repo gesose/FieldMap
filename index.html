@@ -48,6 +48,41 @@
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
   #center-readout-elev.show{display:block;}
 
+  /* Active Trip persistent indicator (Stage 2) — top-left is the one corner with no existing
+     map chrome (see the HTML comment above its markup). Styled like #map-search-input's pill
+     (blur background) rather than #center-readout-float's plain card, since it's tappable and
+     should read as a button, not a passive readout. Same body-level-sibling-of-<main id="map">
+     positioning gotcha as #wildlife-legend: "left" here is relative to the viewport, not the
+     map, so plain left:14px landed inside #sidebar's 0-330px column on desktop — offset past
+     the sidebar's width instead (mobile override below reverts to plain left:14px, since the
+     sidebar collapses to a bottom bar there, not a left column). */
+  #active-trip-chip{
+    /* top:130px, not 14px — MapLibre's NavigationControl (zoom +/-/compass-reset) is added at
+       'top-left' too (see createMap()'s addControl call) and occupies roughly the first 110px
+       of the map's own top-left corner; 14px would sit directly on top of it. */
+    position:absolute;top:130px;left:calc(var(--sidebar-width) + 14px);z-index:1000;cursor:pointer;
+    font-family:var(--font-sans);font-size:12px;font-weight:600;color:var(--text);
+    background:rgba(34,41,35,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.12);border-radius:20px;
+    padding:7px 14px;max-width:220px;
+    display:flex;align-items:center;gap:6px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  #active-trip-chip.hidden{display:none;}
+  #active-trip-chip:hover{border-color:var(--accent);}
+  #active-trip-chip::before{content:'●';color:var(--accent);font-size:9px;}
+  #active-trip-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* Trip picker panel's list rows (Stage 2) */
+  .trip-picker-row{
+    display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+    padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;
+  }
+  .trip-picker-row:hover{background:var(--bg-elevated-2);}
+  .trip-picker-row.active{background:var(--bg-elevated-2);border:1px solid var(--accent);}
+  .trip-picker-row-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+  .trip-picker-row-meta{font-size:11px;color:var(--text-muted);flex-shrink:0;}
+
   /* Mobile coordinate + elevation readout — desktop's #center-readout-float is hidden on
      mobile (no room at top-right, that's where the floating search/layers/filter/locate
      icon column lives), so this is a separate, compact, top-left equivalent. */
@@ -226,6 +261,18 @@
     padding:9px 10px;border-radius:8px;font-size:14px;font-family:var(--font-sans);
   }
   .modal textarea{resize:vertical;min-height:60px;}
+
+  /* Trip picker button (replaces the old free-text trip input — Stage 2 of the Active Trip
+     project) — styled to match .modal input[type=text] so it doesn't look out of place next
+     to the real inputs above/below it, but is a real <button> (opens the trip picker panel),
+     not text entry. The chevron hints it's tappable the same way a <select> would. */
+  .trip-picker-btn{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:9px 10px;border-radius:8px;font-size:14px;font-family:var(--font-sans);
+    text-align:left;cursor:pointer;display:flex;align-items:center;justify-content:space-between;
+  }
+  .trip-picker-btn.no-trip{color:var(--text-muted);}
+  .trip-picker-btn::after{content:'▾';font-size:11px;color:var(--text-muted);margin-left:8px;}
   .coord-display{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-bottom:14px;}
   .modal-actions{
     display:flex;justify-content:flex-end;gap:8px;margin-top:12px;
@@ -960,6 +1007,10 @@
     #wildlife-legend{ left:14px; right:auto; bottom:195px; max-width:calc(100% - 28px); }
     body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 245px); }
 
+    /* Active Trip chip: same reasoning as #wildlife-legend just above — mobile's sidebar is a
+       bottom bar, not a left column, so plain left:14px is correct here unlike desktop. */
+    #active-trip-chip{ left:14px; max-width:calc(100% - 28px); }
+
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
   }
@@ -1064,6 +1115,14 @@
   <span id="scale-bar-label"></span>
 </div>
 
+<!-- Active Trip persistent indicator (Stage 2 of the Active Trip project) — top-left, the one
+     corner with no existing map chrome (bottom/right host #map-controls, top-right hosts
+     #center-readout-float, top-center hosts #map-search-bar). Hidden entirely when no trip is
+     active — see updateActiveTripIndicator(). -->
+<button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
+  <span id="active-trip-chip-label"></span>
+</button>
+
 <div id="publicland-legend" class="hidden">
   <span style="color:#FEE679;">BLM</span>
   <span style="color:#6FCF52;">USFS</span>
@@ -1113,6 +1172,34 @@
       <path d="M4 15.5h12"/>
     </svg>
   </button>
+</div>
+
+<!-- Trip picker panel (Stage 2 of the Active Trip project) — one shared panel for two modes:
+     'device' (tapping the active-trip chip / "Start a new trip" from the startup prompt — picking
+     a trip sets state.settings.activeTripId) and 'form' (tapping a pin/track/area/bearing's trip
+     field inside its Add/Edit modal — picking a trip only stages a value on that field's button,
+     committed by the modal's own Save, exactly like every other field). See openTripPickerForDevice/
+     openTripPickerForForm. A plain .floating-panel (not #view-drawer) specifically so it can open
+     from INSIDE an already-expanded edit form without colliding with drawerExpandedType's
+     one-edit-at-a-time invariant (see the Session 17 showViewDrawer fix). -->
+<div id="trip-picker-panel" class="floating-panel hidden" style="max-height:70vh;overflow-y:auto;width:300px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <h2 id="trip-picker-title" style="margin:0;">Switch trip</h2>
+    <button class="layer-hint-btn" id="trip-picker-close-btn" aria-label="Close" style="width:20px;height:20px;font-size:13px;">×</button>
+  </div>
+  <input type="text" id="trip-picker-search" placeholder="Search trips…" autocomplete="off"
+    style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;font-family:var(--font-sans);margin-bottom:10px;">
+  <div id="trip-picker-list" style="display:flex;flex-direction:column;gap:4px;"></div>
+  <div id="trip-picker-no-trip-row" style="margin-top:8px;"></div>
+  <button class="chip" id="trip-picker-new-btn" style="border-style:dashed;margin-top:10px;width:100%;box-sizing:border-box;text-align:center;">+ New trip</button>
+  <div id="trip-picker-new-form" class="hidden" style="margin-top:10px;">
+    <input type="text" id="trip-picker-new-name" placeholder="Trip name" maxlength="60" autocomplete="off"
+      style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;font-family:var(--font-sans);margin-bottom:8px;">
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn btn-ghost" id="trip-picker-new-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="trip-picker-new-create-btn">Create + activate</button>
+    </div>
+  </div>
 </div>
 
 <!-- Settings panel (accessible via Tools → Settings) -->
@@ -1531,6 +1618,21 @@
   </div>
 </div>
 
+<!-- Active Trip startup prompt (Stage 2) — deliberately NOT in the Escape-key hidden list and
+     has no backdrop-click-to-dismiss (see .modal-overlay's own lack of one, shared by every
+     modal in this file) — every one of the 3 buttons is a real, explicit decision, so there is
+     no passive/accidental way to dismiss this. Shown once per app load, only when a trip is
+     currently active — see maybeShowTripStartupPrompt(). -->
+<div class="modal-overlay hidden" id="trip-startup-modal">
+  <div class="modal" style="text-align:center;">
+    <h2 style="margin-top:0;">Still working on this trip?</h2>
+    <p id="trip-startup-name" style="font-size:16px;font-weight:600;color:var(--accent);margin:6px 0 20px;"></p>
+    <button class="btn btn-primary btn-block" id="trip-startup-continue-btn" style="margin-bottom:10px;">Continue this trip</button>
+    <button class="btn btn-ghost btn-block" id="trip-startup-new-btn" style="margin-bottom:10px;">Start a new trip</button>
+    <button class="link-btn" id="trip-startup-end-btn" style="font-size:13px;color:var(--text-muted);">End trip — browse with no trip</button>
+  </div>
+</div>
+
 <div id="layers-panel" class="floating-panel hidden">
 
   <div class="layer-section" data-section="base">
@@ -1886,7 +1988,7 @@
       <div class="chip-row" id="pin-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="pin-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="pin-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="pin-trip-btn" data-trip-id="">No trip</button></label>
     <label><span>Date</span><input type="date" id="pin-date"></label>
     <div class="coord-display">Lat <span id="pin-lat">—</span> · Lng <span id="pin-lng">—</span></div>
     <div class="modal-actions">
@@ -1924,7 +2026,7 @@
       <div class="chip-row" id="track-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="track-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="track-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="track-trip-btn" data-trip-id="">No trip</button></label>
     <label><span>Date</span><input type="date" id="track-date"></label>
     <div class="coord-display" id="track-point-count"></div>
     <div class="modal-actions">
@@ -1962,7 +2064,7 @@
       <div class="chip-row" id="polygon-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="polygon-notes" maxlength="500" placeholder="Anything worth noting"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="polygon-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="polygon-trip-btn" data-trip-id="">No trip</button></label>
     <label><span>Date</span><input type="date" id="polygon-date"></label>
     <div id="polygon-area-display" class="coord-display" style="min-height:18px;"></div>
     <div class="modal-actions">
@@ -2000,7 +2102,7 @@
       <div class="chip-row" id="bearing-tags-row"></div>
     </div>
     <label><span>Notes</span><textarea id="bearing-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
-    <label><span>Trip (optional)</span><input type="text" id="bearing-trip" list="trip-suggestions" autocomplete="off" maxlength="60" placeholder="e.g. Nov 2026 quail trip"></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="bearing-trip-btn" data-trip-id="">No trip</button></label>
     <label><span>Date</span><input type="date" id="bearing-date"></label>
     <div class="coord-display" id="bearing-meta-display"></div>
     <div class="modal-actions">
@@ -2287,7 +2389,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.25.1';
+  var APP_VERSION = '2.26.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2397,7 +2499,13 @@
       gpsFollow: false,
       clusterPins: true,
       defaultSort: 'chronological',
-      terrain3dOn: false
+      terrain3dOn: false,
+      // Active Trip (Stage 2 of the Active Trip project) — device-only, deliberately inside
+      // state.settings rather than a synced field: settings are never part of
+      // getSyncableState's payload, so this naturally never syncs to Firestore, matching the
+      // spec's "what am I doing right now on THIS device" intent (different devices may have
+      // different active trips at once).
+      activeTripId: null
     }
   };
 
@@ -4102,6 +4210,199 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     });
     return changed;
+  }
+
+  // ---------- Active Trip (Stage 2 of the Active Trip project — see CLAUDE.md) ----------
+  // "What am I doing right now on THIS device" — device-only (state.settings.activeTripId,
+  // never synced, see the field's own comment in the state object above). A default for new
+  // items' tripId at creation time, never a lock — always overridable via the trip picker.
+
+  // Formats a timestamp as "today"/"yesterday"/"N days/weeks/months/years ago" — no existing
+  // relative-time formatter exists anywhere else in this file (dateLabelFor/formatCreatedDate
+  // are both absolute-date only), so this is new.
+  function relativeTimeLabel(ts){
+    if (!ts) return '';
+    var diffDays = Math.floor((Date.now() - ts) / 86400000);
+    if (diffDays <= 0) return 'today';
+    if (diffDays === 1) return 'yesterday';
+    if (diffDays < 7) return diffDays + ' days ago';
+    var weeks = Math.floor(diffDays / 7);
+    if (weeks < 5) return weeks === 1 ? '1 week ago' : weeks + ' weeks ago';
+    var months = Math.floor(diffDays / 30);
+    if (months < 12) return months <= 1 ? '1 month ago' : months + ' months ago';
+    var years = Math.floor(diffDays / 365);
+    return years === 1 ? '1 year ago' : years + ' years ago';
+  }
+
+  // Resolves the active trip entity, defensively clearing a dangling reference (the active
+  // trip having been deleted through some other path — not expected in normal use, since Stage
+  // 2 doesn't build trip deletion UI, but degrading gracefully to "no active trip" is cheap
+  // insurance against ever getting stuck showing a broken indicator/prompt for a trip that no
+  // longer exists).
+  function getActiveTrip(){
+    var id = state.settings.activeTripId;
+    if (!id) return null;
+    var trip = tripById(id);
+    if (!trip){ state.settings.activeTripId = null; return null; }
+    return trip;
+  }
+
+  function setActiveTrip(tripId){
+    state.settings.activeTripId = tripId || null;
+    updateActiveTripIndicator();
+    scheduleSave();
+  }
+
+  function updateActiveTripIndicator(){
+    var chip = document.getElementById('active-trip-chip');
+    if (!chip) return;
+    var trip = getActiveTrip();
+    if (!trip){ chip.classList.add('hidden'); return; }
+    document.getElementById('active-trip-chip-label').textContent = trip.name;
+    chip.classList.remove('hidden');
+  }
+
+  // ---------- Trip picker panel ----------
+  // One shared .floating-panel for two distinct modes — see the HTML comment above
+  // #trip-picker-panel for why this is a plain floating panel rather than #view-drawer.
+  //   'device': picking a trip calls setActiveTrip() (state.settings.activeTripId).
+  //   'form':   picking a trip calls tripPickerFormCallback(tripId) instead — the caller (a
+  //             pin/track/polygon/bearing modal's trip-picker-btn) only stages the value on
+  //             its own button; the real commit happens later via that modal's normal Save,
+  //             exactly like every other field in the same form (name, notes, tags, date...).
+  var tripPickerMode = null; // 'device' | 'form'
+  var tripPickerFormCallback = null; // function(tripId) — only used when mode === 'form'
+  var tripPickerFormCurrentId = null; // the form's currently-staged tripId, for highlighting
+
+  function setTripPickerButtonDisplay(btnId, tripId){
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.dataset.tripId = tripId || '';
+    var trip = tripId ? tripById(tripId) : null;
+    btn.textContent = trip ? trip.name : 'No trip';
+    btn.classList.toggle('no-trip', !trip);
+  }
+
+  function openTripPickerForDevice(){
+    closeAllPanels();
+    tripPickerMode = 'device';
+    tripPickerFormCallback = null;
+    tripPickerFormCurrentId = null;
+    document.getElementById('trip-picker-title').textContent = 'Switch trip';
+    document.getElementById('trip-picker-new-create-btn').textContent = 'Create + activate';
+    document.getElementById('trip-picker-search').value = '';
+    document.getElementById('trip-picker-new-form').classList.add('hidden');
+    document.getElementById('trip-picker-new-name').value = '';
+    renderTripPickerList();
+    document.getElementById('trip-picker-panel').classList.remove('hidden');
+  }
+
+  // currentTripId: whatever this form field currently has staged (its button's data-trip-id) —
+  // used only to highlight the matching row, never read/written to any real item here.
+  function openTripPickerForForm(currentTripId, onSelect){
+    closeAllPanels();
+    tripPickerMode = 'form';
+    tripPickerFormCallback = onSelect;
+    tripPickerFormCurrentId = currentTripId || null;
+    document.getElementById('trip-picker-title').textContent = 'Set trip';
+    document.getElementById('trip-picker-new-create-btn').textContent = 'Create + assign';
+    document.getElementById('trip-picker-search').value = '';
+    document.getElementById('trip-picker-new-form').classList.add('hidden');
+    document.getElementById('trip-picker-new-name').value = '';
+    renderTripPickerList();
+    document.getElementById('trip-picker-panel').classList.remove('hidden');
+  }
+
+  function closeTripPickerPanel(){
+    document.getElementById('trip-picker-panel').classList.add('hidden');
+    tripPickerMode = null;
+    tripPickerFormCallback = null;
+    tripPickerFormCurrentId = null;
+  }
+
+  // Search box: substring-filters computeTripsPresent()'s real trips (the NO_TRIP_LABEL
+  // sentinel entry is excluded — "no trip" is offered separately below, never as a filterable
+  // row) — typing here only ever filters what's rendered, it can never itself create anything.
+  function renderTripPickerList(){
+    var query = document.getElementById('trip-picker-search').value.trim().toLowerCase();
+    var listEl = document.getElementById('trip-picker-list');
+    var trips = computeTripsPresent().filter(function(t){ return t.key !== NO_TRIP_LABEL; });
+    var filtered = query ? trips.filter(function(t){ return t.label.toLowerCase().indexOf(query) !== -1; }) : trips;
+    var activeId = tripPickerMode === 'device' ? state.settings.activeTripId : tripPickerFormCurrentId;
+    listEl.innerHTML = '';
+    if (!filtered.length){
+      var msg = document.createElement('p');
+      msg.className = 'hint';
+      msg.style.margin = '8px 0';
+      msg.textContent = trips.length ? 'No trips match.' : 'No trips yet — create one below.';
+      listEl.appendChild(msg);
+    } else {
+      filtered.forEach(function(t){
+        var trip = tripById(t.key);
+        var row = document.createElement('div');
+        row.className = 'trip-picker-row' + (t.key === activeId ? ' active' : '');
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'trip-picker-row-name';
+        nameSpan.textContent = t.label;
+        var metaSpan = document.createElement('span');
+        metaSpan.className = 'trip-picker-row-meta';
+        metaSpan.textContent = trip ? relativeTimeLabel(trip.updatedAt || trip.createdAt) : '';
+        row.appendChild(nameSpan);
+        row.appendChild(metaSpan);
+        row.addEventListener('click', function(){ selectTripFromPicker(t.key); });
+        listEl.appendChild(row);
+      });
+    }
+    var noTripRow = document.getElementById('trip-picker-no-trip-row');
+    noTripRow.innerHTML = '';
+    var noTripBtn = document.createElement('button');
+    noTripBtn.className = 'link-btn';
+    if (tripPickerMode === 'device'){
+      noTripBtn.textContent = 'End trip — browse with no trip';
+      noTripBtn.addEventListener('click', function(){ setActiveTrip(null); closeTripPickerPanel(); });
+    } else {
+      noTripBtn.textContent = 'No trip';
+      noTripBtn.addEventListener('click', function(){ selectTripFromPicker(null); });
+    }
+    noTripRow.appendChild(noTripBtn);
+  }
+
+  function selectTripFromPicker(tripId){
+    if (tripPickerMode === 'device'){
+      setActiveTrip(tripId);
+    } else if (tripPickerMode === 'form' && tripPickerFormCallback){
+      tripPickerFormCallback(tripId);
+    }
+    closeTripPickerPanel();
+  }
+
+  // "+ New trip" — a real inline mini-form (name input + Cancel/Create), not a bare prompt()
+  // like quickAddTag's tag shortcut, per the batch spec. Dedup-safe via the existing
+  // findOrCreateTripByName (exact-string match) — creating a trip that already exists by name
+  // just reuses it rather than creating a duplicate.
+  function createTripFromPicker(){
+    var name = document.getElementById('trip-picker-new-name').value.trim();
+    if (!name){ showToast('Give the trip a name first'); return; }
+    var trip = findOrCreateTripByName(name);
+    refreshTripSuggestions();
+    renderTripChips();
+    scheduleSave();
+    selectTripFromPicker(trip.id);
+  }
+
+  // ---------- Active Trip startup prompt ----------
+  // Shows every single time the app opens while a trip is active — not gated behind any
+  // "only after inactivity" or "only once" check, per the batch spec (deliberate: this is a
+  // per-load confirmation, not a one-time onboarding-style notice). Skipped entirely (not
+  // shown, not even an empty modal) when no trip is active. Deliberately NOT in the Escape-key
+  // handler's hidden-modal list and has no backdrop-dismiss (shared by every .modal-overlay in
+  // this file) — every one of its 3 buttons is a real decision, so there's no accidental way
+  // past it.
+  function maybeShowTripStartupPrompt(){
+    var trip = getActiveTrip();
+    if (!trip) return;
+    document.getElementById('trip-startup-name').textContent = trip.name;
+    document.getElementById('trip-startup-modal').classList.remove('hidden');
   }
 
   function escapeHtml(s){
@@ -7710,13 +8011,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openTrackModal(track){
-    refreshTripSuggestions();
     editingTrackId = track.id;
     pendingDrawPoints = null;
     document.getElementById('track-modal-title').textContent = 'Edit track';
     document.getElementById('track-name').value = track.name;
     document.getElementById('track-notes').value = track.notes || '';
-    document.getElementById('track-trip').value = tripDisplayName(track);
+    setTripPickerButtonDisplay('track-trip-btn', track.tripId);
     document.getElementById('track-date').value = tsToDateInputValue(track.created);
     document.getElementById('track-point-count').textContent = track.points.length + ' points' + (track.state ? ' · ' + track.state : '');
     document.getElementById('track-delete-btn').classList.remove('hidden');
@@ -7728,13 +8028,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openTrackModalForNew(points){
-    refreshTripSuggestions();
     editingTrackId = null;
     pendingDrawPoints = points;
     document.getElementById('track-modal-title').textContent = 'Save route';
     document.getElementById('track-name').value = defaultTrackName(Date.now());
     document.getElementById('track-notes').value = '';
-    document.getElementById('track-trip').value = '';
+    setTripPickerButtonDisplay('track-trip-btn', state.settings.activeTripId);
     document.getElementById('track-date').value = tsToDateInputValue(Date.now());
     document.getElementById('track-point-count').textContent = points.length + ' points';
     document.getElementById('track-delete-btn').classList.add('hidden');
@@ -7761,8 +8060,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.querySelectorAll('#track-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
     if (tags.length === 0) tags = ['uncategorized'];
     var notes = document.getElementById('track-notes').value.trim();
-    var tripName = document.getElementById('track-trip').value.trim();
-    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
+    var tripId = document.getElementById('track-trip-btn').dataset.tripId || null;
     var dateVal = dateInputValueToTs(document.getElementById('track-date').value);
 
     if (editingTrackId){
@@ -7867,7 +8165,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-modal-title').textContent = pin ? 'Edit pin' : 'Add pin';
     document.getElementById('pin-name').value = pin ? pin.name : defaultWaypointName(Date.now());
     document.getElementById('pin-notes').value = pin ? pin.notes : '';
-    document.getElementById('pin-trip').value = pin ? tripDisplayName(pin) : '';
+    // Editing shows the pin's current trip; a brand-new pin defaults to the active trip (Stage
+    // 2's auto-tag-on-creation), still overridable via the same picker before Save.
+    setTripPickerButtonDisplay('pin-trip-btn', pin ? pin.tripId : state.settings.activeTripId);
     document.getElementById('pin-date').value = tsToDateInputValue(pin ? pin.created : Date.now());
     renderPinTagChips(pin ? pin.tags.slice() : []);
     renderPinStatusPicker(pin ? (pin.status || 'escout') : 'escout');
@@ -7937,8 +8237,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tags = selectedPinTagIds();
     if (tags.length === 0) tags = ['uncategorized'];
     var notes = document.getElementById('pin-notes').value.trim();
-    var tripName = document.getElementById('pin-trip').value.trim();
-    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
+    var tripId = document.getElementById('pin-trip-btn').dataset.tripId || null;
     var dateVal = dateInputValueToTs(document.getElementById('pin-date').value);
     var status = _selectedPinStatus || 'escout';
 
@@ -9125,12 +9424,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ---------- Polygon modal ----------
   function openPolygonModal(polygon){
-    refreshTripSuggestions();
     editingPolygonId = polygon ? polygon.id : null;
     document.getElementById('polygon-modal-title').textContent = polygon ? 'Edit area' : 'New area';
     document.getElementById('polygon-name').value = polygon ? polygon.name : defaultAreaName(Date.now());
     document.getElementById('polygon-notes').value = polygon ? (polygon.notes || '') : '';
-    document.getElementById('polygon-trip').value = polygon ? tripDisplayName(polygon) : '';
+    setTripPickerButtonDisplay('polygon-trip-btn', polygon ? polygon.tripId : state.settings.activeTripId);
     document.getElementById('polygon-date').value = polygon
       ? (tsToDateInputValue(polygon.created) || '')
       : tsToDateInputValue(Date.now());
@@ -9171,8 +9469,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tags = [];
     document.querySelectorAll('#polygon-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
     if (!tags.length) tags = ['uncategorized'];
-    var tripName = document.getElementById('polygon-trip').value.trim();
-    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
+    var tripId = document.getElementById('polygon-trip-btn').dataset.tripId || null;
     var dateVal = dateInputValueToTs(document.getElementById('polygon-date').value);
     var notes = document.getElementById('polygon-notes').value.trim();
 
@@ -9325,12 +9622,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function openBearingModal(b){
-    refreshTripSuggestions();
     editingBearingId = b ? b.id : null;
     document.getElementById('bearing-modal-title').textContent = b ? 'Edit bearing' : 'Save bearing';
     document.getElementById('bearing-name').value = b ? b.name : '';
     document.getElementById('bearing-notes').value = b ? (b.notes || '') : '';
-    document.getElementById('bearing-trip').value = b ? tripDisplayName(b) : '';
+    setTripPickerButtonDisplay('bearing-trip-btn', b ? b.tripId : state.settings.activeTripId);
     document.getElementById('bearing-date').value = b ? (tsToDateInputValue(b.created) || '') : tsToDateInputValue(Date.now());
     selectedBearingStatus = b ? (b.status || 'escout') : 'escout';
     renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
@@ -9436,7 +9732,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-modal-title').textContent = 'Save bearing';
     document.getElementById('bearing-name').value = autoName;
     document.getElementById('bearing-notes').value = '';
-    document.getElementById('bearing-trip').value = '';
+    setTripPickerButtonDisplay('bearing-trip-btn', state.settings.activeTripId);
     document.getElementById('bearing-date').value = tsToDateInputValue(Date.now());
     selectedBearingStatus = 'escout';
     renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
@@ -9459,8 +9755,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function saveBearingFromModal(){
     var name = document.getElementById('bearing-name').value.trim();
     var notes = document.getElementById('bearing-notes').value.trim();
-    var tripName = document.getElementById('bearing-trip').value.trim();
-    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
+    var tripId = document.getElementById('bearing-trip-btn').dataset.tripId || null;
     var dateVal = dateInputValueToTs(document.getElementById('bearing-date').value);
     var modal = document.getElementById('bearing-modal');
     var tags = [];
@@ -11958,7 +12253,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // Canonical list of floating popover panels — shared by closeAllPanels/closeAllPanels_except
   // so a panel only has to be added in one place to get consistent close-on-switch behavior.
-  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel'];
+  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel'];
   // Scrim is scoped to pure configuration/selection popovers that actually overlay the map —
   // deliberately EXCLUDES sunrise-panel and compass-panel, both of which need the map itself
   // still interactive while open (sunrise-panel's sun-arc preview updates live as you pan the
@@ -11970,7 +12265,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // full-screen scrim outside #sidebar's subtree, so a scrim covering them would just swallow
   // their own clicks with no way to fix it short of restructuring the DOM. They don't overlay
   // the map anyway (they render inside the sidebar's own header), so they don't need one.
-  var PANEL_SCRIM_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel'];
+  var PANEL_SCRIM_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel'];
   // Broader list for the outside-click-dismiss listener, which isn't affected by the stacking
   // issue above (it's a plain event listener, not a DOM element competing for paint order) —
   // this keeps the dropdown menus' existing dismiss-on-outside-click behavior.
@@ -13322,6 +13617,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.gpsFollow === undefined) state.settings.gpsFollow = false;
             if (state.settings.clusterPins === undefined) state.settings.clusterPins = true;
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
+            if (state.settings.activeTripId === undefined) state.settings.activeTripId = null;
             if (state.settings.terrain3dOn === undefined) state.settings.terrain3dOn = false;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
@@ -14143,8 +14439,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
       b.name = document.getElementById('bearing-name').value.trim() || b.name;
       b.notes = document.getElementById('bearing-notes').value.trim();
-      var remapTripName = document.getElementById('bearing-trip').value.trim();
-      b.tripId = remapTripName ? findOrCreateTripByName(remapTripName).id : null;
+      b.tripId = document.getElementById('bearing-trip-btn').dataset.tripId || null;
       b.status = selectedBearingStatus;
       b.tags = tags.length ? tags : (b.tags || ['uncategorized']);
       scheduleSave();
@@ -14245,6 +14540,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeAllPanels();
       if (willOpen) panel.classList.remove('hidden');
     });
+
+    // ---------- Active Trip UI (Stage 2) ----------
+    document.getElementById('active-trip-chip').addEventListener('click', function(e){
+      e.stopPropagation(); // see the weather-panel/OUTSIDE_CLICK_DISMISS_IDS gotcha this mirrors
+      openTripPickerForDevice();
+    });
+
+    document.getElementById('trip-startup-continue-btn').addEventListener('click', function(){
+      document.getElementById('trip-startup-modal').classList.add('hidden');
+    });
+    document.getElementById('trip-startup-new-btn').addEventListener('click', function(){
+      document.getElementById('trip-startup-modal').classList.add('hidden');
+      openTripPickerForDevice();
+    });
+    document.getElementById('trip-startup-end-btn').addEventListener('click', function(){
+      setActiveTrip(null);
+      document.getElementById('trip-startup-modal').classList.add('hidden');
+    });
+
+    document.getElementById('trip-picker-close-btn').addEventListener('click', function(e){
+      e.stopPropagation();
+      closeTripPickerPanel();
+    });
+    document.getElementById('trip-picker-search').addEventListener('input', renderTripPickerList);
+    document.getElementById('trip-picker-new-btn').addEventListener('click', function(){
+      document.getElementById('trip-picker-new-form').classList.remove('hidden');
+      document.getElementById('trip-picker-new-name').focus();
+    });
+    document.getElementById('trip-picker-new-cancel-btn').addEventListener('click', function(){
+      document.getElementById('trip-picker-new-form').classList.add('hidden');
+      document.getElementById('trip-picker-new-name').value = '';
+    });
+    document.getElementById('trip-picker-new-create-btn').addEventListener('click', createTripFromPicker);
+
+    // Each of the 4 item modals' trip field is now a picker button (Stage 2) — tapping it
+    // opens the same trip-picker-panel in 'form' mode, staging the pick on the button itself
+    // (dataset.tripId); the actual commit happens in that modal's own save*FromModal, exactly
+    // like every other field. Same shared handler shape for all four.
+    ['pin-trip-btn', 'track-trip-btn', 'polygon-trip-btn', 'bearing-trip-btn'].forEach(function(btnId){
+      document.getElementById(btnId).addEventListener('click', function(e){
+        e.stopPropagation();
+        var btn = this;
+        openTripPickerForForm(btn.dataset.tripId || null, function(newTripId){
+          setTripPickerButtonDisplay(btnId, newTripId);
+        });
+      });
+    });
+
     document.getElementById('google-signin-btn').addEventListener('click', function(){
       if (window.FieldMapSync) window.FieldMapSync.signIn();
       else showToast('Sync is still loading — try again in a moment');
@@ -14684,6 +15027,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       setTimeout(function(){
         document.getElementById('onboarding-modal').classList.remove('hidden');
       }, 800);
+    }
+    // Active Trip (Stage 2): indicator reflects activeTripId from the very first frame; the
+    // startup prompt itself is skipped on a genuinely first-ever launch (shouldShowOnboarding
+    // true) — a brand-new install can't have an activeTripId set yet anyway, and this avoids
+    // ever stacking two centered modals with no arbitration between them.
+    updateActiveTripIndicator();
+    if (!shouldShowOnboarding()){
+      setTimeout(maybeShowTripStartupPrompt, 800);
     }
   }).catch(function(err){
     showBootFailure(err);
