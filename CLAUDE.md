@@ -6,6 +6,11 @@ FieldMap is a PWA for hunters/outdoor recreationists to manage pins, routes, are
 ## Current state
 Pins, routes, areas, and bearings are all fully ported to MapLibre — draw, edit, vertex/endpoint editing,
 and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any of those four item types.
+The standalone Measure tool is also now fully ported (Session 15) — see Architecture notes' "Measure tool"
+entry. A codebase-wide audit (Session 15, `\bL\.[a-zA-Z]+\(` grep across the whole file) confirmed these are
+the ONLY remaining functional Leaflet dependencies anywhere: elevation tap, compass bearing lines, the GPX
+search-result marker, all overlay toggles, the sun-path arc, and the offline-boundary rectangles were all
+already fully MapLibre-native before this session, despite CLAUDE.md previously listing them as broken.
 - Pins render as maplibregl.Marker with custom SVG HTML (buildPinMarkerHtml)
 - Routes/areas/bearings all render from shared GeoJSON sources (tracks-source, polygons-source,
   bearings-source) rather than one Leaflet layer per item — see Architecture notes
@@ -16,8 +21,6 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   marker visibility (see Architecture notes) — proper clustering to be implemented in a later session
 
 ## What's broken (expected, to be fixed in later sessions)
-- Draw/measure tools other than route/area drawing (the standalone "measure" ruler tool, elevation tap,
-  compass bearing lines, GPX search-result marker) — still L.circleMarker/L.polyline based
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
   NOT converted to the new #view-drawer — deliberately out of scope for both drawer-unification batches (not
   named in either batch's spec), not a bug
@@ -25,11 +28,12 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   use their classic centered modal — only EDITING an existing item (or continuing to refine a just-quick-
   saved tap-anywhere pin) expands the drawer in place; this was a deliberate scope line in the expand-in-
   place batch, not an oversight — see Architecture notes' #view-drawer entry
-- All overlay toggles (FSTopo, MVUM, public land, hydro, snow depth, NLCD)
-- Sun-path arc, offline-area boundary rectangles — still L.geoJSON/L.rectangle based
-- GPS accuracy circle (gpsAccCircle) — needs MapLibre source/layer
+- GPS accuracy circle (gpsAccCircle) — declared but never assigned/rendered anywhere; confirmed (Session 15
+  audit) this is a never-built feature, not a stalled Leaflet port — there's no leftover L.circle code for it
+  either. Needs a MapLibre source/layer built from scratch, not a port.
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
-  polygons drawn via the (still-Leaflet) offline-boundary rectangles — not in scope, different feature
+  the offline-boundary rectangles (these are read-only display outlines, not user-drawn/editable shapes) —
+  not in scope, different feature
 - FIXED performance bug (was: every GMU toggle-on, even a cache hit, paid a 20-40+ second synchronous
   main-thread cost): buildLabelPointFeatureCollection's per-feature pole-of-inaccessibility grid search
   (bestLabelPointForGeometry) is genuinely expensive on real government boundary data (Idaho: 100 features/
@@ -178,6 +182,15 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   polygonAreaDisplay). Verified full cycle (ac → sq ft → sq mi → back to the original value) and confirmed
   the meta row stays single-line at real mobile width (no reintroduction of the wrapping bug fixed the
   session before this one).
+- Measure tool (redrawMeasureLine/createMeasureMarker/clearMeasure/handleMeasureClick): a standalone ruler,
+  separate from Draw Route — measurePoints (plain lat/lng objects) is repopulated into
+  measure-preview-source (GeoJSON LineString, dashed `#c2622d`) on every tap via redrawMeasureLine, same
+  resync-on-style-switch pattern as the other draw previews. Each tapped point also gets a small non-
+  interactive maplibregl.Marker dot (createMeasureMarker) — deliberately not draggable/deletable
+  individually, since Measure is cleared all at once (Clear button / toggling the tool off), not edited like
+  a saved shape. Was previously L.circleMarker/L.polyline, throwing `L is not defined` on the very first tap
+  since Leaflet was removed — this was the one item on the old "what's broken" list that was still genuinely
+  broken (see Session 15).
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -463,3 +476,23 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   popups confirmed unchanged (no card, same footer); area unit cycles through a full rotation back to its
   starting value and the meta row stays single-line at mobile width (no regression to the fix from the
   session before this one).
+- Session 15: Fixed the Measure tool (`Uncaught ReferenceError: L is not defined` — a genuine, never-ported
+  Leaflet dependency) and, before touching anything else, audited every item on the "what's broken" list via
+  a literal `\bL\.[a-zA-Z]+\(` grep across the whole file (the actual discriminator between a real Leaflet
+  dependency and a coincidentally-named identifier), cross-checked against a direct read of each named
+  feature's current code. Result: of 8 previously-listed concerns, only the Measure tool had a real Leaflet
+  call left. Elevation tap, compass bearing lines, the GPX search-result marker, all 6 overlay toggles, the
+  sun-path arc, and the offline-boundary rectangles were all already fully MapLibre-native — the list had
+  gone stale as a side effect of work in earlier sessions that never updated it. GPS accuracy circle
+  (gpsAccCircle) is a different category entirely: confirmed never implemented at all (no assignment, no
+  render call, no leftover Leaflet code to port from) — reported as a gap to flag, not silently built as new
+  scope. The same audit surfaced one more genuine crash bug not on the original list: zoomToVisible()'s
+  `L.latLngBounds([])`, called from 4 sites (tag/state/trip/date filter-chip toggles) — fixed the same way,
+  swapped for `maplibregl.LngLatBounds`, extending per-point (`[lng,lat]` order) since MapLibre's bounds
+  object doesn't accept a Leaflet-style raw-array-of-points argument the way `.extend()` used to; also
+  handles track points' historical dual format ([[lat,lng],...] or [{lat,lng},...], same normalization
+  already used by trackDistanceMiles/trackStartLatLng elsewhere in the file). Verified both fixes live via
+  Playwright: Measure tool produces a correct distance/bearing readout across 3 taps with the dashed preview
+  line rendering exactly as designed (confirmed visually via screenshot, not just DOM state), Clear resets
+  state and exits measure-mode correctly, and toggling a filter chip (the zoomToVisible call path) fires with
+  zero console errors. `node --check` on all 4 extracted inline `<script>` blocks confirmed clean syntax.

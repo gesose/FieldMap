@@ -2287,7 +2287,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.24.2';
+  var APP_VERSION = '2.24.3';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5606,11 +5606,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function zoomToVisible(){
     var query = document.getElementById('search-input').value.trim().toLowerCase();
-    var bounds = L.latLngBounds([]);
+    var bounds = new maplibregl.LngLatBounds();
     var any = false;
-    state.pins.forEach(function(p){ if (itemVisible(p, query)){ bounds.extend([p.lat, p.lng]); any = true; } });
-    state.tracks.forEach(function(t){ if (itemVisible(t, query)){ bounds.extend(t.points); any = true; } });
-    if (any && bounds.isValid()) map.fitBounds(bounds, { padding:[50,50], maxZoom:16 });
+    state.pins.forEach(function(p){ if (itemVisible(p, query)){ bounds.extend([p.lng, p.lat]); any = true; } });
+    // track.points may be [[lat,lng],...] or [{lat,lng},...] — same dual-format handling as
+    // trackDistanceMiles/trackStartLatLng elsewhere in the file.
+    state.tracks.forEach(function(t){
+      if (itemVisible(t, query)){
+        t.points.forEach(function(pt){
+          var lat = Array.isArray(pt) ? pt[0] : pt.lat, lng = Array.isArray(pt) ? pt[1] : pt.lng;
+          bounds.extend([lng, lat]);
+        });
+        any = true;
+      }
+    });
+    if (any && !bounds.isEmpty()) map.fitBounds(bounds, { padding:50, maxZoom:16 });
   }
 
   // ---------- Pin markers ----------
@@ -6813,6 +6823,27 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Live preview line for the standalone Measure tool (handleMeasureClick) — same pattern
+    // as draw-preview-line above. Ported from the old Leaflet L.polyline version, which threw
+    // ReferenceError: L is not defined on the very first measure tap (L was never actually
+    // defined post-migration) — confirmed via direct audit, not assumed from the stale
+    // CLAUDE.md "what's broken" list.
+    if (!map.getSource('measure-preview-source')){
+      map.addSource('measure-preview-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('measure-preview-line')){
+      map.addLayer({
+        id: 'measure-preview-line',
+        type: 'line',
+        source: 'measure-preview-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-width': 2, 'line-color': '#c2622d', 'line-dasharray': [2, 2] }
+      });
+    }
+
     // Live preview for an in-progress "Edit shape" vertex edit — shared by both track
     // and polygon vertex-editing (mutually exclusive UI modes, never both live at once).
     // MapLibre's fill renderer does NOT skip LineString features — it triangulates
@@ -6988,6 +7019,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     redrawDrawLine();
     redrawPolygonDraft();
     redrawBearingDrawPreview();
+    redrawMeasureLine();
     if (vertexEditSyncFn) vertexEditSyncFn();
     if (bearingEndpointSyncFn) bearingEndpointSyncFn();
     if (SUNRISE_ARC_ON && !document.getElementById('sunrise-panel').classList.contains('hidden')) renderSunArc(map.getCenter(), sunDate);
@@ -8707,23 +8739,47 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       showToast("Couldn't snap to trail — check your connection or that the points are near a mapped trail/road", 5000);
     });
   }
+  // Repopulates measure-preview-source from measurePoints — called after every measure tap
+  // and once at the end of reinitializeLayers() (a style switch wipes the GeoJSON source/
+  // layer, same as draw/polygon/bearing's own preview lines; measurePoints itself, plain JS
+  // state, survives on its own). Mirrors redrawDrawLine() exactly.
+  function redrawMeasureLine(){
+    if (!map || !map.getSource('measure-preview-source')) return;
+    var coords = measurePoints.length > 1 ? measurePoints.map(function(p){ return [p.lng, p.lat]; }) : [];
+    map.getSource('measure-preview-source').setData({
+      type: 'FeatureCollection',
+      features: coords.length ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }] : []
+    });
+  }
+
+  // Small filled dot per tapped point — deliberately non-interactive (no drag, no delete
+  // popup, unlike the draw-route vertex markers): Measure is a simple, ephemeral ruler,
+  // cleared all at once by clearMeasure, not an editable saved shape.
+  function createMeasureMarker(latlng){
+    var el = document.createElement('div');
+    el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#c2622d;' +
+      'border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.5);pointer-events:none;';
+    return new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([latlng.lng, latlng.lat])
+      .addTo(map);
+  }
+
   function clearMeasure(){
     measurePoints = [];
-    measureMarkers.forEach(function(m){ map.removeLayer(m); });
+    measureMarkers.forEach(function(m){ m.remove(); });
     measureMarkers = [];
-    if (measureLine){ map.removeLayer(measureLine); measureLine = null; }
+    redrawMeasureLine();
     document.getElementById('measure-result').classList.add('hidden');
   }
 
   function handleMeasureClick(latlng){
-    var marker = L.circleMarker(latlng, { radius:6, color:'#c2622d', fillColor:'#c2622d', fillOpacity:1, weight:2 }).addTo(map);
+    var marker = createMeasureMarker(latlng);
     measureMarkers.push(marker);
     measurePoints.push(latlng);
 
     if (measurePoints.length < 2) return;
 
-    if (measureLine) map.removeLayer(measureLine);
-    measureLine = L.polyline(measurePoints, { color:'#c2622d', weight:2, dashArray:'6,6' }).addTo(map);
+    redrawMeasureLine();
 
     var total = 0;
     for (var i=1;i<measurePoints.length;i++){
