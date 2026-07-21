@@ -2287,7 +2287,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.24.3';
+  var APP_VERSION = '2.25.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2367,6 +2367,7 @@
     polygons: [],
     bearings: [],
     tags: SEED_TAGS.slice(),
+    trips: [],
     tombstones: {},
     lastLocalEditAt: 0,
     settings: {
@@ -4029,6 +4030,80 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return newTag.id;
   }
 
+  // ---------- Trips (Active Trip project, Stage 1 — see CLAUDE.md) ----------
+  // Trip is now a real entity (state.trips, synced exactly like tags: an array field on the
+  // same users/{uid} doc, via the same mergeArray/tombstone machinery in mergeStates) rather
+  // than a free-text string repeated on every item. Items reference it via .tripId; the trip
+  // NAME is always resolved live through tripById() for display, never cached onto the item,
+  // so a future rename propagates everywhere with nothing left stale.
+  function tripById(id){
+    return (state.trips || []).find(function(t){ return t.id === id; }) || null;
+  }
+
+  // Resolves an item's trip name for display — '' if it has no tripId (or the tripId points
+  // at a trip that's since been deleted, which should never normally happen since deletes are
+  // meant to go through deleteTripById, but a dangling reference degrades to "no trip" rather
+  // than throwing).
+  function tripDisplayName(item){
+    if (!item || !item.tripId) return '';
+    var t = tripById(item.tripId);
+    return t ? t.name : '';
+  }
+
+  function tripUid(){
+    return 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+  }
+
+  // Finds an existing trip with this exact name (case-sensitive, matching the exact-string
+  // grouping computeTripsPresent already used before this migration — deliberately NOT
+  // case-insensitive like quickAddTag's tag dedup, since the migration's contract is "one Trip
+  // per distinct string found", and two differently-cased trip strings were already shown as
+  // two distinct groups pre-migration) or creates one. Used by every write path that used to
+  // set item.trip directly, plus the migration itself — the single source of truth for
+  // string -> Trip resolution so both stay in exact agreement.
+  function findOrCreateTripByName(name){
+    name = (name || '').trim();
+    if (!name) return null;
+    var existing = (state.trips || []).find(function(t){ return t.name === name; });
+    if (existing) return existing;
+    var trip = { id: tripUid(), name: name, createdAt: Date.now(), updatedAt: Date.now() };
+    state.trips.push(trip);
+    return trip;
+  }
+
+  // Tombstone-based delete, matching the pattern already proven for pins/tracks/polygons/
+  // bearings/tags — this is the exact bug class fixed for bearings earlier this session
+  // (deleteBearingById was missing its recordTombstone call), so every trip delete path must
+  // call this. Items still pointing at the deleted tripId are left as-is (dangling reference
+  // degrades gracefully via tripDisplayName/tripById returning null) rather than silently
+  // reassigned — Stage 2 (Active Trip UI) owns any reassignment-on-delete UX decision.
+  function deleteTripById(id){
+    state.trips = state.trips.filter(function(t){ return t.id !== id; });
+    recordTombstone(id);
+    scheduleSave();
+  }
+
+  // One-time migration: converts every pin/track/polygon/bearing's old free-text .trip string
+  // to a real .tripId reference (see CLAUDE.md's Active Trip Stage 1 notes). Idempotent by
+  // construction — an item with .tripId already set is left completely alone (its old .trip
+  // string, if any, is never re-read), so running this on every load/merge is always safe and
+  // never creates a duplicate Trip entity for a string that's already been migrated. The old
+  // .trip field itself is never cleared — kept dormant as a one-release rollback net. Returns
+  // whether anything actually changed, matching migrateRepeatStatus's return-value convention,
+  // so callers only persist when there was real work to do.
+  function migrateTripsToTripId(){
+    var changed = false;
+    [state.pins, state.tracks, state.polygons || [], state.bearings || []].forEach(function(list){
+      list.forEach(function(item){
+        if (item.tripId) return; // already migrated (or created post-migration with a tripId directly)
+        if (!item.trip) return; // never had a trip — correctly stays without a tripId
+        var trip = findOrCreateTripByName(item.trip);
+        if (trip){ item.tripId = trip.id; changed = true; }
+      });
+    });
+    return changed;
+  }
+
   function escapeHtml(s){
     var d = document.createElement('div');
     d.textContent = s;
@@ -5573,12 +5648,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         var tagsOk = item.tags.some(function(tid){ return activeTagFilters[tid] !== false; });
         if (!tagsOk) return false;
       }
-      var tripLabel = item.trip || NO_TRIP_LABEL;
-      if (activeTripFilters[tripLabel] === false) return false;
+      var tripKey = item.tripId || NO_TRIP_LABEL;
+      if (activeTripFilters[tripKey] === false) return false;
       var dl = dateLabelFor(item.created);
       if (dl && activeDateFilters[dl] === false) return false;
       if (query){
-        var hay = (item.name + ' ' + (item.notes||'') + ' ' + (item.trip||'')).toLowerCase();
+        var hay = (item.name + ' ' + (item.notes||'') + ' ' + tripDisplayName(item)).toLowerCase();
         if (hay.indexOf(query) === -1) return false;
       }
       return true;
@@ -5586,12 +5661,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tagsOk = (item.tags||[]).some(function(tid){ return activeTagFilters[tid] !== false; });
     if (!tagsOk) return false;
     if (item.state && activeStateFilters[item.state] === false) return false;
-    var tripLabel = item.trip || NO_TRIP_LABEL;
-    if (activeTripFilters[tripLabel] === false) return false;
+    var tripKey = item.tripId || NO_TRIP_LABEL;
+    if (activeTripFilters[tripKey] === false) return false;
     var dl = dateLabelFor(item.created);
     if (dl && activeDateFilters[dl] === false) return false;
     if (query){
-      var hay = (item.name + ' ' + (item.notes||'') + ' ' + (item.trip||'')).toLowerCase();
+      var hay = (item.name + ' ' + (item.notes||'') + ' ' + tripDisplayName(item)).toLowerCase();
       if (hay.indexOf(query) === -1) return false;
     }
     return true;
@@ -6001,7 +6076,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' +
         statusBadge +
-        '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(tag.label) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (pin.trip ? ' · ' + escapeHtml(pin.trip) : '') + '</span>' +
+        '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(tag.label) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (tripDisplayName(pin) ? ' · ' + escapeHtml(tripDisplayName(pin)) : '') + '</span>' +
       '</div>' +
       notes +
       '<div class="pin-popup-coords pin-popup-coords-row">' +
@@ -7100,7 +7175,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var nameEl = document.createElement('div'); nameEl.className = 'cluster-item-name'; nameEl.textContent = p.name;
       var metaEl = document.createElement('div'); metaEl.className = 'cluster-item-meta';
       var tag = tagById((p.tags && p.tags[0]) || 'uncategorized');
-      metaEl.textContent = (tag ? tag.label : '') + (p.state ? ' · ' + p.state : '') + (p.trip ? ' · ' + p.trip : '');
+      metaEl.textContent = (tag ? tag.label : '') + (p.state ? ' · ' + p.state : '') + (tripDisplayName(p) ? ' · ' + tripDisplayName(p) : '');
       textEl.appendChild(nameEl); textEl.appendChild(metaEl);
       var actions = document.createElement('div'); actions.className = 'cluster-item-actions';
       var editBtn = document.createElement('button'); editBtn.className = 'btn btn-small'; editBtn.textContent = 'Edit';
@@ -7159,7 +7234,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
       '</div>' +
       '<div class="pin-popup-cat">' + escapeHtml(tagLabelsFor(track)) + ' · ' + distLabel + gainLossLabel +
-      (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
+      (track.state ? ' · ' + escapeHtml(track.state) : '') + (tripDisplayName(track) ? ' · ' + escapeHtml(tripDisplayName(track)) : '') + '</div>' +
       notes +
       createdLabel +
       conditionsCard +
@@ -7633,7 +7708,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('track-modal-title').textContent = 'Edit track';
     document.getElementById('track-name').value = track.name;
     document.getElementById('track-notes').value = track.notes || '';
-    document.getElementById('track-trip').value = track.trip || '';
+    document.getElementById('track-trip').value = tripDisplayName(track);
     document.getElementById('track-date').value = tsToDateInputValue(track.created);
     document.getElementById('track-point-count').textContent = track.points.length + ' points' + (track.state ? ' · ' + track.state : '');
     document.getElementById('track-delete-btn').classList.remove('hidden');
@@ -7678,12 +7753,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.querySelectorAll('#track-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
     if (tags.length === 0) tags = ['uncategorized'];
     var notes = document.getElementById('track-notes').value.trim();
-    var trip = document.getElementById('track-trip').value.trim();
+    var tripName = document.getElementById('track-trip').value.trim();
+    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
     var dateVal = dateInputValueToTs(document.getElementById('track-date').value);
 
     if (editingTrackId){
       var track = state.tracks.find(function(t){ return t.id === editingTrackId; });
-      track.name = name; track.tags = tags; track.notes = notes; track.trip = trip;
+      track.name = name; track.tags = tags; track.notes = notes; track.tripId = tripId;
       track.status = selectedTrackStatus;
       track.updatedAt = Date.now();
       if (dateVal) track.created = dateVal;
@@ -7694,7 +7770,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     } else if (pendingDrawPoints){
       var pts = pendingDrawPoints.map(function(p){ return [p.lat, p.lng]; });
       var newTrack = {
-        id: uid(), name: name, points: pts, tags: tags, notes: notes, trip: trip,
+        id: uid(), name: name, points: pts, tags: tags, notes: notes, tripId: tripId,
         status: selectedTrackStatus,
         created: dateVal || Date.now(), updatedAt: Date.now(), source: 'drawn',
         distMiles: trackDistanceMiles(pts),
@@ -7783,7 +7859,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('pin-modal-title').textContent = pin ? 'Edit pin' : 'Add pin';
     document.getElementById('pin-name').value = pin ? pin.name : defaultWaypointName(Date.now());
     document.getElementById('pin-notes').value = pin ? pin.notes : '';
-    document.getElementById('pin-trip').value = pin ? (pin.trip || '') : '';
+    document.getElementById('pin-trip').value = pin ? tripDisplayName(pin) : '';
     document.getElementById('pin-date').value = tsToDateInputValue(pin ? pin.created : Date.now());
     renderPinTagChips(pin ? pin.tags.slice() : []);
     renderPinStatusPicker(pin ? (pin.status || 'escout') : 'escout');
@@ -7853,20 +7929,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tags = selectedPinTagIds();
     if (tags.length === 0) tags = ['uncategorized'];
     var notes = document.getElementById('pin-notes').value.trim();
-    var trip = document.getElementById('pin-trip').value.trim();
+    var tripName = document.getElementById('pin-trip').value.trim();
+    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
     var dateVal = dateInputValueToTs(document.getElementById('pin-date').value);
     var status = _selectedPinStatus || 'escout';
 
     if (editingPinId){
       var pin = state.pins.find(function(p){ return p.id === editingPinId; });
-      pin.name = name; pin.tags = tags; pin.notes = notes; pin.trip = trip; pin.status = status;
+      pin.name = name; pin.tags = tags; pin.notes = notes; pin.tripId = tripId; pin.status = status;
       pin.updatedAt = Date.now();
       if (dateVal) pin.created = dateVal;
       refreshMarkerPopup(pin);
     } else {
       var newPin = {
         id: uid(), lat: pendingLatLng.lat, lng: pendingLatLng.lng,
-        name: name, tags: tags, notes: notes, trip: trip, status: status,
+        name: name, tags: tags, notes: notes, tripId: tripId, status: status,
         created: dateVal || Date.now(), updatedAt: Date.now(), source: 'manual',
         state: stateForPoint(pendingLatLng.lat, pendingLatLng.lng)
       };
@@ -7982,7 +8059,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var elevationFt = tapAnywhereState.elevationFt;
       var newPin = {
         id: uid(), lat: latlng.lat, lng: latlng.lng,
-        name: name, tags: tags, notes: '', trip: '', status: 'escout',
+        name: name, tags: tags, notes: '', tripId: null, status: 'escout',
         created: Date.now(), updatedAt: Date.now(), source: 'tap-anywhere',
         state: stateForPoint(latlng.lat, latlng.lng)
       };
@@ -8858,7 +8935,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>' +
       '<div class="pin-popup-meta">' + tagLabelsFor(polygon) + areaLabel +
         (polygon.state ? ' · ' + polygon.state : '') +
-        (polygon.trip ? ' · ' + polygon.trip : '') + '</div>' +
+        (tripDisplayName(polygon) ? ' · ' + tripDisplayName(polygon) : '') + '</div>' +
       createdLabel +
       '</div>' +
       conditionsCard +
@@ -9045,7 +9122,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('polygon-modal-title').textContent = polygon ? 'Edit area' : 'New area';
     document.getElementById('polygon-name').value = polygon ? polygon.name : defaultAreaName(Date.now());
     document.getElementById('polygon-notes').value = polygon ? (polygon.notes || '') : '';
-    document.getElementById('polygon-trip').value = polygon ? (polygon.trip || '') : '';
+    document.getElementById('polygon-trip').value = polygon ? tripDisplayName(polygon) : '';
     document.getElementById('polygon-date').value = polygon
       ? (tsToDateInputValue(polygon.created) || '')
       : tsToDateInputValue(Date.now());
@@ -9086,7 +9163,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tags = [];
     document.querySelectorAll('#polygon-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
     if (!tags.length) tags = ['uncategorized'];
-    var trip = document.getElementById('polygon-trip').value.trim();
+    var tripName = document.getElementById('polygon-trip').value.trim();
+    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
     var dateVal = dateInputValueToTs(document.getElementById('polygon-date').value);
     var notes = document.getElementById('polygon-notes').value.trim();
 
@@ -9094,7 +9172,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var poly = state.polygons.find(function(p){ return p.id === editingPolygonId; });
       if (poly){
         poly.name = name; poly.status = selectedPolygonStatus; poly.tags = tags;
-        poly.trip = trip; poly.notes = notes;
+        poly.tripId = tripId; poly.notes = notes;
         poly.updatedAt = Date.now();
         if (dateVal) poly.created = dateVal;
         // refreshPolygonMap() just triggers a debounced source refresh and can't throw —
@@ -9107,7 +9185,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: uid(), name: name,
         points: pendingPolygonPoints || [],
         status: selectedPolygonStatus, fillOpacity: 0.18,
-        tags: tags, trip: trip, notes: notes,
+        tags: tags, tripId: tripId, notes: notes,
         created: dateVal || Date.now(), updatedAt: Date.now(),
         state: firstPt ? stateForPoint(firstPt.lat, firstPt.lng) : ''
       };
@@ -9153,7 +9231,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var notes = b.notes ? '<div class="pin-popup-notes">' + escapeHtml(b.notes) + '</div>' : '';
     var meta = bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '° · ' + b.distMiles.toFixed(2) + ' mi';
     if (catLabel) meta += ' · ' + catLabel;
-    if (b.trip) meta += ' · ' + escapeHtml(b.trip);
+    if (tripDisplayName(b)) meta += ' · ' + escapeHtml(tripDisplayName(b));
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
       '</div>' +
@@ -9244,7 +9322,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('bearing-modal-title').textContent = b ? 'Edit bearing' : 'Save bearing';
     document.getElementById('bearing-name').value = b ? b.name : '';
     document.getElementById('bearing-notes').value = b ? (b.notes || '') : '';
-    document.getElementById('bearing-trip').value = b ? (b.trip || '') : '';
+    document.getElementById('bearing-trip').value = b ? tripDisplayName(b) : '';
     document.getElementById('bearing-date').value = b ? (tsToDateInputValue(b.created) || '') : tsToDateInputValue(Date.now());
     selectedBearingStatus = b ? (b.status || 'escout') : 'escout';
     renderStatusPicker('bearing-status-row', 'bearing-status-label', function(k){ selectedBearingStatus = k; }, selectedBearingStatus);
@@ -9373,7 +9451,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function saveBearingFromModal(){
     var name = document.getElementById('bearing-name').value.trim();
     var notes = document.getElementById('bearing-notes').value.trim();
-    var trip = document.getElementById('bearing-trip').value.trim();
+    var tripName = document.getElementById('bearing-trip').value.trim();
+    var tripId = tripName ? findOrCreateTripByName(tripName).id : null;
     var dateVal = dateInputValueToTs(document.getElementById('bearing-date').value);
     var modal = document.getElementById('bearing-modal');
     var tags = [];
@@ -9383,7 +9462,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (editingBearingId){
       var b = state.bearings.find(function(x){ return x.id === editingBearingId; });
       if (b){
-        b.name = name; b.notes = notes; b.trip = trip; b.status = selectedBearingStatus; b.tags = tags;
+        b.name = name; b.notes = notes; b.tripId = tripId; b.status = selectedBearingStatus; b.tags = tags;
         b.updatedAt = Date.now();
         if (dateVal) b.created = dateVal;
         // refreshBearingMap() just triggers a debounced source refresh and can't throw —
@@ -9396,7 +9475,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         originLat: +modal.dataset.originLat, originLng: +modal.dataset.originLng,
         targetLat: +modal.dataset.targetLat, targetLng: +modal.dataset.targetLng,
         bearingDeg: +modal.dataset.bearingDeg, distMiles: +modal.dataset.distMiles,
-        status: selectedBearingStatus, tags: tags, notes: notes, trip: trip,
+        status: selectedBearingStatus, tags: tags, notes: notes, tripId: tripId,
         created: dateVal || Date.now(), updatedAt: Date.now()
       };
       state.bearings.push(newB);
@@ -9818,14 +9897,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Returns [{key, label}, ...] for every trip actually referenced by at least one item, plus
+  // a leading {key: NO_TRIP_LABEL, label: NO_TRIP_LABEL} entry if any item has no trip — key is
+  // a real tripId (stable across a rename) rather than the old free-text label, so
+  // activeTripFilters/eyeHiddenTrips/collapsedGroups now key off tripId too. Sorted by
+  // most-recent referencing item's activity (updatedAt, falling back to created for older
+  // items saved before updatedAt existed) descending — the no-trip bucket is always pinned
+  // first regardless, matching its previous unconditional-unshift behavior.
   function computeTripsPresent(){
-    var set = {};
+    var activity = {}; // tripId -> most recent referencing item's timestamp
     var hasNoTrip = false;
     state.pins.concat(state.tracks, state.polygons || [], state.bearings || []).forEach(function(it){
-      if (it.trip) set[it.trip] = true; else hasNoTrip = true;
+      if (it.tripId){
+        var ts = it.updatedAt || it.created || 0;
+        if (!(it.tripId in activity) || ts > activity[it.tripId]) activity[it.tripId] = ts;
+      } else {
+        hasNoTrip = true;
+      }
     });
-    var list = Object.keys(set).sort();
-    if (hasNoTrip) list.unshift(NO_TRIP_LABEL);
+    var list = Object.keys(activity)
+      .map(function(id){ var t = tripById(id); return t ? { key: id, label: t.name, activity: activity[id] } : null; })
+      .filter(function(x){ return x; })
+      .sort(function(a,b){ return b.activity - a.activity; })
+      .map(function(x){ return { key: x.key, label: x.label }; });
+    if (hasNoTrip) list.unshift({ key: NO_TRIP_LABEL, label: NO_TRIP_LABEL });
     return list;
   }
 
@@ -9840,14 +9935,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       return;
     }
     trips.forEach(function(tr){
-      if (!(tr in activeTripFilters)) activeTripFilters[tr] = true;
+      var key = tr.key;
+      if (!(key in activeTripFilters)) activeTripFilters[key] = true;
       var chip = document.createElement('div');
-      chip.className = 'chip' + (activeTripFilters[tr] ? ' active' : '');
-      chip.style.background = activeTripFilters[tr] ? '#5a7a8a' : 'var(--bg)';
-      chip.style.borderColor = activeTripFilters[tr] ? '#5a7a8a' : 'var(--border)';
-      chip.textContent = tr;
+      chip.className = 'chip' + (activeTripFilters[key] ? ' active' : '');
+      chip.style.background = activeTripFilters[key] ? '#5a7a8a' : 'var(--bg)';
+      chip.style.borderColor = activeTripFilters[key] ? '#5a7a8a' : 'var(--border)';
+      chip.textContent = tr.label;
       chip.addEventListener('click', function(){
-        activeTripFilters[tr] = !activeTripFilters[tr];
+        activeTripFilters[key] = !activeTripFilters[key];
         renderTripChips();
         renderPinList();
         refreshAllVisibility();
@@ -9861,8 +9957,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var dl = document.getElementById('trip-suggestions');
     dl.innerHTML = '';
     computeTripsPresent().forEach(function(tr){
+      if (tr.key === NO_TRIP_LABEL) return; // not a real suggestion to type into the free-text field
       var opt = document.createElement('option');
-      opt.value = tr;
+      opt.value = tr.label;
       dl.appendChild(opt);
     });
   }
@@ -9958,7 +10055,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : (it.type === 'bearing' ? '' : tagLabelsFor(d));
     metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + (it.type === 'bearing' ? bearingTag : areaLabel) : '') +
       (it.type !== 'bearing' ? (pinTag ? (typeLabel ? ' · ' + pinTag : pinTag) : '') : '') +
-      distLabel + (d.state ? ' · ' + d.state : '') + (d.trip ? ' · ' + d.trip : '');
+      distLabel + (d.state ? ' · ' + d.state : '') + (tripDisplayName(d) ? ' · ' + tripDisplayName(d) : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
 
@@ -10038,7 +10135,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tags = item.tags && item.tags.length ? item.tags : ['uncategorized'];
     if (tags.every(function(tid){ return eyeHiddenTags[tid]; })) return false;
     // Check eye-hidden trip
-    var tripKey = item.trip || NO_TRIP_LABEL;
+    var tripKey = item.tripId || NO_TRIP_LABEL;
     if (eyeHiddenTrips[tripKey]) return false;
     return true;
   }
@@ -10129,8 +10226,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var tid = (it.data.tags && it.data.tags[0]) || 'uncategorized';
           key = tid; label = tagById(tid).label;
         } else {
-          key = it.data.trip || NO_TRIP_LABEL;
-          label = key;
+          key = it.data.tripId || NO_TRIP_LABEL;
+          label = key === NO_TRIP_LABEL ? NO_TRIP_LABEL : tripDisplayName(it.data);
         }
         if (!groups[key]) groups[key] = { label: label, items: [] };
         groups[key].items.push(it);
@@ -10212,7 +10309,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function applyBulkEdit(){
     var addTagIds = [];
     document.querySelectorAll('#bulk-tags-row .chip.active').forEach(function(c){ addTagIds.push(c.dataset.tagId); });
-    var trip = document.getElementById('bulk-trip').value.trim();
+    var bulkTripName = document.getElementById('bulk-trip').value.trim();
+    var bulkTripId = bulkTripName ? findOrCreateTripByName(bulkTripName).id : null;
     var dateVal = dateInputValueToTs(document.getElementById('bulk-date').value);
     var pinIds = Object.keys(bulkSelectedPins);
     var trackIds = Object.keys(bulkSelectedTracks);
@@ -10226,7 +10324,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           item.tags = item.tags.filter(function(id){ return id !== 'uncategorized'; });
         }
       }
-      if (trip) item.trip = trip;
+      if (bulkTripId) item.tripId = bulkTripId;
       if (dateVal) item.created = dateVal;
       item.updatedAt = Date.now();
     }
@@ -10922,7 +11020,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function confirmImport(){
-    var importTrip = document.getElementById('import-trip').value.trim();
+    var importTripName = document.getElementById('import-trip').value.trim();
+    var importTripId = importTripName ? findOrCreateTripByName(importTripName).id : null;
     var pinRows = document.querySelectorAll('#import-item-list .import-item-row');
     var trackRows = document.querySelectorAll('#import-track-list .import-item-row');
     var importedPins = 0, importedTracks = 0, skipped = 0;
@@ -10937,7 +11036,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: uid(), lat: p.lat, lng: p.lng,
         name: p.name || 'Imported point', tags: [tagId],
         notes: p.notes || '', created: p.createdAt || Date.now(), source: 'imported',
-        trip: importTrip, state: stateForPoint(p.lat, p.lng)
+        tripId: importTripId, state: stateForPoint(p.lat, p.lng)
       };
       state.pins.push(pin);
       addMarkerForPin(pin);
@@ -10954,7 +11053,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         id: uid(), name: t.name || 'Imported track', points: t.points, tags: [tagId],
         notes: t.notes || '', created: t.createdAt || Date.now(), source: 'imported',
         distMiles: trackDistanceMiles(t.points),
-        trip: importTrip, state: stateForPoint(t.points[0][0], t.points[0][1])
+        tripId: importTripId, state: stateForPoint(t.points[0][0], t.points[0][1])
       };
       state.tracks.push(track);
       addTrackToMap(track);
@@ -13006,6 +13105,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       polygons: state.polygons || [],
       bearings: state.bearings || [],
       tags: state.tags,
+      trips: state.trips || [],
       tombstones: state.tombstones,
       lastLocalEditAt: state.lastLocalEditAt
     };
@@ -13017,6 +13117,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.polygons = merged.polygons || [];
     state.bearings = merged.bearings || [];
     state.tags = merged.tags && merged.tags.length ? merged.tags : SEED_TAGS.slice();
+    state.trips = merged.trips || [];
     state.tombstones = merged.tombstones || {};
     state.lastLocalEditAt = merged.lastLocalEditAt || Date.now();
 
@@ -13025,6 +13126,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tracks.forEach(migrateRepeatStatus);
     state.polygons.forEach(migrateRepeatStatus);
     state.bearings.forEach(migrateRepeatStatus);
+    // Same reasoning: a merge can bring in .trip-only data from a stale device that hasn't
+    // updated past this migration yet — re-run it here too, not just on cold load. (persist()
+    // happens unconditionally a few lines below regardless of whether this changed anything.)
+    migrateTripsToTripId();
 
     Object.keys(markersById).forEach(function(id){ if (markersById[id]) markersById[id].remove(); });
     markersById = {};
@@ -13111,6 +13216,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.polygons = [];
     state.bearings = [];
     state.tags = SEED_TAGS.slice();
+    state.trips = [];
     state.tombstones = {};
     state.lastLocalEditAt = 0;
     updatePinClusterSource();
@@ -13201,6 +13307,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.lastLocalEditAt === undefined) state.lastLocalEditAt = 0;
             if (!state.polygons) state.polygons = [];
             if (!state.bearings) state.bearings = [];
+            if (!state.trips) state.trips = [];
             if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
             if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'topo';
             if (!state.settings.maplibreStyle) state.settings.maplibreStyle = 'topo';
@@ -13262,6 +13369,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             state.tracks.forEach(function(t){ if (migrateRepeatStatus(t)) repeatMigrated = true; });
             state.polygons.forEach(function(p){ if (migrateRepeatStatus(p)) repeatMigrated = true; });
             state.bearings.forEach(function(b){ if (migrateRepeatStatus(b)) repeatMigrated = true; });
+            // Trip string -> Trip entity migration (Stage 1 of the Active Trip project — see
+            // CLAUDE.md). Idempotent: safe to re-run every load, only touches items still
+            // missing .tripId, never creates duplicate Trip entities for a string already
+            // migrated. The old .trip field is left in place, untouched, as a rollback net.
+            if (migrateTripsToTripId()) repeatMigrated = true;
             if (repeatMigrated) persist();
           }
         } catch(e){}
@@ -14023,7 +14135,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.querySelectorAll('#bearing-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
       b.name = document.getElementById('bearing-name').value.trim() || b.name;
       b.notes = document.getElementById('bearing-notes').value.trim();
-      b.trip = document.getElementById('bearing-trip').value.trim();
+      var remapTripName = document.getElementById('bearing-trip').value.trim();
+      b.tripId = remapTripName ? findOrCreateTripByName(remapTripName).id : null;
       b.status = selectedBearingStatus;
       b.tags = tags.length ? tags : (b.tags || ['uncategorized']);
       scheduleSave();
@@ -14071,7 +14184,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (listSortMode === 'category'){
         state.tags.forEach(function(t){ eyeHiddenTags[t.id] = true; collapsedGroups[t.id] = true; });
       } else if (listSortMode === 'trip'){
-        computeTripsPresent().forEach(function(tr){ eyeHiddenTrips[tr] = true; collapsedGroups[tr] = true; });
+        computeTripsPresent().forEach(function(tr){ eyeHiddenTrips[tr.key] = true; collapsedGroups[tr.key] = true; });
       }
       state.pins.forEach(applyFilterToMarker);
       state.tracks.forEach(applyFilterToTrack);
@@ -14709,6 +14822,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       polygons: mergeArray(local.polygons || [], cloud.polygons || []),
       bearings: mergeArray(local.bearings || [], cloud.bearings || []),
       tags: mergeArray(local.tags, cloud.tags),
+      trips: mergeArray(local.trips || [], cloud.trips || []),
       tombstones: tombstones,
       lastLocalEditAt: Math.max(local.lastLocalEditAt || 0, cloud.updatedAtMs || 0)
     };

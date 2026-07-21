@@ -19,6 +19,10 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
 - Clustering is temporarily disabled: all pins always show as individual markers regardless of zoom. The
   cluster-circles/cluster-counts bubble layers and pins-source still exist but no longer drive individual
   marker visibility (see Architecture notes) — proper clustering to be implemented in a later session
+- Trip is now a real entity (state.trips), not a free-text string — Stage 1 of 3 of the Active Trip project
+  (Session 16). Every pin/track/polygon/bearing references it via .tripId; see Architecture notes' "Trips"
+  entry for the full design. Stage 2 (Active Trip UI — startup prompt, persistent indicator, trip switcher)
+  and Stage 3 (tap-anywhere integration) are separate, not-yet-started follow-on sessions.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -191,6 +195,51 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   a saved shape. Was previously L.circleMarker/L.polyline, throwing `L is not defined` on the very first tap
   since Leaflet was removed — this was the one item on the old "what's broken" list that was still genuinely
   broken (see Session 15).
+- Trips (Active Trip project, Stage 1 of 3 — Session 16): Trip is now a real entity, state.trips
+  ({id, name, createdAt, updatedAt}), rather than a free-text string repeated on every pin/track/polygon/
+  bearing. Stored as an array field on the SAME users/{uid} document as pins/tracks/polygons/bearings/tags —
+  deliberately NOT a separate Firestore sub-collection, since this app has no sub-collections anywhere and a
+  real one would need its own security rules (none checked into this repo) and couldn't reuse mergeArray/
+  tombstones at all. trips is synced via the exact same mergeStates/mergeArray/tombstone machinery as the
+  other four types (getSyncableState/applyMergedState/mergeStates all updated to include it). Helper
+  functions: tripById(id), tripDisplayName(item) (resolves item.tripId → trip.name for display, '' if none —
+  the name is NEVER cached onto the item itself, so a future rename propagates everywhere with nothing left
+  stale), findOrCreateTripByName(name) (exact case-sensitive match against existing trips — deliberately not
+  case-insensitive like quickAddTag's tag dedup, since the migration's contract is "one Trip per distinct
+  string", and two differently-cased trip strings were already two distinct groups pre-migration),
+  deleteTripById(id) (filter + recordTombstone, matching the pattern already proven for pins/tracks/polygons/
+  bearings/tags — the exact bug class fixed for bearings in an earlier session). Every write path that used
+  to set item.trip directly now calls findOrCreateTripByName and sets item.tripId instead (pin/track/polygon/
+  bearing save modals, the bearing-remap-btn's save-before-remap path, bulk edit, CSV/GPX import) — the old
+  .trip field is never written by any code path anymore, only ever read by the one-time migration below.
+  migrateTripsToTripId() (called from loadState()'s one-time-fixup block and from applyMergedState(), matching
+  migrateRepeatStatus's placement/return-value convention) scans every pin/track/polygon/bearing still missing
+  .tripId, resolves each non-empty .trip string via findOrCreateTripByName, and sets .tripId — idempotent by
+  construction, since an item with .tripId already set is skipped entirely (its old .trip string, if any, is
+  never re-read), so re-running it (every load, every merge) can never create a duplicate Trip for a string
+  already migrated. The old .trip field itself is kept in place, untouched, as a one-release rollback net —
+  not cleared, not read by anything except the migration. computeTripsPresent() now returns [{key, label}, ...]
+  (key = tripId, or the NO_TRIP_LABEL sentinel for items with no trip) instead of raw label strings, sorted by
+  most-recent referencing item's activity (updatedAt, falling back to created) descending, with the no-trip
+  bucket always pinned first — activeTripFilters/eyeHiddenTrips/collapsedGroups all now key off tripId rather
+  than the old free-text label, so a future trip rename (Stage 2) won't silently reset anyone's filter/
+  visibility state. renderTripChips, the sidebar's "group by trip" view (renderPinList), itemVisible/
+  mapItemVisible, and every popup/meta-line display (pin/track/polygon/bearing/cluster-item-list/sidebar row)
+  were all updated to resolve display names via tripDisplayName() instead of reading .trip. Verified via a
+  from-scratch Playwright run seeding a realistic pre-migration localStorage snapshot (multiple pins/tracks/
+  polygons/bearings sharing trip strings across types, plus items with an empty trip and — separately — items
+  missing the .trip field entirely, i.e. genuinely ancient data): exactly one Trip entity was created per
+  distinct string with zero duplicates, every item's .tripId resolved to the correct trip, no-trip items
+  correctly got no .tripId, three consecutive reloads left the trips array byte-identical (full idempotency),
+  the sidebar's trip filter chips and "group by trip" view both showed correct real trip names post-migration,
+  and creating a brand-new trip through the real Add-pin UI correctly created exactly one new Trip entity with
+  no legacy .trip string ever written. Trip delete + tombstone + cross-device merge behavior (no live second
+  Firestore account available in this sandbox to test against, same constraint noted in earlier sessions) was
+  verified by extracting mergeStates() verbatim into a standalone Node script and exercising the exact
+  "stale device reconnects after another device deleted something" scenario already fixed once for bearings —
+  confirmed a trip deleted on one device is correctly dropped by the merge even when a second, not-yet-synced
+  device still has it locally, confirmed the tombstone carries forward correctly, and confirmed an unrelated
+  brand-new trip created on the stale device survives the same merge untouched.
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -496,3 +545,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   line rendering exactly as designed (confirmed visually via screenshot, not just DOM state), Clear resets
   state and exits measure-mode correctly, and toggling a filter chip (the zoomToVisible call path) fires with
   zero console errors. `node --check` on all 4 extracted inline `<script>` blocks confirmed clean syntax.
+- Session 16: Stage 1 of 3 of the Active Trip project — converted Trip from a free-text string to a real
+  entity (state.trips) with a full migration; see Architecture notes' "Trips" entry for the complete design.
+  Explicitly deferred to later stages: Active Trip concept (startup prompt, persistent indicator, trip
+  switcher — Stage 2) and tap-anywhere trip integration (Stage 3) — neither was touched this session. Before
+  writing any code, surfaced a real discrepancy between the spec (which asked for "a new Firestore
+  collection") and the actual codebase (confirmed via a full sweep — zero `collection()` calls anywhere):
+  every existing type is an array field on one single `users/{uid}` document, synced via mergeStates/
+  mergeArray with a shared tombstones map, not real Firestore sub-collections. Confirmed with the user before
+  proceeding — trips are an array field on that same document, exactly like tags/pins/tracks/polygons/
+  bearings, specifically because that's the only way to literally reuse the proven mergeArray/tombstone
+  machinery the spec asked for rather than building a second, differently-behaved sync system. Verified via a
+  from-scratch Playwright run against a realistic seeded pre-migration localStorage snapshot (see the Trips
+  architecture entry for full detail): zero duplicate Trip entities, correct .tripId on every item including
+  cross-type sharing (a pin/track/bearing all pointing at the same trip correctly resolved to one shared
+  entity), no-trip items (including ones missing the .trip field entirely — genuinely ancient data) correctly
+  left without a .tripId, three consecutive reloads produced a byte-identical trips array (idempotency),
+  sidebar trip filter chips and the "group by trip" view both rendered correct real trip names post-migration,
+  and creating a new trip through the real Add-pin UI wrote exactly one new Trip entity with zero legacy
+  .trip writes. Trip delete + tombstone + cross-device-merge rigor (no live second Firestore account
+  available in this sandbox, same constraint as earlier sessions) was verified by extracting mergeStates()
+  verbatim into a standalone Node script and replaying the exact "stale device reconnects after another
+  device already deleted something" scenario originally fixed for bearings — confirmed a trip tombstoned on
+  one device is correctly dropped by the merge even when a second, not-yet-synced device still has it
+  locally, and confirmed an unrelated brand-new trip on the stale device survives that same merge untouched.
+  `node --check` on all 4 extracted inline `<script>` blocks confirmed clean syntax after every batch of edits.
