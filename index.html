@@ -326,6 +326,15 @@
   .pin-popup-meta{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
+  /* Modifier for the coords/elevation/date line (pin popup, tap-anywhere) — plain
+     concatenated " · "-joined text wrapped awkwardly on narrower mobile widths (drawer
+     content width is narrower than the old centered modal's). Each value as its own flex
+     item with space-between distributes them across the full width instead of cramming
+     left-aligned; still wraps gracefully (flex-wrap) if the drawer is ever narrow enough
+     that even this can't fit two/three short values on one line. Not applied to
+     .pin-popup-coords' other users (bearing's Origin/Target lines, track/area's standalone
+     Created line) — those were never the concatenated-multi-value case this fixes. */
+  .pin-popup-coords-row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;}
   .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
 
   /* Unified popup footer (Directions/Share/Edit data + overflow) — one row, same shape
@@ -2274,7 +2283,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.24.0';
+  var APP_VERSION = '2.24.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2459,6 +2468,10 @@
   //                  can be null/omitted if a state has no matching link (see Oregon).
   //   filterFeature — optional function(props) returning true to KEEP a feature; used to drop
   //                  non-huntable/closed entries a raw agency layer includes (see Nevada).
+  // Arizona-specific: the only two GIS unit codes whose azgfd.com URL slug isn't just their
+  // own lowercased code — see GMU_STATES.az.infoUrl for the full explanation (both are a
+  // directional sub-split of a unit the new site shows as a single combined page).
+  var AZ_GMU_SLUG_OVERRIDES = { '5BN': '5b', '5BS': '5b', '7E': '7', '7W': '7' };
   var GMU_STATES = {
     az: {
       label: 'Arizona',
@@ -2467,16 +2480,26 @@
       popupTitle: function(props){ return 'GMU ' + (props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || ''); },
       popupMeta: function(props){ return props.REG_NAME || null; },
       infoLabel: 'AZGFD unit info',
-      // The source data's AGFDLink field is a full "<a href=\"...\">Unit N</a>" HTML snippet,
-      // not a plain URL — used as-is it got escapeHtml'd whole into an href attribute (i.e.
-      // the href literally became the escaped markup string), producing a link that 404'd on
-      // every tap regardless of platform. Pull just the href out of it instead (see
-      // extractHrefFromHtml). Fallback pattern matches the real azgfd.gov URLs seen in the
-      // source data (azgfd.gov, not .com; /h_f/hunting_units_<unit>.shtml, not
-      // /location/gmu-<unit>/) — only used if AGFDLink is ever missing, extremely rare here.
+      // The source data's AGFDLink field is a full "<a href=\"...\">Unit N</a>" HTML snippet
+      // AND, confirmed by directly querying the live FeatureServer (not just spot-checking
+      // one unit), its embedded href is uniformly the OLD azgfd.gov/h_f/hunting_units_*.shtml
+      // URL pattern for every single unit — AZGFD migrated their site (azgfd.com now,
+      // /location/gmu-<unit>/) without updating this field, so extracting AGFDLink's href
+      // just produced a 404 every time, not an edge case. Ignore AGFDLink entirely and build
+      // the new-site URL straight from the GMU field instead.
+      // Confirmed live (fetched the real FeatureServer, checked every distinct GMU value
+      // present, then loaded a representative spread of the resulting URLs — plain numbers,
+      // number+single-letter, and both exceptions below — not just one example): a plain
+      // lowercased GMU code matches the new site's slug for every unit EXCEPT two base units
+      // that have a further directional sub-split in this app's source data but were
+      // consolidated into one shared page each on the new site — 5BN/5BS both live at
+      // gmu-5b, 7E/7W both live at gmu-7 (confirmed each of the 4 codes individually; the
+      // undirected slug is the only one that resolves, not e.g. gmu-5bnorth/gmu-5b-north).
       infoUrl: function(props){
-        var label = props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '';
-        return extractHrefFromHtml(props.AGFDLink) || ('https://www.azgfd.gov/h_f/hunting_units_' + encodeURIComponent(String(label).toLowerCase()) + '.shtml');
+        var label = String(props.GMU || props.UNIT_NAME || props.NAME || props.UNIT_ID || '').trim();
+        if (!label || label.toUpperCase() === 'N/A') return null;
+        var slug = AZ_GMU_SLUG_OVERRIDES[label.toUpperCase()] || label.toLowerCase();
+        return 'https://www.azgfd.com/location/gmu-' + encodeURIComponent(slug) + '/';
       },
       filterFeature: null,
       // Confirmed live: FeatureServer/0?f=json exposes editingInfo.dataLastEditDate, a tiny
@@ -5967,9 +5990,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(tag.label) + (pin.state ? ' · ' + escapeHtml(pin.state) : '') + (pin.trip ? ' · ' + escapeHtml(pin.trip) : '') + '</span>' +
       '</div>' +
       notes +
-      '<div class="pin-popup-coords">' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) +
-        (pin.elevationFt != null ? ' · ' + pin.elevationFt.toLocaleString() + ' ft' : '') +
-        (pin.created ? ' · Created ' + formatCreatedDate(pin.created) : '') + '</div>' +
+      '<div class="pin-popup-coords pin-popup-coords-row">' +
+        '<span>' + pin.lat.toFixed(5) + ', ' + pin.lng.toFixed(5) + '</span>' +
+        (pin.elevationFt != null ? '<span>' + pin.elevationFt.toLocaleString() + ' ft</span>' : '') +
+        (pin.created ? '<span>' + formatCreatedDate(pin.created) + '</span>' : '') +
+      '</div>' +
       popupFooterHtml(
         'FieldMap.directionsToPin(\'' + pin.id + '\')',
         'FieldMap.sharePin(\'' + pin.id + '\')',
@@ -7079,7 +7104,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // been loaded at least once, so a track's own info line never reflected it directly.
     var gainLossLabel = track.elevGainFt != null ? ' · ▲' + track.elevGainFt.toLocaleString() + 'ft ▼' + track.elevLossFt.toLocaleString() + 'ft' : '';
     var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
-    var createdLabel = track.created ? '<div class="pin-popup-coords">Created ' + formatCreatedDate(track.created) + '</div>' : '';
+    var createdLabel = track.created ? '<div class="pin-popup-coords">' + formatCreatedDate(track.created) + '</div>' : '';
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
       '</div>' +
@@ -7876,7 +7901,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!tapAnywhereState) return;
       shareLocationText(tapAnywhereState.name.trim() || 'Location', tapAnywhereState.latlng.lat, tapAnywhereState.latlng.lng);
     },
-    tapAnywhereOpenForecast: function(){
+    tapAnywhereOpenForecast: function(event){
+      // Same fix as sheet-weather-btn's handler (see its comment) — weather-panel is in
+      // OUTSIDE_CLICK_DISMISS_IDS, so without stopping this click here, it bubbles to the
+      // document-level outside-click listener, which sees the panel now open and this
+      // button (living inside #view-drawer, not #weather-panel) as "outside it," and
+      // immediately re-hides the very panel this click just opened — previously the actual
+      // bug: it looked like tapping "10-day forecast" just closed the drawer and did nothing.
+      if (event) event.stopPropagation();
       if (!tapAnywhereState) return;
       openWeatherPanel(tapAnywhereState.latlng); // closes this drawer itself (see openWeatherPanel) — discards the draft, same as any other dismiss
     },
@@ -8699,7 +8731,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function polygonPopupHtml(polygon){
     var area = polygonAreaDisplay(polygon.points);
     var areaLabel = area ? ' · ' + area : '';
-    var createdLabel = polygon.created ? '<div class="pin-popup-coords">Created ' + formatCreatedDate(polygon.created) + '</div>' : '';
+    var createdLabel = polygon.created ? '<div class="pin-popup-coords">' + formatCreatedDate(polygon.created) + '</div>' : '';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(polygon.name) + '</div>' +
@@ -9005,7 +9037,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<div class="pin-popup-coords">' +
         'Origin: ' + b.originLat.toFixed(5) + ', ' + b.originLng.toFixed(5) + '<br>' +
         'Target: ' + b.targetLat.toFixed(5) + ', ' + b.targetLng.toFixed(5) +
-        (b.created ? '<br>Created ' + formatCreatedDate(b.created) : '') +
+        (b.created ? '<br>' + formatCreatedDate(b.created) : '') +
       '</div>' +
       popupFooterHtml(
         'FieldMap.directionsToBearing(\'' + b.id + '\')',
@@ -12210,7 +12242,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<span class="tap-conditions-icon">' + c.icon + '</span>' +
       '<span class="tap-conditions-temp">' + c.temp + '°' + c.tempUnit + '</span>' +
       '<span class="tap-conditions-desc">' + escapeHtml(c.shortForecast) + '</span>' +
-      '<button type="button" class="link-btn" onclick="FieldMap.tapAnywhereOpenForecast()">10-day forecast →</button>' +
+      '<button type="button" class="link-btn" onclick="FieldMap.tapAnywhereOpenForecast(event)">10-day forecast →</button>' +
     '</div>';
   }
 
@@ -12235,8 +12267,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         'oninput="FieldMap.tapAnywhereTitleInput(this.value)">' +
       '</div>' +
       '<div id="tap-anywhere-chips">' + tapAnywhereChipsHtml() + '</div>' +
-      '<div class="pin-popup-coords">' + latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5) +
-        ' · <span id="tap-anywhere-elev">' + tapAnywhereElevText() + '</span></div>' +
+      '<div class="pin-popup-coords pin-popup-coords-row">' +
+        '<span>' + latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5) + '</span>' +
+        '<span id="tap-anywhere-elev">' + tapAnywhereElevText() + '</span>' +
+      '</div>' +
       '<div id="tap-anywhere-conditions">' + tapAnywhereConditionsHtml() + '</div>' +
       '<div class="pin-popup-footer">' +
         '<button class="btn btn-small btn-primary" onclick="FieldMap.tapAnywhereSave()">Save</button>' +

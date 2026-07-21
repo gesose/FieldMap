@@ -374,3 +374,37 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   different feature) rather than a real app or network problem; switching the test to an in-page
   window.fetch monkey-patch (no page.route) resolved it. GMU/USFS/wildlife/migration popups and bearing's
   live creation flow were not re-tested this session (unchanged since Session 11, already covered there).
+- Session 13: Three small bug fixes reported after Session 12 shipped.
+  (1) Tap-anywhere's "10-day forecast" button was closing the drawer without ever showing the forecast —
+  root cause confirmed by tracing the actual event flow (not assumed): weather-panel IS a real, already-
+  built forecast view (openWeatherPanel/fetchWeather/renderWeather, the same one Tools > Weather uses; no
+  new view needed), but weather-panel is in OUTSIDE_CLICK_DISMISS_IDS, so the click bubbling up from the
+  button (which lives inside #view-drawer, not #weather-panel) reached the document-level outside-click
+  listener, which saw the panel it had just opened as "clicked outside" and immediately re-hid it — the
+  exact same bug the codebase had already hit and fixed once for sheet-weather-btn (see that handler's own
+  comment), just not applied when the tap-anywhere button was wired up in Session 12. Fixed the same way:
+  stopPropagation, passed through via onclick="...(event)" since this button is built as an HTML string
+  rather than a real addEventListener target.
+  (2) Arizona GMU info links were 404ing. Confirmed by directly querying the live FeatureServer (not
+  assuming from one example) that the AGFDLink field itself — not just this app's old fallback pattern —
+  is uniformly stale across every unit: AZGFD migrated their site (azgfd.com, /location/gmu-<unit>/) without
+  updating this field, which still points at the old azgfd.gov/h_f/hunting_units_*.shtml pattern for 100%
+  of units checked. Verified the new pattern directly in a real Chrome browser (curl/WebFetch both got
+  403'd — AZGFD's WAF blocks non-browser requests, same category of gotcha as IDFG/WDFW) across a
+  representative spread of unit-code shapes (plain numbers, number+single-letter, number+M) and found one
+  real generalization gap this way: units with a further directional sub-split in this app's GIS source
+  data (5BN/5BS, 7E/7W) don't have their own pages on the new site — both 5BN and 5BS live at gmu-5b, both
+  7E and 7W live at gmu-7 (confirmed each of the 4 codes individually 404s or works as expected). Fixed by
+  ignoring AGFDLink entirely and building the URL straight from the live GMU field, with a 4-entry
+  AZ_GMU_SLUG_OVERRIDES lookup for those two exceptions; also now returns no link at all (was previously
+  generating a guaranteed-broken one) for the handful of features with an empty or "N/A" GMU value.
+  (3) Pin/bearing/track/area drawer content (coords/elevation/date) wrapped awkwardly on real mobile
+  widths — the "Created" label was dropped everywhere (bare date now) and pin's coords+elevation+date line
+  (previously one " · "-joined string) is now 3 flex items in a new .pin-popup-coords-row modifier class
+  with justify-content:space-between, confirmed via Playwright at 390px to render coords and date on one
+  line, evenly spaced, no wrap. Applied the same treatment to tap-anywhere's own coords+elevation line for
+  consistency (not explicitly named in the bug report, but the identical concatenated-line pattern).
+  Bearing's Origin/Target lines and track/area's standalone Created line were left as plain
+  .pin-popup-coords (no -row modifier) — they were never the crammed-single-line case this fixes, and
+  making .pin-popup-coords flex globally would have risked breaking bearing's <br>-separated multi-line
+  layout.
