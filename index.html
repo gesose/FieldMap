@@ -335,6 +335,10 @@
      .pin-popup-coords' other users (bearing's Origin/Target lines, track/area's standalone
      Created line) — those were never the concatenated-multi-value case this fixes. */
   .pin-popup-coords-row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+  /* Area's size value, in the drawer's compact view — tapping cycles ac/sq ft/sq mi (see
+     FieldMap.cycleAreaUnit). Dotted underline is the only visual cue it's tappable, kept
+     subtle so the row stays as compact as the rest of .pin-popup-meta's plain text. */
+  .area-cycle-value{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;}
   .pin-popup-actions{display:flex;gap:6px;flex-wrap:wrap;}
 
   /* Unified popup footer (Directions/Share/Edit data + overflow) — one row, same shape
@@ -2283,7 +2287,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.24.1';
+  var APP_VERSION = '2.24.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5995,6 +5999,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         (pin.elevationFt != null ? '<span>' + pin.elevationFt.toLocaleString() + ' ft</span>' : '') +
         (pin.created ? '<span>' + formatCreatedDate(pin.created) + '</span>' : '') +
       '</div>' +
+      conditionsCardContainerHtml(pin.lat, pin.lng) +
       popupFooterHtml(
         'FieldMap.directionsToPin(\'' + pin.id + '\')',
         'FieldMap.sharePin(\'' + pin.id + '\')',
@@ -6027,6 +6032,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function openPinDrawer(pin){
     showViewDrawer('pin', pin.id, popupHtml(pin));
     backfillPinElevation(pin);
+    fetchConditionsForDrawerItem('pin', pin.id, pin.lat, pin.lng);
   }
 
   function addMarkerForPin(pin){
@@ -7096,6 +7102,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
+  // Track's start point — same normalization Directions' start/end chooser already uses
+  // (points may be [[lat,lng],...] or [{lat,lng},...]). Returns null for a track saved
+  // (or somehow left) with no points at all, which should never happen in practice but
+  // costs nothing to guard.
+  function trackStartLatLng(track){
+    var p = track.points && track.points[0];
+    if (!p) return null;
+    return { lat: Array.isArray(p) ? p[0] : p.lat, lng: Array.isArray(p) ? p[1] : p.lng };
+  }
+
   function trackPopupHtml(track){
     var dist = track.distMiles !== undefined ? track.distMiles : trackDistanceMiles(track.points);
     var distLabel = formatDist(dist);
@@ -7105,6 +7121,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var gainLossLabel = track.elevGainFt != null ? ' · ▲' + track.elevGainFt.toLocaleString() + 'ft ▼' + track.elevLossFt.toLocaleString() + 'ft' : '';
     var notes = track.notes ? '<div class="pin-popup-notes">' + escapeHtml(track.notes) + '</div>' : '';
     var createdLabel = track.created ? '<div class="pin-popup-coords">' + formatCreatedDate(track.created) + '</div>' : '';
+    var startPt = trackStartLatLng(track);
+    var conditionsCard = startPt ? conditionsCardContainerHtml(startPt.lat, startPt.lng) : '';
     return '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(track.name) + '</div>' +
       '</div>' +
@@ -7112,6 +7130,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       (track.state ? ' · ' + escapeHtml(track.state) : '') + (track.trip ? ' · ' + escapeHtml(track.trip) : '') + '</div>' +
       notes +
       createdLabel +
+      conditionsCard +
       trackElevationSectionHtml(track) +
       popupFooterHtml(
         'FieldMap.directionsToTrack(\'' + track.id + '\')',
@@ -7345,6 +7364,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         drawElevationProfileCanvas(document.getElementById('track-elev-canvas-' + track.id), track.elevProfile);
       });
     }
+    var startPt = trackStartLatLng(track);
+    if (startPt) fetchConditionsForDrawerItem('track', track.id, startPt.lat, startPt.lng);
   }
 
   // Re-renders the currently-open track drawer's HTML in place (if it's showing THIS track)
@@ -7901,7 +7922,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!tapAnywhereState) return;
       shareLocationText(tapAnywhereState.name.trim() || 'Location', tapAnywhereState.latlng.lat, tapAnywhereState.latlng.lng);
     },
-    tapAnywhereOpenForecast: function(event){
+    // Shared by every conditions mini-card (tap-anywhere and the pin/bearing/track/area
+    // compact views) — drawerConditionsPoint always matches whichever card is currently
+    // shown, since only one is ever visible at a time.
+    openDrawerConditionsForecast: function(event){
       // Same fix as sheet-weather-btn's handler (see its comment) — weather-panel is in
       // OUTSIDE_CLICK_DISMISS_IDS, so without stopping this click here, it bubbles to the
       // document-level outside-click listener, which sees the panel now open and this
@@ -7909,8 +7933,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // immediately re-hides the very panel this click just opened — previously the actual
       // bug: it looked like tapping "10-day forecast" just closed the drawer and did nothing.
       if (event) event.stopPropagation();
-      if (!tapAnywhereState) return;
-      openWeatherPanel(tapAnywhereState.latlng); // closes this drawer itself (see openWeatherPanel) — discards the draft, same as any other dismiss
+      if (!drawerConditionsPoint) return;
+      openWeatherPanel(drawerConditionsPoint); // closes the drawer itself (see openWeatherPanel) — same "soft dismiss" as any other panel-opening action
     },
     // Immediate save, no full-form detour — name/category from what's been typed/detected so
     // far (or sensible defaults), status always Escout, trip deliberately left blank (Active
@@ -8034,6 +8058,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!poly || !poly.points || poly.points.length < 3) return;
       var pt = polygonInteriorPoint(poly.points);
       shareLocationText(poly.name, pt.lat, pt.lng, polygonAreaDisplay(poly.points));
+    },
+    // Tapping the area value in the drawer's compact view cycles ac → sq ft → sq mi → back
+    // to ac, independent of polygonAreaDisplay's own auto-selected-by-size unit used
+    // everywhere else. Only affects the compact view (re-renders it in place if it's what's
+    // currently showing) — the edit form's own read-only area line is unaffected.
+    cycleAreaUnit: function(id){
+      var poly = state.polygons.find(function(p){ return p.id === id; });
+      if (!poly || !poly.points || poly.points.length < 3) return;
+      var sqMi = polygonAreaSqMiles(poly.points);
+      var current = polygonAreaUnitOverride[id] || defaultAreaUnit(sqMi);
+      var idx = AREA_UNIT_CYCLE_ORDER.indexOf(current);
+      polygonAreaUnitOverride[id] = AREA_UNIT_CYCLE_ORDER[(idx + 1) % AREA_UNIT_CYCLE_ORDER.length];
+      if (isViewDrawerShowing('polygon', id)) setViewDrawerContent(polygonPopupHtml(poly));
     },
     deletePolygon: function(id){
       if (confirm('Delete this area? This cannot be undone.')){
@@ -8727,11 +8764,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return sqMi.toFixed(2) + ' mi²';
   }
 
+  // ── Area unit tap-to-cycle (drawer compact view only) ──
+  // polygonAreaDisplay above (auto-selects a unit by size) is still used everywhere else —
+  // the sidebar list row, Share text, the edit form's own read-only area line — none of
+  // those are tap-to-cycle, so it's untouched. This is a separate, deliberately narrower
+  // display path just for the drawer's compact view.
+  var polygonAreaUnitOverride = {}; // polygonId -> 'sqft'|'ac'|'sqmi', once tapped at least once; unset = auto-select by size, same thresholds as polygonAreaDisplay
+  var AREA_UNIT_CYCLE_ORDER = ['ac', 'sqft', 'sqmi'];
+
+  function defaultAreaUnit(sqMi){
+    if (sqMi < 0.00156) return 'sqft';
+    if (sqMi < 1) return 'ac';
+    return 'sqmi';
+  }
+  function formatAreaInUnit(sqMi, unit){
+    if (unit === 'sqft') return Math.round(sqMi * 27878400) + ' sq ft';
+    if (unit === 'ac') return Math.round(sqMi * 640) + ' ac';
+    return sqMi.toFixed(2) + ' mi²';
+  }
+  function polygonAreaDisplayForDrawer(polygon){
+    if (!polygon.points || polygon.points.length < 3) return null;
+    var sqMi = polygonAreaSqMiles(polygon.points);
+    var unit = polygonAreaUnitOverride[polygon.id] || defaultAreaUnit(sqMi);
+    return formatAreaInUnit(sqMi, unit);
+  }
+
   // ---------- Polygon popup ----------
   function polygonPopupHtml(polygon){
-    var area = polygonAreaDisplay(polygon.points);
-    var areaLabel = area ? ' · ' + area : '';
+    var area = polygonAreaDisplayForDrawer(polygon);
+    var areaLabel = area ? ' · <span class="area-cycle-value" title="Tap to cycle units" onclick="FieldMap.cycleAreaUnit(\'' + polygon.id + '\')">' + area + '</span>' : '';
     var createdLabel = polygon.created ? '<div class="pin-popup-coords">' + formatCreatedDate(polygon.created) + '</div>' : '';
+    var interiorPt = polygon.points && polygon.points.length >= 3 ? polygonInteriorPoint(polygon.points) : null;
+    var conditionsCard = interiorPt ? conditionsCardContainerHtml(interiorPt.lat, interiorPt.lng) : '';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name-row">' +
         '<div class="pin-popup-name">' + escapeHtml(polygon.name) + '</div>' +
@@ -8741,6 +8805,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         (polygon.trip ? ' · ' + polygon.trip : '') + '</div>' +
       createdLabel +
       '</div>' +
+      conditionsCard +
       popupFooterHtml(
         'FieldMap.directionsToPolygon(\'' + polygon.id + '\')',
         'FieldMap.sharePolygon(\'' + polygon.id + '\')',
@@ -8755,6 +8820,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function openPolygonPopupAt(polygon){
     showViewDrawer('polygon', polygon.id, polygonPopupHtml(polygon));
     openPolygonPopup = { remove: viewDrawerRemoveShim };
+    if (polygon.points && polygon.points.length >= 3){
+      var pt = polygonInteriorPoint(polygon.points);
+      fetchConditionsForDrawerItem('polygon', polygon.id, pt.lat, pt.lng);
+    }
   }
 
   // ---------- Polygon drawing ----------
@@ -9039,6 +9108,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         'Target: ' + b.targetLat.toFixed(5) + ', ' + b.targetLng.toFixed(5) +
         (b.created ? '<br>' + formatCreatedDate(b.created) : '') +
       '</div>' +
+      conditionsCardContainerHtml(b.originLat, b.originLng) +
       popupFooterHtml(
         'FieldMap.directionsToBearing(\'' + b.id + '\')',
         'FieldMap.shareBearing(\'' + b.id + '\')',
@@ -9057,6 +9127,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       remove: viewDrawerRemoveShim,
       setHTML: function(html){ if (isViewDrawerShowing('bearing', bearing.id)) setViewDrawerContent(html); }
     };
+    // Origin, not target — "where the observation was actually made."
+    fetchConditionsForDrawerItem('bearing', bearing.id, bearing.originLat, bearing.originLng);
   }
 
   // Bearings render from a single shared GeoJSON source (bearings-source, set up in
@@ -12184,7 +12256,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Save has run, at which point the drawer has already transitioned to a normal 'pin' type
   // (see FieldMap.tapAnywhereSave) and this feature's own state is no longer relevant.
   var tapAnywhereMarker = null;
-  var tapAnywhereState = null; // { latlng, name, detectedTagIds, elevationFt, conditions }
+  var tapAnywhereState = null; // { latlng, name, detectedTagIds, elevationFt } — conditions live in the shared currentConditionsCache/drawerConditionsPoint now, not here
 
   // Mirrors addMarkerForPin's own element construction exactly (wrapper gets the
   // pin-marker class + cursor styling, buildPinMarkerHtml's output goes inside it as
@@ -12228,27 +12300,63 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (el) el.textContent = tapAnywhereElevText();
   }
 
-  function tapAnywhereConditionsHtml(){
-    if (!tapAnywhereState) return '';
-    var c = tapAnywhereState.conditions;
-    if (c === undefined){
+  // ── Current conditions mini-card — shared component ──
+  // Used by tap-anywhere AND the pin/bearing/track/area compact drawer views (not
+  // duplicated per type). Split into two concerns on purpose:
+  //   - conditionsCardHtml/conditionsCardContainerHtml/peekCurrentConditions: pure, no side
+  //     effects. Safe to call from a popup builder even when the result might never actually
+  //     be displayed — e.g. promptDirectionsChoice stashes bearingPopupHtml(b)/
+  //     trackPopupHtml(track)'s output as a "restore" string well before (if ever) it's shown
+  //     again; that must never itself trigger a network fetch.
+  //   - fetchConditionsForDrawerItem: the actual fetch-and-patch-back-in side effect, called
+  //     exactly once by whichever open*/openPinDrawer function is showing an item, right
+  //     after showViewDrawer — same pattern pin elevation backfill already uses.
+  // drawerConditionsPoint is read by the "10-day forecast" link's click handler; it's always
+  // whatever point the currently-shown card's data came from, since only one card is ever
+  // visible at a time.
+  var drawerConditionsPoint = null;
+
+  function conditionsCardHtml(cached){
+    if (cached === undefined){
       return '<div class="tap-conditions-row tap-conditions-loading">Loading conditions…</div>';
     }
-    if (c === null){
+    if (cached === null){
       var text = navigator.onLine ? 'Conditions unavailable' : 'Unavailable offline';
       return '<div class="tap-conditions-row tap-conditions-unavailable">' + text + '</div>';
     }
     return '<div class="tap-conditions-row">' +
-      '<span class="tap-conditions-icon">' + c.icon + '</span>' +
-      '<span class="tap-conditions-temp">' + c.temp + '°' + c.tempUnit + '</span>' +
-      '<span class="tap-conditions-desc">' + escapeHtml(c.shortForecast) + '</span>' +
-      '<button type="button" class="link-btn" onclick="FieldMap.tapAnywhereOpenForecast(event)">10-day forecast →</button>' +
+      '<span class="tap-conditions-icon">' + cached.icon + '</span>' +
+      '<span class="tap-conditions-temp">' + cached.temp + '°' + cached.tempUnit + '</span>' +
+      '<span class="tap-conditions-desc">' + escapeHtml(cached.shortForecast) + '</span>' +
+      '<button type="button" class="link-btn" onclick="FieldMap.openDrawerConditionsForecast(event)">10-day forecast →</button>' +
     '</div>';
   }
 
-  function updateTapAnywhereConditionsDisplay(){
-    var el = document.getElementById('tap-anywhere-conditions');
-    if (el) el.innerHTML = tapAnywhereConditionsHtml();
+  // Synchronous cache-only read — no fetch, no promise, never mutates the cache. Lets a
+  // popup builder show already-cached data immediately (no "Loading…" flash on a re-render)
+  // without itself causing a fetch as a side effect.
+  function peekCurrentConditions(lat, lng){
+    var cached = currentConditionsCache[currentConditionsCacheKey(lat, lng)];
+    if (cached && cached.fetchedAt && (Date.now() - cached.fetchedAt) < CURRENT_CONDITIONS_CACHE_MS) return cached.data;
+    return undefined;
+  }
+
+  function conditionsCardContainerHtml(lat, lng){
+    var initial = navigator.onLine ? peekCurrentConditions(lat, lng) : null;
+    return '<div id="drawer-conditions-card">' + conditionsCardHtml(initial) + '</div>';
+  }
+
+  // type/id let the eventual resolution check isViewDrawerShowing before writing back, so a
+  // stale fetch for something the user has since closed or replaced can't clobber whatever's
+  // now actually on screen.
+  function fetchConditionsForDrawerItem(type, id, lat, lng){
+    drawerConditionsPoint = { lat: lat, lng: lng };
+    if (!navigator.onLine) return; // already rendered as "Unavailable offline" synchronously — nothing to fetch
+    getCurrentConditions(lat, lng).then(function(result){
+      if (!isViewDrawerShowing(type, id)) return;
+      var el = document.getElementById('drawer-conditions-card');
+      if (el) el.innerHTML = conditionsCardHtml(result);
+    });
   }
 
   // Compact (not-yet-saved) drawer content — footer is Save/Directions/Share only, no
@@ -12271,7 +12379,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<span>' + latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5) + '</span>' +
         '<span id="tap-anywhere-elev">' + tapAnywhereElevText() + '</span>' +
       '</div>' +
-      '<div id="tap-anywhere-conditions">' + tapAnywhereConditionsHtml() + '</div>' +
+      conditionsCardContainerHtml(latlng.lat, latlng.lng) +
       '<div class="pin-popup-footer">' +
         '<button class="btn btn-small btn-primary" onclick="FieldMap.tapAnywhereSave()">Save</button>' +
         '<button class="btn btn-small" onclick="FieldMap.tapAnywhereDirections()">Directions</button>' +
@@ -12290,7 +12398,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function openTapAnywhereDrawer(latlng){
     discardTapAnywhereDraft(); // defensive — should already be null, but never leave two temp markers around
-    tapAnywhereState = { latlng: latlng, name: '', detectedTagIds: [], elevationFt: null, conditions: undefined };
+    tapAnywhereState = { latlng: latlng, name: '', detectedTagIds: [], elevationFt: null };
     tapAnywhereMarker = new maplibregl.Marker({ element: buildTapAnywhereMarkerEl(), anchor: 'center' })
       .setLngLat([latlng.lng, latlng.lat])
       .addTo(map);
@@ -12302,16 +12410,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       updateTapAnywhereElevDisplay();
     }).catch(function(){});
 
-    if (!navigator.onLine){
-      tapAnywhereState.conditions = null;
-      updateTapAnywhereConditionsDisplay();
-    } else {
-      getCurrentConditions(latlng.lat, latlng.lng).then(function(result){
-        if (!tapAnywhereState || tapAnywhereState.latlng !== latlng) return;
-        tapAnywhereState.conditions = result; // null on failure — same "unavailable" display, different wording
-        updateTapAnywhereConditionsDisplay();
-      });
-    }
+    fetchConditionsForDrawerItem('tap', 'new', latlng.lat, latlng.lng);
   }
 
   // ── Wildlife Layers (P3a) ──

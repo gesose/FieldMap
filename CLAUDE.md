@@ -98,16 +98,12 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   title input, auto-detected category chips (detectCategoryTagIds — matches each tag's FIRST WORD against
   the typed text, not the whole label, so multi-word labels like "Water source"/"Turkey strut zone" still
   fire from natural phrasing; deliberately loose since a wrong chip costs one tap to remove), coords +
-  elevation (getElevationFt, placeholder text until it resolves), and a current-conditions mini-card. The
-  title input's DOM node is never recreated after first render — every later update (elevation resolving,
-  conditions resolving, a chip added/removed) patches its own specific sub-element (#tap-anywhere-elev/
-  #tap-anywhere-conditions/#tap-anywhere-chips) instead of re-rendering the whole drawer content, so focus/
-  cursor position survives while actively typing. Current conditions use a NEW dedicated cache
-  (getCurrentConditions/currentConditionsCache, 30min TTL, keyed to a ~0.1°-rounded grid cell) — separate
-  from the full Tools > Weather panel's own always-fresh fetchWeather, since no caching existed anywhere in
-  the weather integration before this. Offline shows "Unavailable offline" (grayed) without even attempting
-  a fetch; an online fetch failure shows "Conditions unavailable" instead — same styling, different wording,
-  so it's never confused with "no connection." Save creates a real pin immediately (name typed or
+  elevation (getElevationFt, placeholder text until it resolves), and a current-conditions mini-card (see
+  the dedicated "Current conditions mini-card" entry below — shared with pin/bearing/track/area, not
+  tap-anywhere-only). The title input's DOM node is never recreated after first render — every later update
+  (elevation resolving, conditions resolving, a chip added/removed) patches its own specific sub-element
+  (#tap-anywhere-elev/#drawer-conditions-card/#tap-anywhere-chips) instead of re-rendering the whole drawer
+  content, so focus/cursor position survives while actively typing. Save creates a real pin immediately (name typed or
   defaultWaypointName, detected tags or 'uncategorized', status always 'escout', trip deliberately left ''
   — Active Trip auto-attribution is a separate not-yet-built feature) and swaps the SAME drawer element to
   that pin's normal popupHtml view via showViewDrawer('pin', ...) — "continuing to refine" it via Edit data
@@ -148,6 +144,40 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   pin's case, but were never actually connected to a click handler at all — Delete inside those two modals
   did nothing, silently, pre-existing and unrelated to this batch's own changes, only surfaced because this
   batch is what finally exercises those buttons in a place they'd get used.
+- Current conditions mini-card (conditionsCardHtml/peekCurrentConditions/conditionsCardContainerHtml/
+  fetchConditionsForDrawerItem, getCurrentConditions/currentConditionsCache 30min-TTL cache) — ONE shared
+  component/cache, used by tap-anywhere AND the pin/bearing/track/area compact drawer views (deliberately
+  NOT added to GMU/USFS/wildlife/migration — those stay exactly as they were). Split into a pure half and a
+  side-effecting half on purpose: conditionsCardHtml/conditionsCardContainerHtml/peekCurrentConditions never
+  fetch anything, just render whatever's already resolved (undefined/null/data) — safe to call from inside
+  a popup builder even when its result might never actually be displayed (bearingPopupHtml/trackPopupHtml
+  are also called to build promptDirectionsChoice's "restore" string well before, if ever, it's shown
+  again; that must never itself trigger a network request). The actual fetch is
+  fetchConditionsForDrawerItem(type, id, lat, lng), called exactly once by whichever open*/openPinDrawer
+  function is showing an item, right after showViewDrawer — same pattern pin elevation backfill already
+  uses. Resolution patches a single fixed-id container (#drawer-conditions-card, since only one card is
+  ever visible at a time) only if isViewDrawerShowing(type, id) still holds, so a stale fetch for something
+  since closed/replaced can't clobber what's now on screen. Point resolved per type — reusing exactly what
+  Directions already uses for each: pin's own lat/lng, bearing's ORIGIN (not target — "where the observation
+  was actually made"), track's START point (trackStartLatLng, same [[lat,lng],...]-or-[{lat,lng},...]
+  normalization as the Directions start/end chooser), area's polygonInteriorPoint (the same guaranteed-
+  inside-the-shape point Directions/Share already use, not a naive centroid). drawerConditionsPoint (a
+  single shared var, not per-type) is read by the "10-day forecast" link's click handler
+  (FieldMap.openDrawerConditionsForecast) — always correct since only one card is ever shown at a time.
+  Verified via Playwright: pin/bearing/track/area all show correct conditions for their correct resolved
+  point; a second nearby item (same ~0.1°-rounded grid cell) reuses the cache with zero additional network
+  calls and renders instantly, no "Loading" flash; offline shows "Unavailable offline" (confirmed via
+  context.setOffline, not just code review); GMU/USFS/wildlife/migration popups confirmed to have no
+  conditions card and unchanged footers.
+- Area unit tap-to-cycle (polygonAreaDisplayForDrawer/polygonAreaUnitOverride/FieldMap.cycleAreaUnit) — the
+  area value in the drawer's compact view is now tappable (.area-cycle-value, dotted-underline affordance),
+  cycling ac → sq ft → sq mi → back to ac on each tap, independent of polygonAreaDisplay's own
+  auto-selected-by-size unit (untouched, still used by the sidebar list row, Share text, and the edit
+  form's own read-only area line — none of those are tap-to-cycle). polygonAreaUnitOverride is a plain
+  polygonId -> unit map, unset until the first tap (auto-select-by-size until then, same thresholds as
+  polygonAreaDisplay). Verified full cycle (ac → sq ft → sq mi → back to the original value) and confirmed
+  the meta row stays single-line at real mobile width (no reintroduction of the wrapping bug fixed the
+  session before this one).
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -408,3 +438,28 @@ and persisted rendering all work with no remaining Leaflet (`L.*`) calls in any 
   .pin-popup-coords (no -row modifier) — they were never the crammed-single-line case this fixes, and
   making .pin-popup-coords flex globally would have risked breaking bearing's <br>-separated multi-line
   layout.
+- Session 14: Two additions on top of Session 12's tap-anywhere/expand-in-place work — see CLAUDE.md
+  Architecture notes' "Current conditions mini-card" and "Area unit tap-to-cycle" entries for the full
+  design; this is what it took to build them without duplicating or regressing anything.
+  Generalized tap-anywhere's weather mini-card (previously tapAnywhereConditionsHtml/
+  updateTapAnywhereConditionsDisplay, tightly coupled to tapAnywhereState) into a shared component
+  (conditionsCardHtml/peekCurrentConditions/conditionsCardContainerHtml/fetchConditionsForDrawerItem) reused
+  by both tap-anywhere and the pin/bearing/track/area compact views — the SAME getCurrentConditions cache,
+  not a second one. The split into a pure render half and a separate side-effecting fetch half mattered in
+  practice, not just in theory: bearingPopupHtml/trackPopupHtml are also called to build
+  promptDirectionsChoice's "restore" string well before (if ever) it's actually redisplayed, so the render
+  half had to be guaranteed fetch-free, with the real fetch triggered explicitly and only once per
+  open*/openPinDrawer call (mirroring how pin elevation backfill already worked). Point resolution reused
+  Directions' existing logic per type rather than inventing new rules: pin's own coordinate, bearing's
+  ORIGIN (not target), track's START point, area's polygonInteriorPoint. Added area unit tap-to-cycle
+  (ac → sq ft → sq mi → back to ac) as a separate, narrower display path (polygonAreaDisplayForDrawer) that
+  doesn't touch polygonAreaDisplay's own auto-select-by-size logic, still used everywhere else (sidebar,
+  Share, edit form). Verified via Playwright: correct weather for all 4 types at their correct resolved
+  point; cache genuinely reused for a second nearby item (confirmed by monkey-patching window.fetch to
+  count real network calls, not by inspecting the cache object directly — a naive first attempt at this
+  check used two points that looked "nearby" on screen but actually straddled the cache's own 0.1°-rounding
+  boundary, a good reminder that "nearby on screen" and "same cache cell" aren't the same claim); offline
+  shows "Unavailable offline" (confirmed with context.setOffline, not assumed); GMU/USFS/wildlife/migration
+  popups confirmed unchanged (no card, same footer); area unit cycles through a full rotation back to its
+  starting value and the meta row stays single-line at mobile width (no regression to the fix from the
+  session before this one).
