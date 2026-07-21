@@ -151,7 +151,26 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   pin-delete-btn and track-delete-btn had markup and even a matching (dead) deletePinFromModal function in
   pin's case, but were never actually connected to a click handler at all — Delete inside those two modals
   did nothing, silently, pre-existing and unrelated to this batch's own changes, only surfaced because this
-  batch is what finally exercises those buttons in a place they'd get used.
+  batch is what finally exercises those buttons in a place they'd get used. SECOND GOTCHA (Session 17, also
+  found only via testing): showViewDrawer() — the function EVERY "open this item's drawer" entry point
+  (openPinDrawer, openTrackPopupAt, openPolygonPopupAt, openBearingPopupAt, the GMU/USFS/wildlife/migration
+  openers, tap-anywhere) funnels through — called setViewDrawerContent() unconditionally, with no check on
+  drawerExpandedType. closeViewDrawer() already had that guard (`if (drawerExpandedType) return;`), and every
+  OTHER direct setViewDrawerContent() call site was already protected via isViewDrawerShowing() (which itself
+  returns false while expanded) — showViewDrawer() itself was the one gap. Real-world trigger: open "Edit
+  data" on any item (expanding its .modal into #view-drawer-content), then — WITHOUT Cancel/Save/Delete —
+  click a different item's marker/row. showViewDrawer() would overwrite #view-drawer-content's innerHTML,
+  permanently destroying the still-expanded .modal (title/coords/every field) since it was never returned to
+  its home overlay first. The very next "Edit data" attempt for THAT item type then throws `Cannot set
+  properties of null (setting 'textContent')` in its openXModal, since e.g. #pin-modal-title no longer exists
+  anywhere in the document. This reproduced identically for all four types (pin/track/polygon/bearing) since
+  they all share the same showViewDrawer/expandDrawerForEdit machinery — confirmed NOT a Trip-migration bug
+  despite surfacing right after that stage shipped (a full diff review of every Stage-1 change found nothing
+  touching pin-modal-title/pin-lat/pin-lng, and the trip field's own value-population line would have crashed
+  identically pre-migration on a null #pin-trip, which never happened in testing). Fixed by adding the same
+  `if (drawerExpandedType) return;` guard to showViewDrawer() itself, matching closeViewDrawer's existing
+  one — mid-edit, the only way out is still Cancel/Save/Delete, now enforced consistently on both the close
+  path and the switch-to-a-different-item path.
 - Current conditions mini-card (conditionsCardHtml/peekCurrentConditions/conditionsCardContainerHtml/
   fetchConditionsForDrawerItem, getCurrentConditions/currentConditionsCache 30min-TTL cache) — ONE shared
   component/cache, used by tap-anywhere AND the pin/bearing/track/area compact drawer views (deliberately
@@ -570,3 +589,27 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   one device is correctly dropped by the merge even when a second, not-yet-synced device still has it
   locally, and confirmed an unrelated brand-new trip on the stale device survives that same merge untouched.
   `node --check` on all 4 extracted inline `<script>` blocks confirmed clean syntax after every batch of edits.
+- Session 17: Fixed a critical "Edit data" crash reported right after Session 16 shipped — see Architecture
+  notes' "Expand-in-place editing" entry's SECOND GOTCHA for the full mechanism. The bug report's own
+  hypothesis (a trip-related element renamed/removed) turned out to be wrong: a full line-by-line review of
+  every change in Session 16's commit found nothing touching pin-modal-title/pin-lat/pin-lng (the only
+  `.textContent` assignments in openPinModal), and the trip field's own `.value` line would have crashed
+  identically pre-migration on a null `#pin-trip`, which never happened. The real, pre-existing root cause
+  (unrelated to trips, dating to Session 12's expand-in-place work): showViewDrawer() — the single function
+  every "open this item's drawer" entry point funnels through — had no guard against overwriting
+  #view-drawer-content while a DIFFERENT edit was still expanded into it, unlike closeViewDrawer() which
+  already refuses to close under the same condition. Reproduced via Playwright by opening "Edit data" on a
+  pin, then (without Cancel/Save/Delete) clicking a different item's row — this permanently destroyed the
+  first item's expanded .modal DOM, and the next "Edit data" attempt for that type threw exactly the reported
+  `Cannot set properties of null (setting 'textContent')`. Confirmed via direct code review and a live repro
+  that this affects all four types identically (pin/track/polygon/bearing all share the same showViewDrawer/
+  expandDrawerForEdit machinery) — not a pin-specific or trip-specific bug. Fixed with a single guard clause
+  in showViewDrawer() matching closeViewDrawer's existing one. Verified via Playwright: the exact regression
+  sequence (edit Pin A, click away to a different pin without saving, attempt to edit again) no longer
+  throws, and the in-progress edit is confirmed to survive intact (the click-away is now correctly a no-op,
+  not a silent discard) rather than merely not-crashing; all four types' "Edit data" open cleanly with zero
+  console errors after that sequence, each showing its correct trip value; Save was verified working for all
+  four types (initial pass showed unchanged names, root-caused to the test reading localStorage before
+  scheduleSave's 700ms persist debounce elapsed — a test-timing artifact, not an app bug — confirmed by
+  re-running with a longer wait). `node --check` on all 4 extracted inline `<script>` blocks confirmed clean
+  syntax.
