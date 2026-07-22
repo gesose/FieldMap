@@ -35,27 +35,39 @@
   html,body{margin:0;padding:0;height:100%;font-family:var(--font-sans);background:var(--bg);color:var(--text);}
   #app{position:fixed;inset:0;display:flex;}
 
+  /* Floating info stack — coordinate/elevation readout, scale bar, active-trip chip, and the
+     active-layers indicator consolidated into one right-aligned vertical column. Previously
+     each of these guessed its own top offset from the previous box's measured height (see the
+     old #active-trip-chip comment this replaced — "top:112px sits just below #scale-bar's
+     measured bottom edge"), which was fragile any time a box's own content/height changed.
+     Flexbox gap now owns the spacing instead: every child is a plain flow element (no more
+     per-child position:absolute/top/right), and #floating-info-stack itself is the only thing
+     positioned. FLOATING_INFO_STACK_WIDTH (230px) is shared by every child — sized to fit the
+     longest single species name in the GAP big_game dataset ("Columbian White-tailed Deer" /
+     "Collared Peccary (Javelina)", both 27 characters) on one line at the active-layers chip's
+     own font, since that's the widest-text case any chip in this stack ever needs to hold. */
+  #floating-info-stack{
+    position:absolute;top:14px;right:14px;z-index:1000;
+    display:flex;flex-direction:column;gap:8px;
+    width:230px;
+  }
   /* Floating coordinate + elevation readout (replaces old topbar), CalTopo-style —
      live-updates as the map pans, elevation via the DEM→GPS→EPQS hierarchy (getElevationFt) */
   #center-readout-float{
-    position:absolute;top:14px;right:14px;z-index:1000;cursor:pointer;
+    cursor:pointer;
     font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
     background:var(--bg-elevated);border:1px solid var(--border);
     padding:5px 9px;border-radius:8px;white-space:nowrap;
-    width:150px;box-sizing:border-box;text-align:center;
+    box-sizing:border-box;text-align:center;
   }
   #center-readout-float:hover{color:var(--text);border-color:var(--accent);}
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
   #center-readout-elev.show{display:block;}
 
-  /* Active Trip persistent indicator — moved (per direct feedback) from top-left (where it
-     collided with MapLibre's own NavigationControl, and on desktop needed an awkward
-     sidebar-width offset since it's a body-level sibling of <main id="map">, not a map-scoped
-     child) to directly under #center-readout-float + #scale-bar's own top-right stack —
-     top:112px sits just below #scale-bar's measured bottom edge (70px top + ~33px tall), same
-     right:14px/width:150px as both boxes above it, so all three read as one aligned column. */
+  /* Active Trip persistent indicator — now just a plain child of #floating-info-stack (see
+     that rule's own comment for why the old per-child pixel-offset stacking was replaced). */
   #active-trip-chip{
-    position:absolute;top:112px;right:14px;left:auto;width:150px;z-index:1000;cursor:pointer;
+    cursor:pointer;
     font-family:var(--font-sans);font-size:12px;font-weight:600;color:var(--text);
     background:rgba(34,41,35,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     border:1px solid rgba(255,255,255,0.12);border-radius:20px;
@@ -76,6 +88,24 @@
   #active-trip-chip.no-active-trip{color:var(--text-muted);font-weight:500;}
   #active-trip-chip.no-active-trip::before{color:var(--text-muted);}
 
+  /* Active layers indicator — replaces the old always-on color-swatch legend (#wildlife-legend
+     panel, previously floating independently at bottom-right), which duplicated the picker
+     panel's own legend and the tap-to-identify popups. Text-only: just the name(s) of whichever
+     Habitat/Migration layer(s) are on, one <div> per active layer type (see
+     updateActiveLayersChip) — one line total when only Habitat or only Migration is active, two
+     when both are. Unlike the trip chip (always visible, has its own muted "no active trip"
+     state), this is the one chip in the stack that's fully hidden (not just emptied) when
+     neither layer is active. */
+  #active-layers-chip{
+    font-family:var(--font-sans);font-size:11px;color:var(--text-muted);
+    background:var(--bg-elevated);border:1px solid var(--border);
+    padding:6px 9px;border-radius:8px;box-sizing:border-box;
+  }
+  #active-layers-chip.hidden{display:none;}
+  /* Ellipsis safety net for a future species name longer than anything in today's dataset —
+     each active layer gets its own line/div, truncated independently. */
+  .active-layers-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
+
   /* Trip picker panel's list rows (Stage 2) */
   .trip-picker-row{
     display:flex;align-items:baseline;justify-content:space-between;gap:8px;
@@ -91,8 +121,7 @@
      icon column lives), so this is a separate, compact, top-left equivalent. */
   #center-readout-mobile{display:none;}
   #scale-bar{
-    position:absolute;top:70px;right:14px;z-index:1000;
-    width:150px;box-sizing:border-box;
+    box-sizing:border-box;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
     padding:6px 9px;display:flex;flex-direction:column;gap:3px;
   }
@@ -845,18 +874,6 @@
   .pub-land-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;}
   .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
 
-  #wildlife-legend{
-    /* #wildlife-legend is a body-level element (a sibling of <main id="map">, not a child of
-       it), so "left" here is relative to the viewport, not the map — left:14px alone landed
-       inside #sidebar's 0-330px column. Offset past the sidebar's width instead. */
-    position:absolute;bottom:14px;left:calc(var(--sidebar-width) + 14px);
-    z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-    border:1px solid rgba(255,255,255,0.1);border-radius:10px;
-    padding:8px 12px;max-width:220px;
-    box-shadow:0 2px 10px rgba(0,0,0,0.4);
-    transition:bottom .25s ease;
-  }
-  #wildlife-legend.hidden{display:none;}
   .wildlife-tab-btn{
     flex:1;padding:8px 4px;font-size:12px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;
     transition:background .15s,color .15s;
@@ -896,22 +913,33 @@
 
     /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
-    /* Mobile equivalent lives at the bottom next to the scale bar (same width, stacked
-       just above it) rather than the top — the top-right area is the floating
-       search/layers/filter/locate icon column, and stacking it there previously ended up
-       overlapping the zoom controls. Two-row layout (coords, then elevation below) mirrors
-       #center-readout-float's structure since the bubble is too narrow for one line of both. */
+    /* Floating info stack, mobile: same consolidated-column concept as desktop (see that rule's
+       own comment) but top-aligned in the left/center info column instead of right-aligned —
+       desktop's right edge is fine on mobile too width-wise, but the RIGHT side is reserved
+       visually for symmetry with #map-controls' icon column conceptually sitting opposite it;
+       parking the stack on the left keeps it clear of that association. top:105px (not 14px)
+       clears two things that both live at/near the top-left otherwise: MapLibre's own
+       NavigationControl (zoom +/-/compass, added at 'top-left', ~10-97px) and #map-search-bar
+       when opened via the search icon (centered, ~14-57px, nearly full-width so no horizontal
+       dodge is possible) — 105px sits comfortably past both. Same fixed width as desktop
+       (230px, sized for the same longest species name) with a max-width safety net for
+       narrower phones. */
+    #floating-info-stack{
+      top:105px;right:auto;left:14px;
+      width:230px;max-width:calc(100vw - 28px);
+    }
+    /* Mobile equivalent of #center-readout-float — same two-row layout (coords, then elevation
+       below) since the bubble is too narrow for one line of both; no longer independently
+       positioned, just a plain child of #floating-info-stack now (see that rule's comment). */
     #center-readout-mobile{
-      display:block;position:absolute;bottom:152px;left:14px;z-index:1000;cursor:pointer;
+      display:block;cursor:pointer;
       font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
       background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
-      padding:5px 9px;width:130px;box-sizing:border-box;text-align:center;
-      transition:bottom .25s ease;
+      padding:5px 9px;box-sizing:border-box;text-align:center;
     }
     #center-readout-mobile-coords{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     #center-readout-mobile-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     #center-readout-mobile-elev.show{display:block;}
-    body.sidebar-open #center-readout-mobile{ bottom:calc(55vh + 204px); }
 
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
     .leaflet-control-zoom{display:none !important;}
@@ -920,18 +948,10 @@
     .leaflet-bottom.leaflet-left{margin-bottom:88px;transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
-    /* Scale bar: stacked above the attribution line, clear of overlap */
-    #scale-bar{
-      display:flex !important;
-      top:auto;right:auto;
-      bottom:108px;left:14px;
-      width:130px;
-      transition:bottom .25s ease;
-    }
-
-    /* When sidebar is open, push attribution and scale bar up above sort row + list */
+    /* When sidebar is open, push attribution up above sort row + list — #scale-bar no longer
+       needs its own push-up rule now that it lives in the top-anchored info stack instead of
+       docked near the bottom sheet. */
     body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 140px); }
-    body.sidebar-open #scale-bar{ bottom:calc(55vh + 160px); }
 
     /* Search bar stays centered now that native zoom controls are hidden */
     #map-search-bar{width:calc(100% - 28px);}
@@ -1038,22 +1058,6 @@
        bottom:694 in testing) but only by ~9px — visually reads as touching/overlapping
        once real border/padding rendering and font-metric variance across devices are
        accounted for. Pushed up further for real clearance. */
-    #wildlife-legend{ left:14px; right:auto; bottom:195px; max-width:calc(100% - 28px); }
-    body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 245px); }
-
-    /* Active Trip chip on mobile — desktop's "stack under the coords/scale-bar column" doesn't
-       apply here (that whole column is hidden on mobile — #center-readout-mobile lives at the
-       BOTTOM instead). Centered at the top instead, per direct feedback — but top:66px, not
-       14px: #map-search-bar, when opened via the search icon, is ALSO centered at top:14px
-       (measured height ~43px), and this must never sit underneath it. 66px clears its
-       measured bottom edge (~57px) with margin. Zoom controls (MapLibre's NavigationControl)
-       occupy the left ~39px regardless of vertical position, but centering keeps this chip
-       clear of that column entirely at any width up to roughly 300px. */
-    #active-trip-chip{
-      top:66px;left:50%;right:auto;transform:translateX(-50%);
-      width:auto;max-width:calc(100% - 100px);
-    }
-
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
   }
@@ -1151,22 +1155,34 @@
   </main>
 </div>
 
-<div id="center-readout-float"><div id="center-readout-coords">--, --</div><div id="center-readout-elev"></div></div>
-<div id="center-readout-mobile"><span id="center-readout-mobile-coords">--, --</span><span id="center-readout-mobile-elev"></span></div>
-<div id="scale-bar">
-  <div id="scale-bar-line"></div>
-  <span id="scale-bar-label"></span>
+<!-- Floating info stack — coords/elevation readout, scale bar, active-trip chip, and the
+     active-layers indicator, consolidated into one column (right-aligned on desktop, top-
+     aligned in the left/center info column on mobile — see #floating-info-stack's own CSS
+     comment for the full reasoning and the responsive repositioning). Each child keeps its own
+     id/JS wiring completely unchanged from before this consolidation; only the positioning
+     mechanism (flex column + gap, not per-child position:absolute) and the shared width moved
+     up to the wrapper. -->
+<div id="floating-info-stack">
+  <div id="center-readout-float"><div id="center-readout-coords">--, --</div><div id="center-readout-elev"></div></div>
+  <div id="center-readout-mobile"><span id="center-readout-mobile-coords">--, --</span><span id="center-readout-mobile-elev"></span></div>
+  <div id="scale-bar">
+    <div id="scale-bar-line"></div>
+    <span id="scale-bar-label"></span>
+  </div>
+  <!-- Active Trip persistent indicator (Stage 2 of the Active Trip project). Starts "hidden"
+       here only as a pre-JS default (avoids a flash of an unstyled/empty button before boot
+       runs) — updateActiveTripIndicator() always removes it, in both the active and
+       no-active-trip state; see that function's own comment for why this is always-visible
+       now, unlike Stage 2. -->
+  <button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
+    <span id="active-trip-chip-label"></span>
+  </button>
+  <!-- Active layers indicator — replaces the old always-on #wildlife-legend swatch panel (see
+       #active-layers-chip's own CSS comment). Starts hidden for the same pre-JS-flash reason as
+       the trip chip above; updateActiveLayersChip() drives visibility from then on, and is the
+       one chip of the four that stays hidden (not just emptied) when nothing is active. -->
+  <div id="active-layers-chip" class="hidden"></div>
 </div>
-
-<!-- Active Trip persistent indicator (Stage 2 of the Active Trip project) — top-left, the one
-     corner with no existing map chrome (bottom/right host #map-controls, top-right hosts
-     #center-readout-float, top-center hosts #map-search-bar). Starts "hidden" here only as a
-     pre-JS default (avoids a flash of an unstyled/empty button before boot runs) —
-     updateActiveTripIndicator() always removes it, in both the active and no-active-trip
-     state; see that function's own comment for why this is always-visible now, unlike Stage 2. -->
-<button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
-  <span id="active-trip-chip-label"></span>
-</button>
 
 <div id="publicland-legend" class="hidden">
   <span style="color:#FEE679;">BLM</span>
@@ -1179,8 +1195,6 @@
   <span style="color:#4A7FC9;">State</span>
   <span style="color:#C0C0C0;">Local</span>
 </div>
-
-<div id="wildlife-legend" class="hidden"></div>
 
 <div id="map-controls">
   <button class="map-icon-btn" id="search-toggle-btn" aria-label="Search">
@@ -1942,7 +1956,7 @@
     <div id="migration-sublayers" style="display:none;">
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
-        <span class="legend-swatch" style="margin-left:auto;background:#FAEEDA;color:#4a3a1a;font-size:10px;">Winter</span>
+        <span class="legend-swatch" style="margin-left:auto;background:#CECBF6;border:1px solid #534AB7;color:#2a2560;font-size:10px;">Winter</span>
       </label>
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-corridor-toggle"> Corridors
@@ -2583,7 +2597,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.27.2';
+  var APP_VERSION = '2.28.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3097,14 +3111,20 @@
   // species picker is derived from whatever's in the merged data, so no other rework needed.
   var MIGRATION_DATA_FILES = ['data/ungulate-migrations/elk-west-goose-lake.geojson'];
   var MIGRATION_CATEGORY_LABELS = { Corridor: 'Corridors', Stopover: 'Stopover', WinterRange: 'Winter Range' };
-  // Style test on the West Goose Lake elk POC herd only (Session: Migration layer style test) —
-  // AnnualRange deliberately not styled here, not present in this herd's data; add it when
-  // AZ/CA/NM are wired in. Three distinct visual treatments per category now, not one shared
-  // violet hue: Winter Range is a soft no-stroke wash (broad zone, not a traced boundary),
-  // Corridor is a continuous amber→coral gradient by use_class with no stroke at all (a stroke
-  // per polygon would show as visible seams between adjacent Low/Medium/High features, breaking
-  // the "one continuous gradient" read), and Stopover keeps a strong fill+stroke pairing
-  // specifically so it stays visually distinct from Corridor's soft gradient at a glance.
+  // Style test on the West Goose Lake elk POC herd only (all migration herds currently wired —
+  // there's only the one). AnnualRange deliberately not styled here, not present in this herd's
+  // data; add it when AZ/CA/NM are wired in. Three distinct visual treatments per category, not
+  // one shared hue: Corridor is a continuous amber→coral gradient by use_class with no stroke
+  // at all (a stroke per polygon would show as visible seams between adjacent Low/Medium/High
+  // features, breaking the "one continuous gradient" read); Stopover keeps a strong fill+stroke
+  // pairing so it stays visually distinct from Corridor's soft gradient at a glance; Winter
+  // Range was originally a tan wash (#FAEEDA) but that had no contrast against the Topo/Topo
+  // Dark basemap's own tan tones — recolored to a purple wash instead, a hue otherwise unused
+  // now that Corridor moved to amber/coral, and one that doesn't visually overlap Hydrography's
+  // blue or the GPS-locate blue either. Winter Range keeps a thin stroke (unlike Corridor) since
+  // a flat wash at 45-50% opacity with zero definition risked disappearing entirely against
+  // some basemap/zoom combinations — a thin stroke costs it none of the "broad zone, not a
+  // traced boundary" read Corridor's gradient is built around avoiding.
   // Corridor gradient — amber (low use) to coral (high use). MEDIUM_FILL is the midpoint of the
   // two (computed, not eyeballed) for a future herd whose data actually has a MediumUse tier;
   // West Goose Lake's own data only has LowUse/HighUse, so it's unused here but keeps the ramp
@@ -3113,7 +3133,7 @@
   var MIGRATION_CORRIDOR_MEDIUM_FILL = '#CA8249';
   var MIGRATION_CORRIDOR_HIGH_FILL = '#993C1D';
   var MIGRATION_STOPOVER_FILL = '#D4537E', MIGRATION_STOPOVER_STROKE = '#72243E';
-  var MIGRATION_WINTERRANGE_FILL = '#FAEEDA';
+  var MIGRATION_WINTERRANGE_FILL = '#CECBF6', MIGRATION_WINTERRANGE_STROKE = '#534AB7';
   var migrationCache = null; // merged FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
   var migrationLoadCallbacks = null; // array of pending callbacks while the fetch is in flight, or null
   var migrationActiveSpecies = null; // currently selected species name (e.g. 'Elk'), or null
@@ -4777,14 +4797,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (data && map.getSource('wildlife-' + wildlifeActive.category + '-source')){
               map.getSource('wildlife-' + wildlifeActive.category + '-source').setData(data);
               updateWildlifeMapFilter();
-              updateWildlifeLegend();
+              updateActiveLayersChip();
             }
           });
           if (migrationsOn && migrationActiveSpecies) loadMigrationData(function(data){
             if (data && map.getSource('migration-source')){
               map.getSource('migration-source').setData(migrationFilteredData());
               updateMigrationMapFilter();
-              updateWildlifeLegend();
+              updateActiveLayersChip();
             }
           });
           if (state.settings.fireperimetersOn) ensureFirePerimetersLoaded(function(data){
@@ -7037,11 +7057,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // geometry_category instead of species_code. Per-category paint (style test, West Goose
     // Lake elk POC only — see the MIGRATION_* constants' own comment): Corridor is a
     // continuous amber→coral 'match' on use_class (LowUse/MediumUse/HighUse — West Goose
-    // Lake's data only has the two ends of that range today), Stopover and Winter Range are
-    // flat colors. fill-opacity is also per-category (Winter Range deliberately low/soft,
-    // Corridor higher since it has no stroke to lean on for legibility, Stopover in between
-    // since its stroke already does most of the definition work). Filter/paint reapplied at
-    // the end of this function via updateMigrationMapFilter().
+    // Lake's data only has the two ends of that range today) with no stroke at all; Stopover
+    // and Winter Range are flat colors, each WITH a stroke (Stopover's existing dark maroon,
+    // Winter Range's new thin purple — see updateMigrationMapFilter's lineCats split, which is
+    // what actually keeps Corridor off the line layer while letting these two through).
+    // fill-opacity is per-category (Winter Range ~47%, a middle ground — needed enough
+    // presence to read against the Topo/Topo Dark basemap's own tan/dark tones now that it's no
+    // longer a same-family tan-on-tan wash, but still a soft "zone" rather than Corridor's more
+    // assertive gradient; Corridor highest since it has no stroke to lean on for legibility;
+    // Stopover in between since its stroke already does most of the definition work). Filter/
+    // paint reapplied at the end of this function via updateMigrationMapFilter().
     if (!map.getSource('migration-source')){
       map.addSource('migration-source', {
         type: 'geojson',
@@ -7069,7 +7094,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           ],
           'fill-opacity': [
             'case',
-            ['==', ['get', 'geometry_category'], 'WinterRange'], 0.35,
+            ['==', ['get', 'geometry_category'], 'WinterRange'], 0.475,
             ['==', ['get', 'geometry_category'], 'Corridor'], 0.55,
             ['==', ['get', 'geometry_category'], 'Stopover'], 0.45,
             0.3
@@ -7077,10 +7102,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }
       });
     }
-    // Stroke now Stopover-only (see updateMigrationMapFilter's lineCats split) — Corridor and
-    // Winter Range are both no-stroke washes, so this layer's own paint can stay a flat color
-    // rather than a per-category case expression; the filter is what keeps the other two
-    // categories' features off this layer entirely.
+    // Stroke is Stopover + Winter Range only (see updateMigrationMapFilter's lineCats split) —
+    // Corridor stays a no-stroke gradient (a stroke per polygon would show as visible seams
+    // between adjacent Low/Medium/High features). Both color and width vary by category now
+    // that Winter Range has its own thin purple stroke rather than no stroke at all.
     if (!map.getLayer('migration-line')){
       map.addLayer({
         id: 'migration-line',
@@ -7089,8 +7114,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         filter: ['in', ['get', 'geometry_category'], ['literal', []]],
         layout: { 'line-join': 'round' },
         paint: {
-          'line-color': MIGRATION_STOPOVER_STROKE,
-          'line-width': 1.75,
+          'line-color': ['case',
+            ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_STROKE,
+            MIGRATION_STOPOVER_STROKE],
+          'line-width': ['case',
+            ['==', ['get', 'geometry_category'], 'WinterRange'], 1,
+            1.75],
           'line-opacity': 0.95
         }
       });
@@ -14054,7 +14083,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (wildlifeActive) wildlifeOn = true;
     persistWildlifeSettings();
     updateWildlifeMapFilter();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
     updateWildlifeQuickToggleUI();
   }
 
@@ -14065,7 +14094,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderWildlifeSublayers();
     persistWildlifeSettings();
     updateWildlifeMapFilter();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
     updateWildlifeQuickToggleUI();
   }
 
@@ -14075,7 +14104,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     wildlifeOn = on;
     persistWildlifeSettings();
     updateWildlifeMapFilter();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
     updateWildlifeQuickToggleUI();
   }
 
@@ -14137,41 +14166,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // so each gets its own labeled section here rather than one overwriting the other, and each
   // label is suffixed with what kind of layer it is ("— range" vs "— migration") so it's never
   // ambiguous which shape on the map belongs to which when both are showing at once.
-  function updateWildlifeLegend(){
-    var legend = document.getElementById('wildlife-legend');
-    var sections = [];
+  // Replaces the old always-on color-swatch #wildlife-legend panel — that duplicated the
+  // picker panel's own per-checkbox legend swatches and the tap-to-identify popups, and floated
+  // independently at bottom-right instead of living with the rest of the floating info chips.
+  // This is text-only: just the name(s) of whichever Habitat/Migration layer(s) are actually
+  // rendering right now, one <div> (one line) per active layer type — one line total when only
+  // Habitat or only Migration is on, two lines when both are (see #active-layers-chip's own CSS
+  // comment for the ellipsis-truncation safety net on each line). Unlike the trip chip, this is
+  // the one chip in the stack that's fully hidden (not just emptied) when neither is active.
+  function updateActiveLayersChip(){
+    var chip = document.getElementById('active-layers-chip');
+    var lines = [];
 
     if (wildlifeOn && wildlifeActive && wildlifeActive.codes.length){
-      var name = wildlifeDisplayName(wildlifeActive.speciesName);
-      var multi = wildlifeActive.codes.length > 1;
-      var swatches = wildlifeActive.codes.map(function(code, i){
-        var color = WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length];
-        var border = WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length];
-        return '<span class="legend-swatch" style="background:' + color + ';border:1px solid ' + border + ';color:#fff;">' + (multi ? ('Layer ' + (i + 1)) : (escapeHtml(name) + ' — range')) + '</span>';
-      }).join(' ');
-      sections.push((multi ? '<div style="font-size:11px;font-weight:600;margin-bottom:4px;">' + escapeHtml(name) + ' — range</div>' : '') +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>');
+      lines.push(escapeHtml(wildlifeDisplayName(wildlifeActive.speciesName)));
+    }
+    if (migrationsOn && migrationActiveSpecies && migrationActiveCategoryList().length){
+      lines.push(escapeHtml(migrationActiveSpecies) + ' migration');
     }
 
-    // Style test (West Goose Lake elk POC): one row per category, in Winter range / Corridors /
-    // Stopover order — no more separate Low/High sub-swatches under Corridors, since that's now
-    // one continuous gradient layer behind a single toggle. Corridor's swatch renders the actual
-    // gradient (CSS linear-gradient, same two endpoint colors as the map's 'match' expression)
-    // rather than a flat color, so the legend itself communicates "this is a gradient, not a
-    // category" at a glance.
-    var migCats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
-    if (migCats.length){
-      var migRows = [];
-      if (migCats.indexOf('WinterRange') !== -1) migRows.push('<span class="legend-swatch" style="background:' + MIGRATION_WINTERRANGE_FILL + ';color:#4a3a1a;">Winter range</span>');
-      if (migCats.indexOf('Corridor') !== -1) migRows.push('<span class="legend-swatch" style="background:linear-gradient(to right, ' + MIGRATION_CORRIDOR_LOW_FILL + ', ' + MIGRATION_CORRIDOR_HIGH_FILL + ');color:#fff;">Corridors</span>');
-      if (migCats.indexOf('Stopover') !== -1) migRows.push('<span class="legend-swatch" style="background:' + MIGRATION_STOPOVER_FILL + ';border:1px solid ' + MIGRATION_STOPOVER_STROKE + ';color:#fff;">Stopover</span>');
-      sections.push('<div style="font-size:11px;font-weight:600;margin-bottom:4px;' + (sections.length ? 'margin-top:8px;' : '') + '">' + escapeHtml(migrationActiveSpecies) + ' — migration</div>' +
-        '<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;">' + migRows.join('') + '</div>');
-    }
-
-    if (!sections.length){ legend.classList.add('hidden'); return; }
-    legend.innerHTML = sections.join('');
-    legend.classList.remove('hidden');
+    if (!lines.length){ chip.classList.add('hidden'); return; }
+    chip.innerHTML = lines.map(function(l){ return '<div class="active-layers-line">' + l + '</div>'; }).join('');
+    chip.classList.remove('hidden');
   }
 
   function wildlifePopupHtml(props){
@@ -14295,7 +14311,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
     updateMigrationMapFilter();
     renderMigrationSublayers();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
     updateMigrationsQuickToggleUI();
   }
 
@@ -14310,7 +14326,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     migrationsOn = on;
     persistMigrationSettings();
     updateMigrationMapFilter();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
     updateMigrationsQuickToggleUI();
   }
 
@@ -14337,7 +14353,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     else if (category === 'WinterRange') state.settings.migrationWinterRangeOn = on;
     scheduleSave();
     updateMigrationMapFilter();
-    updateWildlifeLegend();
+    updateActiveLayersChip();
   }
 
   // Re-applies the checked-category filter to the migration layers — called after every
@@ -14347,10 +14363,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function updateMigrationMapFilter(){
     if (!map || !map.getLayer('migration-fill')) return;
     var cats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
-    // migration-line only ever shows Stopover now (Corridor/Winter Range are no-stroke washes
-    // — see the migration-fill/migration-line layer setup comment), so its filter is always a
-    // subset of the fill layer's, never the same list.
-    var lineCats = cats.indexOf('Stopover') !== -1 ? ['Stopover'] : [];
+    // migration-line only ever shows Stopover + Winter Range (Corridor stays a no-stroke
+    // gradient — see the migration-fill/migration-line layer setup comment), so its filter is
+    // always a subset of the fill layer's, never the same list.
+    var lineCats = cats.filter(function(c){ return c === 'Stopover' || c === 'WinterRange'; });
     map.setFilter('migration-fill', ['in', ['get', 'geometry_category'], ['literal', cats]]);
     map.setFilter('migration-line', ['in', ['get', 'geometry_category'], ['literal', lineCats]]);
     if (!cats.length && openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }

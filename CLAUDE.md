@@ -51,6 +51,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   the one actually reported, but this affected any new-item creation modal, not just bearings) — a z-index
   stacking gap, not a wiring gap; see Architecture notes' "Range Ring/Buffer wiring gaps" entry for the full
   mechanism and why it looked like "one shared root cause" but was actually two.
+- Winter Range recolored tan → purple (Session 24) for contrast against the Topo/Topo Dark basemap, and the
+  desktop/mobile floating info chips (coords, scale bar, active trip, and a new active-layers indicator) are
+  now one consolidated stack instead of four independently-positioned elements plus a separate always-on
+  legend panel — see Architecture notes' "Floating info stack" and "Migration corridors" entries for the
+  full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -611,9 +616,14 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Low/Medium/High checkboxes; a style-test session's report assumed otherwise but direct code inspection
   confirmed there was nothing to consolidate on the checkbox side, only the paint/legend needed to change).
   Per-category paint (style-tested against West Goose Lake, not yet applied to any other herd):
-  - Winter Range: flat `MIGRATION_WINTERRANGE_FILL` (#FAEEDA, a soft warm-amber wash) at low fill-opacity
-    (0.35 in the fill-opacity case expression) and no stroke at all — reads as a broad zone, not a traced
-    boundary, per explicit design intent.
+  - Winter Range: flat `MIGRATION_WINTERRANGE_FILL` at fill-opacity 0.475, WITH a thin (1px)
+    `MIGRATION_WINTERRANGE_STROKE`. Originally a tan wash (#FAEEDA) with no stroke at all (Session 23) — recolored
+    purple (Session 24: fill #CECBF6, stroke #534AB7) because the tan-on-tan combination had no contrast
+    against the Topo/Topo Dark basemap's own tan tones, and purple was otherwise unused now that Corridor
+    owns the amber/coral gradient (also doesn't overlap Hydrography's or GPS-locate's blues). The thin stroke
+    was added at the same time — a flat wash with zero definition at 45-50% opacity risked disappearing
+    entirely against some basemap/zoom combinations; a 1px outline costs it none of the "broad zone, not a
+    traced boundary" read Corridor's own gradient is built around avoiding.
   - Corridor: a `['match', ['get','use_class'], ...]` expression — amber `MIGRATION_CORRIDOR_LOW_FILL`
     (#FAC775) at LowUse, coral `MIGRATION_CORRIDOR_HIGH_FILL` (#993C1D) at HighUse — at fill-opacity 0.55 (the
     highest of the three categories, since it has no stroke to lean on for legibility) and, deliberately, NO
@@ -626,34 +636,94 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   - Stopover: flat `MIGRATION_STOPOVER_FILL` (#D4537E, pink/magenta) at fill-opacity 0.45 WITH a stroke
     (`MIGRATION_STOPOVER_STROKE`, #72243E) — the one category that keeps a traced-boundary look, specifically
     so it stays visually distinct from Corridor's soft gradient at a glance (a Corridor/Stopover confusion
-    was the concrete risk named in the style-test request).
-  Because only Stopover keeps a stroke, `migration-line`'s own filter is now a *subset* of `migration-fill`'s
-  — `updateMigrationMapFilter()` computes `lineCats` as `cats` intersected with `['Stopover']`, not the same
-  list reused for both layers (the pre-existing pattern before this style test, back when all three
-  categories had their own stroke color). `migration-line`'s paint is a flat `MIGRATION_STOPOVER_STROKE`
-  now too (no per-category case expression needed) since the filter already guarantees only Stopover
-  features ever reach that layer.
-  Legend (both the on-map `#wildlife-legend` mini-legend and the Wildlife Layers panel's own per-checkbox
-  swatches) shows one row per category, Winter range / Corridors / Stopover order — no more separate Low/
-  High sub-swatches under Corridors, since that's a single toggle-controlled gradient layer now. Both
-  legends render Corridors' swatch as an actual CSS `linear-gradient(to right, LOW_FILL, HIGH_FILL)` rather
-  than a flat color, so the legend itself communicates "this is a gradient" rather than just "this is a
-  color". `migrationPopupHtml`'s per-feature "Low use"/"High use" label (shown when tapping one specific
-  Corridor polygon, unrelated to the consolidated legend) was extended to also handle a hypothetical
-  MediumUse value, for the same forward-compat reason as MIGRATION_CORRIDOR_MEDIUM_FILL.
+    was the concrete risk named in the original style-test request).
+  Corridor stays the only no-stroke category — `migration-line`'s own filter is a *subset* of
+  `migration-fill`'s (`updateMigrationMapFilter()` computes `lineCats` as `cats` filtered to
+  `Stopover`/`WinterRange` only, never the same list reused for both layers). Both `line-color` and
+  `line-width` on that layer are now per-category `case` expressions (Winter Range's 1px purple vs.
+  Stopover's 1.75px maroon) rather than the flat single-color paint used back when Winter Range had no
+  stroke at all.
+  Legend (both the on-map mini-legend, now folded into the "active layers" chip — see "Floating info
+  stack" — and the Wildlife Layers panel's own per-checkbox swatches) shows one row per category, Winter
+  range / Corridors / Stopover order — no more separate Low/High sub-swatches under Corridors, since that's
+  a single toggle-controlled gradient layer now. The panel's own Corridors swatch renders an actual CSS
+  `linear-gradient(to right, LOW_FILL, HIGH_FILL)` rather than a flat color, so it communicates "this is a
+  gradient" rather than just "this is a color"; Winter Range's own swatch there was updated to the new
+  purple fill+stroke to match. `migrationPopupHtml`'s per-feature "Low use"/"High use" label (shown when
+  tapping one specific Corridor polygon) also handles a hypothetical MediumUse value, for the same
+  forward-compat reason as MIGRATION_CORRIDOR_MEDIUM_FILL.
   Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
-  centered on West Goose Lake via the coordinate-search box (`42.2207657, -120.77918315`, matched against the
-  herd's own data bounding box computed via a quick fetch+scan, since no UI shortcut jumps straight to a
-  specific herd): all three layers toggle independently through the real checkbox UI (confirmed Winter Range
-  off leaves only Corridors+Stopover rendering, both on the map and in the legend); the Corridor gradient
-  reads as one continuous amber-to-coral flow at both a close zoom (single polygon boundary visible) and a
-  zoomed-out view spanning the whole herd extent (the two use_class tiers blend into a visible light-to-dark
-  gradient down the corridor's length); Stopover's pink/stroked polygons are clearly distinguishable from the
-  surrounding Corridor gradient at a glance, at every zoom level tested; tapping a Corridor polygon shows
-  "Corridors · Low use" or "Corridors · High use" correctly, tapping Stopover shows "Stopover" with no use-
-  class suffix. One test-environment hiccup unrelated to the app itself: a stray earlier `resize_window` call
-  left one browser tab's actual rendered viewport stuck at 278×86 despite a later resize call reporting
-  success — worked around by opening a fresh tab rather than continuing to fight the stuck one.
+  centered on West Goose Lake via the coordinate-search box (herd/Winter-Range-specific centers computed
+  from the raw GeoJSON's own bounding box each time, since no UI shortcut jumps straight to a specific herd
+  or category): all three layers toggle independently through the real checkbox UI; the Corridor gradient
+  reads as one continuous amber-to-coral flow at both a close zoom and a zoomed-out view spanning the whole
+  herd extent; Stopover's pink/stroked polygons and Winter Range's purple wash are both clearly
+  distinguishable from Corridor's gradient and from each other at a glance; Winter Range's new purple
+  confirmed visibly contrasting against Topo and Topo Dark (Aerial could not be checked — this sandbox has
+  no network access to Mapbox's satellite tile servers, a pre-existing environment limitation, not an app
+  issue); tapping a Corridor polygon shows "Corridors · Low use"/"Corridors · High use" correctly, Stopover
+  and Winter Range popups show their plain category name with no use-class suffix. One test-environment
+  gotcha hit again this session (same root cause as a prior one): a `resize_window` call can leave a tab's
+  actual rendered viewport stuck at a stale size despite reporting success — worked around each time by
+  opening a fresh tab rather than continuing to fight the stuck one.
+- Floating info stack (Session 24) — the coordinate/elevation readout, scale bar, active-trip chip, and a
+  new active-layers indicator are one consolidated column now (`#floating-info-stack`), not four
+  independently `position:absolute`-placed elements each guessing the previous one's rendered height (the
+  old `#active-trip-chip` comment literally said "top:112px sits just below #scale-bar's measured bottom
+  edge") plus a fifth element (`#wildlife-legend`) floating completely independently at bottom-right. Every
+  child lost its own `position/top/right/width` and became a plain flow element; the wrapper alone is
+  positioned, and flexbox `gap:8px` owns the spacing between children — adding, removing, or resizing a
+  chip can never desync the gap again. All children share one fixed width (230px, `#floating-info-stack`'s
+  own `width`), sized to fit the longest single species name in the GAP big_game dataset ("Columbian
+  White-tailed Deer" / "Collared Peccary (Javelina)", both 27 characters) on one line — verified via
+  `scrollWidth`/`clientWidth` equality (no truncation) with both names live, not just estimated.
+  - Desktop: wrapper stays at `top:14px;right:14px` (unchanged edge from the old individual elements) —
+    same visual position as before, just no longer three separate pixel-offset guesses.
+  - Mobile: wrapper moves to `top:105px;left:14px;right:auto` — top-aligned in the left/center info column,
+    not right-aligned like desktop (the right side conceptually pairs with `#map-controls`' icon column,
+    even though that column is actually bottom-right on both breakpoints — parking the stack on the left
+    avoids that association regardless). `top:105px` (not 14px) is deliberate, not arbitrary: it clears TWO
+    things that would otherwise collide at the literal top-left on mobile — MapLibre's own
+    NavigationControl (zoom +/-/compass, always added at `'top-left'`, measured ~0-97px tall) and
+    `#map-search-bar` when opened via the search icon (centered, nearly full viewport width when open, so
+    no horizontal dodge is possible — only clearing its ~57px bottom edge works). 105px sits past both with
+    margin. The old mobile layout split these same concerns across two *different* fixes (coords+scale
+    docked at the *bottom* specifically to avoid the zoom control; the trip chip centered at `top:66px`
+    specifically to avoid the search bar) — this session unified both constraints into the one number that
+    satisfies both at once, letting everything live in a single top-anchored column instead of two disjoint
+    ones. The active-trip chip's mobile-only centered-position override was removed entirely — it's now
+    just a plain stack child, left-aligned like every other chip in the column (including its own
+    "No active trip" state, previously the one thing on mobile that was centered independently at the top).
+  - New active-layers chip (`#active-layers-chip`, driven by `updateActiveLayersChip()` — a straight rename
+    of the old `updateWildlifeLegend()`, all 8 call sites renamed with it, no call-site logic changed):
+    replaces `#wildlife-legend`'s always-on color-swatch panel, which duplicated both the Wildlife Layers
+    picker panel's own per-checkbox legend swatches and the tap-to-identify popups. Text-only — just the
+    name(s) of whichever Habitat/Migration layer(s) are actually rendering, one `<div class="active-layers-
+    line">` per active layer type (Habitat's `wildlifeDisplayName(wildlifeActive.speciesName)`, Migration's
+    `migrationActiveSpecies + ' migration'`) — one line when only one of the two is active, two when both
+    are, verified with the actual longest species names in both single- and both-active combinations, not
+    just estimated. Each line gets its own `white-space:nowrap;overflow:hidden;text-overflow:ellipsis` as a
+    safety net for a future name longer than anything in today's dataset. Unlike the trip chip (always
+    visible, has its own muted no-active-trip state), this is the one chip in the stack that's fully
+    `classList`-hidden (not just emptied) when neither Habitat nor Migration is active — confirmed via
+    `getComputedStyle(...).display === 'none'` after switching both off, and confirmed the stack collapses
+    cleanly (remaining chips keep their correct 8px gaps, no leftover empty space) when it disappears.
+  - Verified live via the already-connected Chrome browser extension against a local `python -m
+    http.server`: desktop stack confirmed via `getBoundingClientRect()` on every child — exactly 230px wide,
+    exactly 8px gaps, same right edge; both longest species names confirmed non-truncated at that width,
+    alone and combined with "Elk migration" (2-line case). Mobile verification hit a real tooling limitation
+    in this sandbox: `resize_window` reports success but does not actually narrow the rendered viewport to
+    mobile widths here (confirmed via `window.innerWidth` staying at the desktop/native resolution
+    regardless of the requested size, across multiple fresh tabs) — there is no dedicated device-emulation
+    tool available either. Worked around by injecting the exact mobile media-query CSS block verbatim as an
+    unconditional `<style>` override on top of the real desktop-width page, which exercises the actual
+    layout math (positions/widths/gaps/z-index relative to the real NavigationControl) without the
+    trigger condition (a genuinely narrow viewport) being real — confirmed the resulting stack position,
+    left-alignment, 8px gaps, and 4-chip ordering (coords → scale → trip → active layers) all match spec
+    this way, but this is not equivalent to the "real mobile device" verification the task asked for, and
+    is flagged here rather than silently presented as full mobile confirmation. Real-device/true-narrow-
+    viewport verification of the mobile layout is still outstanding and should be the first thing checked
+    next time a real device or working mobile emulation is available.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1101,3 +1171,36 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   showing "Corridors · Low use"/"Corridors · High use"/"Stopover" correctly. `node --check` confirmed clean
   syntax on all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION bumped 2.27.1 →
   2.27.2, SHELL_CACHE bumped v132 → v133.
+- Session 24: Two-part request — recolor Winter Range tan → purple for basemap contrast, and consolidate the
+  scattered floating UI (coords/scale/trip chips plus a separate always-on legend panel) into one stack on
+  both desktop and mobile, with a new compact "active layers" chip replacing the old legend entirely. See
+  Architecture notes' "Floating info stack" and "Migration corridors" entries for full detail. The Winter
+  Range recolor also picked up a thin stroke it didn't have before (Session 23 made it a no-stroke wash,
+  matching Corridor's now-strokeless design) — a flat wash at 45-50% opacity with nothing else to define its
+  edge risked disappearing against some basemap/zoom combinations, so `migration-line`'s filter/paint grew
+  back to cover Winter Range alongside Stopover (both now per-category `case` expressions for color and
+  width), while Corridor stays the only category with no stroke at all. The UI consolidation replaced four
+  independently-positioned elements (each computing its own pixel offset from the previous one's guessed
+  height) with a single flex column that only the wrapper positions — gap and width are never guessed again.
+  `updateWildlifeLegend()` was renamed to `updateActiveLayersChip()` (all 8 call sites renamed with it, no
+  logic changes) and rewritten to render plain species/migration names instead of color swatches, since the
+  swatches duplicated the Wildlife Layers panel's own legend and the tap-to-identify popups. Judgment call
+  flagged per the task's own instruction to make reasonable calls rather than stall: mobile's stack top
+  offset (105px) had to satisfy two separate collision constraints at once — MapLibre's NavigationControl
+  and the search bar when opened — that the old layout had solved with two different, disjoint fixes (bottom
+  docking for one, top-centering for the other); 105px is the single number that clears both, discovered by
+  computing each constraint's actual measured extent rather than guessing. Verified live via the
+  already-connected Chrome browser extension against a local `python -m http.server`: Winter Range's purple
+  confirmed contrasting well against both Topo and Topo Dark (Aerial untestable — no network access to
+  Mapbox tiles in this sandbox, a pre-existing environment limitation); desktop stack confirmed exactly
+  230px wide with exactly 8px gaps via `getBoundingClientRect()` on every child, both longest GAP big_game
+  species names confirmed non-truncated alone and in the two-line both-active case; the active-layers chip
+  confirmed fully hidden (not just empty) with neither layer active, and the stack confirmed collapsing
+  cleanly when it disappears. Mobile verification hit a genuine tooling limitation, flagged rather than
+  glossed over: `resize_window` does not actually narrow this sandbox's rendered viewport (confirmed via
+  `window.innerWidth` staying at native resolution across multiple fresh tabs, with no dedicated
+  device-emulation tool available as a fallback) — worked around by injecting the real mobile CSS block as
+  an unconditional override to confirm the layout math itself is correct, but this is not equivalent to true
+  mobile-viewport or real-device verification, and that verification is still outstanding. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.27.2 → 2.28.0
+  (minor, per convention for a UI-scope change this size), SHELL_CACHE bumped v133 → v134.
