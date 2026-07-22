@@ -599,6 +599,61 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   regardless of exactly which edit happened before or after the bump within the same release. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION
   bumped 2.27.0 → 2.27.1, SHELL_CACHE bumped v131 → v132.
+- Migration corridors (ungulate migration data, P4 proof of concept — elk only, West Goose Lake herd) — lives
+  in the Wildlife Layers panel as a 4th tab alongside Habitats, own independent on/off + species picker
+  (migrationsOn/migrationActiveSpecies), fully separate from Habitats' own toggle (see that entry's own
+  comment for why it isn't folded into the generic WILDLIFE_CATEGORIES loop). One shared source
+  ('migration-source') + fill/line layer pair for all three geometry_category values (Corridor/Stopover/
+  WinterRange — AnnualRange exists as a category in the wider USGS dataset but isn't present in West Goose
+  Lake's own data, so it's out of scope until AZ/CA/NM herds are wired in), filtered by three independent
+  checkboxes (migrationCorridorOn/migrationStopoverOn/migrationWinterRangeOn — despite the name, Corridor was
+  always ONE checkbox controlling all of that category's use_class tiers together, never three separate
+  Low/Medium/High checkboxes; a style-test session's report assumed otherwise but direct code inspection
+  confirmed there was nothing to consolidate on the checkbox side, only the paint/legend needed to change).
+  Per-category paint (style-tested against West Goose Lake, not yet applied to any other herd):
+  - Winter Range: flat `MIGRATION_WINTERRANGE_FILL` (#FAEEDA, a soft warm-amber wash) at low fill-opacity
+    (0.35 in the fill-opacity case expression) and no stroke at all — reads as a broad zone, not a traced
+    boundary, per explicit design intent.
+  - Corridor: a `['match', ['get','use_class'], ...]` expression — amber `MIGRATION_CORRIDOR_LOW_FILL`
+    (#FAC775) at LowUse, coral `MIGRATION_CORRIDOR_HIGH_FILL` (#993C1D) at HighUse — at fill-opacity 0.55 (the
+    highest of the three categories, since it has no stroke to lean on for legibility) and, deliberately, NO
+    stroke at all: a per-tier stroke color would show as a visible seam at the boundary between adjacent
+    Low/Medium/High polygons, undermining the "one continuous gradient" read the style calls for.
+    `MIGRATION_CORRIDOR_MEDIUM_FILL` (#CA8249, the exact numeric midpoint of the two endpoint colors, not
+    eyeballed) is wired into the same match expression for a future herd whose data actually has a MediumUse
+    tier — West Goose Lake's own data only has LowUse/HighUse, so it's unused today but keeps the ramp a
+    genuine 3-stop gradient rather than a 2-stop one pretending to be 3-tier.
+  - Stopover: flat `MIGRATION_STOPOVER_FILL` (#D4537E, pink/magenta) at fill-opacity 0.45 WITH a stroke
+    (`MIGRATION_STOPOVER_STROKE`, #72243E) — the one category that keeps a traced-boundary look, specifically
+    so it stays visually distinct from Corridor's soft gradient at a glance (a Corridor/Stopover confusion
+    was the concrete risk named in the style-test request).
+  Because only Stopover keeps a stroke, `migration-line`'s own filter is now a *subset* of `migration-fill`'s
+  — `updateMigrationMapFilter()` computes `lineCats` as `cats` intersected with `['Stopover']`, not the same
+  list reused for both layers (the pre-existing pattern before this style test, back when all three
+  categories had their own stroke color). `migration-line`'s paint is a flat `MIGRATION_STOPOVER_STROKE`
+  now too (no per-category case expression needed) since the filter already guarantees only Stopover
+  features ever reach that layer.
+  Legend (both the on-map `#wildlife-legend` mini-legend and the Wildlife Layers panel's own per-checkbox
+  swatches) shows one row per category, Winter range / Corridors / Stopover order — no more separate Low/
+  High sub-swatches under Corridors, since that's a single toggle-controlled gradient layer now. Both
+  legends render Corridors' swatch as an actual CSS `linear-gradient(to right, LOW_FILL, HIGH_FILL)` rather
+  than a flat color, so the legend itself communicates "this is a gradient" rather than just "this is a
+  color". `migrationPopupHtml`'s per-feature "Low use"/"High use" label (shown when tapping one specific
+  Corridor polygon, unrelated to the consolidated legend) was extended to also handle a hypothetical
+  MediumUse value, for the same forward-compat reason as MIGRATION_CORRIDOR_MEDIUM_FILL.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
+  centered on West Goose Lake via the coordinate-search box (`42.2207657, -120.77918315`, matched against the
+  herd's own data bounding box computed via a quick fetch+scan, since no UI shortcut jumps straight to a
+  specific herd): all three layers toggle independently through the real checkbox UI (confirmed Winter Range
+  off leaves only Corridors+Stopover rendering, both on the map and in the legend); the Corridor gradient
+  reads as one continuous amber-to-coral flow at both a close zoom (single polygon boundary visible) and a
+  zoomed-out view spanning the whole herd extent (the two use_class tiers blend into a visible light-to-dark
+  gradient down the corridor's length); Stopover's pink/stroked polygons are clearly distinguishable from the
+  surrounding Corridor gradient at a glance, at every zoom level tested; tapping a Corridor polygon shows
+  "Corridors · Low use" or "Corridors · High use" correctly, tapping Stopover shows "Stopover" with no use-
+  class suffix. One test-environment hiccup unrelated to the app itself: a stray earlier `resize_window` call
+  left one browser tab's actual rendered viewport stuck at 278×86 despite a later resize call reporting
+  success — worked around by opening a fresh tab rather than continuing to fight the stuck one.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1021,3 +1076,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   would just get the already-bumped cache key on their next visit. `node --check` confirmed clean syntax on
   all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION bumped 2.27.0 → 2.27.1,
   SHELL_CACHE bumped v131 → v132.
+- Session 23: Migration layer style test, scoped explicitly to the West Goose Lake elk POC herd only (not a
+  general migration-rendering rework — AZ/CA/NM herds get their own pass later, including AnnualRange, which
+  isn't present in this herd's data and wasn't touched here). See Architecture notes' "Migration corridors"
+  entry for the full color/opacity/stroke design. Before writing any code, checked whether the request's
+  premise ("consolidate the existing Low/Medium/High useclass checkboxes into a single toggle") matched the
+  actual code — it didn't: Corridor was already one checkbox controlling all use_class tiers together, so
+  that part of the ask was already true going in; the real work was entirely on the paint side (per-tier
+  stroke colors → one continuous no-stroke gradient) and the legend side (separate Low/High swatches → one
+  gradient swatch). Winter Range moved to a soft no-stroke wash, Corridor to an amber→coral `match`-expression
+  gradient with no stroke (a per-tier stroke would show as seams between adjacent polygons, breaking the
+  "continuous" read), Stopover to pink/magenta with a darker stroke kept specifically so it stays visually
+  distinct from Corridor's now-strokeless gradient. `migration-line`'s filter had to become a genuine subset
+  of `migration-fill`'s (Stopover only) rather than the same list reused for both, since only Stopover still
+  needs a line layer at all. Legend (both the on-map mini-legend and the Wildlife Layers panel's own
+  checkbox-row swatches) rebuilt as one row per category in Winter range/Corridors/Stopover order, with
+  Corridors rendered as an actual CSS gradient swatch rather than a flat color. Verified live via the
+  already-connected Chrome browser extension (this sandbox still has no local Playwright install) against a
+  local `python -m http.server`, navigated to West Goose Lake via the app's own coordinate-search box (herd
+  center computed from the raw GeoJSON's bounding box, since there's no in-app shortcut to a specific herd):
+  all three layers confirmed toggling independently through the real checkbox UI; the Corridor gradient reads
+  as one continuous amber-to-coral flow at both a tight zoom and a whole-herd-extent zoomed-out view; Stopover
+  confirmed clearly distinct from Corridor at a glance at every zoom level tried; per-feature popups confirmed
+  showing "Corridors · Low use"/"Corridors · High use"/"Stopover" correctly. `node --check` confirmed clean
+  syntax on all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION bumped 2.27.1 →
+  2.27.2, SHELL_CACHE bumped v132 → v133.

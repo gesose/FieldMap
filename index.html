@@ -1934,19 +1934,23 @@
     <select id="migration-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
       <option value="">Select a species…</option>
     </select>
+    <!-- Style test (West Goose Lake elk POC) — three rows, Winter range / Corridors / Stopover
+         order. Corridors used to have separate Low/High swatches next to its own checkbox (one
+         checkbox already controlled both — this was never three separate checkboxes to begin
+         with); that's now a single gradient swatch matching the map's continuous amber→coral
+         fill, since all three use_class tiers render as one toggle-controlled layer underneath. -->
     <div id="migration-sublayers" style="display:none;">
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
+        <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
+        <span class="legend-swatch" style="margin-left:auto;background:#FAEEDA;color:#4a3a1a;font-size:10px;">Winter</span>
+      </label>
+      <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-corridor-toggle"> Corridors
-        <span class="legend-swatch" style="margin-left:auto;background:#a78bda;border:1px solid #6b3fa0;color:#fff;font-size:10px;">Low</span>
-        <span class="legend-swatch" style="background:#6b3fa0;border:1px solid #3f2560;color:#fff;font-size:10px;">High</span>
+        <span class="legend-swatch" style="margin-left:auto;background:linear-gradient(to right, #FAC775, #993C1D);color:#fff;font-size:10px;">Low → High</span>
       </label>
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-stopover-toggle"> Stopover
-        <span class="legend-swatch" style="margin-left:auto;background:#c060d8;border:1px solid #8a3aa0;color:#fff;font-size:10px;">Stopover</span>
-      </label>
-      <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
-        <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
-        <span class="legend-swatch" style="margin-left:auto;background:#5a4a9e;border:1px solid #362a63;color:#fff;font-size:10px;">Winter</span>
+        <span class="legend-swatch" style="margin-left:auto;background:#D4537E;border:1px solid #72243E;color:#fff;font-size:10px;">Stopover</span>
       </label>
     </div>
     <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener" style="color:var(--accent);">westernmigrations.net</a>.</p>
@@ -2579,7 +2583,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.27.1';
+  var APP_VERSION = '2.27.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3093,15 +3097,23 @@
   // species picker is derived from whatever's in the merged data, so no other rework needed.
   var MIGRATION_DATA_FILES = ['data/ungulate-migrations/elk-west-goose-lake.geojson'];
   var MIGRATION_CATEGORY_LABELS = { Corridor: 'Corridors', Stopover: 'Stopover', WinterRange: 'Winter Range' };
-  // One hue (violet) for the whole feature — kept clearly distinct from Wildlife's orange
-  // (#c2622d) and GPS's blue (#3a8fd4) so Migration reads as its own thing next to GAP
-  // species-range polygons. Corridor Low/High are two shades of it; Stopover and Winter
-  // Range get their own shades of the same violet family so all three can render
-  // simultaneously (independent checkboxes) and still read as distinct from each other.
-  var MIGRATION_CORRIDOR_LOW_FILL = '#a78bda', MIGRATION_CORRIDOR_LOW_STROKE = '#6b3fa0';
-  var MIGRATION_CORRIDOR_HIGH_FILL = '#6b3fa0', MIGRATION_CORRIDOR_HIGH_STROKE = '#3f2560';
-  var MIGRATION_STOPOVER_FILL = '#c060d8', MIGRATION_STOPOVER_STROKE = '#8a3aa0';
-  var MIGRATION_WINTERRANGE_FILL = '#5a4a9e', MIGRATION_WINTERRANGE_STROKE = '#362a63';
+  // Style test on the West Goose Lake elk POC herd only (Session: Migration layer style test) —
+  // AnnualRange deliberately not styled here, not present in this herd's data; add it when
+  // AZ/CA/NM are wired in. Three distinct visual treatments per category now, not one shared
+  // violet hue: Winter Range is a soft no-stroke wash (broad zone, not a traced boundary),
+  // Corridor is a continuous amber→coral gradient by use_class with no stroke at all (a stroke
+  // per polygon would show as visible seams between adjacent Low/Medium/High features, breaking
+  // the "one continuous gradient" read), and Stopover keeps a strong fill+stroke pairing
+  // specifically so it stays visually distinct from Corridor's soft gradient at a glance.
+  // Corridor gradient — amber (low use) to coral (high use). MEDIUM_FILL is the midpoint of the
+  // two (computed, not eyeballed) for a future herd whose data actually has a MediumUse tier;
+  // West Goose Lake's own data only has LowUse/HighUse, so it's unused here but keeps the ramp
+  // genuinely continuous rather than a 2-stop gradient masquerading as a 3-tier one.
+  var MIGRATION_CORRIDOR_LOW_FILL = '#FAC775';
+  var MIGRATION_CORRIDOR_MEDIUM_FILL = '#CA8249';
+  var MIGRATION_CORRIDOR_HIGH_FILL = '#993C1D';
+  var MIGRATION_STOPOVER_FILL = '#D4537E', MIGRATION_STOPOVER_STROKE = '#72243E';
+  var MIGRATION_WINTERRANGE_FILL = '#FAEEDA';
   var migrationCache = null; // merged FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
   var migrationLoadCallbacks = null; // array of pending callbacks while the fetch is in flight, or null
   var migrationActiveSpecies = null; // currently selected species name (e.g. 'Elk'), or null
@@ -7022,9 +7034,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Migration corridors (P4 proof of concept) — one source/fill/line pair (not one per
     // category like Wildlife above) since which categories render is just a filter over a
     // single 'geometry_category' property, same idea as wildlifeActive.codes but applied to
-    // geometry_category instead of species_code. Colors are a nested case expression: violet
-    // family throughout, Corridor further split into Low/High by use_class. Filter/paint
-    // reapplied at the end of this function via updateMigrationMapFilter().
+    // geometry_category instead of species_code. Per-category paint (style test, West Goose
+    // Lake elk POC only — see the MIGRATION_* constants' own comment): Corridor is a
+    // continuous amber→coral 'match' on use_class (LowUse/MediumUse/HighUse — West Goose
+    // Lake's data only has the two ends of that range today), Stopover and Winter Range are
+    // flat colors. fill-opacity is also per-category (Winter Range deliberately low/soft,
+    // Corridor higher since it has no stroke to lean on for legibility, Stopover in between
+    // since its stroke already does most of the definition work). Filter/paint reapplied at
+    // the end of this function via updateMigrationMapFilter().
     if (!map.getSource('migration-source')){
       map.addSource('migration-source', {
         type: 'geojson',
@@ -7041,15 +7058,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           'fill-color': [
             'case',
             ['==', ['get', 'geometry_category'], 'Corridor'],
-              ['case', ['==', ['get', 'use_class'], 'HighUse'], MIGRATION_CORRIDOR_HIGH_FILL, MIGRATION_CORRIDOR_LOW_FILL],
+              ['match', ['get', 'use_class'],
+                'LowUse', MIGRATION_CORRIDOR_LOW_FILL,
+                'MediumUse', MIGRATION_CORRIDOR_MEDIUM_FILL,
+                'HighUse', MIGRATION_CORRIDOR_HIGH_FILL,
+                MIGRATION_CORRIDOR_LOW_FILL],
             ['==', ['get', 'geometry_category'], 'Stopover'], MIGRATION_STOPOVER_FILL,
             ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_FILL,
             MIGRATION_CORRIDOR_LOW_FILL
           ],
-          'fill-opacity': 0.22
+          'fill-opacity': [
+            'case',
+            ['==', ['get', 'geometry_category'], 'WinterRange'], 0.35,
+            ['==', ['get', 'geometry_category'], 'Corridor'], 0.55,
+            ['==', ['get', 'geometry_category'], 'Stopover'], 0.45,
+            0.3
+          ]
         }
       });
     }
+    // Stroke now Stopover-only (see updateMigrationMapFilter's lineCats split) — Corridor and
+    // Winter Range are both no-stroke washes, so this layer's own paint can stay a flat color
+    // rather than a per-category case expression; the filter is what keeps the other two
+    // categories' features off this layer entirely.
     if (!map.getLayer('migration-line')){
       map.addLayer({
         id: 'migration-line',
@@ -7058,14 +7089,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         filter: ['in', ['get', 'geometry_category'], ['literal', []]],
         layout: { 'line-join': 'round' },
         paint: {
-          'line-color': [
-            'case',
-            ['==', ['get', 'geometry_category'], 'Corridor'],
-              ['case', ['==', ['get', 'use_class'], 'HighUse'], MIGRATION_CORRIDOR_HIGH_STROKE, MIGRATION_CORRIDOR_LOW_STROKE],
-            ['==', ['get', 'geometry_category'], 'Stopover'], MIGRATION_STOPOVER_STROKE,
-            ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_STROKE,
-            MIGRATION_CORRIDOR_LOW_STROKE
-          ],
+          'line-color': MIGRATION_STOPOVER_STROKE,
           'line-width': 1.75,
           'line-opacity': 0.95
         }
@@ -14129,17 +14153,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + swatches + '</div>');
     }
 
+    // Style test (West Goose Lake elk POC): one row per category, in Winter range / Corridors /
+    // Stopover order — no more separate Low/High sub-swatches under Corridors, since that's now
+    // one continuous gradient layer behind a single toggle. Corridor's swatch renders the actual
+    // gradient (CSS linear-gradient, same two endpoint colors as the map's 'match' expression)
+    // rather than a flat color, so the legend itself communicates "this is a gradient, not a
+    // category" at a glance.
     var migCats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
     if (migCats.length){
-      var migSwatches = [];
-      if (migCats.indexOf('Corridor') !== -1){
-        migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_CORRIDOR_LOW_FILL + ';border:1px solid ' + MIGRATION_CORRIDOR_LOW_STROKE + ';color:#fff;">Corridor (low)</span>');
-        migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_CORRIDOR_HIGH_FILL + ';border:1px solid ' + MIGRATION_CORRIDOR_HIGH_STROKE + ';color:#fff;">Corridor (high)</span>');
-      }
-      if (migCats.indexOf('Stopover') !== -1) migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_STOPOVER_FILL + ';border:1px solid ' + MIGRATION_STOPOVER_STROKE + ';color:#fff;">Stopover</span>');
-      if (migCats.indexOf('WinterRange') !== -1) migSwatches.push('<span class="legend-swatch" style="background:' + MIGRATION_WINTERRANGE_FILL + ';border:1px solid ' + MIGRATION_WINTERRANGE_STROKE + ';color:#fff;">Winter Range</span>');
+      var migRows = [];
+      if (migCats.indexOf('WinterRange') !== -1) migRows.push('<span class="legend-swatch" style="background:' + MIGRATION_WINTERRANGE_FILL + ';color:#4a3a1a;">Winter range</span>');
+      if (migCats.indexOf('Corridor') !== -1) migRows.push('<span class="legend-swatch" style="background:linear-gradient(to right, ' + MIGRATION_CORRIDOR_LOW_FILL + ', ' + MIGRATION_CORRIDOR_HIGH_FILL + ');color:#fff;">Corridors</span>');
+      if (migCats.indexOf('Stopover') !== -1) migRows.push('<span class="legend-swatch" style="background:' + MIGRATION_STOPOVER_FILL + ';border:1px solid ' + MIGRATION_STOPOVER_STROKE + ';color:#fff;">Stopover</span>');
       sections.push('<div style="font-size:11px;font-weight:600;margin-bottom:4px;' + (sections.length ? 'margin-top:8px;' : '') + '">' + escapeHtml(migrationActiveSpecies) + ' — migration</div>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + migSwatches.join(' ') + '</div>');
+        '<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;">' + migRows.join('') + '</div>');
     }
 
     if (!sections.length){ legend.classList.add('hidden'); return; }
@@ -14320,15 +14347,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function updateMigrationMapFilter(){
     if (!map || !map.getLayer('migration-fill')) return;
     var cats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
-    var filter = ['in', ['get', 'geometry_category'], ['literal', cats]];
-    map.setFilter('migration-fill', filter);
-    map.setFilter('migration-line', filter);
+    // migration-line only ever shows Stopover now (Corridor/Winter Range are no-stroke washes
+    // — see the migration-fill/migration-line layer setup comment), so its filter is always a
+    // subset of the fill layer's, never the same list.
+    var lineCats = cats.indexOf('Stopover') !== -1 ? ['Stopover'] : [];
+    map.setFilter('migration-fill', ['in', ['get', 'geometry_category'], ['literal', cats]]);
+    map.setFilter('migration-line', ['in', ['get', 'geometry_category'], ['literal', lineCats]]);
     if (!cats.length && openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }
   }
 
   function migrationPopupHtml(props){
     var catLabel = MIGRATION_CATEGORY_LABELS[props.geometry_category] || props.geometry_category;
-    var useLabel = (props.geometry_category === 'Corridor' && props.use_class) ? (props.use_class === 'HighUse' ? 'High use' : 'Low use') : '';
+    var useLabel = (props.geometry_category === 'Corridor' && props.use_class) ?
+      (props.use_class === 'HighUse' ? 'High use' : props.use_class === 'MediumUse' ? 'Medium use' : 'Low use') : '';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">' + escapeHtml(props.herd_name || 'Migration herd') + '</div>' +
       '<div class="pin-popup-meta">' + escapeHtml(catLabel) + (useLabel ? ' · ' + escapeHtml(useLabel) : '') + '</div>' +
