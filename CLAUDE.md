@@ -69,6 +69,15 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   tailed deer), a new Annual Range category/toggle (AZ/CA/NM herds), and a fixed paint/z-order (Stopover →
   Corridor → Winter Range → Annual Range, top to bottom, via `fill-sort-key`/`line-sort-key` rather than
   feature-array order) — see Architecture notes' "Migration corridors" entry for the full design.
+- Reachability pass (Session 27): zoom (+/-) and north/reset moved out of MapLibre's built-in top-left
+  NavigationControl into the same reachable right-side icon cluster as search/layers/filter/locate/download
+  (custom round buttons matching that cluster's existing style, not a restyled native control), plus two new
+  device-local settings — "Show zoom buttons" (default on; north/reset always stays, since orientation reset
+  has no gesture equivalent) and "Left-handed mode" (default off; mirrors only that one icon cluster to the
+  opposite edge). Also root-caused and fixed the double-tap-drag-to-zoom regression reported since tap-
+  anywhere shipped — see Architecture notes' "Reachability: zoom/north-reset relocation, left-handed mode,
+  double-tap-drag fix" entry for the full investigation, the fix, and a flagged mobile left-handed-mode
+  collision with the (deliberately not-mirrored) floating chip stack.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -839,6 +848,105 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       verification is still outstanding, same caveat as Session 24. Zero console errors across the test
       session. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION
       bumped 2.28.0 → 2.29.0, SHELL_CACHE bumped v134 → v135.
+- Reachability: zoom/north-reset relocation, left-handed mode, double-tap-drag fix (Session 27):
+  - Double-tap-drag-zoom investigation (done first, per explicit instruction — root cause before any fix):
+    the reported regression ("worked before tap-anywhere shipped, broken since") was investigated by reading
+    the actual vendored `maplibre-gl.js` (not assumed from the Map option names) to find exactly which
+    handler class implements the drag gesture. Two candidate causes named in the task were both ruled out by
+    source inspection: (1) this app's pre-existing `doubleClickZoom: false` (Map constructor option) —
+    confirmed via the minified handler-manager wiring code that MapLibre's tap-drag-zoom gesture
+    (`TapDragZoomHandler`, minified as `Qs`) is bundled inside `touchZoomRotate`'s own `enable()`/`disable()`
+    (`class ta`'s methods call `this._tapDragZoom.enable()`/`.disable()` directly), fully independent of the
+    separate `doubleClickZoom` composite handler (`Xs`, combining `ClickZoomHandler`+`TapZoomHandler`) that
+    option actually gates — so `doubleClickZoom:false` was a red herring, never capable of affecting this
+    gesture. (2) tap-anywhere's own `map.on('click', ...)` handler — confirmed via reading its full body (the
+    map's final click handler) that it never calls `preventDefault()`/`stopPropagation()` on the underlying
+    native touch events, and MapLibre's synthesized `'click'` event only fires after its OWN internal gesture
+    recognition already completed for a confirmed single tap — so this handler fires too late in the pipeline
+    to structurally intercept anything `Qs` needs. The REAL root cause: `Qs`'s own class body
+    (`this._tap=new Ss({numTouches:1,numTaps:1})`, `touchstart(t,e,i){...a=t.timeStamp-this._tapTime<500,
+    o=this._tapPoint.dist(s)<30...}`) requires the gesture's second tap to land within ~30px of the first —
+    and tap-anywhere's temp marker (`buildTapAnywhereMarkerEl`, dropped via `tapAnywhereMarker = new
+    maplibregl.Marker(...)`) sits exactly at the first tap's location, well within that 30px tolerance. The
+    marker's own code comment already said it was meant to be "deliberately inert" (no click handler,
+    `cursor:default`) — but that only changed the visual cursor; the element was still a normal, solid DOM
+    node that fully captures/absorbs any touch landing on it regardless of whether a listener is attached
+    (an element with zero JS listeners still consumes the event — it just does nothing with it — the event
+    does not "pass through" to whatever's visually behind it, since the canvas is a separate sibling
+    element, not an ancestor). So the gesture's second tap, landing on the marker instead of the canvas,
+    never reached MapLibre's touch handler at all. Fix: added `pointer-events:none` to the temp marker's
+    inline style (`buildTapAnywhereMarkerEl`) — a genuinely zero-side-effect change (the marker never had
+    any interaction to lose) that lets a second tap pass straight through to the canvas beneath, restoring
+    the native gesture with no delay added anywhere — the narrow fix the task asked to prefer over a
+    long-press fallback, and no long-press fallback was needed. Confirmed via DOM inspection after dropping a
+    temp marker: `pointer-events:none` is applied and computed correctly, while real (saved) pin markers
+    remain fully `pointer-events:auto`/clickable, completely unaffected. **Verification limitation, flagged
+    rather than silently claimed**: this sandbox's browser reports `navigator.maxTouchPoints === 0` /
+    `'ontouchstart' in window === false` — genuinely no touch hardware or emulation available — so the actual
+    live gesture (a real double-tap-and-drag) could not be empirically exercised here; the fix is grounded in
+    a specific, source-verified mechanism (not a guess), but real-device verification of the restored gesture
+    is the first thing that should be checked next, per the task's own "verify live on real device" ask.
+  - Zoom/north-reset relocation: removed `map.addControl(new maplibregl.NavigationControl(...), 'top-left')`
+    entirely and added three custom buttons (`zoom-in-btn`, `zoom-out-btn`, `north-reset-btn`) to
+    `#map-controls`' existing reachable icon cluster (search/layers/filter/locate/download), styled with the
+    same `.map-icon-btn` class (round, 40px desktop/38px mobile) rather than restyling MapLibre's own
+    rectangular control markup. Click handlers are the direct MapLibre equivalents (`map.zoomIn()`,
+    `map.zoomOut()`, `map.easeTo({bearing:0,pitch:0})` — the last matching NavigationControl's own documented
+    `resetNorthPitch()` behavior exactly, resetting both bearing AND pitch in one motion). `north-reset-btn`'s
+    needle icon (two-tone SVG triangle pair, accent-colored north half) live-rotates via
+    `map.on('rotate', updateNorthResetIcon)` to keep pointing true north as bearing changes, the one piece of
+    NavigationControl's own behavior worth preserving. Placed at the TOP of the existing stack (above
+    search), a judgment call — the task didn't specify intra-cluster order, only that the two move "together
+    as one unit"; kept every pre-existing icon's relative position unchanged rather than reshuffling for
+    theoretical thumb-reach priority. Being plain buttons in `#map-controls`' own persistent HTML (not a
+    MapLibre control), they need no extra plumbing to survive a style switch, unlike layers/sources that
+    `setStyle({diff:false})` wipes.
+  - "Show zoom buttons" (`state.settings.showZoomButtons`, default `true`): `zoom-in-btn`/`zoom-out-btn` carry
+    an extra `.zoom-btn` class; `#map-controls.zoom-buttons-hidden .zoom-btn{display:none;}` is the only CSS
+    involved, toggled by `applyReachabilitySettings()`. `north-reset-btn` deliberately has no `.zoom-btn`
+    class and is never affected — orientation reset has no gesture equivalent, unlike zoom (pinch/scroll,
+    both confirmed still fully enabled — `map.scrollZoom.isEnabled()`/`map.touchZoomRotate.isEnabled()` —
+    regardless of this setting, since it only ever touches the buttons' own visibility, never the gesture
+    handlers).
+  - "Left-handed mode" (`state.settings.leftHandedMode`, default `false`): `body.left-handed-mode
+    #map-controls{...}` — deliberately scoped to `#map-controls` alone (not a body-wide RTL/mirroring
+    mechanism), matching the spec's explicit "does not mirror anything else in the app." Desktop and mobile
+    need DIFFERENT left offsets: desktop's rule is `left:calc(var(--sidebar-width) + 14px)`, not a flat
+    `14px` — the 330px sidebar is a persistent LEFT COLUMN on desktop (unlike mobile, where it collapses to a
+    bottom sheet), so a flat offset rendered the icon cluster on top of the sidebar's own content; this is
+    the exact same class of body-level-sibling-vs-sidebar collision already documented and fixed this same
+    way for `#active-trip-chip` in an earlier session, caught here via live testing (not assumed) — the first
+    render attempt visibly showed the icon column sitting inside the sidebar's dark background. Mobile's
+    override (inside the `max-width:760px` media query) is a flat `14px`, correct as-is since mobile's
+    sidebar isn't a left column and has nothing there to clear.
+  - **Known, spec-acknowledged tradeoff, confirmed via live mobile-simulated testing, not silently
+    papered over**: on mobile, left-handed mode's relocated icon cluster (bottom-left) visibly overlaps
+    `#floating-info-stack` (the coords/scale/trip/active-layers chip column, ALSO bottom-left on mobile) —
+    filter/locate/download icons render directly on top of chip text. This is a direct, foreseeable
+    consequence of the task's own explicit scope line ("does not mirror anything else in the app... chips"):
+    the chip stack deliberately stays put rather than also moving to avoid the collision, since expanding the
+    mirror to cover it would have contradicted that instruction. No fix was attempted within the narrow
+    scope actually asked for; flagged here as the first thing to revisit if this collision proves disruptive
+    in real use, rather than expanding scope unprompted.
+  - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`
+    (after the now-standard service-worker-unregister + Cache-Storage-clear step — hit the same stale-
+    SHELL_CACHE gotcha documented in prior sessions when a CSS fix was tested right after editing, resolved
+    the same way): NavigationControl confirmed gone from top-left, all 8 icons (zoom in/out, north-reset,
+    search, layers, filter, locate, download) render correctly in the reachable cluster in the same round
+    style; zoom-in/zoom-out/north-reset all confirmed functionally correct via direct map-state inspection
+    (bearing/pitch reset to 0, zoom level changes) — one testing wrinkle hit and resolved along the way: an
+    automated background browser tab (`document.visibilityState === 'hidden'`) throttles `requestAnimationFrame`
+    hard enough that MapLibre's `easeTo`-based zoom/rotate animations can sit "stuck" mid-flight for many
+    seconds of real wall-clock time before completing — confirmed as a test-harness artifact, not an app bug,
+    by re-checking after a foreground-forcing screenshot action and seeing the queued zoom change land
+    correctly; "Show zoom buttons" off/on confirmed hiding/showing exactly the two zoom buttons while
+    north-reset stays and scroll/touch-zoom stay enabled; "Left-handed mode" confirmed mirroring the cluster
+    correctly on desktop (clear of the sidebar after the offset fix) and on mobile (with the chip-stack
+     collision above, confirmed and flagged, not fixed). Real touch-gesture (double-tap-drag) verification
+    could not be performed in this sandbox (no touch hardware/emulation — see that entry above) and remains
+    the top item for real-device verification. Zero console errors observed. `node --check` confirmed clean
+    syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE
+    bumped v136 → v137.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1362,3 +1470,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   confirming via a whole-repo grep that nothing else referenced its path. `node --check` confirmed clean
   syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.29.0 → 2.30.0, SHELL_CACHE bumped
   v135 → v136.
+- Session 27: A reachability-focused pass — see Architecture notes' "Reachability: zoom/north-reset
+  relocation, left-handed mode, double-tap-drag fix" entry for full detail on all four parts. Investigated
+  (root cause first, per explicit instruction) a double-tap-drag-zoom regression reported since tap-anywhere
+  shipped: read the actual vendored `maplibre-gl.js` handler classes and ruled out both candidates named in
+  the task (this app's pre-existing `doubleClickZoom:false`, and tap-anywhere's own click handler) via direct
+  source inspection, then found the real mechanism — tap-anywhere's temp marker sits exactly where the
+  gesture's second tap must land (within the native handler's own ~30px tolerance), and a DOM element with no
+  click listener still fully absorbs a touch landing on it, so the second tap never reached MapLibre's canvas
+  handler. Fixed with `pointer-events:none` on the temp marker (it never had any interaction to lose) — a
+  genuinely narrow, zero-delay fix, so no long-press fallback was needed. Flagged clearly: this sandbox has
+  no touch hardware or emulation (`maxTouchPoints:0`), so the restored gesture itself couldn't be empirically
+  exercised here and is the top item for real-device verification. Relocated zoom (+/-) and north/reset from
+  MapLibre's top-left NavigationControl into custom buttons in the same reachable right-side icon cluster as
+  search/layers/filter/locate/download, matching that cluster's round style exactly; north-reset's needle
+  icon live-rotates with bearing and resets both bearing and pitch on tap, matching the removed control's own
+  behavior. Added two device-local settings: "Show zoom buttons" (default on, hides just the two zoom
+  buttons, north-reset always stays, pinch/scroll zoom unaffected either way) and "Left-handed mode" (default
+  off, mirrors only `#map-controls` to the opposite edge — desktop needed a sidebar-width-aware offset, caught
+  via live testing when the first attempt rendered the cluster on top of the sidebar, the same collision
+  class already solved once before for `#active-trip-chip`). Flagged, not silently fixed: mobile left-handed
+  mode's relocated cluster visibly overlaps the floating chip stack (both bottom-left on mobile) — a direct,
+  foreseeable consequence of the task's own explicit "does not mirror... chips" scope line, confirmed live via
+  the established mobile-CSS-injection workaround. Zero console errors. `node --check` confirmed clean syntax
+  on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE bumped v136 →
+  v137.

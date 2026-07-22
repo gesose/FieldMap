@@ -643,6 +643,23 @@
   .link-btn:hover{color:var(--text);}
 
   #map-controls{position:absolute;bottom:24px;right:14px;z-index:1100;display:flex;flex-direction:column;gap:10px;transition:opacity .2s ease;}
+  /* "Show zoom buttons" off (Session 27) — hides just zoom-in-btn/zoom-out-btn (the .zoom-btn
+     pair); north-reset-btn and every other icon in the cluster stay, per spec. Scoped to
+     #map-controls' own class (not a body-level class) since this is the only place .zoom-btn
+     exists. */
+  #map-controls.zoom-buttons-hidden .zoom-btn{display:none;}
+  /* Left-handed mode (Session 27) — mirrors ONLY this one relocated icon cluster (zoom, north/
+     reset, search, layers, filter, locate, download) to the opposite edge; deliberately scoped
+     to #map-controls alone, not a broader RTL/mirroring mechanism, per spec ("does not mirror
+     anything else in the app"). Desktop offset is calc(var(--sidebar-width) + 14px), not a flat
+     14px — the sidebar is a persistent 330px LEFT COLUMN on desktop (unlike mobile, where it
+     collapses to a bottom sheet — see the #publicland-legend mobile comment's own note on this
+     exact distinction), so a flat 14px would render the icon cluster on top of/underneath the
+     sidebar's own content rather than clear of it — the same class of body-level-sibling-vs-
+     sidebar collision already documented and fixed this same way for #active-trip-chip in an
+     earlier session. The mobile override below replaces this with a flat 14px, since mobile's
+     sidebar isn't a left column and has nothing here to clear. */
+  body.left-handed-mode #map-controls{left:calc(var(--sidebar-width) + 14px);right:auto;}
   .map-icon-btn{
     width:40px;height:40px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
@@ -986,6 +1003,14 @@
        don't overlap or clutter the expanded pin list. */
     body.sidebar-open #map-controls{opacity:0;pointer-events:none;}
     .map-icon-btn{width:38px;height:38px;}
+    /* Left-handed mode, mobile override: flat 14px, not the desktop rule's sidebar-width
+       offset — mobile's sidebar is a bottom sheet, not a left column (see #publicland-legend's
+       own comment above), so there's nothing at the left edge to clear. This DOES sit in the
+       same corner as #floating-info-stack's own mobile position (bottom-left, see that rule's
+       comment) — a known, spec-acknowledged tradeoff: the task this shipped under explicitly
+       scoped mirroring to #map-controls alone ("does not mirror... chips"), so the chip stack
+       deliberately stays put rather than also moving to avoid this collision. */
+    body.left-handed-mode #map-controls{left:14px;right:auto;}
 
     /* Floating panels: full-width above bottom sheet */
     .floating-panel{
@@ -1249,6 +1274,35 @@
 </div>
 
 <div id="map-controls">
+  <!-- Zoom + north/reset (Session 27) — relocated here from MapLibre's built-in
+       NavigationControl (previously top-left, unreachable one-handed on most phones) into this
+       same reachable icon cluster, matching .map-icon-btn's round shape/size exactly rather than
+       restyling MapLibre's own rectangular control markup. zoom-in-btn/zoom-out-btn carry the
+       extra .zoom-btn class so "Show zoom buttons" (settings-zoom-buttons-toggle) can hide just
+       those two via #map-controls.zoom-buttons-hidden — north-reset-btn deliberately has no
+       .zoom-btn class and is never hidden by that toggle (orientation reset has no gesture
+       equivalent the way pinch/scroll-zoom covers zoom). north-reset-btn's inner <svg> is
+       live-rotated via map.on('rotate', ...) to keep pointing true north, same visual behavior
+       NavigationControl's own compass button had; a tap resets both bearing AND pitch to 0
+       (map.easeTo({bearing:0,pitch:0})), matching that control's documented resetNorthPitch()
+       behavior exactly (see the removed addControl call's old comment history). -->
+  <button class="map-icon-btn zoom-btn" id="zoom-in-btn" aria-label="Zoom in">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+      <line x1="10" y1="3" x2="10" y2="17"/>
+      <line x1="3" y1="10" x2="17" y2="10"/>
+    </svg>
+  </button>
+  <button class="map-icon-btn zoom-btn" id="zoom-out-btn" aria-label="Zoom out">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+      <line x1="3" y1="10" x2="17" y2="10"/>
+    </svg>
+  </button>
+  <button class="map-icon-btn" id="north-reset-btn" aria-label="Reset north and pitch">
+    <svg id="north-reset-icon-svg" viewBox="0 0 20 20" width="20" height="20" style="transform-origin:50% 50%;">
+      <path d="M10 2 L13 10 L10 8.3 Z" fill="var(--accent)"/>
+      <path d="M10 18 L7 10 L10 11.7 Z" fill="var(--text-muted)"/>
+    </svg>
+  </button>
   <button class="map-icon-btn" id="search-toggle-btn" aria-label="Search">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <circle cx="8.5" cy="8.5" r="5"/>
@@ -1406,6 +1460,16 @@
     <input type="checkbox" id="settings-terrain3d-toggle" class="settings-check">
     <span class="settings-check-pill"></span>
     <span>3D Terrain (desktop recommended — uses more data)</span>
+  </label>
+  <label class="settings-check-row" style="padding-bottom:14px;">
+    <input type="checkbox" id="settings-zoom-buttons-toggle" class="settings-check" checked>
+    <span class="settings-check-pill"></span>
+    <span>Show zoom buttons</span>
+  </label>
+  <label class="settings-check-row" style="padding-bottom:14px;">
+    <input type="checkbox" id="settings-left-handed-toggle" class="settings-check">
+    <span class="settings-check-pill"></span>
+    <span>Left-handed mode</span>
   </label>
 </div>
 
@@ -2658,7 +2722,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.30.0';
+  var APP_VERSION = '2.31.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2771,6 +2835,13 @@
       clusterPins: true,
       defaultSort: 'chronological',
       terrain3dOn: false,
+      // Reachability (Session 27) — device-only display/layout preferences, same reasoning as
+      // gpsFollow/clusterPins above for why these live in state.settings rather than being
+      // synced: purely "how THIS device's UI should look," not data. showZoomButtons defaults
+      // true (matches the always-on native NavigationControl it replaces); leftHandedMode
+      // defaults false (most users are right-handed; opt-in, not opt-out).
+      showZoomButtons: true,
+      leftHandedMode: false,
       // Active Trip (Stage 2 of the Active Trip project) — device-only, deliberately inside
       // state.settings rather than a synced field: settings are never part of
       // getSyncableState's payload, so this naturally never syncs to Firestore, matching the
@@ -4823,15 +4894,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         doubleClickZoom: false
       });
 
-      // showCompass:true adds a persistent zoom-button-styled control that live-rotates to
-      // always point true north as the map's bearing changes; visualizePitch:true makes it
-      // also tilt to reflect the current pitch, and — most importantly — makes tapping it
-      // reset BOTH bearing and pitch to 0 in one motion (MapLibre's built-in
-      // resetNorthPitch(), the same easeTo({bearing:0,pitch:0}) pattern Apple/Google Maps
-      // use), rather than only resetting bearing. This also functions as the pitch/tilt
-      // reset, since there's no real 3D terrain loaded yet and a tilted view of a flat plane
-      // is just confusing — no need for a separate control or for disabling the tilt gesture.
-      map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-left');
+      // Zoom +/- and north/reset used to live here as MapLibre's built-in NavigationControl
+      // (top-left, showCompass+visualizePitch) — replaced (Session 27) with custom buttons in
+      // #map-controls' own reachable icon cluster (see that div's HTML comment for the full
+      // reasoning and the exact resetNorthPitch-equivalent click behavior each button
+      // reproduces). updateNorthResetIcon keeps north-reset-btn's needle pointing true north as
+      // bearing changes, the one piece of NavigationControl's own live behavior worth keeping.
+      function updateNorthResetIcon(){
+        var svg = document.getElementById('north-reset-icon-svg');
+        if (svg) svg.style.transform = 'rotate(' + (-map.getBearing()) + 'deg)';
+      }
+      map.on('rotate', updateNorthResetIcon);
+      updateNorthResetIcon();
 
       // Surfaces a one-time toast (instead of letting MapLibre repeat a raw console error per
       // failed tile) if a live third-party raster source can't be reached — e.g. the NLCD WMS
@@ -11238,6 +11312,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-offline-boundaries-toggle').checked = state.settings.showOfflineBoundaries !== false;
     document.getElementById('settings-area-labels-toggle').checked = state.settings.showAreaLabels !== false;
     document.getElementById('settings-terrain3d-toggle').checked = !!state.settings.terrain3dOn;
+    document.getElementById('settings-zoom-buttons-toggle').checked = state.settings.showZoomButtons !== false;
+    document.getElementById('settings-left-handed-toggle').checked = !!state.settings.leftHandedMode;
+    applyReachabilitySettings();
+  }
+
+  // "Show zoom buttons" and "Left-handed mode" (Session 27) — both pure device-local
+  // display/layout toggles with no data or map-source implications, so unlike most settings
+  // here there's no separate setXOn() with side effects to call; applying them is just these
+  // two class toggles. Called from applySettingsUI() (boot + every settings-panel open, both
+  // idempotent) and directly from each checkbox's own change listener.
+  function applyReachabilitySettings(){
+    document.getElementById('map-controls').classList.toggle('zoom-buttons-hidden', state.settings.showZoomButtons === false);
+    document.body.classList.toggle('left-handed-mode', !!state.settings.leftHandedMode);
   }
 
   function toggleGpsFollow(){
@@ -13920,11 +14007,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // pin-marker class + cursor styling, buildPinMarkerHtml's output goes inside it as
   // innerHTML) so this temp marker looks and behaves like a real one until Save swaps it
   // for one. No click handler — tapping it isn't a defined interaction for a not-yet-saved
-  // point, so it's deliberately inert (cursor:default, not :pointer).
+  // point, so it's deliberately inert (cursor:default, not :pointer) — and, since Session 27,
+  // genuinely non-interactive at the DOM level (pointer-events:none), not just visually inert.
+  // ROOT CAUSE (Session 27 investigation): this marker sits exactly at the tap location, and a
+  // native double-tap-and-drag-to-zoom gesture's second tap must land within ~30px of the
+  // first (confirmed via the vendored maplibre-gl.js's own TapDragZoomHandler tolerance) — so
+  // the second tap of that gesture, attempted right after a plain tap opened this marker+drawer,
+  // almost always lands ON the marker's own <div> rather than passing through to the map canvas
+  // beneath. A DOM element with no click listener still fully captures/absorbs the touch that
+  // hits it (browsers don't "see through" an element just because nothing is listening), so
+  // MapLibre's touch-gesture handler (which listens on the canvas container, not this marker)
+  // never received that second touchstart, and silently failed to recognize the gesture.
+  // Confirmed via source: MapLibre's tap-drag-zoom handler is bundled into touchZoomRotate,
+  // fully independent of this app's pre-existing doubleClickZoom:false (a red herring — that
+  // option only ever gated single-double-tap-zoom-in-one-step and desktop dblclick-zoom, never
+  // the drag gesture) — and tap-anywhere's own map.on('click', ...) handler never calls
+  // preventDefault/stopPropagation on the underlying native touch events either, so it
+  // structurally could not itself "intercept" the gesture; the marker's own solid hit area was
+  // the actual, sole blocker. pointer-events:none is a zero-side-effect fix: the marker never
+  // had any interaction to lose, it now lets a touch pass straight through to the canvas
+  // beneath exactly as if the marker weren't there, and needs no delay anywhere in
+  // tap-anywhere's own instant single-tap trigger.
   function buildTapAnywhereMarkerEl(){
     var el = document.createElement('div');
     el.className = 'pin-marker';
-    el.style.cssText = 'cursor:default;';
+    el.style.cssText = 'cursor:default;pointer-events:none;';
     el.innerHTML = buildPinMarkerHtml({ tags: tapAnywhereState ? tapAnywhereState.detectedTagIds : [], status: 'escout' });
     return el;
   }
@@ -14895,6 +15002,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (!state.settings.defaultSort) state.settings.defaultSort = 'chronological';
             if (state.settings.activeTripId === undefined) state.settings.activeTripId = null;
             if (state.settings.terrain3dOn === undefined) state.settings.terrain3dOn = false;
+            if (state.settings.showZoomButtons === undefined) state.settings.showZoomButtons = true;
+            if (state.settings.leftHandedMode === undefined) state.settings.leftHandedMode = false;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
@@ -15624,6 +15733,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-terrain3d-toggle').addEventListener('change', function(){
       setTerrain3dOn(this.checked);
     });
+    document.getElementById('settings-zoom-buttons-toggle').addEventListener('change', function(){
+      state.settings.showZoomButtons = this.checked;
+      applyReachabilitySettings();
+      scheduleSave();
+    });
+    document.getElementById('settings-left-handed-toggle').addEventListener('change', function(){
+      state.settings.leftHandedMode = this.checked;
+      applyReachabilitySettings();
+      scheduleSave();
+    });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
       state.settings.defaultBaseLayer = this.value;
       state.settings.maplibreStyle = this.value;
@@ -15825,6 +15944,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('center-readout-mobile').addEventListener('click', toggleCenterReadoutMode);
     updateCenterReadoutModeIcon();
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
+    document.getElementById('zoom-in-btn').addEventListener('click', function(){ map.zoomIn(); });
+    document.getElementById('zoom-out-btn').addEventListener('click', function(){ map.zoomOut(); });
+    document.getElementById('north-reset-btn').addEventListener('click', function(){ map.easeTo({ bearing: 0, pitch: 0 }); });
 
     document.getElementById('layers-btn').addEventListener('click', function(e){
       e.stopPropagation();
