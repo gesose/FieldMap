@@ -48,30 +48,29 @@
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
   #center-readout-elev.show{display:block;}
 
-  /* Active Trip persistent indicator (Stage 2) — top-left is the one corner with no existing
-     map chrome (see the HTML comment above its markup). Styled like #map-search-input's pill
-     (blur background) rather than #center-readout-float's plain card, since it's tappable and
-     should read as a button, not a passive readout. Same body-level-sibling-of-<main id="map">
-     positioning gotcha as #wildlife-legend: "left" here is relative to the viewport, not the
-     map, so plain left:14px landed inside #sidebar's 0-330px column on desktop — offset past
-     the sidebar's width instead (mobile override below reverts to plain left:14px, since the
-     sidebar collapses to a bottom bar there, not a left column). */
+  /* Active Trip persistent indicator — moved (per direct feedback) from top-left (where it
+     collided with MapLibre's own NavigationControl, and on desktop needed an awkward
+     sidebar-width offset since it's a body-level sibling of <main id="map">, not a map-scoped
+     child) to directly under #center-readout-float + #scale-bar's own top-right stack —
+     top:112px sits just below #scale-bar's measured bottom edge (70px top + ~33px tall), same
+     right:14px/width:150px as both boxes above it, so all three read as one aligned column. */
   #active-trip-chip{
-    /* top:130px, not 14px — MapLibre's NavigationControl (zoom +/-/compass-reset) is added at
-       'top-left' too (see createMap()'s addControl call) and occupies roughly the first 110px
-       of the map's own top-left corner; 14px would sit directly on top of it. */
-    position:absolute;top:130px;left:calc(var(--sidebar-width) + 14px);z-index:1000;cursor:pointer;
+    position:absolute;top:112px;right:14px;left:auto;width:150px;z-index:1000;cursor:pointer;
     font-family:var(--font-sans);font-size:12px;font-weight:600;color:var(--text);
     background:rgba(34,41,35,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     border:1px solid rgba(255,255,255,0.12);border-radius:20px;
-    padding:7px 14px;max-width:220px;
+    padding:7px 14px;box-sizing:border-box;
     display:flex;align-items:center;gap:6px;
     box-shadow:0 4px 14px rgba(0,0,0,0.35);
   }
   #active-trip-chip.hidden{display:none;}
   #active-trip-chip:hover{border-color:var(--accent);}
-  #active-trip-chip::before{content:'●';color:var(--accent);font-size:9px;}
-  #active-trip-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #active-trip-chip::before{content:'●';color:var(--accent);font-size:9px;flex-shrink:0;}
+  /* min-width:0 is the actual fix, not just overflow/ellipsis/nowrap alone — a flex item's
+     default min-width:auto means it refuses to shrink below its own text's full unwrapped
+     width, so without this the ellipsis never actually engaged and long trip names wrapped
+     the chip onto two lines instead of truncating (the exact bug reported). */
+  #active-trip-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
   /* No-active-trip state — same chip, same tap target (still opens the switcher), just muted
      styling so it doesn't read as "a trip named No active trip" is currently active. */
   #active-trip-chip.no-active-trip{color:var(--text-muted);font-weight:500;}
@@ -961,6 +960,25 @@
       max-height:48vh;
     }
 
+    /* Expanded (edit) state on mobile — CRITICAL FIX: without this, #view-drawer.expanded's
+       desktop-only rule (higher specificity than the plain #view-drawer rule just above, since
+       id+class beats id alone regardless of which media query each is defined in) kept
+       winning even on mobile, computing max-width:calc(100vw - 330px - 90px) — NEGATIVE on any
+       viewport narrower than 420px, collapsing the entire expanded edit form down to a
+       near-zero-width sliver with all its content crushed and overflowing vertically instead
+       of wrapping. This is what a "narrow, clipped vertical sliver with unreadable/overlapping
+       content" report was actually describing — a pre-existing gap in the mobile CSS since
+       Session 12's expand-in-place work (never actually exercised at a real mobile viewport's
+       EXPANDED width until this session's investigation, only the compact view was previously
+       screenshot-verified at 390px), not something the trip-picker itself broke — the
+       trip-picker's extra field just made the already-broken container's content noticeably
+       taller/more obviously wrong. Same edge-to-edge width as the compact view above, just
+       taller (mirrors the desktop pattern: expanded grows taller than compact, position/width
+       otherwise unchanged). */
+    #view-drawer.expanded{
+      width:auto;max-width:none;max-height:85vh;
+    }
+
     /* Sunrise panel: docked above the sidebar bar on mobile */
     #sunrise-panel.sunrise-docked-panel{
       position:fixed !important;
@@ -1011,9 +1029,18 @@
     #wildlife-legend{ left:14px; right:auto; bottom:195px; max-width:calc(100% - 28px); }
     body.sidebar-open #wildlife-legend{ bottom:calc(55vh + 245px); }
 
-    /* Active Trip chip: same reasoning as #wildlife-legend just above — mobile's sidebar is a
-       bottom bar, not a left column, so plain left:14px is correct here unlike desktop. */
-    #active-trip-chip{ left:14px; max-width:calc(100% - 28px); }
+    /* Active Trip chip on mobile — desktop's "stack under the coords/scale-bar column" doesn't
+       apply here (that whole column is hidden on mobile — #center-readout-mobile lives at the
+       BOTTOM instead). Centered at the top instead, per direct feedback — but top:66px, not
+       14px: #map-search-bar, when opened via the search icon, is ALSO centered at top:14px
+       (measured height ~43px), and this must never sit underneath it. 66px clears its
+       measured bottom edge (~57px) with margin. Zoom controls (MapLibre's NavigationControl)
+       occupy the left ~39px regardless of vertical position, but centering keeps this chip
+       clear of that column entirely at any width up to roughly 300px. */
+    #active-trip-chip{
+      top:66px;left:50%;right:auto;transform:translateX(-50%);
+      width:auto;max-width:calc(100% - 100px);
+    }
 
     /* Larger tap targets for popup action buttons on mobile */
     .pin-popup-actions .btn{padding:9px 14px;font-size:13px;}
@@ -1516,11 +1543,16 @@
 </div>
 
 <!-- Compass HUD (compact — heading text only, lines are on the map) -->
-<div id="compass-panel" class="hidden" style="
+<!-- Visual style matches #view-drawer's card (solid bg-elevated, 14px radius, same shadow) for
+     consistency with the rest of the app's popup surfaces — position/z-index/interaction model
+     deliberately UNCHANGED: still plain position:absolute (not #view-drawer, not a
+     .floating-panel), still absent from FLOATING_PANEL_IDS/PANEL_SCRIM_IDS/
+     OUTSIDE_CLICK_DISMISS_IDS, so the map stays fully interactive underneath it (tapping to set
+     a bearing, panning while it's open) exactly as before. --><div id="compass-panel" class="hidden" style="
   position:absolute;top:14px;left:50%;transform:translateX(-50%);
-  z-index:1400;background:rgba(25,31,27,0.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-  border:1px solid var(--border);border-radius:12px;padding:10px 16px;
-  box-shadow:0 4px 16px rgba(0,0,0,0.5);min-width:200px;text-align:center;
+  z-index:1400;background:var(--bg-elevated);
+  border:1px solid var(--border);border-radius:14px;padding:10px 16px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.45);min-width:200px;text-align:center;
   font-family:var(--font-mono);">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
     <div>
@@ -2395,7 +2427,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.26.1';
+  var APP_VERSION = '2.26.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -4367,11 +4399,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var noTripRow = document.getElementById('trip-picker-no-trip-row');
     noTripRow.innerHTML = '';
     var noTripBtn = document.createElement('button');
-    noTripBtn.className = 'link-btn';
     if (tripPickerMode === 'device'){
+      // Full button, same visual weight as "+ New trip" (per explicit feedback — this was
+      // previously a plain text link, easy to miss and inconsistent with the other primary
+      // action in this panel).
+      noTripBtn.className = 'chip';
+      noTripBtn.style.cssText = 'border-style:dashed;width:100%;box-sizing:border-box;text-align:center;';
       noTripBtn.textContent = 'End trip — browse with no trip';
       noTripBtn.addEventListener('click', function(){ setActiveTrip(null); closeTripPickerPanel(); });
     } else {
+      // Form mode's "No trip" stays a lighter link — clearing one item's trip assignment is a
+      // routine, low-stakes edit, not the bigger "end my active trip" decision above.
+      noTripBtn.className = 'link-btn';
       noTripBtn.textContent = 'No trip';
       noTripBtn.addEventListener('click', function(){ selectTripFromPicker(null); });
     }
@@ -8364,9 +8403,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       openWeatherPanel(drawerConditionsPoint); // closes the drawer itself (see openWeatherPanel) — same "soft dismiss" as any other panel-opening action
     },
     // Immediate save, no full-form detour — name/category from what's been typed/detected so
-    // far (or sensible defaults), status always Escout, trip deliberately left blank (Active
-    // Trip auto-attribution is a separate, not-yet-built feature — see the batch spec). The
-    // drawer swaps in place to the normal saved pin view via showViewDrawer('pin', ...),
+    // far (or sensible defaults), status always Escout, trip auto-tagged from the active trip
+    // (state.settings.activeTripId) exactly like every other creation path — this was still
+    // hardcoded to null through Stage 2 (deliberately deferred to "Stage 3: tap-anywhere
+    // integration" in the original spec) but got fixed here instead, once reported as a
+    // critical bug: a quick tap-anywhere save is the single most common pin-creation path in
+    // the app, so leaving it unwired made the whole auto-tag feature look broken in practice.
+    // The drawer swaps in place to the normal saved pin view via showViewDrawer('pin', ...),
     // reusing popupHtml exactly as any other pin popup would — "continuing to refine" this
     // item afterward (Edit data) is thus indistinguishable from editing any other pin.
     tapAnywhereSave: function(){
@@ -8377,7 +8420,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var elevationFt = tapAnywhereState.elevationFt;
       var newPin = {
         id: uid(), lat: latlng.lat, lng: latlng.lng,
-        name: name, tags: tags, notes: '', tripId: null, status: 'escout',
+        name: name, tags: tags, notes: '', tripId: state.settings.activeTripId, status: 'escout',
         created: Date.now(), updatedAt: Date.now(), source: 'tap-anywhere',
         state: stateForPoint(latlng.lat, latlng.lng)
       };

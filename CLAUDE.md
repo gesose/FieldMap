@@ -280,17 +280,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     genuinely first-ever install can't have an activeTripId set yet — every path that sets one requires a
     usable, past-onboarding app), but as cheap insurance against ever stacking two centered modals with no
     arbitration between them.
-  - Persistent indicator (#active-trip-chip): a small pill, top-left of the map — the one corner with no
-    existing map chrome (bottom/right host #map-controls, top-right hosts #center-readout-float, top-center
-    hosts #map-search-bar). GOTCHA (caught via a screenshot, not code review): #active-trip-chip is a
-    body-level sibling of `<main id="map">`, same as #wildlife-legend — "left"/"top" are relative to the
-    whole viewport, not the map, so a naive `left:14px` landed inside #sidebar's 0-330px column on desktop
-    (exactly the bug #wildlife-legend's own CSS comment already documents and works around), and even after
-    offsetting past `var(--sidebar-width)`, `top:14px` collided with MapLibre's own NavigationControl
-    (zoom +/-/compass-reset, added at 'top-left' in createMap()) — fixed with
-    `left:calc(var(--sidebar-width) + 14px)` and `top:130px` (clearing the nav control stack), plus the same
-    mobile override pattern #wildlife-legend already uses (sidebar collapses to a bottom bar on mobile, so
-    plain `left:14px` is correct there).
+  - Persistent indicator (#active-trip-chip, updateActiveTripIndicator): ALWAYS visible now (Session 19 fix)
+    — originally hidden entirely with no active trip, which meant a fresh account with zero trips ever
+    created had no indicator AND no startup prompt (that only ever fires when a trip is already active),
+    i.e. no way to reach the trip switcher at all. Now always shown; with no active trip it reads "No active
+    trip" in a muted `.no-active-trip` style (same tap target, still opens the device-mode switcher) instead
+    of the accent-styled active state. Position (Session 20 fix): now sits directly under
+    #center-readout-float + #scale-bar's own top-right stack (`top:112px;right:14px;width:150px`, same width
+    as both boxes above it) rather than top-left — top-left originally collided with MapLibre's own
+    NavigationControl (zoom +/-/compass-reset, added at 'top-left' in createMap()) and, as a body-level
+    sibling of `<main id="map">` (same class of gotcha #wildlife-legend's own CSS comment already documents),
+    needed an awkward `calc(var(--sidebar-width) + 14px)` offset just to clear the sidebar on desktop. Mobile
+    now centers it at `top:66px` instead (desktop's "stack under the coords column" doesn't apply — that
+    whole column is hidden on mobile) — 66px specifically clears #map-search-bar's own measured bottom edge
+    (~57px) when the user taps to open search, confirmed via a real bounding-box overlap check, not just
+    visual inspection. Truncation (Session 20 fix): long trip names were wrapping onto two lines instead of
+    ellipsis-truncating — the real cause wasn't missing `overflow:hidden`/`text-overflow:ellipsis`/
+    `white-space:nowrap` (all three were already present on #active-trip-chip-label) but a classic flexbox
+    gotcha: a flex item's default `min-width:auto` refuses to shrink below its own text's full unwrapped
+    width, so the ellipsis never actually engaged. `min-width:0` on the label is the real fix.
   - Trip picker (#trip-picker-panel): ONE shared `.floating-panel` — not #view-drawer — for two modes.
     'device' (opened via the indicator chip or the startup prompt's "Start a new trip"): picking a trip calls
     setActiveTrip(). 'form' (opened via any of the 4 item modals' trip-picker-btn): picking a trip only calls
@@ -310,16 +318,53 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     "N days/weeks/months/years ago") is new — no relative-time formatter existed anywhere in this file before
     (dateLabelFor/formatCreatedDate are both absolute-date only).
   - Auto-tagging on creation: every one of the 4 "new item" modal-open functions (openPinModal(null,...),
-    openTrackModalForNew, openPolygonModal(null), openBearingModalForNew) now pre-fills its trip-picker-btn
+    openTrackModalForNew, openPolygonModal(null), openBearingModalForNew) pre-fills its trip-picker-btn
     with state.settings.activeTripId instead of leaving it blank — since the object doesn't actually get
     created until Save is clicked, "auto-tag at creation time" and "pre-fill the field Save will read" are
     the same thing, and the pre-fill is still visibly overridable via the same picker before saving (active
-    trip is a default, never a lock, per spec).
+    trip is a default, never a lock, per spec). CRITICAL BUG (Session 20): tap-anywhere's own quick-save
+    (FieldMap.tapAnywhereSave) still hardcoded `tripId: null` — the original Stage 2 spec explicitly deferred
+    tap-anywhere integration to "Stage 3", so this was deliberate at the time, but tap-anywhere is the single
+    most common pin-creation path in the app (one tap, type a name, Save — no +Add sheet detour), so leaving
+    it unwired made the entire auto-tag feature look broken in real use ("fish" pin created via tap-anywhere
+    while a trip was active came out with no trip). Fixed by reading state.settings.activeTripId here too,
+    ahead of the original Stage 3 scope line, once reported as a critical bug — full tap-anywhere/Stage-3
+    integration (chip UI inside the tap-anywhere drawer itself, etc.) is still not built.
   - The old free-text `<input id="X-trip" list="trip-suggestions">` in all 4 item modals is now a
     `<button class="trip-picker-btn" id="X-trip-btn" data-trip-id="">` — opening the picker in 'form' mode on
     click. The `trip-suggestions` datalist itself and refreshTripSuggestions() are NOT removed — bulk-edit
     (#bulk-trip) and CSV/GPX import (#import-trip) still use the old free-text+datalist pattern unchanged
     (not named in the Stage 2 spec, deliberately left alone).
+  - "End trip" button (Session 20): the device-mode row in #trip-picker-panel was a plain `.link-btn` text
+    link, easy to miss and visually inconsistent with "+ New trip" right above it — now a full `.chip`
+    button with the same dashed-border/full-width treatment. Form-mode's "No trip" (clearing one specific
+    item's trip assignment) deliberately stays the lighter link style — a routine, low-stakes field edit,
+    not the bigger "end my active trip" decision the device-mode row represents.
+  - CRITICAL MOBILE BUG (Session 20): #view-drawer.expanded — the container Edit-data's form actually lives
+    in — rendered as a near-zero-width sliver on any mobile viewport, all its content crushed and overflowing
+    vertically instead of wrapping (reported as "narrow, clipped vertical sliver with unreadable/overlapping
+    content"). Root cause, found via a real 390px-viewport bounding-box measurement, not guesswork: the base
+    (non-expanded) `#view-drawer` CSS rule has a mobile override (`width:auto;max-width:none`), but
+    `#view-drawer.expanded`'s own rule — `width:380px;max-width:calc(100vw - var(--sidebar-width) - 90px)` —
+    has no mobile override of its own, and `#view-drawer.expanded` (id+class) beats the mobile override's
+    plain `#view-drawer` (id only) in specificity regardless of which media query each is defined in. On any
+    viewport narrower than 420px, `100vw - 330px - 90px` goes NEGATIVE, collapsing the box. This is a
+    pre-existing gap in the mobile CSS dating to Session 12's expand-in-place work — never actually exercised
+    at a real mobile viewport's EXPANDED width before (only the compact view was previously
+    screenshot-verified at 390px) — not something the Stage 2 trip-picker itself broke, though the
+    trip-picker's extra field made the already-broken container's content noticeably taller and the breakage
+    far more obvious. Fixed with a matching `#view-drawer.expanded` override inside the mobile media query
+    (`width:auto;max-width:none;max-height:85vh` — same edge-to-edge width as the compact view, just taller).
+    Confirmed fixed for all four item types via real 390×844 mobile-viewport screenshots, not just DOM
+    measurements.
+  - Compass panel visual restyle (Session 20): #compass-panel's card now uses the same solid
+    `background:var(--bg-elevated)` / `border-radius:14px` / `box-shadow` treatment as #view-drawer, for
+    visual consistency with every other popup surface in the app — position, z-index, and interaction model
+    are completely unchanged (still a plain `position:absolute`, still absent from PANEL_SCRIM_IDS/
+    OUTSIDE_CLICK_DISMISS_IDS, deliberately alongside sunrise-panel — see that entry's own reasoning — so the
+    map stays fully interactive underneath it: tapping to set a bearing and live-panning for the sun-arc
+    preview both still work exactly as before). Confirmed via a live map tap that bearing-target-setting
+    still works correctly after the change.
 - In-progress draw previews: draw-preview-source (routes), polygon-draw-preview-source (areas, fill+line),
   bearing-draw-preview-source (bearings). Vertex/endpoint editing of an *existing* saved item reuses two more:
   vertex-edit-preview-source (shared between route and area vertex-edit — mutually exclusive modes, fill layer
@@ -708,3 +753,39 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   pre-seeded; and two more instances of the same scheduleSave-debounce-timing mistake identified and fixed in
   Session 17 (reading localStorage inside the 700ms window before persist() actually runs). `node --check` on
   all 4 extracted inline `<script>` blocks confirmed clean syntax after every batch of edits.
+- Session 19: Design-gap fix reported right after Session 18 shipped — with no trip ever active, there was no
+  way to reach the trip switcher at all (the indicator was hidden entirely with no active trip, and the
+  startup prompt only ever fires when a trip is already active). See Architecture notes' "Active Trip UI"
+  entry's "Persistent indicator" bullet for the full fix (#active-trip-chip now always visible, muted
+  "No active trip" state when inactive, same tap target). Verified via Playwright against a genuinely fresh
+  seed (zero trips ever created): indicator visible and correctly muted/labeled, tapping it opens the
+  switcher with an empty list, "+ New trip" creates and activates the account's very first trip, and
+  previously-verified active-trip behavior (name display, switching, End trip) all confirmed unchanged —
+  "End trip" specifically confirmed to return to the visible muted state rather than disappearing again.
+  `node --check` confirmed clean syntax.
+- Session 20: A combined critical-bug-fix + polish pass reported after Session 19 shipped. Two Priority-1
+  items, both root-caused via live reproduction (not guessed) before fixing:
+  (1) Auto-tag not firing — turned out to be scoped correctly everywhere EXCEPT tap-anywhere's own
+  quick-save, which still hardcoded `tripId: null` (deliberately deferred to "Stage 3" in the original Stage
+  2 spec, but tap-anywhere is the single most common pin-creation path in the app, so the gap made the whole
+  feature look broken). (2) Mobile Edit-data rendering as an unreadable clipped sliver — root-caused to a
+  pre-existing gap in #view-drawer.expanded's mobile CSS dating to Session 12 (a negative max-width on any
+  viewport under ~420px), never actually exercised at a real mobile viewport's EXPANDED width before, just
+  newly exposed more severely by the trip-picker's extra field height. See Architecture notes' "Active Trip
+  UI" entry for both fixes' full detail. Also fixed in the same pass: "End trip" upgraded from a text link to
+  a full button matching "+ New trip"; the indicator chip repositioned from top-left (where it collided with
+  MapLibre's own zoom controls) to directly under the coords/scale-bar column on desktop and centered
+  (clearing the search bar) on mobile, plus a real flexbox min-width:0 fix so long trip names now truncate
+  instead of wrapping; and the Compass panel's visual container restyled to match #view-drawer's card
+  treatment, with its position/interaction model (map stays fully interactive, no scrim — deliberately shared
+  with sunrise-panel) explicitly left untouched. Verified via Playwright: all four item types (pin via both
+  the standard Add flow AND tap-anywhere, track, area, bearing) confirmed correctly auto-tagged while a trip
+  is active; the mobile Edit-data fix confirmed for all four item types via real 390×844-viewport screenshots
+  (not just DOM measurements) showing fully readable, non-overlapping content; "End trip" button confirmed
+  restyled; the indicator chip confirmed truncating (not wrapping) a deliberately very long trip name on both
+  desktop and mobile, confirmed via real bounding-box overlap checks to not collide with the coords/scale-bar
+  column, zoom controls, or the mobile search bar (opened); Compass confirmed to still allow live map-tap
+  bearing-target-setting after the restyle. Also caught, mid-session, that Session 19's own indicator fix had
+  never been written up in CLAUDE.md at all — backfilled that gap into the "Active Trip UI" entry alongside
+  this session's own changes rather than leaving it undocumented. `node --check` confirmed clean syntax after
+  every batch of edits.
