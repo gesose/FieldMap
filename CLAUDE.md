@@ -56,6 +56,14 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   now one consolidated stack instead of four independently-positioned elements plus a separate always-on
   legend panel — see Architecture notes' "Floating info stack" and "Migration corridors" entries for the
   full design.
+- Four small refinements on top of Session 24's floating info stack (Session 25): the Migration picker's
+  checkbox list now reads Stopover/Corridors/Winter Range top-to-bottom (display order only); the
+  active-layers chip is now tappable (opens the Wildlife Layers panel directly) and carries a small
+  layers-glyph icon; the mobile chip stack moved from top-left to lower-left at a narrower width (140px,
+  closer to pre-Session-24 sizing), with the active-layers chip truncating long species names via ellipsis
+  rather than widening; and the coords+elevation chip (already one bubble on both desktop and mobile) is now
+  tappable to toggle between map-center (crosshair icon) and live GPS location (pin icon), both values always
+  switching together. See Architecture notes' "Floating info stack" entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -724,6 +732,64 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     is flagged here rather than silently presented as full mobile confirmation. Real-device/true-narrow-
     viewport verification of the mobile layout is still outstanding and should be the first thing checked
     next time a real device or working mobile emulation is available.
+  - Four refinements on top of the above (Session 25):
+    - Migration picker display order (no map/paint changes): `#migration-sublayers`' checkbox rows were
+      reordered in the HTML to Stopover/Corridors/Winter Range, top to bottom — purely a markup reorder,
+      since `renderMigrationSublayers()` and the checkbox change listeners all reference elements by id and
+      are order-independent. Map paint/z-order (Stopover already renders on top as the smallest, most
+      specific feature) was untouched.
+    - `#active-layers-chip` is now tappable, not display-only: `openActiveLayersPanel()` opens
+      `#wildlife-panel` (the deep species-picker "WILDLIFE LAYERS" panel with Habitats/Migrations tabs)
+      directly, defaulting to whichever top-level tab has an active layer (or the last-viewed tab,
+      `wildlifeActiveTopLevel`, if both or neither are active) and, for Habitats, pre-selecting
+      `wildlifeActive.category`. Judgment call: the task said "same as clicking the layers toolbar icon,"
+      but `#layers-btn` actually opens the shallower `#layers-panel` (quick-toggle rows), not the deep
+      species picker — opening `#wildlife-panel` directly was implemented instead, since that's the panel
+      the task actually names ("Wildlife Layers panel") and is the more useful one-tap destination. A small
+      inline layers-glyph SVG icon (`.active-layers-icon`) was added at the start of the chip, wrapped
+      alongside `#active-layers-chip-lines` (the chip's content moved into this new sibling div so the icon
+      has `flex-shrink:0` while the text lines get `min-width:0;flex:1` — the same flex-shrink gotcha already
+      documented for `#active-trip-chip-label` applies here for ellipsis truncation to actually engage).
+    - Mobile stack repositioned bottom-left instead of top-left: `#floating-info-stack` in the mobile media
+      query is now `top:auto;right:auto;bottom:108px;left:14px;width:140px` (anchored by `bottom` only, so it
+      grows upward as chips are added/removed) instead of the Session 24 `top:105px;left:14px`. Width
+      narrowed 230px → 140px (closer to the pre-Session-24 ~130px sizing the task referenced as "v2.27.2
+      sizing") — the active-layers chip is expected to (and does) truncate long species names via ellipsis
+      at this width rather than widening the chip; verified live with "Collared Peccary (Javelina)" truncating
+      to "Collared Peccary (J…" while "Elk migration" (shorter) stays untruncated on its own line. Desktop
+      stack (`top:14px;right:14px;width:230px`) is completely unchanged.
+    - Coordinates + elevation, previously a single non-interactive bubble on both breakpoints, gained a
+      tap-to-toggle: `centerReadoutMode` ('center' | 'gps') plus `centerReadoutGpsLatLng`/
+      `centerReadoutGpsAltitudeM`/`centerReadoutGpsWatchId` (all new module vars) drive a third, fully
+      independent `watchPosition` — deliberately NOT sharing state with the locate button's `gpsDotState`/
+      `lastGpsLatLng` or Compass's `gpsWatchIdCompass`/`currentGpsLatLng`, matching this codebase's existing
+      "each GPS-consuming feature gets its own watch" pattern (now a third example of it). Default/tap-back
+      state ('center') reads `map.getCenter()` exactly as before; one tap starts the watch and switches both
+      the coordinates AND elevation to the live GPS fix together (`updateCenterReadout()` branches once on
+      `centerReadoutMode`, so there is no code path that could show one without the other); a second tap
+      clears the watch and reverts to center mode. `updateCenterReadoutModeIcon()` swaps a small inline SVG
+      (crosshair for center, a location pin for gps) into `#center-readout-mode-icon`/
+      `#center-readout-mobile-mode-icon` — same icon/toggle behavior on both breakpoints, per spec. A
+      geolocation error (permission denied, no hardware) reverts cleanly to center mode with a toast, rather
+      than getting stuck mid-toggle. Judgment call, flagged: this replaces the previous tap-to-copy-
+      coordinates gesture entirely (`copyCoordsText`/`copyMapCenterCoords` deleted outright) — the task's
+      single-tap-to-toggle spec left no obvious room to preserve both gestures on the same tap target, and no
+      alternate gesture (long-press, etc.) was requested for copy.
+    - Verified live via the already-connected Chrome browser extension against a local `python -m
+      http.server`, after unregistering the service worker and clearing Cache Storage first (stale
+      SHELL_CACHE gotcha, same as every prior session's testing): Migration picker order confirmed visually
+      (Stopover/Corridors/Winter Range top-to-bottom); active-layers chip confirmed opening `#wildlife-panel`
+      on the Migrations tab (both layers were active in the seeded test data); coords/elevation toggle
+      confirmed switching both values together (mocked `watchPosition` to a synthetic fix, since this
+      sandbox has no real GPS), showing the correct icon at each state, and round-tripping cleanly
+      (center → gps → center) with the elevation correctly re-resolving via the async DEM/lookup path after
+      reverting. Mobile verification reused the same `resize_window`-doesn't-actually-narrow-the-viewport
+      workaround established in Session 24 (confirmed again this session — a fresh tab's `window.innerWidth`
+      stays at native resolution regardless of requested size) — CSS-injection override confirmed the
+      repositioned/narrowed stack and the truncation behavior, but true narrow-viewport/real-device
+      verification is still outstanding, same caveat as Session 24. Zero console errors across the test
+      session. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION
+      bumped 2.28.0 → 2.29.0, SHELL_CACHE bumped v134 → v135.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1204,3 +1270,21 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   mobile-viewport or real-device verification, and that verification is still outstanding. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.27.2 → 2.28.0
   (minor, per convention for a UI-scope change this size), SHELL_CACHE bumped v133 → v134.
+- Session 25: A four-part polish pass on top of Session 24's floating info stack, all in one batch — see
+  Architecture notes' "Floating info stack" entry's own "Session 25" sub-bullet for full detail on each part
+  and how it was verified. Reordered the Migration picker's checkbox list to Stopover/Corridors/Winter Range
+  (display order only, no paint/z-order change); made the active-layers chip tappable (opens `#wildlife-panel`
+  directly — flagged as a deliberate deviation from the task's literal "same as the layers toolbar icon,"
+  which actually opens the shallower `#layers-panel`) and gave it a small layers-glyph icon; moved the mobile
+  chip stack from top-left to bottom-left and narrowed it 230px → 140px, with the active-layers chip now
+  truncating long species names via ellipsis rather than widening; and added a tap-to-toggle to the
+  coordinates+elevation chip switching both values together between map-center (crosshair icon) and live GPS
+  (pin icon, its own independent `watchPosition`, matching the locate-button/Compass pattern of one dedicated
+  watch per feature) — flagged as deliberately removing the previous tap-to-copy-coordinates gesture, since
+  the new single-tap-toggle left no room to preserve both. Verified live via the Chrome browser extension:
+  picker order, chip-opens-panel, and the GPS toggle's icon/value round-trip (mocked `watchPosition`, no real
+  GPS in this sandbox) all confirmed on desktop; mobile layout re-verified via the same CSS-injection
+  workaround as Session 24 (`resize_window` still doesn't narrow this sandbox's real viewport) — true
+  narrow-viewport/real-device verification remains outstanding, same caveat carried forward from Session 24.
+  Zero console errors observed. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
+  blocks. APP_VERSION bumped 2.28.0 → 2.29.0, SHELL_CACHE bumped v134 → v135.

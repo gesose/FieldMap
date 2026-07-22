@@ -52,7 +52,9 @@
     width:230px;
   }
   /* Floating coordinate + elevation readout (replaces old topbar), CalTopo-style —
-     live-updates as the map pans, elevation via the DEM→GPS→EPQS hierarchy (getElevationFt) */
+     live-updates as the map pans, elevation via the DEM→GPS→EPQS hierarchy (getElevationFt),
+     UNLESS toggled to current-location mode (see toggleCenterReadoutMode) — tap anywhere in the
+     bubble to switch. */
   #center-readout-float{
     cursor:pointer;
     font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
@@ -63,6 +65,11 @@
   #center-readout-float:hover{color:var(--text);border-color:var(--accent);}
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
   #center-readout-elev.show{display:block;}
+  /* Mode icon (crosshair = map center, pin = current GPS location) sits inline with the coords
+     text, not swapped by rebuilding the whole chip — only its own innerHTML changes, via
+     updateCenterReadoutModeIcon(). Shared by both desktop and mobile readouts. */
+  #center-readout-row, #center-readout-mobile-row{display:flex;align-items:center;justify-content:center;gap:4px;}
+  .center-readout-icon{display:inline-flex;flex-shrink:0;}
 
   /* Active Trip persistent indicator — now just a plain child of #floating-info-stack (see
      that rule's own comment for why the old per-child pixel-offset stacking was replaced). */
@@ -91,19 +98,29 @@
   /* Active layers indicator — replaces the old always-on color-swatch legend (#wildlife-legend
      panel, previously floating independently at bottom-right), which duplicated the picker
      panel's own legend and the tap-to-identify popups. Text-only: just the name(s) of whichever
-     Habitat/Migration layer(s) are on, one <div> per active layer type (see
-     updateActiveLayersChip) — one line total when only Habitat or only Migration is active, two
-     when both are. Unlike the trip chip (always visible, has its own muted "no active trip"
-     state), this is the one chip in the stack that's fully hidden (not just emptied) when
-     neither layer is active. */
+     Habitat/Migration layer(s) are on, one <div> per active layer type inside
+     #active-layers-chip-lines (see updateActiveLayersChip) — one line total when only Habitat
+     or only Migration is active, two when both are. Unlike the trip chip (always visible, has
+     its own muted "no active trip" state), this is the one chip in the stack that's fully
+     hidden (not just emptied) when neither layer is active. Tappable now (opens the Wildlife
+     Layers panel) — the layers-glyph icon lives in its own persistent span so
+     updateActiveLayersChip() can keep rebuilding just the lines without wiping it. */
   #active-layers-chip{
+    cursor:pointer;
     font-family:var(--font-sans);font-size:11px;color:var(--text-muted);
     background:var(--bg-elevated);border:1px solid var(--border);
     padding:6px 9px;border-radius:8px;box-sizing:border-box;
+    display:flex;align-items:center;gap:6px;
   }
+  #active-layers-chip:hover{border-color:var(--accent);}
   #active-layers-chip.hidden{display:none;}
-  /* Ellipsis safety net for a future species name longer than anything in today's dataset —
-     each active layer gets its own line/div, truncated independently. */
+  .active-layers-icon{flex-shrink:0;color:var(--text-muted);}
+  /* min-width:0 for the same reason as #active-trip-chip-label — without it a flex item won't
+     shrink below its own text's full unwrapped width, so ellipsis on the lines inside never
+     actually engages at the narrower mobile chip width. */
+  #active-layers-chip-lines{min-width:0;flex:1;}
+  /* Ellipsis safety net (now load-bearing at mobile's narrower fixed width, not just a future-
+     proofing measure) — each active layer gets its own line/div, truncated independently. */
   .active-layers-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
 
   /* Trip picker panel's list rows (Stage 2) */
@@ -913,21 +930,27 @@
 
     /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
-    /* Floating info stack, mobile: same consolidated-column concept as desktop (see that rule's
-       own comment) but top-aligned in the left/center info column instead of right-aligned —
-       desktop's right edge is fine on mobile too width-wise, but the RIGHT side is reserved
-       visually for symmetry with #map-controls' icon column conceptually sitting opposite it;
-       parking the stack on the left keeps it clear of that association. top:105px (not 14px)
-       clears two things that both live at/near the top-left otherwise: MapLibre's own
-       NavigationControl (zoom +/-/compass, added at 'top-left', ~10-97px) and #map-search-bar
-       when opened via the search icon (centered, ~14-57px, nearly full-width so no horizontal
-       dodge is possible) — 105px sits comfortably past both. Same fixed width as desktop
-       (230px, sized for the same longest species name) with a max-width safety net for
-       narrower phones. */
+    /* Floating info stack, mobile (Session 26): lower-left now, not top-left — a prior session
+       tried top-left (top:105px, clearing MapLibre's NavigationControl and the search bar), but
+       moved back down here per explicit follow-up feedback. Anchored by `bottom` only (no
+       `top`), so the box's bottom edge stays fixed and it grows UPWARD as chips are added — the
+       same trick #scale-bar/#center-readout-mobile used pre-consolidation, just applied to the
+       whole stack instead of two separately-guessed offsets. bottom:108px reuses that same
+       pre-consolidation number verbatim (already proven clear of #map-controls' bottom:90px
+       icon column and the collapsed sidebar bar/attribution line). Width is 140px now, not
+       desktop's 230px — narrower, "closer to the old pre-consolidation 130px sizing" per
+       explicit feedback; the active-layers chip is the one child whose content can actually
+       overflow this width (a long species/migration name), and it's expected to truncate via
+       its own ellipsis rather than widen the chip (see .active-layers-line) — this is a
+       deliberate width/truncation tradeoff for mobile, not a bug. */
     #floating-info-stack{
-      top:105px;right:auto;left:14px;
-      width:230px;max-width:calc(100vw - 28px);
+      top:auto;right:auto;bottom:108px;left:14px;
+      width:140px;max-width:calc(100vw - 28px);
     }
+    /* When the bottom sheet is open, push the whole stack up above it — same idea as the old
+       pre-consolidation body.sidebar-open rules for #center-readout-mobile/#scale-bar
+       individually, now just one rule for the whole stack. */
+    body.sidebar-open #floating-info-stack{ bottom:calc(55vh + 160px); }
     /* Mobile equivalent of #center-readout-float — same two-row layout (coords, then elevation
        below) since the bubble is too narrow for one line of both; no longer independently
        positioned, just a plain child of #floating-info-stack now (see that rule's comment). */
@@ -1163,8 +1186,25 @@
      mechanism (flex column + gap, not per-child position:absolute) and the shared width moved
      up to the wrapper. -->
 <div id="floating-info-stack">
-  <div id="center-readout-float"><div id="center-readout-coords">--, --</div><div id="center-readout-elev"></div></div>
-  <div id="center-readout-mobile"><span id="center-readout-mobile-coords">--, --</span><span id="center-readout-mobile-elev"></span></div>
+  <!-- Coords + elevation readout — a single map-center/current-location TOGGLE (tap to switch),
+       not a copy-to-clipboard button anymore (see toggleCenterReadoutMode's own comment for why
+       that tradeoff was made deliberately). The mode icon (crosshair vs. location pin) is a
+       persistent sibling of the coords text, not rebuilt on every update — only its innerHTML
+       swaps, via updateCenterReadoutModeIcon(). -->
+  <div id="center-readout-float">
+    <div id="center-readout-row">
+      <span id="center-readout-mode-icon" class="center-readout-icon"></span>
+      <span id="center-readout-coords">--, --</span>
+    </div>
+    <div id="center-readout-elev"></div>
+  </div>
+  <div id="center-readout-mobile">
+    <div id="center-readout-mobile-row">
+      <span id="center-readout-mobile-mode-icon" class="center-readout-icon"></span>
+      <span id="center-readout-mobile-coords">--, --</span>
+    </div>
+    <span id="center-readout-mobile-elev"></span>
+  </div>
   <div id="scale-bar">
     <div id="scale-bar-line"></div>
     <span id="scale-bar-label"></span>
@@ -1180,8 +1220,20 @@
   <!-- Active layers indicator — replaces the old always-on #wildlife-legend swatch panel (see
        #active-layers-chip's own CSS comment). Starts hidden for the same pre-JS-flash reason as
        the trip chip above; updateActiveLayersChip() drives visibility from then on, and is the
-       one chip of the four that stays hidden (not just emptied) when nothing is active. -->
-  <div id="active-layers-chip" class="hidden"></div>
+       one chip of the four that stays hidden (not just emptied) when nothing is active. Now
+       tappable (opens the Wildlife Layers panel directly) — the layers-glyph icon (same SVG as
+       #layers-btn's own, for at-a-glance consistency) lives in its own persistent span so
+       updateActiveLayersChip() only ever touches #active-layers-chip-lines, never wiping the icon. -->
+  <div id="active-layers-chip" class="hidden" aria-label="Active overlays — tap to open Wildlife Layers">
+    <span class="active-layers-icon">
+      <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M10 2 L18 6.5 L10 11 L2 6.5 Z"/>
+        <path d="M2.5 10.2 L10 14.5 L17.5 10.2"/>
+        <path d="M2.5 13.7 L10 18 L17.5 13.7"/>
+      </svg>
+    </span>
+    <div id="active-layers-chip-lines"></div>
+  </div>
 </div>
 
 <div id="publicland-legend" class="hidden">
@@ -1948,23 +2000,25 @@
     <select id="migration-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
       <option value="">Select a species…</option>
     </select>
-    <!-- Style test (West Goose Lake elk POC) — three rows, Winter range / Corridors / Stopover
-         order. Corridors used to have separate Low/High swatches next to its own checkbox (one
-         checkbox already controlled both — this was never three separate checkboxes to begin
-         with); that's now a single gradient swatch matching the map's continuous amber→coral
-         fill, since all three use_class tiers render as one toggle-controlled layer underneath. -->
+    <!-- Picker display order: Stopover / Corridors / Winter Range (Session 25) — display order
+         only, no change to map paint/z-order, which already renders Stopover on top as the
+         smallest/most specific feature regardless of this list's order. Corridors used to have
+         separate Low/High swatches next to its own checkbox (one checkbox already controlled
+         both — this was never three separate checkboxes to begin with); that's now a single
+         gradient swatch matching the map's continuous amber→coral fill, since all three
+         use_class tiers render as one toggle-controlled layer underneath. -->
     <div id="migration-sublayers" style="display:none;">
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
-        <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
-        <span class="legend-swatch" style="margin-left:auto;background:#CECBF6;border:1px solid #534AB7;color:#2a2560;font-size:10px;">Winter</span>
+        <input type="checkbox" id="migration-stopover-toggle"> Stopover
+        <span class="legend-swatch" style="margin-left:auto;background:#D4537E;border:1px solid #72243E;color:#fff;font-size:10px;">Stopover</span>
       </label>
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-corridor-toggle"> Corridors
         <span class="legend-swatch" style="margin-left:auto;background:linear-gradient(to right, #FAC775, #993C1D);color:#fff;font-size:10px;">Low → High</span>
       </label>
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
-        <input type="checkbox" id="migration-stopover-toggle"> Stopover
-        <span class="legend-swatch" style="margin-left:auto;background:#D4537E;border:1px solid #72243E;color:#fff;font-size:10px;">Stopover</span>
+        <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
+        <span class="legend-swatch" style="margin-left:auto;background:#CECBF6;border:1px solid #534AB7;color:#2a2560;font-size:10px;">Winter</span>
       </label>
     </div>
     <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener" style="color:var(--accent);">westernmigrations.net</a>.</p>
@@ -2597,7 +2651,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.28.0';
+  var APP_VERSION = '2.29.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3150,6 +3204,16 @@
   var compassHeadingDeg = null; // from DeviceOrientationEvent when GPS heading unavailable
   var lastGpsLatLng = null;
   var lastGpsAltitudeM = null, lastGpsAltitudeTime = 0; // from the GPS dot watcher, used by getElevationFt()'s GPS fallback tier
+  // Coords/elevation readout chip's own map-center/current-location toggle — entirely
+  // independent of gpsDotState/lastGpsLatLng (the locate button's own GPS tracking) and of
+  // Compass's gpsWatchIdCompass/currentGpsLatLng, mirroring this file's existing "each
+  // GPS-consuming feature gets its own dedicated watchPosition" pattern rather than sharing
+  // state across unrelated features (which risked the chip's tap silently interfering with the
+  // locate button's own tri-state behavior, or vice versa). See toggleCenterReadoutMode().
+  var centerReadoutMode = 'center'; // 'center' | 'gps'
+  var centerReadoutGpsLatLng = null;
+  var centerReadoutGpsAltitudeM = null;
+  var centerReadoutGpsWatchId = null;
   var selectedTrackStatus = 'escout';
   var selectedPolygonStatus = 'escout';
   var eyeHiddenTags = {};   // tagId → true when hidden via eye icon (independent of filter panel)
@@ -5302,17 +5366,71 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // network-based GPS/EPQS fallback (see getElevationFt) gets debounced, since that's the
   // tier that would otherwise fire a request storm while the user is actively dragging.
   var centerElevTimer = null;
+  var CENTER_READOUT_ICONS = {
+    center: '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="8" y1="1" x2="8" y2="4"/><line x1="8" y1="12" x2="8" y2="15"/><line x1="1" y1="8" x2="4" y2="8"/><line x1="12" y1="8" x2="15" y2="8"/><circle cx="8" cy="8" r="2.2"/></svg>',
+    gps: '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M8 15S13 9.5 13 6.2A5 5 0 0 0 3 6.2C3 9.5 8 15 8 15Z"/><circle cx="8" cy="6.2" r="1.6"/></svg>'
+  };
+  function updateCenterReadoutModeIcon(){
+    var svg = CENTER_READOUT_ICONS[centerReadoutMode === 'gps' ? 'gps' : 'center'];
+    ['center-readout-mode-icon', 'center-readout-mobile-mode-icon'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = svg;
+    });
+  }
+  // Tap the coords/elevation chip to switch what it describes — map center (crosshair icon,
+  // the default) or current GPS location (pin icon) — both values always switch together since
+  // they share one bubble and must describe the same point. This REPLACES the chip's previous
+  // tap-to-copy-coordinates behavior (copyMapCenterCoords/copyCoordsText, now dead code and
+  // removed) — a deliberate trade explicitly called for by the tap spec, not an oversight; there
+  // was no room to keep both a single-tap toggle and a single-tap copy on the same gesture.
+  // Uses its own dedicated watchPosition (centerReadoutGpsWatchId), never gpsDotState/
+  // lastGpsLatLng or Compass's gpsWatchIdCompass/currentGpsLatLng — see this file's other two
+  // independent GPS watches for the established precedent this follows.
+  function toggleCenterReadoutMode(){
+    if (centerReadoutMode === 'gps'){
+      centerReadoutMode = 'center';
+      centerReadoutGpsLatLng = null;
+      centerReadoutGpsAltitudeM = null;
+      if (centerReadoutGpsWatchId !== null){ navigator.geolocation.clearWatch(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
+      updateCenterReadoutModeIcon();
+      updateCenterReadout();
+      return;
+    }
+    if (!navigator.geolocation){ showToast('Location not available on this device'); return; }
+    centerReadoutMode = 'gps';
+    updateCenterReadoutModeIcon();
+    centerReadoutGpsWatchId = navigator.geolocation.watchPosition(function(pos){
+      centerReadoutGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      centerReadoutGpsAltitudeM = pos.coords.altitude != null ? pos.coords.altitude : null;
+      updateCenterReadout();
+    }, function(){
+      showToast('Location error — check permissions');
+      centerReadoutMode = 'center';
+      if (centerReadoutGpsWatchId !== null){ navigator.geolocation.clearWatch(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
+      updateCenterReadoutModeIcon();
+      updateCenterReadout();
+    }, { enableHighAccuracy: true, maximumAge: 3000 });
+  }
   function updateCenterReadout(){
-    var c = map.getCenter();
+    var usingGps = centerReadoutMode === 'gps' && centerReadoutGpsLatLng;
+    var c = usingGps ? centerReadoutGpsLatLng : map.getCenter();
     // Each coordinate formatted independently to a fixed precision (CalTopo convention),
     // THEN concatenated — not a fixed-precision string truncated by character count
     // afterward, which used to cut off the tail of whichever coordinate came second
-    // (usually longitude, e.g. producing "45.12756, -119...."). This is a display-only
-    // shortening: copyCoordsText() below reads the live full-precision map center at copy
-    // time rather than this truncated text, so "Copy coords" is unaffected.
+    // (usually longitude, e.g. producing "45.12756, -119....").
     var coordsText = c.lat.toFixed(3) + ', ' + c.lng.toFixed(3);
     document.getElementById('center-readout-coords').textContent = coordsText;
     document.getElementById('center-readout-mobile-coords').textContent = coordsText;
+
+    // GPS mode prefers the device's own reported altitude (already have it from this exact
+    // position fix) over a DEM/EPQS lookup at that point — faster, and more directly "your
+    // current elevation" than a terrain-model estimate. Falls through to the normal DEM→EPQS
+    // hierarchy below if the device didn't report one (common on some browsers/devices).
+    if (usingGps && centerReadoutGpsAltitudeM != null){
+      if (centerElevTimer) clearTimeout(centerElevTimer);
+      setCenterElevText(Math.round(centerReadoutGpsAltitudeM * 3.28084).toLocaleString() + ' ft');
+      return;
+    }
 
     var demFt = tryDemElevationFt(c.lat, c.lng);
     if (demFt != null){
@@ -5324,8 +5442,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (centerElevTimer) clearTimeout(centerElevTimer);
     centerElevTimer = setTimeout(function(){
       getElevationFt(c.lat, c.lng).then(function(ft){
-        // Guard against a stale result resolving after the map has since panned elsewhere
-        var nowC = map.getCenter();
+        // Guard against a stale result resolving after the reference point has since moved on
+        // (map panned elsewhere in center mode, or a newer GPS fix arrived in gps mode)
+        var nowUsingGps = centerReadoutMode === 'gps' && centerReadoutGpsLatLng;
+        var nowC = nowUsingGps ? centerReadoutGpsLatLng : map.getCenter();
         if (nowC.lat.toFixed(5) !== c.lat.toFixed(5) || nowC.lng.toFixed(5) !== c.lng.toFixed(5)) return;
         setCenterElevText(ft != null ? ft.toLocaleString() + ' ft' : '');
       });
@@ -14176,6 +14296,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // the one chip in the stack that's fully hidden (not just emptied) when neither is active.
   function updateActiveLayersChip(){
     var chip = document.getElementById('active-layers-chip');
+    var linesEl = document.getElementById('active-layers-chip-lines');
     var lines = [];
 
     if (wildlifeOn && wildlifeActive && wildlifeActive.codes.length){
@@ -14186,8 +14307,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
 
     if (!lines.length){ chip.classList.add('hidden'); return; }
-    chip.innerHTML = lines.map(function(l){ return '<div class="active-layers-line">' + l + '</div>'; }).join('');
+    linesEl.innerHTML = lines.map(function(l){ return '<div class="active-layers-line">' + l + '</div>'; }).join('');
     chip.classList.remove('hidden');
+  }
+
+  // Opens the Wildlife Layers panel (the species-picker one, #wildlife-panel) directly from a
+  // tap on the active-layers chip — mirrors habitats-layers-open-btn/migrations-layers-open-btn
+  // (the Layers panel's own "Select species ›" rows), not #layers-btn itself (that opens the
+  // shallower #layers-panel, one level up — the chip skips straight to the deeper panel, which
+  // is what actually shows what's currently active). Prefers whichever category is the ONLY one
+  // active; if both Habitat and Migration are active at once, leaves the currently-open tab
+  // alone rather than forcing a jump.
+  function openActiveLayersPanel(){
+    var panel = document.getElementById('wildlife-panel');
+    var habitatActive = wildlifeOn && wildlifeActive && wildlifeActive.codes.length;
+    var migrationActive = migrationsOn && migrationActiveSpecies && migrationActiveCategoryList().length;
+    var topLevel = (habitatActive && !migrationActive) ? 'habitats' : (migrationActive && !habitatActive) ? 'migrations' : wildlifeActiveTopLevel;
+    closeAllPanels();
+    panel.classList.remove('hidden');
+    setWildlifeTopLevel(topLevel);
+    if (topLevel === 'habitats' && wildlifeActive) setWildlifeCategory(wildlifeActive.category);
   }
 
   function wildlifePopupHtml(props){
@@ -15592,35 +15731,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.tracks.forEach(applyFilterToTrack);
       renderPinList();
     });
-    function copyCoordsText(text){
-      function fallbackCopy(){
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); showToast('Copied ' + text); }
-        catch(e){ showToast('Could not copy — coordinates: ' + text, 4000); }
-        document.body.removeChild(ta);
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(text).then(function(){
-          showToast('Copied ' + text);
-        }).catch(fallbackCopy);
-      } else {
-        fallbackCopy();
-      }
-    }
-    // Copies the live full-precision center, not the (now intentionally shortened, see
-    // updateCenterReadout) displayed text — the display truncates to 3 decimals for
-    // readability, but what gets copied should still be precise enough to paste into
-    // another app and land on the same spot.
-    function copyMapCenterCoords(){
-      var c = map.getCenter();
-      copyCoordsText(c.lat.toFixed(6) + ', ' + c.lng.toFixed(6));
-    }
-    document.getElementById('center-readout-float').addEventListener('click', copyMapCenterCoords);
-    document.getElementById('center-readout-mobile').addEventListener('click', copyMapCenterCoords);
+    // Tap either readout (desktop or mobile) to toggle map-center vs. current-location mode —
+    // see toggleCenterReadoutMode's own comment for why this replaced the previous tap-to-copy
+    // behavior (copyMapCenterCoords/copyCoordsText, removed — no longer referenced anywhere).
+    document.getElementById('center-readout-float').addEventListener('click', toggleCenterReadoutMode);
+    document.getElementById('center-readout-mobile').addEventListener('click', toggleCenterReadoutMode);
+    updateCenterReadoutModeIcon();
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
 
     document.getElementById('layers-btn').addEventListener('click', function(e){
@@ -15629,6 +15745,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
       if (willOpen){ panel.classList.remove('hidden'); updateOverlayOfflineAvailability(); }
+    });
+    document.getElementById('active-layers-chip').addEventListener('click', function(e){
+      e.stopPropagation();
+      openActiveLayersPanel();
     });
 ;
 
