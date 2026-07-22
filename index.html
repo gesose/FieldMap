@@ -2000,13 +2000,16 @@
     <select id="migration-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
       <option value="">Select a species…</option>
     </select>
-    <!-- Picker display order: Stopover / Corridors / Winter Range (Session 25) — display order
-         only, no change to map paint/z-order, which already renders Stopover on top as the
-         smallest/most specific feature regardless of this list's order. Corridors used to have
-         separate Low/High swatches next to its own checkbox (one checkbox already controlled
-         both — this was never three separate checkboxes to begin with); that's now a single
-         gradient swatch matching the map's continuous amber→coral fill, since all three
-         use_class tiers render as one toggle-controlled layer underneath. -->
+    <!-- Picker display order: Stopover / Corridors / Winter Range / Annual Range — display
+         order only, no relation to map paint/z-order (fixed via fill-sort-key/line-sort-key —
+         see the MIGRATION_CATEGORY_ZORDER comment — to always render bottom-to-top as
+         AnnualRange → WinterRange → Corridor → Stopover regardless of this list's order).
+         Corridors uses a single gradient swatch matching the map's continuous amber→coral
+         fill, since all use_class tiers render as one toggle-controlled layer underneath.
+         Annual Range's row (id'd separately so it can be shown/hidden per species — see
+         renderMigrationSublayers/migrationSpeciesHasCategory) only appears for species/herds
+         that actually have AnnualRange features (AZ/CA/NM herds today); for a species with
+         none, the row is hidden entirely rather than shown as a dead/no-op checkbox. -->
     <div id="migration-sublayers" style="display:none;">
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-stopover-toggle"> Stopover
@@ -2019,6 +2022,10 @@
       <label class="layer-overlay-row" style="margin-top:6px;padding-top:6px;">
         <input type="checkbox" id="migration-winterrange-toggle"> Winter Range
         <span class="legend-swatch" style="margin-left:auto;background:#CECBF6;border:1px solid #534AB7;color:#2a2560;font-size:10px;">Winter</span>
+      </label>
+      <label class="layer-overlay-row" id="migration-annualrange-row" style="margin-top:6px;padding-top:6px;">
+        <input type="checkbox" id="migration-annualrange-toggle"> Annual Range
+        <span class="legend-swatch" style="margin-left:auto;background:#BCE8E1;border:1px solid #1D7A68;color:#0d3d35;font-size:10px;">Annual</span>
       </label>
     </div>
     <p class="hint" style="margin-top:12px;font-size:11px;line-height:1.4;">Generalized migration data — USGS Corridor Mapping Team. For complete, current herd data, visit <a href="https://www.usgs.gov/tools/western-migrations" target="_blank" rel="noopener" style="color:var(--accent);">westernmigrations.net</a>.</p>
@@ -2651,7 +2658,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.29.0';
+  var APP_VERSION = '2.30.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2750,7 +2757,7 @@
       publicLandOn: false, publicLandOpacity: 0.55,
       gmuOn: false, gmuState: 'az',
       wildlifeOn: false, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
-      migrationsOn: false, migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false,
+      migrationsOn: false, migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false, migrationAnnualRangeOn: false,
       showOfflineBoundaries: true,
       showAreaLabels: true,
       snowDepthOn: false, snowDepthOpacity: 0.75,
@@ -3154,41 +3161,54 @@
   var wildlifeActive = null; // { category, speciesName, codes: [...] } — the currently *selected* species, or null
   var wildlifeOn = false; // whether the quick-toggle has the selected species' layer actually visible right now
 
-  // ── Migration corridors (P4 proof of concept — elk only) ── lives in the same
-  // Wildlife Layers panel/tab-bar shell as a 4th tab, but is otherwise a self-contained
-  // system (own source/layers/state), not folded into the generic WILDLIFE_CATEGORIES loop
-  // above — that loop's filtering/coloring is keyed on species_code, which this dataset
-  // doesn't have, and Migration's independent multi-checkbox model (any subset of
-  // Corridor/Stopover/WinterRange can be on at once) doesn't match the single-select
-  // "codes as alternate layers" semantics the sublayer checkboxes were built for either.
-  // One entry per herd/species dataset — add more files here as more herds are added; the
-  // species picker is derived from whatever's in the merged data, so no other rework needed.
-  var MIGRATION_DATA_FILES = ['data/ungulate-migrations/elk-west-goose-lake.geojson'];
-  var MIGRATION_CATEGORY_LABELS = { Corridor: 'Corridors', Stopover: 'Stopover', WinterRange: 'Winter Range' };
-  // Style test on the West Goose Lake elk POC herd only (all migration herds currently wired —
-  // there's only the one). AnnualRange deliberately not styled here, not present in this herd's
-  // data; add it when AZ/CA/NM are wired in. Three distinct visual treatments per category, not
-  // one shared hue: Corridor is a continuous amber→coral gradient by use_class with no stroke
-  // at all (a stroke per polygon would show as visible seams between adjacent Low/Medium/High
-  // features, breaking the "one continuous gradient" read); Stopover keeps a strong fill+stroke
-  // pairing so it stays visually distinct from Corridor's soft gradient at a glance; Winter
-  // Range was originally a tan wash (#FAEEDA) but that had no contrast against the Topo/Topo
-  // Dark basemap's own tan tones — recolored to a purple wash instead, a hue otherwise unused
-  // now that Corridor moved to amber/coral, and one that doesn't visually overlap Hydrography's
-  // blue or the GPS-locate blue either. Winter Range keeps a thin stroke (unlike Corridor) since
-  // a flat wash at 45-50% opacity with zero definition risked disappearing entirely against
-  // some basemap/zoom combinations — a thin stroke costs it none of the "broad zone, not a
-  // traced boundary" read Corridor's gradient is built around avoiding.
+  // ── Migration corridors (compiled 10-state USGS Corridor Mapping Team data, Session 26) ──
+  // lives in the same Wildlife Layers panel/tab-bar shell as a 4th tab, but is otherwise a
+  // self-contained system (own source/layers/state), not folded into the generic
+  // WILDLIFE_CATEGORIES loop above — that loop's filtering/coloring is keyed on species_code,
+  // which this dataset doesn't have, and Migration's independent multi-checkbox model (any
+  // subset of Corridor/Stopover/WinterRange/AnnualRange can be on at once) doesn't match the
+  // single-select "codes as alternate layers" semantics the sublayer checkboxes were built for
+  // either. One entry per compiled species file — the West Goose Lake elk POC file (Sessions
+  // 23/24's single-herd style-test dataset) is superseded entirely by the compiled elk file
+  // below, which already includes that exact herd (CA_Elk_WestGooseLake) among AZ/CA/CO/ID/NM/
+  // NV/WA's other elk herds — keeping both wired would have double-rendered it. The species
+  // picker is derived from whatever's in the merged data, so no other rework needed to add a
+  // species — White-tailed Deer appears automatically once its file is in this list.
+  var MIGRATION_DATA_FILES = [
+    'data/ungulate-migrations/cmt_migrations_elk.geojson',
+    'data/ungulate-migrations/cmt_migrations_mule_deer.geojson',
+    'data/ungulate-migrations/cmt_migrations_pronghorn.geojson',
+    'data/ungulate-migrations/cmt_migrations_whitetail_deer.geojson'
+  ];
+  var MIGRATION_CATEGORY_LABELS = { Corridor: 'Corridors', Stopover: 'Stopover', WinterRange: 'Winter Range', AnnualRange: 'Annual Range' };
+  // Four distinct visual treatments per category, not one shared hue: Corridor is a continuous
+  // amber→coral gradient by use_class with no stroke at all (a stroke per polygon would show as
+  // visible seams between adjacent Low/Medium/High features, breaking the "one continuous
+  // gradient" read); Stopover keeps a strong fill+stroke pairing so it stays visually distinct
+  // from Corridor's soft gradient at a glance; Winter Range is a soft purple wash with a thin
+  // stroke (recolored from an original tan that had no contrast against the Topo/Topo Dark
+  // basemap's own tan tones); Annual Range (AZ/CA/NM only — most other states' compiled data has
+  // no AnnualRange features at all) gets the identical treatment as Winter Range — same light
+  // wash + thin stroke, no gradient — but in teal rather than purple, so the two flat-wash
+  // categories stay visually distinguishable from each other where they overlap. Teal was picked
+  // specifically because it doesn't collide with Hydrography's or GPS-locate's blues, Corridor's
+  // amber/coral, Stopover's pink/magenta, or Winter Range's purple.
   // Corridor gradient — amber (low use) to coral (high use). MEDIUM_FILL is the midpoint of the
-  // two (computed, not eyeballed) for a future herd whose data actually has a MediumUse tier;
-  // West Goose Lake's own data only has LowUse/HighUse, so it's unused here but keeps the ramp
-  // genuinely continuous rather than a 2-stop gradient masquerading as a 3-tier one.
+  // two (computed, not eyeballed), for herds whose data has a MediumUse tier.
   var MIGRATION_CORRIDOR_LOW_FILL = '#FAC775';
   var MIGRATION_CORRIDOR_MEDIUM_FILL = '#CA8249';
   var MIGRATION_CORRIDOR_HIGH_FILL = '#993C1D';
   var MIGRATION_STOPOVER_FILL = '#D4537E', MIGRATION_STOPOVER_STROKE = '#72243E';
   var MIGRATION_WINTERRANGE_FILL = '#CECBF6', MIGRATION_WINTERRANGE_STROKE = '#534AB7';
-  var migrationCache = null; // merged FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
+  var MIGRATION_ANNUALRANGE_FILL = '#BCE8E1', MIGRATION_ANNUALRANGE_STROKE = '#1D7A68';
+  // Paint (and sort-key) rank, bottom to top: AnnualRange is the broadest/most general zone so it
+  // sits at the very bottom, Winter Range next, Corridor above that, and Stopover — the smallest,
+  // most specific feature — always on top so it's never obscured by a broader zone covering the
+  // same area. Fixed via fill-sort-key/line-sort-key (a real MapLibre layout property, not a
+  // manual feature-array reorder) so this holds regardless of which order the merged/filtered
+  // GeoJSON's features happen to be in.
+  var MIGRATION_CATEGORY_ZORDER = { AnnualRange: 0, WinterRange: 1, Corridor: 2, Stopover: 3 };
+  var migrationCache = null; // merged, property-normalized FeatureCollection across all MIGRATION_DATA_FILES, Route features stripped out, cached for the session
   var migrationLoadCallbacks = null; // array of pending callbacks while the fetch is in flight, or null
   var migrationActiveSpecies = null; // currently selected species name (e.g. 'Elk'), or null
   var migrationsOn = false; // Migrations' own master on/off — fully independent of wildlifeOn (Habitats')
@@ -7171,22 +7191,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
     });
 
-    // Migration corridors (P4 proof of concept) — one source/fill/line pair (not one per
-    // category like Wildlife above) since which categories render is just a filter over a
-    // single 'geometry_category' property, same idea as wildlifeActive.codes but applied to
-    // geometry_category instead of species_code. Per-category paint (style test, West Goose
-    // Lake elk POC only — see the MIGRATION_* constants' own comment): Corridor is a
-    // continuous amber→coral 'match' on use_class (LowUse/MediumUse/HighUse — West Goose
-    // Lake's data only has the two ends of that range today) with no stroke at all; Stopover
-    // and Winter Range are flat colors, each WITH a stroke (Stopover's existing dark maroon,
-    // Winter Range's new thin purple — see updateMigrationMapFilter's lineCats split, which is
-    // what actually keeps Corridor off the line layer while letting these two through).
-    // fill-opacity is per-category (Winter Range ~47%, a middle ground — needed enough
-    // presence to read against the Topo/Topo Dark basemap's own tan/dark tones now that it's no
-    // longer a same-family tan-on-tan wash, but still a soft "zone" rather than Corridor's more
-    // assertive gradient; Corridor highest since it has no stroke to lean on for legibility;
-    // Stopover in between since its stroke already does most of the definition work). Filter/
-    // paint reapplied at the end of this function via updateMigrationMapFilter().
+    // Migration corridors — one source/fill/line pair (not one per category like Wildlife
+    // above) since which categories render is just a filter over a single 'geometry_category'
+    // property, same idea as wildlifeActive.codes but applied to geometry_category instead of
+    // species_code. Per-category paint: Corridor is a continuous amber→coral 'match' on
+    // use_class (LowUse/MediumUse/HighUse) with no stroke at all; Stopover, Winter Range, and
+    // Annual Range are all flat colors, each WITH a stroke (Stopover's dark maroon, Winter
+    // Range's purple, Annual Range's teal — see updateMigrationMapFilter's lineCats split,
+    // which is what actually keeps Corridor off the line layer while letting these three
+    // through). fill-opacity is per-category (Winter Range/Annual Range ~47%, a middle ground —
+    // enough presence to read against the Topo/Topo Dark basemap's own tan/dark tones, but
+    // still a soft "zone" rather than Corridor's more assertive gradient; Corridor highest
+    // since it has no stroke to lean on for legibility; Stopover in between since its stroke
+    // already does most of the definition work).
+    // Paint order (bottom to top): AnnualRange → WinterRange → Corridor → Stopover, via
+    // fill-sort-key/line-sort-key (Session 26 fix — a real MapLibre layout property, evaluated
+    // per-feature exactly like a paint expression) rather than relying on the merged/filtered
+    // GeoJSON's own feature order, which is not guaranteed and was the actual cause of a prior
+    // session's Winter Range-renders-over-Corridors bug: both categories lived in the SAME
+    // single fill layer, so whichever category happened to come later in migrationCache's
+    // concatenated-across-4-files feature array painted on top, regardless of visual intent.
+    // Stopover is always highest since it's the smallest, most specific feature and must never
+    // be obscured by a broader zone covering the same area; AnnualRange (the broadest zone) is
+    // always lowest. Filter/paint/sort-key all reapplied at the end of this function via
+    // updateMigrationMapFilter().
+    var MIGRATION_SORT_KEY_EXPR = ['match', ['get', 'geometry_category'],
+      'AnnualRange', MIGRATION_CATEGORY_ZORDER.AnnualRange,
+      'WinterRange', MIGRATION_CATEGORY_ZORDER.WinterRange,
+      'Corridor', MIGRATION_CATEGORY_ZORDER.Corridor,
+      'Stopover', MIGRATION_CATEGORY_ZORDER.Stopover,
+      0];
     if (!map.getSource('migration-source')){
       map.addSource('migration-source', {
         type: 'geojson',
@@ -7199,6 +7233,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         type: 'fill',
         source: 'migration-source',
         filter: ['in', ['get', 'geometry_category'], ['literal', []]],
+        layout: { 'fill-sort-key': MIGRATION_SORT_KEY_EXPR },
         paint: {
           'fill-color': [
             'case',
@@ -7210,11 +7245,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
                 MIGRATION_CORRIDOR_LOW_FILL],
             ['==', ['get', 'geometry_category'], 'Stopover'], MIGRATION_STOPOVER_FILL,
             ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_FILL,
+            ['==', ['get', 'geometry_category'], 'AnnualRange'], MIGRATION_ANNUALRANGE_FILL,
             MIGRATION_CORRIDOR_LOW_FILL
           ],
           'fill-opacity': [
             'case',
             ['==', ['get', 'geometry_category'], 'WinterRange'], 0.475,
+            ['==', ['get', 'geometry_category'], 'AnnualRange'], 0.475,
             ['==', ['get', 'geometry_category'], 'Corridor'], 0.55,
             ['==', ['get', 'geometry_category'], 'Stopover'], 0.45,
             0.3
@@ -7222,23 +7259,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }
       });
     }
-    // Stroke is Stopover + Winter Range only (see updateMigrationMapFilter's lineCats split) —
-    // Corridor stays a no-stroke gradient (a stroke per polygon would show as visible seams
-    // between adjacent Low/Medium/High features). Both color and width vary by category now
-    // that Winter Range has its own thin purple stroke rather than no stroke at all.
+    // Stroke is Stopover + Winter Range + Annual Range only (see updateMigrationMapFilter's
+    // lineCats split) — Corridor stays a no-stroke gradient (a stroke per polygon would show as
+    // visible seams between adjacent Low/Medium/High features).
     if (!map.getLayer('migration-line')){
       map.addLayer({
         id: 'migration-line',
         type: 'line',
         source: 'migration-source',
         filter: ['in', ['get', 'geometry_category'], ['literal', []]],
-        layout: { 'line-join': 'round' },
+        layout: { 'line-join': 'round', 'line-sort-key': MIGRATION_SORT_KEY_EXPR },
         paint: {
           'line-color': ['case',
             ['==', ['get', 'geometry_category'], 'WinterRange'], MIGRATION_WINTERRANGE_STROKE,
+            ['==', ['get', 'geometry_category'], 'AnnualRange'], MIGRATION_ANNUALRANGE_STROKE,
             MIGRATION_STOPOVER_STROKE],
           'line-width': ['case',
             ['==', ['get', 'geometry_category'], 'WinterRange'], 1,
+            ['==', ['get', 'geometry_category'], 'AnnualRange'], 1,
             1.75],
           'line-opacity': 0.95
         }
@@ -14346,10 +14384,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openWildlifePopup = { remove: viewDrawerRemoveShim };
   }
 
-  // ── Migration corridors (P4 proof of concept) ──
+  // ── Migration corridors ──
   // Fetches every file in MIGRATION_DATA_FILES and merges them into one FeatureCollection,
   // stripping Route features at load time (never rendered, never hit-testable, never in a
-  // popup) rather than just filtering them out in the map layer.
+  // popup) rather than just filtering them out in the map layer — none of the current compiled
+  // files actually contain a Route feature, but this stays as a cheap guard against a future
+  // data refresh reintroducing one.
+  // The compiled CMT files use a different property schema than the old West Goose Lake POC
+  // file did (type/useclass/herdid vs. this app's existing geometry_category/use_class/
+  // herd_id/herd_name) — normalized here, once, at merge time via Object.assign, rather than
+  // touching every downstream reader (paint expressions, filters, migrationPopupHtml). This
+  // keeps the original raw properties too (including `states`, an array like ["OR","NV"] for a
+  // herd deduped across state boundaries — e.g. Sheldon Hart Mountain — not read by any UI yet,
+  // just carried through onto the rendered feature's properties for potential future use, per
+  // spec). The compiled files have no human-readable herd name field (only a machine-readable
+  // herdid like "AZ_Elk_Interstate17"), so herd_name falls back to herdid rather than always
+  // reading as the generic "Migration herd" placeholder in the popup.
   function loadMigrationData(cb){
     if (migrationCache){ cb(migrationCache); return; }
     if (migrationLoadCallbacks){ migrationLoadCallbacks.push(cb); return; }
@@ -14360,7 +14410,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var features = [];
       datasets.forEach(function(fc){
         (fc.features || []).forEach(function(f){
-          if (f.properties.geometry_category !== 'Route') features.push(f);
+          var p = f.properties || {};
+          var category = p.geometry_category || p.type;
+          if (category === 'Route') return;
+          var normalized = Object.assign({}, p, {
+            geometry_category: category,
+            use_class: p.use_class || p.useclass,
+            herd_id: p.herd_id || p.herdid,
+            herd_name: p.herd_name || p.herdid
+          });
+          features.push({ type: f.type, geometry: f.geometry, properties: normalized });
         });
       });
       migrationCache = { type: 'FeatureCollection', features: features };
@@ -14414,6 +14473,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderMigrationSublayers();
   }
 
+  // Whether the given species has at least one feature of the given geometry_category
+  // anywhere in the merged data — drives whether the Annual Range row even appears (AZ/CA/NM
+  // herds have AnnualRange features today; most other states' compiled data doesn't, and a
+  // species like White-tailed Deer — currently just Washington's single Selkirk herd — has
+  // none at all). Generic over category on purpose, not Annual-Range-specific, in case a
+  // future category ends up similarly state-limited.
+  function migrationSpeciesHasCategory(speciesName, category){
+    if (!migrationCache || !speciesName) return false;
+    return migrationCache.features.some(function(f){
+      return f.properties.species === speciesName && f.properties.geometry_category === category;
+    });
+  }
+
   function renderMigrationSublayers(){
     var wrap = document.getElementById('migration-sublayers');
     if (!migrationActiveSpecies){ wrap.style.display = 'none'; return; }
@@ -14421,6 +14493,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('migration-corridor-toggle').checked = !!state.settings.migrationCorridorOn;
     document.getElementById('migration-stopover-toggle').checked = !!state.settings.migrationStopoverOn;
     document.getElementById('migration-winterrange-toggle').checked = !!state.settings.migrationWinterRangeOn;
+    document.getElementById('migration-annualrange-toggle').checked = !!state.settings.migrationAnnualRangeOn;
+    // Hide the row entirely (rather than just disabling it) when the current species has no
+    // AnnualRange features at all — even if migrationAnnualRangeOn was left checked from a
+    // previous species that did have it, the filter simply matches nothing for this species,
+    // so it's already a safe no-op on the map; hiding the row just keeps the picker honest.
+    var annualRow = document.getElementById('migration-annualrange-row');
+    annualRow.style.display = migrationSpeciesHasCategory(migrationActiveSpecies, 'AnnualRange') ? '' : 'none';
   }
 
   function migrationFilteredData(){
@@ -14432,10 +14511,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function migrationActiveCategoryList(){
+    // Listed bottom-to-top (matches MIGRATION_CATEGORY_ZORDER) for readability only — the
+    // actual filter this feeds is a set-membership 'in' expression, order-independent.
     var cats = [];
+    if (state.settings.migrationAnnualRangeOn) cats.push('AnnualRange');
+    if (state.settings.migrationWinterRangeOn) cats.push('WinterRange');
     if (state.settings.migrationCorridorOn) cats.push('Corridor');
     if (state.settings.migrationStopoverOn) cats.push('Stopover');
-    if (state.settings.migrationWinterRangeOn) cats.push('WinterRange');
     return cats;
   }
 
@@ -14490,6 +14572,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (category === 'Corridor') state.settings.migrationCorridorOn = on;
     else if (category === 'Stopover') state.settings.migrationStopoverOn = on;
     else if (category === 'WinterRange') state.settings.migrationWinterRangeOn = on;
+    else if (category === 'AnnualRange') state.settings.migrationAnnualRangeOn = on;
     scheduleSave();
     updateMigrationMapFilter();
     updateActiveLayersChip();
@@ -14502,10 +14585,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function updateMigrationMapFilter(){
     if (!map || !map.getLayer('migration-fill')) return;
     var cats = (migrationsOn && migrationActiveSpecies) ? migrationActiveCategoryList() : [];
-    // migration-line only ever shows Stopover + Winter Range (Corridor stays a no-stroke
-    // gradient — see the migration-fill/migration-line layer setup comment), so its filter is
-    // always a subset of the fill layer's, never the same list.
-    var lineCats = cats.filter(function(c){ return c === 'Stopover' || c === 'WinterRange'; });
+    // migration-line only ever shows Stopover + Winter Range + Annual Range (Corridor stays a
+    // no-stroke gradient — see the migration-fill/migration-line layer setup comment), so its
+    // filter is always a subset of the fill layer's, never the same list.
+    var lineCats = cats.filter(function(c){ return c === 'Stopover' || c === 'WinterRange' || c === 'AnnualRange'; });
     map.setFilter('migration-fill', ['in', ['get', 'geometry_category'], ['literal', cats]]);
     map.setFilter('migration-line', ['in', ['get', 'geometry_category'], ['literal', lineCats]]);
     if (!cats.length && openMigrationPopup){ openMigrationPopup.remove(); openMigrationPopup = null; }
@@ -14842,6 +14925,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.migrationCorridorOn === undefined) state.settings.migrationCorridorOn = false;
             if (state.settings.migrationStopoverOn === undefined) state.settings.migrationStopoverOn = false;
             if (state.settings.migrationWinterRangeOn === undefined) state.settings.migrationWinterRangeOn = false;
+            if (state.settings.migrationAnnualRangeOn === undefined) state.settings.migrationAnnualRangeOn = false;
             // Migrate existing pins to add status field
             (state.pins || []).forEach(function(p){ if (!p.status) p.status = 'escout'; });
             (state.tracks || []).forEach(function(t){ if (!t.status) t.status = 'escout'; });
@@ -15372,6 +15456,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('migration-winterrange-toggle').addEventListener('change', function(){
       setMigrationCategoryOn('WinterRange', this.checked);
+    });
+    document.getElementById('migration-annualrange-toggle').addEventListener('change', function(){
+      setMigrationCategoryOn('AnnualRange', this.checked);
     });
     document.getElementById('migration-clear-btn').addEventListener('click', function(){
       clearMigrationSelection();

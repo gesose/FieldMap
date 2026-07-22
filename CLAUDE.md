@@ -64,6 +64,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   rather than widening; and the coords+elevation chip (already one bubble on both desktop and mobile) is now
   tappable to toggle between map-center (crosshair icon) and live GPS location (pin icon), both values always
   switching together. See Architecture notes' "Floating info stack" entry for the full design.
+- Migration corridors upgraded from a single-herd (West Goose Lake elk) proof of concept to the full compiled
+  10-state USGS Corridor Mapping Team dataset (Session 26) — 4 species (Elk, Mule deer, Pronghorn, White-
+  tailed deer), a new Annual Range category/toggle (AZ/CA/NM herds), and a fixed paint/z-order (Stopover →
+  Corridor → Winter Range → Annual Range, top to bottom, via `fill-sort-key`/`line-sort-key` rather than
+  feature-array order) — see Architecture notes' "Migration corridors" entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -612,18 +617,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   regardless of exactly which edit happened before or after the bump within the same release. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION
   bumped 2.27.0 → 2.27.1, SHELL_CACHE bumped v131 → v132.
-- Migration corridors (ungulate migration data, P4 proof of concept — elk only, West Goose Lake herd) — lives
-  in the Wildlife Layers panel as a 4th tab alongside Habitats, own independent on/off + species picker
+- Migration corridors (compiled 10-state USGS Corridor Mapping Team ungulate migration data, Session 26) —
+  lives in the Wildlife Layers panel as a 4th tab alongside Habitats, own independent on/off + species picker
   (migrationsOn/migrationActiveSpecies), fully separate from Habitats' own toggle (see that entry's own
   comment for why it isn't folded into the generic WILDLIFE_CATEGORIES loop). One shared source
-  ('migration-source') + fill/line layer pair for all three geometry_category values (Corridor/Stopover/
-  WinterRange — AnnualRange exists as a category in the wider USGS dataset but isn't present in West Goose
-  Lake's own data, so it's out of scope until AZ/CA/NM herds are wired in), filtered by three independent
-  checkboxes (migrationCorridorOn/migrationStopoverOn/migrationWinterRangeOn — despite the name, Corridor was
-  always ONE checkbox controlling all of that category's use_class tiers together, never three separate
-  Low/Medium/High checkboxes; a style-test session's report assumed otherwise but direct code inspection
-  confirmed there was nothing to consolidate on the checkbox side, only the paint/legend needed to change).
-  Per-category paint (style-tested against West Goose Lake, not yet applied to any other herd):
+  ('migration-source') + fill/line layer pair for all four geometry_category values (Corridor/Stopover/
+  WinterRange/AnnualRange), filtered by four independent checkboxes (migrationCorridorOn/
+  migrationStopoverOn/migrationWinterRangeOn/migrationAnnualRangeOn — despite the name, Corridor is ONE
+  checkbox controlling all of that category's use_class tiers together, never separate Low/Medium/High
+  checkboxes). Data source is 4 compiled species files (`data/ungulate-migrations/cmt_migrations_{elk,
+  mule_deer,pronghorn,whitetail_deer}.geojson`, Elk/Mule deer/Pronghorn/White-tailed deer), each spanning
+  multiple states — this supersedes the original single-herd West Goose Lake POC file (deleted; California's
+  compiled elk file already includes that exact herd as CA_Elk_WestGooseLake, so keeping both wired would
+  have double-rendered it). The species dropdown is fully data-driven (migrationSpeciesList()), so White-
+  tailed Deer needed zero picker code — it appeared automatically once its file joined MIGRATION_DATA_FILES.
+  Property schema normalization: the compiled files use a different property schema than the old POC file
+  did (`type`/`useclass`/`herdid` vs. this app's existing `geometry_category`/`use_class`/`herd_id`/
+  `herd_name`) — normalized once at merge time in loadMigrationData via `Object.assign`, so every downstream
+  reader (paint expressions, filters, migrationPopupHtml) keeps working unchanged against the same property
+  names as before. This also preserves the original raw properties untouched, including `states` (an array
+  like `["OR","NV"]` for a herd deduped across state boundaries, e.g. Sheldon Hart Mountain) — not read by
+  any UI yet, just carried through onto the rendered feature's properties for potential future use, per
+  spec. Confirmed live: `states` survives as a real array on the data passed to `GeoJSONSource.setData()`
+  (MapLibre itself is what turns it into a JSON string on features returned from `queryRenderedFeatures`/
+  click events, same as any GeoJSON source with array-valued properties — not something the app does or
+  needs to work around). The compiled files have no human-readable herd name field (only a machine-readable
+  herdid like "AZ_Elk_Interstate17"), so `herd_name` falls back to `herdid` rather than always reading as
+  the generic "Migration herd" placeholder every popup showed before this normalization.
+  Per-category paint:
   - Winter Range: flat `MIGRATION_WINTERRANGE_FILL` at fill-opacity 0.475, WITH a thin (1px)
     `MIGRATION_WINTERRANGE_STROKE`. Originally a tan wash (#FAEEDA) with no stroke at all (Session 23) — recolored
     purple (Session 24: fill #CECBF6, stroke #534AB7) because the tan-on-tan combination had no contrast
@@ -638,42 +659,70 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     stroke at all: a per-tier stroke color would show as a visible seam at the boundary between adjacent
     Low/Medium/High polygons, undermining the "one continuous gradient" read the style calls for.
     `MIGRATION_CORRIDOR_MEDIUM_FILL` (#CA8249, the exact numeric midpoint of the two endpoint colors, not
-    eyeballed) is wired into the same match expression for a future herd whose data actually has a MediumUse
-    tier — West Goose Lake's own data only has LowUse/HighUse, so it's unused today but keeps the ramp a
-    genuine 3-stop gradient rather than a 2-stop one pretending to be 3-tier.
+    eyeballed) is wired into the same match expression for herds whose data has a MediumUse tier.
   - Stopover: flat `MIGRATION_STOPOVER_FILL` (#D4537E, pink/magenta) at fill-opacity 0.45 WITH a stroke
     (`MIGRATION_STOPOVER_STROKE`, #72243E) — the one category that keeps a traced-boundary look, specifically
-    so it stays visually distinct from Corridor's soft gradient at a glance (a Corridor/Stopover confusion
-    was the concrete risk named in the original style-test request).
+    so it stays visually distinct from Corridor's soft gradient at a glance.
+  - Annual Range (Session 26 — AZ/CA/NM herds have this type; most other states' compiled data doesn't):
+    identical treatment to Winter Range — flat `MIGRATION_ANNUALRANGE_FILL` (#BCE8E1) at fill-opacity 0.475
+    WITH a thin (1px) `MIGRATION_ANNUALRANGE_STROKE` (#1D7A68) — but in teal rather than purple, so the two
+    flat-wash categories stay visually distinguishable from each other where they overlap. Teal was picked
+    specifically because it's unused elsewhere in the app (doesn't collide with Hydrography's/GPS-locate's
+    blues, Corridor's amber/coral, Stopover's pink, or Winter Range's purple). The Annual Range row in the
+    picker (`#migration-annualrange-row`) is hidden entirely — not just disabled — for any species/herd
+    combination with zero AnnualRange features (`migrationSpeciesHasCategory()`), e.g. White-tailed Deer
+    (Washington's single Selkirk herd has Corridor/Stopover/WinterRange only, no AnnualRange at all); even if
+    `migrationAnnualRangeOn` was left checked from a previously-viewed species that did have it, the filter
+    simply matches nothing for a species without it, so it's already a safe no-op on the map regardless.
   Corridor stays the only no-stroke category — `migration-line`'s own filter is a *subset* of
   `migration-fill`'s (`updateMigrationMapFilter()` computes `lineCats` as `cats` filtered to
-  `Stopover`/`WinterRange` only, never the same list reused for both layers). Both `line-color` and
-  `line-width` on that layer are now per-category `case` expressions (Winter Range's 1px purple vs.
-  Stopover's 1.75px maroon) rather than the flat single-color paint used back when Winter Range had no
-  stroke at all.
-  Legend (both the on-map mini-legend, now folded into the "active layers" chip — see "Floating info
-  stack" — and the Wildlife Layers panel's own per-checkbox swatches) shows one row per category, Winter
-  range / Corridors / Stopover order — no more separate Low/High sub-swatches under Corridors, since that's
-  a single toggle-controlled gradient layer now. The panel's own Corridors swatch renders an actual CSS
-  `linear-gradient(to right, LOW_FILL, HIGH_FILL)` rather than a flat color, so it communicates "this is a
-  gradient" rather than just "this is a color"; Winter Range's own swatch there was updated to the new
-  purple fill+stroke to match. `migrationPopupHtml`'s per-feature "Low use"/"High use" label (shown when
-  tapping one specific Corridor polygon) also handles a hypothetical MediumUse value, for the same
-  forward-compat reason as MIGRATION_CORRIDOR_MEDIUM_FILL.
-  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
-  centered on West Goose Lake via the coordinate-search box (herd/Winter-Range-specific centers computed
-  from the raw GeoJSON's own bounding box each time, since no UI shortcut jumps straight to a specific herd
-  or category): all three layers toggle independently through the real checkbox UI; the Corridor gradient
-  reads as one continuous amber-to-coral flow at both a close zoom and a zoomed-out view spanning the whole
-  herd extent; Stopover's pink/stroked polygons and Winter Range's purple wash are both clearly
-  distinguishable from Corridor's gradient and from each other at a glance; Winter Range's new purple
-  confirmed visibly contrasting against Topo and Topo Dark (Aerial could not be checked — this sandbox has
-  no network access to Mapbox's satellite tile servers, a pre-existing environment limitation, not an app
-  issue); tapping a Corridor polygon shows "Corridors · Low use"/"Corridors · High use" correctly, Stopover
-  and Winter Range popups show their plain category name with no use-class suffix. One test-environment
-  gotcha hit again this session (same root cause as a prior one): a `resize_window` call can leave a tab's
-  actual rendered viewport stuck at a stale size despite reporting success — worked around each time by
-  opening a fresh tab rather than continuing to fight the stuck one.
+  `Stopover`/`WinterRange`/`AnnualRange`, never the same list reused for both layers). `line-color` and
+  `line-width` on that layer are per-category `case` expressions (Winter Range's 1px purple, Annual Range's
+  1px teal, Stopover's 1.75px maroon).
+  Paint order / z-order fix (Session 26 — reported as broken in the prior session's shipped work: Winter
+  Range was observed rendering on top of Corridors in at least one visible area, backwards from spec).
+  Required order, bottom to top: AnnualRange → WinterRange → Corridor → Stopover (Stopover — the smallest,
+  most specific feature — must never be obscured; AnnualRange — the broadest zone — must never cover
+  anything). Root cause: all four categories live in the SAME single `migration-fill`/`migration-line`
+  layer (one shared source/layer pair for the whole feature, not one layer per category — see below), so
+  which feature painted on top of another spatially-overlapping feature was governed by feature order
+  within the merged/filtered GeoJSON's own `features` array, not by any explicit z-order control — purely
+  an artifact of which of the 4 compiled files' features happened to concatenate later. Fixed via
+  `fill-sort-key`/`line-sort-key` (real MapLibre layout properties — confirmed present in the vendored
+  `maplibre-gl.js` via grep before using them — evaluated per-feature exactly like a paint expression, the
+  documented, idiomatic mechanism for this exact problem) rather than manually re-sorting the source data on
+  every `setData()` call: `MIGRATION_CATEGORY_ZORDER = {AnnualRange:0, WinterRange:1, Corridor:2,
+  Stopover:3}` feeds one shared `MIGRATION_SORT_KEY_EXPR` match expression applied to both layers' `layout`.
+  This holds regardless of fetch/merge order and needs no re-sort logic anywhere else in the code.
+  Legend (both the "active layers" chip and the Wildlife Layers panel's own per-checkbox swatches) shows one
+  row per category, Stopover / Corridors / Winter Range / Annual Range picker order (display order only, no
+  relation to the fixed paint/z-order above). The panel's own Corridors swatch renders an actual CSS
+  `linear-gradient(to right, LOW_FILL, HIGH_FILL)` rather than a flat color. `migrationPopupHtml`'s
+  per-feature "Low use"/"High use"/"Medium use" label only applies to Corridor; Stopover/Winter Range/Annual
+  Range popups show their plain category name with no use-class suffix.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`:
+  all 4 species selectable and correctly populated from the merged data (Elk/Mule deer/Pronghorn/White-
+  tailed deer, alphabetical); White-tailed Deer confirmed rendering its single WA Selkirk herd correctly
+  with the Annual Range row correctly hidden; Annual Range confirmed rendering (teal wash + stroke) for an
+  AZ Mule Deer herd (Rainbow Valley) and an AZ Elk/Pronghorn combination, with the row correctly appearing
+  only for species/herds that have it. The paint-order fix was verified programmatically, not just visually
+  — by capturing the live MapLibre `Map` instance (via a `Map.prototype` method monkey-patch, since `map`
+  isn't a global) and calling `queryRenderedFeatures()` at real, data-confirmed overlap points (found via a
+  proper point-in-polygon test against the raw GeoJSON, not bounding-box overlap, which produces false
+  positives for irregular/sparse polygons — confirmed the hard way when an initial bbox-only search and a
+  low-zoom/under-tessellated screen-space search both produced points that looked like overlaps but weren't
+  real ones once checked against the raw source geometry or re-verified at a properly settled zoom level):
+  at a real AZ elk (Interstate17 herd) overlap point, `queryRenderedFeatures` returned Stopover → Corridor →
+  Corridor → WinterRange, topmost first; at a real AZ/NV pronghorn overlap point (CA_Pronghorn_LikelyTables'
+  AnnualRange under NV_Pronghorn_CentralWashoe's Corridor/WinterRange), it returned Corridor → WinterRange →
+  AnnualRange. Together these two real-data checks cover the full required stack top-to-bottom. Also
+  confirmed visually at the pronghorn overlap: Stopover's pink blobs sit fully opaque on top of everything,
+  Corridor's amber/coral gradient is visible cutting across both the purple Winter Range band and the teal
+  Annual Range wash beneath it, and Annual Range never covers any of the other three. Zero console errors
+  across the test session. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
+  blocks. APP_VERSION bumped 2.29.0 → 2.30.0, SHELL_CACHE bumped v135 → v136. The old West Goose Lake POC
+  file (`data/ungulate-migrations/elk-west-goose-lake.geojson`) was deleted from the repo after confirming
+  via a whole-repo grep that nothing else referenced its path.
 - Floating info stack (Session 24) — the coordinate/elevation readout, scale bar, active-trip chip, and a
   new active-layers indicator are one consolidated column now (`#floating-info-stack`), not four
   independently `position:absolute`-placed elements each guessing the previous one's rendered height (the
@@ -1288,3 +1337,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   narrow-viewport/real-device verification remains outstanding, same caveat carried forward from Session 24.
   Zero console errors observed. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
   blocks. APP_VERSION bumped 2.28.0 → 2.29.0, SHELL_CACHE bumped v134 → v135.
+- Session 26: Wired in the compiled 10-state USGS Corridor Mapping Team migration dataset, replacing the
+  single-herd West Goose Lake POC entirely — see Architecture notes' "Migration corridors" entry for full
+  detail. Four compiled species files (Elk/Mule deer/Pronghorn/White-tailed deer) replace the one POC file;
+  a property-schema mismatch between the compiled files (`type`/`useclass`/`herdid`) and this app's existing
+  reader code (`geometry_category`/`use_class`/`herd_id`/`herd_name`) was normalized once at merge time
+  rather than touching every downstream paint expression/filter/popup builder. White-tailed Deer needed no
+  picker code at all — the species dropdown is fully data-driven. Added Annual Range as a fourth toggle/
+  category (AZ/CA/NM herds have it; teal fill+stroke, same treatment as Winter Range, picked specifically to
+  stay visually distinct from Winter Range's purple), with its picker row hidden entirely for any species/
+  herd combination that has none (e.g. White-tailed Deer). Fixed the paint/z-order bug explicitly reported
+  from the prior session's shipped work (Winter Range rendering on top of Corridors, backwards) via
+  `fill-sort-key`/`line-sort-key` — real MapLibre layout properties, confirmed supported in the vendored
+  `maplibre-gl.js` before using them — rather than a manual feature-array resort; verified not just visually
+  but programmatically, by capturing the live `Map` instance and calling `queryRenderedFeatures()` at real,
+  data-confirmed overlap points (a genuine point-in-polygon test against the raw GeoJSON, after an initial
+  bounding-box-based search and a low-zoom/under-tessellated screen-space search both produced false-positive
+  "overlaps" that didn't hold up against the raw source data or a properly settled zoom level) — confirmed
+  the full required stack Stopover → Corridor → WinterRange → AnnualRange (top to bottom) across two real
+  multi-category overlaps (an AZ elk herd, an AZ/NV pronghorn herd pair), not just the picker's already-
+  correct checkbox order. `states` (an array like `["OR","NV"]` for a herd deduped across state boundaries)
+  is preserved through to the rendered feature's properties per spec, confirmed surviving as a real array on
+  the data passed to `GeoJSONSource.setData()`. Deleted the old POC geojson file from the repo after
+  confirming via a whole-repo grep that nothing else referenced its path. `node --check` confirmed clean
+  syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.29.0 → 2.30.0, SHELL_CACHE bumped
+  v135 → v136.
