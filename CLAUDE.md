@@ -28,6 +28,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   item's trip from Edit data), and auto-tagging new pins/tracks/areas/bearings with the active trip at
   creation. See Architecture notes' "Active Trip UI" entry for the full design. Stage 3 (wiring tap-anywhere's
   quick-save to inherit the active trip) is a separate, not-yet-started follow-on session.
+- Range Ring and Buffer are two new persistent, toggleable object types — same tier as pins/tracks/polygons/
+  bearings/areas (Session 21). Range Ring: one center point + one or more comma-separated radii, rendered as
+  concentric circle outlines with a persistent per-ring radius label at each ring's own top point. Buffer: a
+  drawn open line (reuses Draw Route's own drawing mechanism directly) turned into a rounded-join/rounded-cap
+  buffered polygon at a given width. Both are feet/miles only (no metric, matching the rest of the app) and
+  carry a generic, non-jurisdiction-specific disclaimer — see Architecture notes' "Range Ring and Buffer"
+  entry for the full design and the geo-math it's built on.
+- Compass's screen anchor now actually matches #view-drawer's (Session 21) — Session 20 only restyled its
+  visual card to match #view-drawer's look but left the position at top-center; this was a leftover gap, now
+  closed. Map interactivity/no-scrim behavior while Compass is open is unchanged.
+- Comma (thousands-separator) formatting audited across all large numeric displays, not just area (Session
+  21) — the scale bar's rounded feet/miles labels were the one remaining gap found; area/elevation/distance
+  were already correct everywhere they're displayed.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -427,6 +440,88 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   from the SW execution context, which Playwright's page.route() does not reliably intercept — disable SW
   registration in any test that needs to mock a GMU state's live endpoint (see verify_gmu_cache_mechanics.js
   pattern in scratch test history). Real end-user browsers are not expected to hit either issue.
+- Range Ring and Buffer (Session 21) — two new persistent, toggleable object types following the exact same
+  "standard object treatment" as pins/tracks/polygons/bearings: a state.rangeRings/state.buffers array wired
+  through all 6 sync touchpoints (initial state, getSyncableState, applyMergedState, clearLocalDataForSignOut,
+  loadState fixups + repeatMigrated loop, mergeStates), a GeoJSON source+layer pair added idempotently in
+  reinitializeLayers() (rangerings-source/-line-touch/-line; buffers-source/-fill/-line) and resynced there on
+  every style.load, addXToMap/removeXFromMap/refreshXMap → scheduleXRefresh() → updateXSource() debounced
+  rebuilds, a centered .modal (#rangering-modal/#buffer-modal) reused via expandDrawerForEdit/
+  collapseDrawerFromEdit for in-place editing, openXModal/openXModalForNew/saveXFromModal/deleteXById/
+  closeXModal functions, a popupHtml builder using the shared popupFooterHtml (Directions/Share/Edit data/
+  overflow-with-Delete, no secondary geometry action — popupFooterHtml's geometryLabel/geometryOnclick params
+  were already optional from prior work), openXPopupAt routing through the shared #view-drawer, a +Add sheet
+  button, and window.FieldMap.* exports for onclick handlers. Both types are entirely user-distance-driven —
+  no preset/default radii or widths anywhere, per the core "tool not the answer" philosophy — and both share
+  one generic, non-jurisdiction-specific RANGE_BUFFER_DISCLAIMER string surfaced in both the creation modal and
+  the compact drawer view.
+  - Geo-math: this file had no geometry library (turf.js etc. — confirmed via audit) before this session, so
+    destinationPoint(lat,lng,bearingDeg,distanceMiles) (forward spherical geodesic, same R=3958.8mi as
+    haversineMiles) was added as the one missing primitive, then built on for both features'
+    geometry: circlePolygonCoords(centerLat,centerLng,radiusMiles) (64-vertex circle approximation, GeoJSON
+    ring convention) for Range Ring, and bufferPolygonCoords(points,widthMiles) (perpendicular offset each
+    segment by widthMiles both sides, insert a round-join arc at each interior vertex, a full round-cap
+    semicircle at each open end, then trace left-forward + end-cap + right-backward + start-cap to close the
+    ring) for Buffer. Both verified numerically correct via standalone Node scripts (not just visually) before
+    wiring into the app — circle points all measured exactly radiusMiles from center; buffer points all
+    measured exactly widthMiles from the source line via point-to-segment distance, for both a straight and a
+    bent test line. One real bug caught this way: bufferPolygonCoords' offsetPt() originally returned
+    `{lat,lng}` objects while the arc-point helpers pushed `[lng,lat]` arrays into the same array, producing
+    silent NaNs (`isNaN(undefined) === true` masked the real mismatch) — fixed by making offsetPt return
+    `[lng,lat]` consistently, matching this file's GeoJSON coordinate convention throughout.
+  - Range Ring specifics: radii are entered as one comma-separated free-text field (parseRangeRingRadii —
+    forgiving of trailing commas/whitespace, silently drops anything that doesn't parse to a positive number)
+    plus a feet/miles unit selector, producing one LineString feature per ring (not per object) in
+    rangerings-source, all sharing one center. Each ring's radius label is a separate, always-visible
+    maplibregl.Marker (rangeRingLabelMarkersById, keyed '<objId>_<ringIndex>' so editing an object's radii
+    only adds/removes the affected label markers rather than a full teardown) positioned at that ring's own
+    due-north point (destinationPoint(center, 0, radiusMiles)) — deliberately NOT a data-driven symbol layer,
+    since MapLibre symbol layers can't easily place one label per ring at each ring's own top point from a
+    shared source. Labels use a plain `.rangering-label` CSS class (bold, colored to the item's status color,
+    text-shadow for legibility over any basemap) rather than inline styles, unlike polygon's own area-label
+    markers — a deliberate, harmless inconsistency, not fixed retroactively since polygon's pattern works too.
+    The compact drawer view always lists every ring's radius as text (not just the map labels) specifically so
+    revisiting the object days/months later still shows what was set even before the map itself is looked at.
+  - Buffer specifics: creation reuses Draw Route's existing drawMode/drawPoints/handleDrawClick machinery
+    directly (not a parallel implementation) via a new drawTargetType module var ('track' | 'buffer', reset to
+    'track' immediately after every Finish/Cancel) that the single shared draw-finish-btn handler branches on
+    to call openBufferModalForNew(pts) instead of openTrackModalForNew(pts) — Snap-to-trail and the travel-
+    mode selector remain visible during buffer drawing as an accepted side effect of full reuse (they're
+    inert/irrelevant for a buffer's reference line, not disabled, since spec called for reusing the mechanism
+    "directly, not a new one"). Width is entered once via a modal number input + unit selector and, unlike
+    CalTopo (explicitly named as the gap being fixed), stays permanently visible in the compact drawer view
+    ("Width: 50 ft") both immediately after creation and on reopening the object later, since it's a real
+    stored field (buffer.width/.unit) rendered by bufferPopupHtml every time, not a one-time creation-only
+    prompt.
+  - Verified end-to-end via live browser testing (this sandbox has no Playwright install, so testing used the
+    already-connected Chrome extension driven directly instead): 3-radii Range Ring (100/250/500 ft) renders
+    3 correct concentric rings with correctly positioned top labels, compact drawer lists all 3 radii, editing
+    radii in place live-updates both the rings and labels, and everything survives a full page reload
+    unchanged. A 3-point bent-line Buffer at 50ft width renders a correctly rounded-cap/rounded-join polygon,
+    "Width: 50 ft" is visible in the drawer immediately and after a reload, and Delete (verified by scripting
+    around the native `confirm()` dialog, which blocks this browser-automation tool's CDP channel — a known
+    tooling limitation, not an app issue) correctly removes the object from both the map and localStorage and
+    writes a tombstone for each (recordTombstone — the exact mechanism a Session 8 bug once went missing for
+    bearings; deliberately checked here to avoid repeating that). Compass's live map-tap-to-set-bearing
+    interaction was also re-confirmed working with the panel in its new position (see below). No console
+    errors observed in either browser tab across the full test pass.
+- Compass anchor fix (Session 21): Session 20's restyle gave #compass-panel the same visual card treatment as
+  #view-drawer (solid bg-elevated, 14px radius, matching shadow) but left its position at the pre-existing
+  top-center rule — a leftover gap, not a new regression. Fixed by copying #view-drawer's own position rules
+  verbatim: desktop `position:fixed;left:auto;bottom:24px;right:64px` (inline style on the element, same as
+  before, just corrected), mobile `left:14px;right:14px;bottom:88px` in the existing `@media (max-width:760px)`
+  block. Deliberately did NOT make it a literal shared element with #view-drawer or a .floating-panel — same
+  reasoning as the trip picker before it: a real shared element would reintroduce the drawerExpandedType/
+  mid-edit conflicts that motivated keeping these separate. Still absent from PANEL_SCRIM_IDS/
+  OUTSIDE_CLICK_DISMISS_IDS, so the map stays fully interactive underneath it exactly as before — confirmed
+  live (not just by inspecting the unchanged JS) by tapping the map with Compass open and observing a bearing
+  target set correctly (WNW 300° in the verification run) with the panel still docked in its new position.
+- Comma-separation audit (Session 21): grepped for `Math\.round\([^)]*\)\s*\+\s*['"]...(ft|sq ft|ac|mi)['"]`-
+  shaped patterns across the whole file to find every large-number display missing `.toLocaleString()`. Area
+  (polygonAreaDisplay/formatAreaInUnit) and elevation (getElevationFt call sites, tapAnywhereConditionsText,
+  pin popup) were already correct. The one real gap found: updateScaleBar()'s rounded feet/miles labels
+  (chosenFeet/chosenMiles, e.g. "5000 ft" at higher zoom levels) had no `.toLocaleString()` — fixed by adding
+  it to both branches.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -789,3 +884,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   never been written up in CLAUDE.md at all — backfilled that gap into the "Active Trip UI" entry alongside
   this session's own changes rather than leaving it undocumented. `node --check` confirmed clean syntax after
   every batch of edits.
+- Session 21: A large batch run without back-and-forth per explicit instruction, in the given order — see
+  Architecture notes' "Range Ring and Buffer", "Compass anchor fix", and "Comma-separation audit" entries for
+  full design/implementation detail; this is what it took to get there and what was verified.
+  Part 1 (quick fixes): finished closing the Compass position gap Session 20's restyle left open (top-center →
+  #view-drawer's own bottom-right anchor, both desktop and mobile), and closed the one remaining comma-
+  separation gap found by a targeted grep audit (the scale bar's rounded feet/miles labels — area and
+  elevation were already correct everywhere).
+  Part 2 (new feature): built Range Ring and Buffer as two new persistent, toggleable object types at the
+  same tier as pins/tracks/polygons/bearings — full standard-object treatment (data model + all 6 sync
+  touchpoints, GeoJSON source/layer pair, +Add sheet entry, sidebar row, expand-in-place edit modal,
+  Directions/Share/Edit data/Delete footer, window.FieldMap.* exports), built on two from-scratch geo-math
+  primitives this file didn't have before (destinationPoint, then circlePolygonCoords and bufferPolygonCoords
+  on top of it) since no geometry library exists anywhere in the app. Both types are entirely user-distance-
+  driven with zero preset/default values and a single generic, non-jurisdiction-specific disclaimer, per the
+  explicit "tool not the answer" philosophy in the request.
+  Judgment calls made along the way, each flagged as instructed rather than stalling: (1) Buffer's creation
+  reuses Draw Route's mechanism so completely that its travel-mode selector and Snap-to-trail control remain
+  visible (inert, not disabled) during buffer-line drawing — matches the explicit "reuse directly, not a new
+  one" instruction rather than partially reimplementing the draw bar to hide them. (2) Range Ring's per-ring
+  label uses a plain CSS class rather than polygon's inline-style pattern for its own area label — a harmless
+  stylistic inconsistency, not worth retrofitting either direction. (3) Both new types' bulk-selection bucket
+  in the sidebar's existing bulk-edit mode falls into the same shared bucket bearing already uses (bulk edit
+  for these types wasn't named in the spec either way) rather than adding two more dedicated bulk-selection
+  maps.
+  Verified end-to-end via the already-connected Chrome browser extension (this sandbox has no local Playwright
+  install, unlike prior sessions) against a local `python -m http.server`: Compass confirmed anchored at
+  #view-drawer's exact position with live map-tap-to-set-bearing still working; a 3-radii (100/250/500 ft)
+  Range Ring renders 3 correct concentric rings with correctly positioned top labels, compact drawer lists all
+  3 radii, in-place radii editing live-updates the map, and it survives a full reload unchanged; a bent-line
+  Buffer at 50ft renders a correctly rounded-cap/rounded-join polygon with "Width: 50 ft" visible in the
+  drawer both immediately and after a reload (the explicit CalTopo-gap fix); Delete correctly removes both
+  object types from map, localStorage, and writes tombstones for each (checked directly, since Session 8 once
+  had a real bug here for bearings); no console errors observed. `node --check` confirmed clean syntax on all
+  4 extracted inline `<script>` blocks. APP_VERSION bumped 2.26.2 → 2.27.0, SHELL_CACHE bumped v130 → v131.

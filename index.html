@@ -376,6 +376,10 @@
   .pin-popup-meta{font-size:11px;color:var(--text-muted);margin-bottom:6px;}
   .pin-popup-notes{font-size:12px;margin-bottom:8px;white-space:pre-wrap;color:var(--text);}
   .pin-popup-coords{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:10px;}
+  /* Range Ring's persistent per-ring radius label — plain bold text at the ring's own
+     "top" point, same bare-colored-text treatment as polygon's area/name label markers
+     (no background pill), just always-visible instead of toggleable via a settings switch. */
+  .rangering-label{font-size:12px;font-weight:700;pointer-events:none;white-space:nowrap;line-height:1.2;text-shadow:0 1px 2px rgba(0,0,0,0.6),0 0 4px rgba(0,0,0,0.4);}
   /* Modifier for the coords/elevation/date line (pin popup, tap-anywhere) — plain
      concatenated " · "-joined text wrapped awkwardly on narrower mobile widths (drawer
      content width is narrower than the old centered modal's). Each value as its own flex
@@ -979,6 +983,14 @@
       width:auto;max-width:none;max-height:85vh;
     }
 
+    /* Compass panel: same edge-to-edge bottom anchor as #view-drawer on mobile (matching
+       desktop's position fix above) — still position:fixed, still no scrim, map stays
+       interactive underneath exactly as before. */
+    #compass-panel{
+      left:14px;right:14px;bottom:88px;
+      min-width:0;width:auto;
+    }
+
     /* Sunrise panel: docked above the sidebar bar on mobile */
     #sunrise-panel.sunrise-docked-panel{
       position:fixed !important;
@@ -1373,6 +1385,25 @@
         </div>
         <div class="sheet-label">Add bearing</div>
       </button>
+      <button class="sheet-cell" id="sheet-add-rangering-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="2.2"/>
+            <circle cx="12" cy="12" r="6"/>
+            <circle cx="12" cy="12" r="10"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Range ring</div>
+      </button>
+      <button class="sheet-cell" id="sheet-draw-buffer-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 18 L14 6" stroke-width="2"/>
+            <path d="M2 20 Q4 15 8 13.5 L16 4.5 Q19 4 21 6.5 Q22.5 9 20 11 L11 19.5 Q7 21.5 2 20 Z" stroke-dasharray="2.5,2"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Buffer</div>
+      </button>
       <button class="sheet-cell" id="sheet-import-btn">
         <div class="sheet-icon">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1545,11 +1576,16 @@
 <!-- Compass HUD (compact — heading text only, lines are on the map) -->
 <!-- Visual style matches #view-drawer's card (solid bg-elevated, 14px radius, same shadow) for
      consistency with the rest of the app's popup surfaces — position/z-index/interaction model
-     deliberately UNCHANGED: still plain position:absolute (not #view-drawer, not a
-     .floating-panel), still absent from FLOATING_PANEL_IDS/PANEL_SCRIM_IDS/
-     OUTSIDE_CLICK_DISMISS_IDS, so the map stays fully interactive underneath it (tapping to set
-     a bearing, panning while it's open) exactly as before. --><div id="compass-panel" class="hidden" style="
-  position:absolute;top:14px;left:50%;transform:translateX(-50%);
+     deliberately UNCHANGED: still plain position:fixed (not literally #view-drawer, not a
+     .floating-panel — a real shared element would reintroduce the drawerExpandedType/
+     mid-edit conflicts that motivated keeping the trip picker separate too), still absent from
+     FLOATING_PANEL_IDS's scrim membership (PANEL_SCRIM_IDS/OUTSIDE_CLICK_DISMISS_IDS), so the
+     map stays fully interactive underneath it (tapping to set a bearing, panning while it's
+     open) exactly as before — only the anchor POSITION now matches #view-drawer's (previous
+     restyle pass matched the visual card treatment but left position at top-center, which this
+     fixes). Desktop position/mobile override below are copied directly from #view-drawer's own
+     rule. --><div id="compass-panel" class="hidden" style="
+  position:fixed;left:auto;bottom:24px;right:64px;
   z-index:1400;background:var(--bg-elevated);
   border:1px solid var(--border);border-radius:14px;padding:10px 16px;
   box-shadow:0 4px 16px rgba(0,0,0,0.45);min-width:200px;text-align:center;
@@ -2162,6 +2198,111 @@
   <button class="btn btn-small btn-ghost" id="bearing-bar-cancel">Cancel</button>
 </div>
 
+<!-- Range Ring bar (shown during +Add range ring mode — single tap for the center point, same
+     bar pattern as bearing-bar's origin/target tap) -->
+<div id="rangering-bar" class="hidden" style="
+  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+  padding:8px 14px;align-items:center;gap:12px;font-size:13px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+  <span id="rangering-bar-text">Tap center point</span>
+  <button class="btn btn-small btn-ghost" id="rangering-bar-cancel">Cancel</button>
+</div>
+
+<!-- Range Ring edit modal -->
+<div class="modal-overlay hidden" id="rangering-modal">
+  <div class="modal">
+    <div class="modal-header-row">
+      <h2 id="rangering-modal-title">Range ring</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="rangering-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="rangering-save-btn-top">Save</button>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="rangering-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
+      <div id="rangering-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="rangering-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="rangering-name" maxlength="60" placeholder="e.g. Rings from camp"></label>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Category</div>
+      <div class="chip-row" id="rangering-tags-row"></div>
+    </div>
+    <label><span>Radii — comma-separated (e.g. 100, 250, 500)</span>
+      <input type="text" id="rangering-radii" maxlength="200" placeholder="100, 250, 500">
+    </label>
+    <label><span>Unit</span>
+      <select id="rangering-unit">
+        <option value="ft">Feet</option>
+        <option value="mi">Miles</option>
+      </select>
+    </label>
+    <p class="hint" id="rangering-disclaimer" style="font-size:11px;line-height:1.4;margin:-6px 0 14px;"></p>
+    <label><span>Notes</span><textarea id="rangering-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="rangering-trip-btn" data-trip-id="">No trip</button></label>
+    <label><span>Date</span><input type="date" id="rangering-date"></label>
+    <div class="coord-display" id="rangering-meta-display"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger hidden" id="rangering-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="rangering-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="rangering-save-btn">Save range ring</button>
+    </div>
+  </div>
+</div>
+
+<!-- Buffer edit modal -->
+<div class="modal-overlay hidden" id="buffer-modal">
+  <div class="modal">
+    <div class="modal-header-row">
+      <h2 id="buffer-modal-title">Buffer</h2>
+      <div class="modal-header-actions">
+        <button class="btn btn-ghost" id="buffer-cancel-btn-top">Cancel</button>
+        <button class="btn btn-primary" id="buffer-save-btn-top">Save</button>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Quick category</div>
+      <div class="chip-row" id="buffer-quick-tags-row"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Status</div>
+      <div id="buffer-status-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="buffer-status-label" style="font-size:11px;color:var(--text-muted);margin-top:5px;"></div>
+    </div>
+    <hr class="modal-divider">
+    <label><span>Name</span><input type="text" id="buffer-name" maxlength="60" placeholder="e.g. Trail buffer"></label>
+    <div style="margin-bottom:14px;">
+      <div class="modal-section-label">Category</div>
+      <div class="chip-row" id="buffer-tags-row"></div>
+    </div>
+    <label><span>Width</span>
+      <input type="number" id="buffer-width" min="0" step="any" placeholder="e.g. 50">
+    </label>
+    <label><span>Unit</span>
+      <select id="buffer-unit">
+        <option value="ft">Feet</option>
+        <option value="mi">Miles</option>
+      </select>
+    </label>
+    <p class="hint" id="buffer-disclaimer" style="font-size:11px;line-height:1.4;margin:-6px 0 14px;"></p>
+    <label><span>Notes</span><textarea id="buffer-notes" maxlength="500" placeholder="Anything worth remembering"></textarea></label>
+    <label><span>Trip (optional)</span><button type="button" class="trip-picker-btn" id="buffer-trip-btn" data-trip-id="">No trip</button></label>
+    <label><span>Date</span><input type="date" id="buffer-date"></label>
+    <div class="coord-display" id="buffer-meta-display"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger hidden" id="buffer-delete-btn">Delete</button>
+      <button class="btn btn-ghost" id="buffer-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="buffer-save-btn">Save buffer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk edit modal -->
 <div class="modal-overlay hidden" id="bulk-modal">
   <div class="modal">
@@ -2427,7 +2568,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.26.2';
+  var APP_VERSION = '2.27.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2506,6 +2647,8 @@
     tracks: [],
     polygons: [],
     bearings: [],
+    rangeRings: [],
+    buffers: [],
     tags: SEED_TAGS.slice(),
     trips: [],
     tombstones: {},
@@ -2825,6 +2968,9 @@
   var openPolygonPopup = null; // same, for areas
   var openBearingPopup = null; // same, for bearings
   var openWildlifePopup = null; // same, for wildlife range polygons
+  var openRangeRingPopup = null; // same, for range rings
+  var openBufferPopup = null; // same, for buffers
+  var pendingBufferPoints = null; // draw-finish-btn's points, staged for openBufferModalForNew when drawTargetType === 'buffer'
 
   // ── Wildlife Layers (P3a) ──
   var WILDLIFE_CATEGORIES = ['big_game', 'upland', 'small_game'];
@@ -2973,6 +3119,21 @@
   var editingBearingId = null, selectedBearingStatus = 'escout';
   var _remapBearingId = null; // when set, draw mode updates this bearing instead of creating new
   var pendingLatLng = null;
+
+  // Range Ring: single-tap center selection (same pattern as bearing's origin tap, just one
+  // tap instead of two — see setRangeRingMode/handleRangeRingMapTap).
+  var rangeRingMode = false;
+  var editingRangeRingId = null, selectedRangeRingStatus = 'escout';
+  var rangeRingLabelMarkersById = {}; // '<objId>_<ringIndex>' -> maplibregl.Marker, the per-ring radius label
+
+  // Buffer: reuses Draw Route's drawMode/drawPoints/handleDrawClick machinery directly (see
+  // the batch spec) — drawTargetType is the only addition, letting the shared draw-finish-btn
+  // handler branch to the right follow-up modal (openTrackModalForNew vs openBufferModalForNew)
+  // without duplicating any of the point-collection/preview-line/snap/undo logic.
+  var drawTargetType = 'track'; // 'track' | 'buffer'
+  var editingBufferId = null, selectedBufferStatus = 'escout';
+
+  var RANGE_BUFFER_DISCLAIMER = 'Reference only — confirm any applicable distance requirements for your activity and location before relying on this.';
   var activeTagFilters = {};
   var activeStateFilters = {};
   var activeTripFilters = {};
@@ -4077,7 +4238,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var TYPE_GLYPHS = {
     track: '<path d="M6.7 16.6 10.4 7.9M13.4 7.1 17.3 12.5"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="14" r="2"/>',
     polygon: '<polygon points="12,3 21,9 18,20 6,20 3,9"/>',
-    bearing: '<line x1="5" y1="19" x2="19" y2="5" stroke-dasharray="4,2"/><polyline points="13,5 19,5 19,11"/>'
+    bearing: '<line x1="5" y1="19" x2="19" y2="5" stroke-dasharray="4,2"/><polyline points="13,5 19,5 19,11"/>',
+    rangering: '<circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="10"/>',
+    buffer: '<path d="M4 18 L14 6" stroke-width="2"/><path d="M2 20 Q4 15 8 13.5 L16 4.5 Q19 4 21 6.5 Q22.5 9 20 11 L11 19.5 Q7 21.5 2 20 Z" stroke-dasharray="2.5,2"/>'
   };
   // color is the glyph's own stroke color (rendered bare, no circle background — see
   // buildItemRow) rather than white-on-a-colored-circle like the pin treatment.
@@ -4648,7 +4811,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
@@ -4673,7 +4837,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
@@ -4698,7 +4863,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4725,7 +4891,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4752,7 +4919,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4779,7 +4947,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4803,7 +4972,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4828,9 +4998,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           e.preventDefault();
           if (e.originalEvent) e.originalEvent.stopPropagation();
           var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
             if (bearingMode){ handleBearingMapTap(latlng); return; }
-            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
             if (compassActive){ handleCompassMapTap(latlng); return; }
             if (measureMode){ handleMeasureClick(latlng); return; }
             if (drawMode){ handleDrawClick(latlng); return; }
@@ -4857,7 +5028,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4886,9 +5058,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           e.preventDefault();
           if (e.originalEvent) e.originalEvent.stopPropagation();
           var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
             if (bearingMode){ handleBearingMapTap(latlng); return; }
-            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
             if (compassActive){ handleCompassMapTap(latlng); return; }
             if (measureMode){ handleMeasureClick(latlng); return; }
             if (drawMode){ handleDrawClick(latlng); return; }
@@ -4909,7 +5082,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         e.preventDefault();
         if (e.originalEvent) e.originalEvent.stopPropagation();
         var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode){
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
           if (bearingMode){ handleBearingMapTap(latlng); return; }
           if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
           if (compassActive){ handleCompassMapTap(latlng); return; }
@@ -4967,6 +5141,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
         if (compassActive){ handleCompassMapTap(latlng); return; }
         if (bearingMode){ handleBearingMapTap(latlng); return; }
+        if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
         if (measureMode){ handleMeasureClick(latlng); return; }
         if (drawMode){ handleDrawClick(latlng); return; }
         if (polygonMode){ handlePolygonClick(latlng); return; }
@@ -5070,12 +5245,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (maxMilesFit < 1){
       var chosenFeet = feetSteps[0];
       for (var i=0;i<feetSteps.length;i++){ if (feetSteps[i] <= maxFeetFit) chosenFeet = feetSteps[i]; }
-      label = chosenFeet + ' ft';
+      label = chosenFeet.toLocaleString() + ' ft';
       barFeet = chosenFeet;
     } else {
       var chosenMiles = mileSteps[0];
       for (var j=0;j<mileSteps.length;j++){ if (mileSteps[j] <= maxMilesFit) chosenMiles = mileSteps[j]; }
-      label = chosenMiles + ' mi';
+      label = chosenMiles.toLocaleString() + ' mi';
       barFeet = chosenMiles * 5280;
     }
     var barPx = (barFeet / 3.28084) / metersPerPixel;
@@ -6028,6 +6203,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tracks.forEach(applyFilterToTrack);
     schedulePolygonsRefresh();
     scheduleBearingsRefresh();
+    scheduleRangeRingsRefresh();
+    scheduleBuffersRefresh();
   }
 
   function zoomToVisible(){
@@ -6079,6 +6256,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // own close button, that constraint is gone — all 4 actions share one row.
   // menuId must be unique per open instance — kept even though only one item's drawer can
   // be open at a time now, so a stale id from a previous drawer content swap never collides.
+  // geometryLabel/geometryOnclick are optional — Range Ring/Buffer have no secondary
+  // "edit shape/endpoints"-style action beyond Delete, so their overflow menu just omits
+  // that button rather than rendering an empty one; every existing caller still passes both,
+  // completely unaffected.
   function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick, menuId, geometryLabel, geometryOnclick, deleteOnclick){
     return '<div class="pin-popup-footer">' +
       '<button class="btn btn-small" onclick="' + directionsOnclick + '">Directions</button>' +
@@ -6087,7 +6268,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '<div class="popup-overflow-wrap">' +
         '<button class="popup-overflow-btn" onclick="FieldMap.toggleOverflowMenu(\'' + menuId + '\')" aria-label="More actions">&#8942;</button>' +
         '<div class="popup-overflow-menu" id="' + menuId + '">' +
-          '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' +
+          (geometryLabel ? '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' : '') +
           '<button class="danger" onclick="' + deleteOnclick + '">Delete</button>' +
         '</div>' +
       '</div>' +
@@ -7187,6 +7368,60 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Range Rings — one GeoJSON LineString feature PER RING (an object can hold several
+    // concentric radii), all sharing one source/pair of layers the same way tracks/polygons/
+    // bearings share theirs. Outline only (no fill) so concentric rings stay readable instead
+    // of stacking opaque fills on top of each other. Radius labels are separate
+    // maplibregl.Markers (see rangeRingLabelMarkersById) — a data-driven symbol layer can't
+    // easily place one label per ring at that ring's own "top" point.
+    if (!map.getSource('rangerings-source')){
+      map.addSource('rangerings-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('rangerings-line-touch')){
+      map.addLayer({
+        id: 'rangerings-line-touch',
+        type: 'line',
+        source: 'rangerings-source',
+        paint: { 'line-width': 18, 'line-opacity': 0 }
+      });
+    }
+    if (!map.getLayer('rangerings-line')){
+      map.addLayer({
+        id: 'rangerings-line',
+        type: 'line',
+        source: 'rangerings-source',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.85 }
+      });
+    }
+
+    // Buffers — a buffered/offset polygon (rounded joins + rounded end caps) around a drawn
+    // open line. Fill + outline, same shape as polygons-source/-fill/-line.
+    if (!map.getSource('buffers-source')){
+      map.addSource('buffers-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('buffers-fill')){
+      map.addLayer({
+        id: 'buffers-fill',
+        type: 'fill',
+        source: 'buffers-source',
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.18 }
+      });
+    }
+    if (!map.getLayer('buffers-line')){
+      map.addLayer({
+        id: 'buffers-line',
+        type: 'line',
+        source: 'buffers-source',
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2 }
+      });
+    }
+
     // GeoJSON cluster source — always re-add after style change
     if (!map.getSource('pins-source')){
       map.addSource('pins-source', {
@@ -7450,6 +7685,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateTracksSource();
     updatePolygonsSource();
     updateBearingsSource();
+    updateRangeRingsSource();
+    updateBuffersSource();
     redrawDrawLine();
     redrawPolygonDraft();
     redrawBearingDrawPreview();
@@ -8889,6 +9126,45 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (openBearingPopup){ openBearingPopup.remove(); openBearingPopup = null; }
         deleteBearingById(id);
       }
+    },
+    editRangeRing: function(id){
+      var r = state.rangeRings.find(function(x){ return x.id === id; });
+      if (r) openRangeRingModal(r);
+    },
+    directionsToRangeRing: function(id){
+      var r = state.rangeRings.find(function(x){ return x.id === id; });
+      if (r) openDirectionsTo(r.centerLat, r.centerLng);
+    },
+    shareRangeRing: function(id){
+      var r = state.rangeRings.find(function(x){ return x.id === id; });
+      if (!r) return;
+      var extra = (r.radii || []).map(function(v){ return formatRangeRingUnit(v, r.unit); }).join(', ');
+      shareLocationText(r.name, r.centerLat, r.centerLng, extra);
+    },
+    deleteRangeRing: function(id){
+      if (confirm('Delete this range ring? This cannot be undone.')){
+        if (openRangeRingPopup){ openRangeRingPopup.remove(); openRangeRingPopup = null; }
+        deleteRangeRingById(id);
+      }
+    },
+    editBuffer: function(id){
+      var b = state.buffers.find(function(x){ return x.id === id; });
+      if (b) openBufferModal(b);
+    },
+    directionsToBuffer: function(id){
+      var b = state.buffers.find(function(x){ return x.id === id; });
+      if (b && b.points && b.points[0]) openDirectionsTo(b.points[0].lat, b.points[0].lng);
+    },
+    shareBuffer: function(id){
+      var b = state.buffers.find(function(x){ return x.id === id; });
+      if (!b || !b.points || !b.points[0]) return;
+      shareLocationText(b.name, b.points[0].lat, b.points[0].lng, 'Width: ' + formatBufferWidth(b.width, b.unit));
+    },
+    deleteBuffer: function(id){
+      if (confirm('Delete this buffer? This cannot be undone.')){
+        if (openBufferPopup){ openBufferPopup.remove(); openBufferPopup = null; }
+        deleteBufferById(id);
+      }
     }
   };
 
@@ -8907,6 +9183,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (bearingMode && except !== 'bearing') setBearingMode(false);
     if (elevTapMode && except !== 'elev') setElevTapMode(false);
     if (compassActive && except !== 'compass') closeCompassPanel();
+    if (rangeRingMode && except !== 'rangering') setRangeRingMode(false);
   }
 
   function setAddMode(on){
@@ -8939,7 +9216,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function formatDist(miles){
-    return miles < 0.2 ? Math.round(miles*5280) + ' ft' : miles.toFixed(2) + ' mi';
+    return miles < 0.2 ? Math.round(miles*5280).toLocaleString() + ' ft' : miles.toFixed(2) + ' mi';
   }
 
   function bearingDegrees(lat1, lng1, lat2, lng2){
@@ -8948,6 +9225,129 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var y = Math.sin(toRad(lng2-lng1)) * Math.cos(toRad(lat2));
     var x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lng2-lng1));
     return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  // Forward geodesic (spherical earth, same R as haversineMiles) — the one geo primitive this
+  // file didn't already have. Used by Range Ring (circle polygon vertices + the "top of ring"
+  // label point) and Buffer (perpendicular offset points along each segment + round join/cap
+  // arcs). bearingDeg: 0=north, clockwise, matching bearingDegrees' own convention.
+  function destinationPoint(lat, lng, bearingDeg, distanceMiles){
+    var R = 3958.8;
+    function toRad(d){ return d * Math.PI / 180; }
+    function toDeg(r){ return r * 180 / Math.PI; }
+    var d = distanceMiles / R, brng = toRad(bearingDeg);
+    var lat1 = toRad(lat), lng1 = toRad(lng);
+    var lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(brng));
+    var lng2 = lng1 + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(lat1), Math.cos(d)-Math.sin(lat1)*Math.sin(lat2));
+    return { lat: toDeg(lat2), lng: ((toDeg(lng2)+540)%360)-180 }; // normalize lng to [-180,180]
+  }
+
+  // Circular polygon approximation (64 vertices) around a center point — Range Ring's ring
+  // geometry. GeoJSON ring convention: first/last point must match (closed ring).
+  function circlePolygonCoords(centerLat, centerLng, radiusMiles){
+    var coords = [];
+    var steps = 64;
+    for (var i = 0; i <= steps; i++){
+      var brng = (360 / steps) * i;
+      var pt = destinationPoint(centerLat, centerLng, brng, radiusMiles);
+      coords.push([pt.lng, pt.lat]);
+    }
+    return coords;
+  }
+
+  // Buffered polygon around an open polyline, rounded joins + rounded end caps — Buffer's
+  // geometry. No geometry library is loaded anywhere in this app (confirmed via audit), so
+  // this is a from-scratch implementation: offset each segment perpendicular by widthMiles on
+  // both sides, insert an arc of points at every interior vertex (round join) and a full
+  // semicircle at each open end (round cap), then trace left-side-forward + end-cap +
+  // right-side-backward + start-cap to close the ring. Assumes a simple (non-self-crossing)
+  // input path, which covers this app's actual use case (a hand-drawn reference line) — full
+  // Minkowski-sum robustness for pathological self-intersecting input is out of scope.
+  function bufferPolygonCoords(points, widthMiles){
+    if (!points || points.length < 2) return null;
+    var r = widthMiles;
+    var arcSteps = 16; // per half-circle (join/cap arcs)
+
+    function seg(a, b){
+      return { brng: bearingDegrees(a.lat, a.lng, b.lat, b.lng) };
+    }
+    function offsetPt(p, brng, dist){
+      // brng here is the segment's own direction; +90/-90 gives the left/right perpendicular.
+      // Returns [lng,lat] (not {lat,lng}) to match arcPoints'/fullCapArc's own point format —
+      // mixing the two shapes in the same left/right arrays was a real bug caught only by a
+      // standalone numeric test (isNaN() on a {lat,lng} object's [0]/[1] silently reads
+      // undefined, which itself is NaN, masking the real problem as a false "coords are NaN").
+      var pt = destinationPoint(p.lat, p.lng, brng, dist);
+      return [pt.lng, pt.lat];
+    }
+    function arcPoints(center, fromBrng, toBrng, steps){
+      // Always sweeps the SHORT way (<=180°) so joins/caps bulge outward, never inward.
+      var delta = ((toBrng - fromBrng + 540) % 360) - 180;
+      var pts = [];
+      for (var i = 1; i < steps; i++){
+        var brng = fromBrng + delta * (i / steps);
+        var pt = destinationPoint(center.lat, center.lng, brng, r);
+        pts.push([pt.lng, pt.lat]);
+      }
+      return pts;
+    }
+
+    var segs = [];
+    for (var i = 0; i < points.length - 1; i++) segs.push(seg(points[i], points[i+1]));
+
+    // Left side (offset at brng-90), walking start -> end
+    var left = [];
+    for (i = 0; i < points.length; i++){
+      if (i === 0){
+        left.push(offsetPt(points[0], segs[0].brng - 90, r));
+      } else if (i === points.length - 1){
+        left.push(offsetPt(points[i], segs[i-1].brng - 90, r));
+      } else {
+        // Round join: arc from the previous segment's left-offset direction to the next
+        // segment's, swept the short way, centered on the shared vertex.
+        var p = offsetPt(points[i], segs[i-1].brng - 90, r);
+        var q = offsetPt(points[i], segs[i].brng - 90, r);
+        left.push(p);
+        left = left.concat(arcPoints(points[i], segs[i-1].brng - 90, segs[i].brng - 90, arcSteps));
+        left.push(q);
+      }
+    }
+    // Right side (offset at brng+90), walking end -> start (reverse) so the ring traces
+    // continuously all the way around.
+    var right = [];
+    for (i = points.length - 1; i >= 0; i--){
+      if (i === points.length - 1){
+        right.push(offsetPt(points[i], segs[i-1].brng + 90, r));
+      } else if (i === 0){
+        right.push(offsetPt(points[0], segs[0].brng + 90, r));
+      } else {
+        var p2 = offsetPt(points[i], segs[i].brng + 90, r);
+        var q2 = offsetPt(points[i], segs[i-1].brng + 90, r);
+        right.push(p2);
+        right = right.concat(arcPoints(points[i], segs[i].brng + 90, segs[i-1].brng + 90, arcSteps));
+        right.push(q2);
+      }
+    }
+
+    // Round caps at the two open ends — full semicircle from the left-offset bearing to the
+    // right-offset bearing at that endpoint, swept the LONG way (outward, away from the line)
+    // by going through the segment's own forward/backward bearing rather than the short way.
+    var endCap = fullCapArc(points[points.length-1], segs[segs.length-1].brng, r, arcSteps * 2);
+    var startCap = fullCapArc(points[0], segs[0].brng + 180, r, arcSteps * 2);
+
+    function fullCapArc(center, outwardBrng, radius, steps){
+      var pts = [];
+      for (var i = 1; i < steps; i++){
+        var brng = (outwardBrng - 90) + (180 * (i / steps));
+        var pt = destinationPoint(center.lat, center.lng, brng, radius);
+        pts.push([pt.lng, pt.lat]);
+      }
+      return pts;
+    }
+
+    var ring = left.concat(endCap, right, startCap);
+    ring.push(ring[0]); // close the ring
+    return ring;
   }
 
   function compassLabel(deg){
@@ -8993,7 +9393,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     for (var i=1;i<pts.length;i++){
       total += haversineMiles(pts[i-1].lat, pts[i-1].lng, pts[i].lat, pts[i].lng);
     }
-    var distText = total < 0.2 ? Math.round(total*5280) + ' ft' : total.toFixed(2) + ' mi';
+    var distText = total < 0.2 ? Math.round(total*5280).toLocaleString() + ' ft' : total.toFixed(2) + ' mi';
     var snapTag = snappedPoints ? ' (snapped)' : '';
     document.getElementById('draw-bar-text').textContent = drawPoints.length + ' point' + (drawPoints.length===1?'':'s') + (pts.length > 1 ? ' · ' + distText + snapTag : '') + drawBarElevText;
   }
@@ -9225,7 +9625,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     var prev = measurePoints[measurePoints.length-2];
     var brng = bearingDegrees(prev.lat, prev.lng, latlng.lat, latlng.lng);
-    var distText = total < 0.2 ? Math.round(total*5280) + ' ft' : total.toFixed(2) + ' mi';
+    var distText = total < 0.2 ? Math.round(total*5280).toLocaleString() + ' ft' : total.toFixed(2) + ' mi';
     var legLabel = measurePoints.length > 2 ? ' total · last leg ' : ' · ';
     document.getElementById('measure-result-text').textContent = distText + legLabel + Math.round(brng) + '° ' + compassLabel(brng);
     document.getElementById('measure-result').classList.remove('hidden');
@@ -9253,8 +9653,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function polygonAreaDisplay(points){
     if (!points || points.length < 3) return '';
     var sqMi = polygonAreaSqMiles(points);
-    if (sqMi < 0.00156) return Math.round(sqMi * 27878400) + ' sq ft'; // < 1 acre
-    if (sqMi < 1) return Math.round(sqMi * 640) + ' ac';
+    if (sqMi < 0.00156) return Math.round(sqMi * 27878400).toLocaleString() + ' sq ft'; // < 1 acre
+    if (sqMi < 1) return Math.round(sqMi * 640).toLocaleString() + ' ac';
     return sqMi.toFixed(2) + ' mi²';
   }
 
@@ -9272,8 +9672,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return 'sqmi';
   }
   function formatAreaInUnit(sqMi, unit){
-    if (unit === 'sqft') return Math.round(sqMi * 27878400) + ' sq ft';
-    if (unit === 'ac') return Math.round(sqMi * 640) + ' ac';
+    if (unit === 'sqft') return Math.round(sqMi * 27878400).toLocaleString() + ' sq ft';
+    if (unit === 'ac') return Math.round(sqMi * 640).toLocaleString() + ' ac';
     return sqMi.toFixed(2) + ' mi²';
   }
   function polygonAreaDisplayForDrawer(polygon){
@@ -9942,6 +10342,449 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     redrawBearingDrawPreview();
   }
 
+  // ---------- Range Rings ----------
+  // A persistent, toggleable object type (same tier as pins/tracks/polygons/bearings) — one
+  // center point + one or more concentric radii, each with its own persistent on-map label.
+  // Core philosophy (see CLAUDE.md): FieldMap gives the tool, not the answer — no preset/
+  // default distances anywhere, radii are entirely user-supplied.
+  function rangeRingRadiusMiles(value, unit){
+    return unit === 'mi' ? value : value / 5280;
+  }
+  function formatRangeRingUnit(value, unit){
+    return value.toLocaleString() + ' ' + (unit === 'mi' ? 'mi' : 'ft');
+  }
+  // Comma-separated free text -> a clean array of positive numbers, silently dropping
+  // anything that doesn't parse (empty segments from trailing commas, non-numeric junk) —
+  // matches how forgiving this app's other free-text-to-list inputs already are.
+  function parseRangeRingRadii(text){
+    return (text || '').split(',')
+      .map(function(s){ return parseFloat(s.trim()); })
+      .filter(function(n){ return !isNaN(n) && n > 0; });
+  }
+  function defaultRangeRingName(ts){
+    return 'Range ring · ' + new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  }
+
+  function rangeRingPopupHtml(r){
+    var catLabel = r.tags && r.tags[0] && r.tags[0] !== 'uncategorized' ? tagById(r.tags[0]).label : '';
+    var notes = r.notes ? '<div class="pin-popup-notes">' + escapeHtml(r.notes) + '</div>' : '';
+    // Info panel lists every radius — the map labels alone aren't enough to revisit "what did
+    // I set here" days/months later (a plain map screenshot can lose that context; this can't).
+    var radiiText = (r.radii || []).map(function(v){ return formatRangeRingUnit(v, r.unit); }).join(', ');
+    var meta = radiiText;
+    if (catLabel) meta += ' · ' + catLabel;
+    if (tripDisplayName(r)) meta += ' · ' + escapeHtml(tripDisplayName(r));
+    var createdLabel = r.created ? '<div class="pin-popup-coords">' + formatCreatedDate(r.created) + '</div>' : '';
+    var interiorPt = { lat: r.centerLat, lng: r.centerLng };
+    var conditionsCard = conditionsCardContainerHtml(interiorPt.lat, interiorPt.lng);
+    return '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(r.name) + '</div>' +
+      '</div>' +
+      '<div class="pin-popup-cat">' + meta + '</div>' +
+      notes +
+      '<div class="pin-popup-coords">Center: ' + r.centerLat.toFixed(5) + ', ' + r.centerLng.toFixed(5) + '</div>' +
+      createdLabel +
+      '<p class="hint" style="font-size:10px;line-height:1.4;margin:6px 0 0;">' + escapeHtml(RANGE_BUFFER_DISCLAIMER) + '</p>' +
+      conditionsCard +
+      popupFooterHtml(
+        'FieldMap.directionsToRangeRing(\'' + r.id + '\')',
+        'FieldMap.shareRangeRing(\'' + r.id + '\')',
+        'FieldMap.editRangeRing(\'' + r.id + '\')',
+        'overflow-rangering-' + r.id, null, null,
+        'FieldMap.deleteRangeRing(\'' + r.id + '\')'
+      );
+  }
+
+  function openRangeRingPopupAt(r){
+    showViewDrawer('rangering', r.id, rangeRingPopupHtml(r));
+    openRangeRingPopup = {
+      remove: viewDrawerRemoveShim,
+      setHTML: function(html){ if (isViewDrawerShowing('rangering', r.id)) setViewDrawerContent(html); }
+    };
+    fetchConditionsForDrawerItem('rangering', r.id, r.centerLat, r.centerLng);
+  }
+
+  // Renders from a single shared GeoJSON source (rangerings-source, set up in
+  // reinitializeLayers) — one LineString feature PER RING (an object can hold several
+  // concentric radii) — same architecture as tracks-source/polygons-source/bearings-source.
+  var rangeRingsRefreshTimer = null;
+  function addRangeRingToMap(r){ scheduleRangeRingsRefresh(); }
+  function removeRangeRingFromMap(id){ scheduleRangeRingsRefresh(); }
+  function refreshRangeRingMap(r){ scheduleRangeRingsRefresh(); }
+  function scheduleRangeRingsRefresh(){
+    clearTimeout(rangeRingsRefreshTimer);
+    rangeRingsRefreshTimer = setTimeout(updateRangeRingsSource, 60);
+  }
+
+  function updateRangeRingsSource(){
+    if (!map) return;
+    var src = map.getSource('rangerings-source');
+    if (!src) return;
+    var visible = state.rangeRings.filter(mapItemVisible);
+    var features = [];
+    visible.forEach(function(r){
+      var sc = STATUS_COLORS[r.status || 'escout'] || STATUS_COLORS.escout;
+      (r.radii || []).forEach(function(radiusVal, idx){
+        var radiusMiles = rangeRingRadiusMiles(radiusVal, r.unit);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: circlePolygonCoords(r.centerLat, r.centerLng, radiusMiles) },
+          properties: { id: r.id, ring: idx, color: sc.bg }
+        });
+      });
+    });
+    src.setData({ type: 'FeatureCollection', features: features });
+    updateRangeRingLabels(visible);
+  }
+
+  // Persistent per-ring radius label, positioned at that ring's own "top" (due-north point
+  // from center, per spec) — separate maplibregl.Markers, one per ring, keyed
+  // '<objId>_<ringIndex>' so adding/removing/reordering radii on an existing object correctly
+  // adds/removes just the affected markers on the next refresh rather than a full
+  // teardown-and-rebuild every time. Must stay visible at all times the ring is shown (not
+  // just at creation), so this runs on every source refresh, not only on save.
+  function updateRangeRingLabels(visible){
+    if (!map) return;
+    var seenKeys = {};
+    visible.forEach(function(r){
+      var sc = STATUS_COLORS[r.status || 'escout'] || STATUS_COLORS.escout;
+      (r.radii || []).forEach(function(radiusVal, idx){
+        var key = r.id + '_' + idx;
+        seenKeys[key] = true;
+        var radiusMiles = rangeRingRadiusMiles(radiusVal, r.unit);
+        var topPt = destinationPoint(r.centerLat, r.centerLng, 0, radiusMiles);
+        var label = formatRangeRingUnit(radiusVal, r.unit);
+        if (rangeRingLabelMarkersById[key]){
+          rangeRingLabelMarkersById[key].setLngLat([topPt.lng, topPt.lat]);
+          var el = rangeRingLabelMarkersById[key].getElement();
+          if (el.textContent !== label) el.textContent = label;
+          el.style.color = sc.bg;
+        } else {
+          var markerEl = document.createElement('div');
+          markerEl.className = 'rangering-label';
+          markerEl.textContent = label;
+          markerEl.style.color = sc.bg;
+          rangeRingLabelMarkersById[key] = new maplibregl.Marker({ element: markerEl, anchor: 'center' })
+            .setLngLat([topPt.lng, topPt.lat])
+            .addTo(map);
+        }
+      });
+    });
+    Object.keys(rangeRingLabelMarkersById).forEach(function(key){
+      if (!seenKeys[key]){ rangeRingLabelMarkersById[key].remove(); delete rangeRingLabelMarkersById[key]; }
+    });
+  }
+
+  function renderRangeRingTagChips(activeTags){
+    categoryExpandedState['rangering-tags-row'] = false;
+    document.getElementById('rangering-tags-row').innerHTML = '';
+    renderCategoryChips('rangering-tags-row', activeTags || []);
+    renderQuickCategoryChips('rangering-quick-tags-row', 'rangering-tags-row');
+  }
+
+  // Edit an existing range ring (radii shown pre-joined back into the same comma-separated
+  // format the creation field accepts, so re-saving without changes round-trips exactly).
+  function openRangeRingModal(r){
+    editingRangeRingId = r.id;
+    document.getElementById('rangering-modal-title').textContent = 'Edit range ring';
+    document.getElementById('rangering-name').value = r.name;
+    document.getElementById('rangering-notes').value = r.notes || '';
+    document.getElementById('rangering-radii').value = (r.radii || []).join(', ');
+    document.getElementById('rangering-unit').value = r.unit;
+    document.getElementById('rangering-disclaimer').textContent = RANGE_BUFFER_DISCLAIMER;
+    setTripPickerButtonDisplay('rangering-trip-btn', r.tripId);
+    document.getElementById('rangering-date').value = tsToDateInputValue(r.created);
+    selectedRangeRingStatus = r.status || 'escout';
+    renderStatusPicker('rangering-status-row', 'rangering-status-label', function(k){ selectedRangeRingStatus = k; }, selectedRangeRingStatus);
+    renderRangeRingTagChips(r.tags || []);
+    document.getElementById('rangering-meta-display').textContent = 'Center: ' + r.centerLat.toFixed(5) + ', ' + r.centerLng.toFixed(5);
+    document.getElementById('rangering-delete-btn').classList.remove('hidden');
+    expandDrawerForEdit('rangering');
+  }
+
+  function openRangeRingModalForNew(centerLL){
+    editingRangeRingId = null;
+    document.getElementById('rangering-modal-title').textContent = 'Range ring';
+    document.getElementById('rangering-name').value = defaultRangeRingName(Date.now());
+    document.getElementById('rangering-notes').value = '';
+    document.getElementById('rangering-radii').value = '';
+    document.getElementById('rangering-unit').value = 'ft';
+    document.getElementById('rangering-disclaimer').textContent = RANGE_BUFFER_DISCLAIMER;
+    setTripPickerButtonDisplay('rangering-trip-btn', state.settings.activeTripId);
+    document.getElementById('rangering-date').value = tsToDateInputValue(Date.now());
+    selectedRangeRingStatus = 'escout';
+    renderStatusPicker('rangering-status-row', 'rangering-status-label', function(k){ selectedRangeRingStatus = k; }, selectedRangeRingStatus);
+    renderRangeRingTagChips([]);
+    var modal = document.getElementById('rangering-modal');
+    modal.dataset.centerLat = centerLL.lat;
+    modal.dataset.centerLng = centerLL.lng;
+    document.getElementById('rangering-meta-display').textContent = 'Center: ' + centerLL.lat.toFixed(5) + ', ' + centerLL.lng.toFixed(5);
+    document.getElementById('rangering-delete-btn').classList.add('hidden');
+    document.getElementById('rangering-modal').classList.remove('hidden');
+    // No auto-focus on purpose — see openPinModal's comment for why.
+  }
+
+  function saveRangeRingFromModal(){
+    var name = document.getElementById('rangering-name').value.trim() || defaultRangeRingName(Date.now());
+    var notes = document.getElementById('rangering-notes').value.trim();
+    var tripId = document.getElementById('rangering-trip-btn').dataset.tripId || null;
+    var unit = document.getElementById('rangering-unit').value === 'mi' ? 'mi' : 'ft';
+    var radii = parseRangeRingRadii(document.getElementById('rangering-radii').value);
+    if (!radii.length){ showToast('Enter at least one radius'); return; }
+    var dateVal = dateInputValueToTs(document.getElementById('rangering-date').value);
+    var modal = document.getElementById('rangering-modal');
+    var tags = [];
+    document.querySelectorAll('#rangering-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+    if (!tags.length) tags = ['uncategorized'];
+
+    if (editingRangeRingId){
+      var r = state.rangeRings.find(function(x){ return x.id === editingRangeRingId; });
+      if (r){
+        r.name = name; r.notes = notes; r.tripId = tripId; r.status = selectedRangeRingStatus; r.tags = tags;
+        r.radii = radii; r.unit = unit;
+        r.updatedAt = Date.now();
+        if (dateVal) r.created = dateVal;
+        try { refreshRangeRingMap(r); } catch(e){ console.error('[FieldMap] refreshRangeRingMap failed:', e); }
+      }
+    } else {
+      var newR = {
+        id: uid(), name: name,
+        centerLat: +modal.dataset.centerLat, centerLng: +modal.dataset.centerLng,
+        radii: radii, unit: unit,
+        status: selectedRangeRingStatus, tags: tags, notes: notes, tripId: tripId,
+        created: dateVal || Date.now(), updatedAt: Date.now()
+      };
+      state.rangeRings.push(newR);
+      try { addRangeRingToMap(newR); } catch(e){ console.error('[FieldMap] addRangeRingToMap failed:', e); }
+    }
+    closeRangeRingModal();
+    renderPinList();
+    scheduleSave();
+    showToast(editingRangeRingId ? 'Range ring updated' : 'Range ring saved');
+  }
+
+  function deleteRangeRingById(id){
+    state.rangeRings = state.rangeRings.filter(function(r){ return r.id !== id; });
+    recordTombstone(id);
+    removeRangeRingFromMap(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Range ring deleted');
+  }
+
+  function closeRangeRingModal(){
+    document.getElementById('rangering-modal').classList.add('hidden');
+    collapseDrawerFromEdit('rangering');
+    editingRangeRingId = null;
+  }
+
+  // Single-tap center selection (+Add sheet entry point) — reuses the exact same
+  // deactivateAllTools/closeAllPanels/crosshair-cursor pattern as setBearingMode, just with
+  // one tap instead of two.
+  function setRangeRingMode(on){
+    rangeRingMode = on;
+    if (!on){
+      document.getElementById('rangering-bar').classList.add('hidden');
+      document.getElementById('rangering-bar').style.display = '';
+      document.getElementById('map').style.cursor = '';
+    } else {
+      deactivateAllTools('rangering');
+      closeAllPanels();
+      document.getElementById('rangering-bar').classList.remove('hidden');
+      document.getElementById('rangering-bar').style.display = 'flex';
+      document.getElementById('rangering-bar-text').textContent = 'Tap center point';
+      document.getElementById('map').style.cursor = 'crosshair';
+    }
+  }
+
+  function handleRangeRingMapTap(latlng){
+    setRangeRingMode(false);
+    openRangeRingModalForNew(latlng);
+  }
+
+  // ---------- Buffers ----------
+  // A persistent, toggleable object type — a buffered/offset polygon (rounded joins + rounded
+  // end caps) around a drawn open line. Creation reuses Draw Route's own drawMode/drawPoints/
+  // handleDrawClick machinery directly (see drawTargetType's own comment near its
+  // declaration) rather than a parallel implementation. Deliberate improvement over CalTopo,
+  // which prompts for width once at creation and never shows it again — Buffer's width is
+  // always visible in its info panel, both immediately after creation and on reopening later.
+  function bufferWidthMiles(value, unit){
+    return unit === 'mi' ? value : value / 5280;
+  }
+  function formatBufferWidth(value, unit){
+    return value.toLocaleString() + ' ' + (unit === 'mi' ? 'mi' : 'ft');
+  }
+  function defaultBufferName(ts){
+    return 'Buffer · ' + new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  }
+
+  function bufferPopupHtml(b){
+    var catLabel = b.tags && b.tags[0] && b.tags[0] !== 'uncategorized' ? tagById(b.tags[0]).label : '';
+    var notes = b.notes ? '<div class="pin-popup-notes">' + escapeHtml(b.notes) + '</div>' : '';
+    var widthText = formatBufferWidth(b.width, b.unit);
+    var meta = 'Width: ' + widthText;
+    if (catLabel) meta += ' · ' + catLabel;
+    if (tripDisplayName(b)) meta += ' · ' + escapeHtml(tripDisplayName(b));
+    var createdLabel = b.created ? '<div class="pin-popup-coords">' + formatCreatedDate(b.created) + '</div>' : '';
+    var startPt = b.points && b.points[0] ? b.points[0] : null;
+    var conditionsCard = startPt ? conditionsCardContainerHtml(startPt.lat, startPt.lng) : '';
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name-row">' +
+        '<div class="pin-popup-name">' + escapeHtml(b.name) + '</div>' +
+      '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(meta) + '</div>' +
+      notes +
+      createdLabel +
+      '<p class="hint" style="font-size:10px;line-height:1.4;margin:6px 0 0;">' + escapeHtml(RANGE_BUFFER_DISCLAIMER) + '</p>' +
+      '</div>' +
+      conditionsCard +
+      popupFooterHtml(
+        'FieldMap.directionsToBuffer(\'' + b.id + '\')',
+        'FieldMap.shareBuffer(\'' + b.id + '\')',
+        'FieldMap.editBuffer(\'' + b.id + '\')',
+        'overflow-buffer-' + b.id, null, null,
+        'FieldMap.deleteBuffer(\'' + b.id + '\')'
+      );
+  }
+
+  function openBufferPopupAt(b){
+    showViewDrawer('buffer', b.id, bufferPopupHtml(b));
+    openBufferPopup = {
+      remove: viewDrawerRemoveShim,
+      setHTML: function(html){ if (isViewDrawerShowing('buffer', b.id)) setViewDrawerContent(html); }
+    };
+    if (b.points && b.points[0]) fetchConditionsForDrawerItem('buffer', b.id, b.points[0].lat, b.points[0].lng);
+  }
+
+  var buffersRefreshTimer = null;
+  function addBufferToMap(b){ scheduleBuffersRefresh(); }
+  function removeBufferFromMap(id){ scheduleBuffersRefresh(); }
+  function refreshBufferMap(b){ scheduleBuffersRefresh(); }
+  function scheduleBuffersRefresh(){
+    clearTimeout(buffersRefreshTimer);
+    buffersRefreshTimer = setTimeout(updateBuffersSource, 60);
+  }
+
+  function updateBuffersSource(){
+    if (!map) return;
+    var src = map.getSource('buffers-source');
+    if (!src) return;
+    var visible = state.buffers.filter(mapItemVisible);
+    var features = [];
+    visible.forEach(function(b){
+      if (!b.points || b.points.length < 2) return;
+      var sc = STATUS_COLORS[b.status || 'escout'] || STATUS_COLORS.escout;
+      var ring = bufferPolygonCoords(b.points, bufferWidthMiles(b.width, b.unit));
+      if (!ring) return;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [ring] },
+        properties: { id: b.id, color: sc.bg }
+      });
+    });
+    src.setData({ type: 'FeatureCollection', features: features });
+  }
+
+  function renderBufferTagChips(activeTags){
+    categoryExpandedState['buffer-tags-row'] = false;
+    document.getElementById('buffer-tags-row').innerHTML = '';
+    renderCategoryChips('buffer-tags-row', activeTags || []);
+    renderQuickCategoryChips('buffer-quick-tags-row', 'buffer-tags-row');
+  }
+
+  function openBufferModal(b){
+    editingBufferId = b.id;
+    document.getElementById('buffer-modal-title').textContent = 'Edit buffer';
+    document.getElementById('buffer-name').value = b.name;
+    document.getElementById('buffer-notes').value = b.notes || '';
+    document.getElementById('buffer-width').value = b.width;
+    document.getElementById('buffer-unit').value = b.unit;
+    document.getElementById('buffer-disclaimer').textContent = RANGE_BUFFER_DISCLAIMER;
+    setTripPickerButtonDisplay('buffer-trip-btn', b.tripId);
+    document.getElementById('buffer-date').value = tsToDateInputValue(b.created);
+    selectedBufferStatus = b.status || 'escout';
+    renderStatusPicker('buffer-status-row', 'buffer-status-label', function(k){ selectedBufferStatus = k; }, selectedBufferStatus);
+    renderBufferTagChips(b.tags || []);
+    document.getElementById('buffer-meta-display').textContent = (b.points || []).length + ' points';
+    document.getElementById('buffer-delete-btn').classList.remove('hidden');
+    expandDrawerForEdit('buffer');
+  }
+
+  function openBufferModalForNew(points){
+    editingBufferId = null;
+    document.getElementById('buffer-modal-title').textContent = 'Buffer';
+    document.getElementById('buffer-name').value = defaultBufferName(Date.now());
+    document.getElementById('buffer-notes').value = '';
+    document.getElementById('buffer-width').value = '';
+    document.getElementById('buffer-unit').value = 'ft';
+    document.getElementById('buffer-disclaimer').textContent = RANGE_BUFFER_DISCLAIMER;
+    setTripPickerButtonDisplay('buffer-trip-btn', state.settings.activeTripId);
+    document.getElementById('buffer-date').value = tsToDateInputValue(Date.now());
+    selectedBufferStatus = 'escout';
+    renderStatusPicker('buffer-status-row', 'buffer-status-label', function(k){ selectedBufferStatus = k; }, selectedBufferStatus);
+    renderBufferTagChips([]);
+    pendingBufferPoints = points;
+    document.getElementById('buffer-meta-display').textContent = points.length + ' points';
+    document.getElementById('buffer-delete-btn').classList.add('hidden');
+    document.getElementById('buffer-modal').classList.remove('hidden');
+    // No auto-focus on purpose — see openPinModal's comment for why.
+  }
+
+  function saveBufferFromModal(){
+    var name = document.getElementById('buffer-name').value.trim() || defaultBufferName(Date.now());
+    var notes = document.getElementById('buffer-notes').value.trim();
+    var tripId = document.getElementById('buffer-trip-btn').dataset.tripId || null;
+    var unit = document.getElementById('buffer-unit').value === 'mi' ? 'mi' : 'ft';
+    var width = parseFloat(document.getElementById('buffer-width').value);
+    if (!width || width <= 0){ showToast('Enter a width first'); return; }
+    var dateVal = dateInputValueToTs(document.getElementById('buffer-date').value);
+    var tags = [];
+    document.querySelectorAll('#buffer-tags-row .chip.active').forEach(function(c){ tags.push(c.dataset.tagId); });
+    if (!tags.length) tags = ['uncategorized'];
+
+    if (editingBufferId){
+      var b = state.buffers.find(function(x){ return x.id === editingBufferId; });
+      if (b){
+        b.name = name; b.notes = notes; b.tripId = tripId; b.status = selectedBufferStatus; b.tags = tags;
+        b.width = width; b.unit = unit;
+        b.updatedAt = Date.now();
+        if (dateVal) b.created = dateVal;
+        try { refreshBufferMap(b); } catch(e){ console.error('[FieldMap] refreshBufferMap failed:', e); }
+      }
+    } else {
+      var newB = {
+        id: uid(), name: name,
+        points: pendingBufferPoints || [],
+        width: width, unit: unit,
+        status: selectedBufferStatus, tags: tags, notes: notes, tripId: tripId,
+        created: dateVal || Date.now(), updatedAt: Date.now()
+      };
+      state.buffers.push(newB);
+      try { addBufferToMap(newB); } catch(e){ console.error('[FieldMap] addBufferToMap failed:', e); }
+      pendingBufferPoints = null;
+    }
+    closeBufferModal();
+    renderPinList();
+    scheduleSave();
+    showToast(editingBufferId ? 'Buffer updated' : 'Buffer saved');
+  }
+
+  function deleteBufferById(id){
+    state.buffers = state.buffers.filter(function(b){ return b.id !== id; });
+    recordTombstone(id);
+    removeBufferFromMap(id);
+    renderPinList();
+    scheduleSave();
+    showToast('Buffer deleted');
+  }
+
+  function closeBufferModal(){
+    document.getElementById('buffer-modal').classList.add('hidden');
+    collapseDrawerFromEdit('buffer');
+    editingBufferId = null;
+  }
+
   // ---------- Mark My Location ----------
   function markMyLocation(){
     var sheet = document.getElementById('add-sheet');
@@ -10390,7 +11233,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // glyph's own stroke color instead of a background fill for these 3 types.
     var mark = document.createElement('div');
     var scItem = STATUS_COLORS[d.status || 'escout'] || STATUS_COLORS.escout;
-    if (it.type === 'track' || it.type === 'polygon' || it.type === 'bearing'){
+    if (it.type === 'track' || it.type === 'polygon' || it.type === 'bearing' || it.type === 'rangering' || it.type === 'buffer'){
       mark.style.cssText = 'width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
       mark.innerHTML = renderTypeGlyph(it.type, 20, scItem.bg);
     } else {
@@ -10404,14 +11247,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     textWrap.className = 'pin-row-text';
     var nameDiv = document.createElement('div'); nameDiv.className = 'pin-row-name'; nameDiv.textContent = d.name;
     var metaDiv = document.createElement('div'); metaDiv.className = 'pin-row-meta';
+    // bearing/rangering/buffer all use the same "typeLabel + type-specific detail + own tag"
+    // shape (their tag isn't merged into the plain tagLabelsFor() list the way pin/track/area
+    // use, since they only ever carry one tag) — bearing established this pattern, rangering/
+    // buffer just add their own detail clause alongside it.
+    var noTagListTypes = (it.type === 'bearing' || it.type === 'rangering' || it.type === 'buffer');
     var distLabel = it.type === 'track' ? ' · ' + formatDist(d.distMiles !== undefined ? d.distMiles : trackDistanceMiles(d.points)) : '';
     var areaLabel = it.type === 'polygon' && d.points && d.points.length >= 3 ? ' · ' + polygonAreaDisplay(d.points) : '';
-    var typeLabel = it.type === 'polygon' ? 'Area' : (it.type === 'bearing' ? 'Bearing' : '');
+    var typeLabel = it.type === 'polygon' ? 'Area' : (it.type === 'bearing' ? 'Bearing' : (it.type === 'rangering' ? 'Range ring' : (it.type === 'buffer' ? 'Buffer' : '')));
     var bearingMeta = it.type === 'bearing' ? ' · ' + bearingCardinalLabel(d.bearingDeg) + ' ' + Math.round(d.bearingDeg) + '° · ' + d.distMiles.toFixed(2) + ' mi' : '';
-    var bearingTag = it.type === 'bearing' ? (d.tags && d.tags[0] && d.tags[0] !== 'uncategorized' ? ' · ' + tagById(d.tags[0]).label : '') : '';
-    var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : (it.type === 'bearing' ? '' : tagLabelsFor(d));
-    metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + (it.type === 'bearing' ? bearingTag : areaLabel) : '') +
-      (it.type !== 'bearing' ? (pinTag ? (typeLabel ? ' · ' + pinTag : pinTag) : '') : '') +
+    var rangeRingMeta = it.type === 'rangering' ? ' · ' + (d.radii || []).map(function(v){ return formatRangeRingUnit(v, d.unit); }).join(', ') : '';
+    var bufferMeta = it.type === 'buffer' ? ' · ' + formatBufferWidth(d.width, d.unit) : '';
+    var ownTag = noTagListTypes ? (d.tags && d.tags[0] && d.tags[0] !== 'uncategorized' ? ' · ' + tagById(d.tags[0]).label : '') : '';
+    var pinTag = it.type === 'pin' ? tagById((d.tags && d.tags[0]) || 'uncategorized').label : (noTagListTypes ? '' : tagLabelsFor(d));
+    metaDiv.textContent = (typeLabel ? typeLabel + bearingMeta + rangeRingMeta + bufferMeta + (noTagListTypes ? ownTag : areaLabel) : '') +
+      (!noTagListTypes ? (pinTag ? (typeLabel ? ' · ' + pinTag : pinTag) : '') : '') +
       distLabel + (d.state ? ' · ' + d.state : '') + (tripDisplayName(d) ? ' · ' + tripDisplayName(d) : '');
     textWrap.appendChild(nameDiv); textWrap.appendChild(metaDiv);
     row.appendChild(textWrap);
@@ -10479,6 +11329,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var midLng = (d.originLng + d.targetLng) / 2;
           openBearingPopupAt(d, { lat: midLat, lng: midLng });
         }, 350);
+      } else if (it.type === 'rangering'){
+        var maxRadiusMiles = (d.radii || []).reduce(function(mx, v){ return Math.max(mx, rangeRingRadiusMiles(v, d.unit)); }, 0);
+        var rRing = circlePolygonCoords(d.centerLat, d.centerLng, maxRadiusMiles || 0.05);
+        var rBounds = rRing.reduce(function(b, c){
+          return [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[0]), Math.max(b[3], c[1])];
+        }, [Infinity, Infinity, -Infinity, -Infinity]);
+        map.fitBounds([[rBounds[0], rBounds[1]], [rBounds[2], rBounds[3]]], { padding: 60 });
+        setTimeout(function(){ openRangeRingPopupAt(d); }, 350);
+      } else if (it.type === 'buffer'){
+        if (d.points && d.points.length){
+          var ufBounds = d.points.reduce(function(b, p){
+            return [Math.min(b[0], p.lng), Math.min(b[1], p.lat), Math.max(b[2], p.lng), Math.max(b[3], p.lat)];
+          }, [Infinity, Infinity, -Infinity, -Infinity]);
+          map.fitBounds([[ufBounds[0], ufBounds[1]], [ufBounds[2], ufBounds[3]]], { padding: 60 });
+        }
+        setTimeout(function(){ openBufferPopupAt(d); }, 350);
       }
     });
     return row;
@@ -10558,7 +11424,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var trackItems = state.tracks.map(function(t){ return {type:'track', data:t}; });
     var polyItems = (state.polygons||[]).map(function(p){ return {type:'polygon', data:p}; });
     var bearingItems = (state.bearings||[]).map(function(b){ return {type:'bearing', data:b}; });
-    var all = pinItems.concat(trackItems).concat(polyItems).concat(bearingItems).filter(function(it){ return itemVisible(it.data, query); });
+    var rangeRingItems = (state.rangeRings||[]).map(function(r){ return {type:'rangering', data:r}; });
+    var bufferItems = (state.buffers||[]).map(function(b){ return {type:'buffer', data:b}; });
+    var all = pinItems.concat(trackItems).concat(polyItems).concat(bearingItems).concat(rangeRingItems).concat(bufferItems).filter(function(it){ return itemVisible(it.data, query); });
 
     // Show/hide the group visibility bar
     var visBar = document.getElementById('group-vis-bar');
@@ -10603,7 +11471,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    var totalCount = state.pins.length + state.tracks.length + (state.polygons||[]).length + (state.bearings||[]).length;
+    var totalCount = state.pins.length + state.tracks.length + (state.polygons||[]).length + (state.bearings||[]).length + (state.rangeRings||[]).length + (state.buffers||[]).length;
     document.getElementById('pin-count').textContent = totalCount + ' item' + (totalCount===1?'':'s') +
       (all.length !== totalCount ? ' · ' + all.length + ' shown' : '');
   }
@@ -13461,6 +14329,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       tracks: state.tracks,
       polygons: state.polygons || [],
       bearings: state.bearings || [],
+      rangeRings: state.rangeRings || [],
+      buffers: state.buffers || [],
       tags: state.tags,
       trips: state.trips || [],
       tombstones: state.tombstones,
@@ -13473,6 +14343,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tracks = merged.tracks || [];
     state.polygons = merged.polygons || [];
     state.bearings = merged.bearings || [];
+    state.rangeRings = merged.rangeRings || [];
+    state.buffers = merged.buffers || [];
     state.tags = merged.tags && merged.tags.length ? merged.tags : SEED_TAGS.slice();
     state.trips = merged.trips || [];
     state.tombstones = merged.tombstones || {};
@@ -13483,6 +14355,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tracks.forEach(migrateRepeatStatus);
     state.polygons.forEach(migrateRepeatStatus);
     state.bearings.forEach(migrateRepeatStatus);
+    state.rangeRings.forEach(migrateRepeatStatus);
+    state.buffers.forEach(migrateRepeatStatus);
     // Same reasoning: a merge can bring in .trip-only data from a stale device that hasn't
     // updated past this migration yet — re-run it here too, not just on cold load. (persist()
     // happens unconditionally a few lines below regardless of whether this changed anything.)
@@ -13494,10 +14368,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.pins.forEach(addMarkerForPin);
     state.tracks.forEach(addTrackToMap);
     state.polygons.forEach(addPolygonToMap);
-    // addBearingToMap() just triggers a debounced source refresh and can't throw —
-    // kept defensive anyway, consistent with the other save flows.
+    // addBearingToMap()/addRangeRingToMap()/addBufferToMap() just trigger a debounced source
+    // refresh and can't throw — kept defensive anyway, consistent with the other save flows.
     (state.bearings||[]).forEach(function(b){
       try { addBearingToMap(b); } catch(e){ console.error('[FieldMap] addBearingToMap failed:', e); }
+    });
+    (state.rangeRings||[]).forEach(function(r){
+      try { addRangeRingToMap(r); } catch(e){ console.error('[FieldMap] addRangeRingToMap failed:', e); }
+    });
+    (state.buffers||[]).forEach(function(b){
+      try { addBufferToMap(b); } catch(e){ console.error('[FieldMap] addBufferToMap failed:', e); }
     });
     refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
     renderDateChips(); renderPinList(); refreshAllVisibility();
@@ -13572,6 +14452,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.tracks = [];
     state.polygons = [];
     state.bearings = [];
+    state.rangeRings = [];
+    state.buffers = [];
     state.tags = SEED_TAGS.slice();
     state.trips = [];
     state.tombstones = {};
@@ -13580,6 +14462,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateTracksSource();
     updatePolygonsSource();
     updateBearingsSource();
+    updateRangeRingsSource();
+    updateBuffersSource();
     refreshStateChips(); renderTagChips(); renderTripChips(); refreshTripSuggestions();
     renderDateChips(); renderPinList(); refreshAllVisibility();
     persist();
@@ -13664,6 +14548,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.lastLocalEditAt === undefined) state.lastLocalEditAt = 0;
             if (!state.polygons) state.polygons = [];
             if (!state.bearings) state.bearings = [];
+            if (!state.rangeRings) state.rangeRings = [];
+            if (!state.buffers) state.buffers = [];
             if (!state.trips) state.trips = [];
             if (!state.settings.units) state.settings.units = { distance: 'imperial', elevation: 'imperial' };
             if (!state.settings.defaultBaseLayer) state.settings.defaultBaseLayer = 'topo';
@@ -13727,6 +14613,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             state.tracks.forEach(function(t){ if (migrateRepeatStatus(t)) repeatMigrated = true; });
             state.polygons.forEach(function(p){ if (migrateRepeatStatus(p)) repeatMigrated = true; });
             state.bearings.forEach(function(b){ if (migrateRepeatStatus(b)) repeatMigrated = true; });
+            state.rangeRings.forEach(function(r){ if (migrateRepeatStatus(r)) repeatMigrated = true; });
+            state.buffers.forEach(function(b){ if (migrateRepeatStatus(b)) repeatMigrated = true; });
             // Trip string -> Trip entity migration (Stage 1 of the Active Trip project — see
             // CLAUDE.md). Idempotent: safe to re-run every load, only touches items still
             // missing .tripId, never creates duplicate Trip entities for a string already
@@ -14512,6 +15400,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('add-sheet').classList.add('hidden');
       setBearingMode(true);
     });
+    document.getElementById('sheet-add-rangering-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      setRangeRingMode(true);
+    });
+    document.getElementById('sheet-draw-buffer-btn').addEventListener('click', function(){
+      document.getElementById('add-sheet').classList.add('hidden');
+      drawTargetType = 'buffer';
+      setDrawMode(true);
+      showToast('Click to add points along the buffer line · Right-click or tap point to delete', 5000);
+    });
+
+    // Range Ring bar cancel + edit modal
+    document.getElementById('rangering-bar-cancel').addEventListener('click', function(){
+      setRangeRingMode(false);
+    });
+    document.getElementById('rangering-save-btn').addEventListener('click', saveRangeRingFromModal);
+    document.getElementById('rangering-cancel-btn').addEventListener('click', closeRangeRingModal);
+    document.getElementById('rangering-save-btn-top').addEventListener('click', saveRangeRingFromModal);
+    document.getElementById('rangering-cancel-btn-top').addEventListener('click', closeRangeRingModal);
+    document.getElementById('rangering-name').addEventListener('focus', function(){
+      if (!editingRangeRingId) this.select();
+    });
+    document.getElementById('rangering-delete-btn').addEventListener('click', function(){
+      if (!editingRangeRingId) return;
+      if (!confirm('Delete this range ring?')) return;
+      deleteRangeRingById(editingRangeRingId);
+      closeRangeRingModal();
+    });
+
+    // Buffer edit modal
+    document.getElementById('buffer-save-btn').addEventListener('click', saveBufferFromModal);
+    document.getElementById('buffer-cancel-btn').addEventListener('click', closeBufferModal);
+    document.getElementById('buffer-save-btn-top').addEventListener('click', saveBufferFromModal);
+    document.getElementById('buffer-cancel-btn-top').addEventListener('click', closeBufferModal);
+    document.getElementById('buffer-name').addEventListener('focus', function(){
+      if (!editingBufferId) this.select();
+    });
+    document.getElementById('buffer-delete-btn').addEventListener('click', function(){
+      if (!editingBufferId) return;
+      if (!confirm('Delete this buffer?')) return;
+      deleteBufferById(editingBufferId);
+      closeBufferModal();
+    });
 
     // Polygon bar
     document.getElementById('polygon-undo-btn').addEventListener('click', undoPolygonPoint);
@@ -14816,8 +15747,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       e.stopPropagation();
       if (drawPoints.length < 2) return;
       var pts = (snappedPoints || drawPoints).slice();
+      var target = drawTargetType;
       setDrawMode(false);
-      openTrackModalForNew(pts);
+      drawTargetType = 'track';
+      if (target === 'buffer') openBufferModalForNew(pts);
+      else openTrackModalForNew(pts);
     });
     document.getElementById('draw-snap-btn').addEventListener('click', function(e){
       e.stopPropagation();
@@ -14826,6 +15760,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('draw-cancel-btn').addEventListener('click', function(e){
       e.stopPropagation();
       setDrawMode(false);
+      drawTargetType = 'track';
     });
     document.addEventListener('click', function(e){
       var searchBar = document.getElementById('map-search-bar');
@@ -15234,6 +16169,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       tracks: mergeArray(local.tracks, cloud.tracks),
       polygons: mergeArray(local.polygons || [], cloud.polygons || []),
       bearings: mergeArray(local.bearings || [], cloud.bearings || []),
+      rangeRings: mergeArray(local.rangeRings || [], cloud.rangeRings || []),
+      buffers: mergeArray(local.buffers || [], cloud.buffers || []),
       tags: mergeArray(local.tags, cloud.tags),
       trips: mergeArray(local.trips || [], cloud.trips || []),
       tombstones: tombstones,
