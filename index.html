@@ -259,7 +259,7 @@
   .modal-section-label{font-size:12px;color:var(--text-muted);margin-bottom:6px;}
   .modal label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:14px;}
   .modal label span{display:block;margin-bottom:5px;}
-  .modal input[type=text], .modal select, .modal textarea{
+  .modal input[type=text], .modal input[type=number], .modal select, .modal textarea{
     width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:9px 10px;border-radius:8px;font-size:14px;font-family:var(--font-sans);
   }
@@ -1226,8 +1226,19 @@
      committed by the modal's own Save, exactly like every other field). See openTripPickerForDevice/
      openTripPickerForForm. A plain .floating-panel (not #view-drawer) specifically so it can open
      from INSIDE an already-expanded edit form without colliding with drawerExpandedType's
-     one-edit-at-a-time invariant (see the Session 17 showViewDrawer fix). -->
-<div id="trip-picker-panel" class="floating-panel hidden" style="max-height:70vh;overflow-y:auto;width:300px;">
+     one-edit-at-a-time invariant (see the Session 17 showViewDrawer fix).
+     z-index:2100 override (plain .floating-panel is 1500): 'form' mode can be opened from a
+     trip-picker-btn that lives inside a brand-new-item .modal-overlay (z-index 2000) — Range
+     Ring/Buffer creation, and Compass's "Save bearing" (openBearingModalForNew doesn't close the
+     Compass panel it was launched from, but that's unrelated to this — the modal itself sits at
+     2000 regardless of entry point). An expand-in-place EDIT of an existing item re-parents its
+     modal into #view-drawer (z-index 1300), which the picker's original 1500 already cleared, so
+     this bug was invisible there — only a *new*-item modal's raw 2000 ever exposed it. Without
+     this override the picker still opened (classList-wise) but rendered entirely underneath the
+     still-open modal, receiving zero pointer events — every click/keystroke silently landed on
+     the modal instead, which is what actually broke the Compass bearing-save trip picker. -->
+
+<div id="trip-picker-panel" class="floating-panel hidden" style="max-height:70vh;overflow-y:auto;width:300px;z-index:2100;">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
     <h2 id="trip-picker-title" style="margin:0;">Switch trip</h2>
     <button class="layer-hint-btn" id="trip-picker-close-btn" aria-label="Close" style="width:20px;height:20px;font-size:13px;">×</button>
@@ -2568,7 +2579,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.27.0';
+  var APP_VERSION = '2.27.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -4910,6 +4921,62 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
       map.on('mouseenter', 'bearing-target-arrow', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'bearing-target-arrow', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Range ring click — mode-aware pass-through, otherwise show that range ring's popup.
+      // Registered on rangerings-line-touch (the wide invisible hit-target layer), same
+      // pattern as tracks-line-touch/bearings-line-touch — the thin visible ring itself is too
+      // narrow a click target on its own.
+      map.on('click', 'rangerings-line-touch', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var rrFeature = e.features && e.features[0];
+        if (!rrFeature) return;
+        var rangeRing = state.rangeRings.find(function(r){ return r.id === rrFeature.properties.id; });
+        if (!rangeRing) return;
+        openRangeRingPopupAt(rangeRing);
+      });
+      map.on('mouseenter', 'rangerings-line-touch', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'rangerings-line-touch', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Buffer click — mode-aware pass-through, otherwise show that buffer's popup. Registered
+      // on buffers-fill (the filled polygon body), same pattern as polygons-fill.
+      map.on('click', 'buffers-fill', function(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var bufFeature = e.features && e.features[0];
+        if (!bufFeature) return;
+        var buffer = state.buffers.find(function(b){ return b.id === bufFeature.properties.id; });
+        if (!buffer) return;
+        openBufferPopupAt(buffer);
+      });
+      map.on('mouseenter', 'buffers-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'buffers-fill', function(){ map.getCanvas().style.cursor = ''; });
 
       // Wildlife range click — mode-aware pass-through, otherwise show that species' popup.
       // Read-only reference data (not part of state.*), so the feature's own properties
@@ -11107,7 +11174,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function computeTripsPresent(){
     var activity = {}; // tripId -> most recent referencing item's timestamp
     var hasNoTrip = false;
-    state.pins.concat(state.tracks, state.polygons || [], state.bearings || []).forEach(function(it){
+    state.pins.concat(state.tracks, state.polygons || [], state.bearings || [], state.rangeRings || [], state.buffers || []).forEach(function(it){
       if (it.tripId){
         var ts = it.updatedAt || it.created || 0;
         if (!(it.tripId in activity) || ts > activity[it.tripId]) activity[it.tripId] = ts;
@@ -15559,11 +15626,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('trip-picker-new-create-btn').addEventListener('click', createTripFromPicker);
 
-    // Each of the 4 item modals' trip field is now a picker button (Stage 2) — tapping it
-    // opens the same trip-picker-panel in 'form' mode, staging the pick on the button itself
-    // (dataset.tripId); the actual commit happens in that modal's own save*FromModal, exactly
-    // like every other field. Same shared handler shape for all four.
-    ['pin-trip-btn', 'track-trip-btn', 'polygon-trip-btn', 'bearing-trip-btn'].forEach(function(btnId){
+    // Each item modal's trip field is a picker button (Stage 2) — tapping it opens the same
+    // trip-picker-panel in 'form' mode, staging the pick on the button itself (dataset.tripId);
+    // the actual commit happens in that modal's own save*FromModal, exactly like every other
+    // field. Same shared handler shape for all six types. (rangering-trip-btn/buffer-trip-btn
+    // were missing from this list when Range Ring/Buffer first shipped — their button existed
+    // and displayed correctly, but nothing ever opened the picker on click, since this array is
+    // the only place any of these six buttons gets wired up.)
+    ['pin-trip-btn', 'track-trip-btn', 'polygon-trip-btn', 'bearing-trip-btn', 'rangering-trip-btn', 'buffer-trip-btn'].forEach(function(btnId){
       document.getElementById(btnId).addEventListener('click', function(e){
         e.stopPropagation();
         var btn = this;

@@ -41,6 +41,16 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
 - Comma (thousands-separator) formatting audited across all large numeric displays, not just area (Session
   21) — the scale bar's rounded feet/miles labels were the one remaining gap found; area/elevation/distance
   were already correct everywhere they're displayed.
+- Range Ring and Buffer are now fully wired into the shared trip-picker, map-click, and computeTripsPresent
+  systems (Session 22) — three bugs fixed post-Session-21: their Trip field had no click listener at all
+  (missing from the 4-item wiring array, now 6), neither type responded to a direct map tap (not registered
+  in the shared layer-click-dispatcher system pins/tracks/areas/bearings all use), and Buffer's Width field
+  didn't match Range Ring's Radii field styling (a `.modal input[type=text]` CSS rule that never covered
+  `type=number`). A separate, more subtle bug was also fixed: the trip picker rendered but was completely
+  unclickable whenever opened from inside a brand-new-item `.modal-overlay` (Compass's "Save bearing" being
+  the one actually reported, but this affected any new-item creation modal, not just bearings) — a z-index
+  stacking gap, not a wiring gap; see Architecture notes' "Range Ring/Buffer wiring gaps" entry for the full
+  mechanism and why it looked like "one shared root cause" but was actually two.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -522,6 +532,73 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   pin popup) were already correct. The one real gap found: updateScaleBar()'s rounded feet/miles labels
   (chosenFeet/chosenMiles, e.g. "5000 ft" at higher zoom levels) had no `.toLocaleString()` — fixed by adding
   it to both branches.
+- Range Ring/Buffer wiring gaps (Session 22): three bugs reported right after Session 21 shipped Range Ring
+  and Buffer, all traced to incomplete wiring rather than broken logic in the features themselves.
+  1. Trip picker not opening for Range Ring/Buffer's Edit view, at all (no scrim, no reaction): the click
+     listener that opens the shared trip picker is attached via a single hardcoded array —
+     `['pin-trip-btn', 'track-trip-btn', 'polygon-trip-btn', 'bearing-trip-btn']` — that Session 21 never
+     added `rangering-trip-btn`/`buffer-trip-btn` to when building the two new modals. The button rendered
+     and displayed correctly (setTripPickerButtonDisplay was called correctly from both openXModal functions)
+     but had zero click behavior. Fixed by adding both ids to the array (now 6 entries, one shared handler
+     shape for all).
+  2. Trip picker rendering but completely unclickable specifically from Compass's "Save bearing" flow — a
+     DIFFERENT root cause from #1, confirmed via `document.elementFromPoint()` at the search box's own
+     coordinates: it resolved to `#bearing-modal`, not the picker, proving the picker was receiving zero
+     pointer events despite `classList` showing it as open. Root cause: `.modal-overlay` is z-index 2000,
+     `.floating-panel` (trip-picker-panel's own class) is 1500 — a brand-new-item modal (Range Ring/Buffer/
+     Pin/Track/Area/Bearing creation, always a raw `.modal-overlay`) sits ABOVE the picker, silently eating
+     every click meant for it. This is why "Range Ring edit"/"Buffer edit" (root cause #1, both go through
+     expandDrawerForEdit → re-parented into #view-drawer at z-index 1300, comfortably BELOW the picker's 1500)
+     read as a different bug from "Compass's save-bearing flow" (root cause #2, a raw NEW-item modal at 2000,
+     ABOVE the picker) even though both were reported together as "likely one shared root cause" — they
+     were actually two, and only coincidentally looked similar (both show the picker's scrim/backdrop with no
+     usable content). Confirmed via direct testing that this z-index bug is not Compass-specific at all — the
+     ordinary +Add-sheet "Add bearing" flow (and by extension a brand-new Pin/Track/Area/Range-Ring/Buffer
+     with a trip assigned at creation time) hits the identical failure, since all of them show the same raw
+     `.modal-overlay`. Fixed with a single `z-index:2100` inline override on `#trip-picker-panel` (higher than
+     any modal-overlay, still above every other `.floating-panel`) rather than three separate patches for each
+     reported symptom — the picker is now always on top regardless of which kind of modal it was opened from.
+     `#panel-scrim` was deliberately left at its original z-index (1050): the still-open creation modal
+     already provides its own backdrop darkening in this nested case, and no other `PANEL_SCRIM_IDS` panel can
+     ever coexist with an open `.modal-overlay` in practice (the modal's own higher z-index blocks the clicks
+     that would be needed to open one), so raising the scrim's z-index too would have risked nothing while
+     fixing nothing further.
+  3. Neither Range Ring nor Buffer responded to a direct map tap (sidebar was the only way in) — unlike pins/
+     tracks/areas/bearings, which are each registered in the shared `map.on('click', layerId, ...)` dispatcher
+     system (checked-before-generic-catch-all via `e.preventDefault()`). Session 21 built the GeoJSON source/
+     layer pair (`rangerings-line-touch`, `buffers-fill`) but never added the matching click/hover handlers.
+     Fixed by adding two new handler blocks (mirroring tracks-line-touch/polygons-fill's exact pattern,
+     mode-aware pass-through included) registered on `rangerings-line-touch` and `buffers-fill`.
+  Also fixed in the same pass, found via testing #1/#2 rather than in the original report: Buffer's Width
+  field (`<input type="number">`) didn't match Range Ring's Radii field (`<input type="text">`) styling — the
+  shared `.modal input[type=text], .modal select, .modal textarea` CSS rule never covered `type=number`
+  (confirmed via grep that `buffer-width` is the only `type=number` input anywhere in the app), so it fell
+  back to browser-default light styling. Fixed by adding `input[type=number]` to that selector.
+  Also fixed, found only by testing the "assign a trip successfully" verification step with an EXISTING trip
+  rather than always creating a new one: `computeTripsPresent()` — which drives the trip picker's list, trip
+  filter chips, and sidebar "group by trip" view — only ever scanned
+  `state.pins/tracks/polygons/bearings`, never `state.rangeRings/buffers`, so a trip assigned only to a Range
+  Ring or Buffer was invisible everywhere else in the app (including in the OTHER new type's own trip picker).
+  Fixed by adding both arrays to the same `.concat()` call. `deleteTripById` was checked and does NOT need the
+  same fix — it never clears `.tripId` off any item of any type (pin/track/polygon/bearing included), relying
+  entirely on `tripDisplayName()`'s existing null-safe fallback for a dangling reference, so this is pre-
+  existing, consistent behavior, not a new gap introduced by the new types.
+  Verified end-to-end live in Chrome (this sandbox still has no local Playwright install): trip assignment
+  confirmed working from Range Ring edit, Buffer edit, and Compass's Save-bearing flow (all three, including
+  creating a brand-new trip via "+ New trip" AND re-selecting that same existing trip from a different item's
+  picker afterward); direct map-tap confirmed opening the drawer for both an existing Range Ring and an
+  existing Buffer with no sidebar detour; Buffer's Width field confirmed visually matching Radii's dark
+  styling; Pin's trip assignment (both a brand-new pin via +Add, and Edit data on an existing pin) confirmed
+  unaffected by any of the above changes — the existing-item edit path was never broken to begin with, only
+  new-item creation modals and Range Ring/Buffer specifically. One real testing gotcha hit along the way: the
+  service worker's cache-first SHELL_CACHE strategy served a stale pre-fix copy of index.html on an early
+  reload (the SHELL_CACHE version bump for this session's work had already been made, then one more source fix
+  — computeTripsPresent — landed afterward without a second bump), making the fix look like it hadn't worked;
+  resolved by unregistering the service worker and clearing Cache Storage directly for testing, not by editing
+  the app itself, since a real end user would simply get the already-bumped SHELL_CACHE on their next visit
+  regardless of exactly which edit happened before or after the bump within the same release. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION
+  bumped 2.27.0 → 2.27.1, SHELL_CACHE bumped v131 → v132.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -918,3 +995,29 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   object types from map, localStorage, and writes tombstones for each (checked directly, since Session 8 once
   had a real bug here for bearings); no console errors observed. `node --check` confirmed clean syntax on all
   4 extracted inline `<script>` blocks. APP_VERSION bumped 2.26.2 → 2.27.0, SHELL_CACHE bumped v130 → v131.
+- Session 22: Three bug reports right after Session 21 shipped Range Ring/Buffer — trip picker broken in
+  Range Ring edit/Buffer edit/Compass's save-bearing flow, neither new type clickable on the map, and
+  Buffer's Width field styled inconsistently with Range Ring's Radii field. Investigated as instructed before
+  patching (the report explicitly suspected one shared root cause) — found it was actually two: a missing
+  wiring-array entry (Range Ring/Buffer's Trip button had literally no click listener) and a separate z-index
+  stacking gap (the shared trip picker, at z-index 1500, rendered underneath any brand-new-item
+  `.modal-overlay`, at z-index 2000 — invisible to clicks despite `classList` showing it as open). The two
+  bugs only coincidentally looked identical from the outside; see Architecture notes' "Range Ring/Buffer
+  wiring gaps" entry for the full mechanism, including why the z-index bug is not actually Compass-specific
+  (any new-item creation modal hits it) even though Compass's bearing-save was the only reported instance of
+  it. Also fixed: neither type was registered in the shared map-click-dispatcher system pins/tracks/areas/
+  bearings all use (the GeoJSON layers existed since Session 21, just never got their click handlers), and
+  Buffer's `type=number` Width input fell outside the shared `.modal input[type=text]` CSS rule. Along the
+  way, found and fixed one more related gap via the verification step itself (assigning an EXISTING trip, not
+  just creating new ones): `computeTripsPresent()` never scanned `state.rangeRings`/`state.buffers`, so a
+  trip assigned only to one of those types was invisible in the picker list, filter chips, and sidebar
+  grouping — including from the OTHER new type's own picker. Verified live in Chrome: trip assignment
+  confirmed from all three reported contexts (create-and-assign a new trip, then separately re-select that
+  same trip from a different item), direct map-tap confirmed opening the drawer for both types with no
+  sidebar detour, Width/Radii styling confirmed matching, and Pin's own trip assignment (both new-item and
+  existing-item edit) confirmed unaffected. One test-process gotcha, not an app bug: a stale service-worker
+  SHELL_CACHE briefly served a pre-fix copy of index.html mid-session because the version bump landed before
+  one final source fix — resolved by unregistering the SW/clearing Cache Storage for testing; a real user
+  would just get the already-bumped cache key on their next visit. `node --check` confirmed clean syntax on
+  all 4 extracted inline `<script>` blocks and on service-worker.js. APP_VERSION bumped 2.27.0 → 2.27.1,
+  SHELL_CACHE bumped v131 → v132.
