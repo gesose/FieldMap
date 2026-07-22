@@ -71,13 +71,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   feature-array order) — see Architecture notes' "Migration corridors" entry for the full design.
 - Reachability pass (Session 27): zoom (+/-) and north/reset moved out of MapLibre's built-in top-left
   NavigationControl into the same reachable right-side icon cluster as search/layers/filter/locate/download
-  (custom round buttons matching that cluster's existing style, not a restyled native control), plus two new
-  device-local settings — "Show zoom buttons" (default on; north/reset always stays, since orientation reset
-  has no gesture equivalent) and "Left-handed mode" (default off; mirrors only that one icon cluster to the
-  opposite edge). Also root-caused and fixed the double-tap-drag-to-zoom regression reported since tap-
-  anywhere shipped — see Architecture notes' "Reachability: zoom/north-reset relocation, left-handed mode,
-  double-tap-drag fix" entry for the full investigation, the fix, and a flagged mobile left-handed-mode
-  collision with the (deliberately not-mirrored) floating chip stack.
+  (custom round buttons matching that cluster's existing style, not a restyled native control), plus a new
+  device-local "Show zoom buttons" setting (default on; north/reset always stays, since orientation reset has
+  no gesture equivalent). Also root-caused and fixed the double-tap-drag-to-zoom regression reported since
+  tap-anywhere shipped — see Architecture notes' "Reachability: zoom/north-reset relocation, double-tap-drag
+  fix" entry for the full investigation and the fix. Session 27 also shipped a "Left-handed mode" setting
+  that mirrored this icon cluster to the opposite edge — removed entirely in Session 28 (see that session's
+  own entry below) after its mobile collision with the floating chip stack proved not worth keeping; no trace
+  of it remains anywhere in the codebase.
+- Mobile layout overhaul (Session 28): the floating chip stack (coords/elevation, scale bar, active trip,
+  active layers) and the icon cluster (now 6 icons — Filter and Download moved into the Tools menu on both
+  platforms) both went from vertical columns to full-width horizontal rows on mobile — chips across the top,
+  icons across the bottom — with the active-layers chip now always single-line (half the height of its
+  row-mates) instead of stacking up to 2 lines. The compass/north-reset icon was also redesigned (two full
+  solid triangles — red north, white south — replacing a rendering bug where each half was a thin partial
+  wedge instead of a real triangle), applies on both desktop and mobile. See Architecture notes' "Mobile
+  layout overhaul" entry for the full design, what else needed to move as a result (search bar, tool-mode
+  status bars), and what was audited and found NOT to need changing (every panel/drawer).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -848,7 +858,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       verification is still outstanding, same caveat as Session 24. Zero console errors across the test
       session. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION
       bumped 2.28.0 → 2.29.0, SHELL_CACHE bumped v134 → v135.
-- Reachability: zoom/north-reset relocation, left-handed mode, double-tap-drag fix (Session 27):
+- Reachability: zoom/north-reset relocation, double-tap-drag fix (Session 27; "Left-handed mode," originally
+  documented in this same entry, was removed entirely in Session 28 — see that session's own entry below and
+  the "Mobile layout overhaul" entry for why, and note that a few details below — the icon cluster's exact
+  member count/order, its `#map-controls` positioning — were also superseded by Session 28's column-to-row
+  rework and are described in the current, post-Session-28 form in that entry instead of here):
   - Double-tap-drag-zoom investigation (done first, per explicit instruction — root cause before any fix):
     the reported regression ("worked before tap-anywhere shipped, broken since") was investigated by reading
     the actual vendored `maplibre-gl.js` (not assumed from the Map option names) to find exactly which
@@ -908,45 +922,129 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     both confirmed still fully enabled — `map.scrollZoom.isEnabled()`/`map.touchZoomRotate.isEnabled()` —
     regardless of this setting, since it only ever touches the buttons' own visibility, never the gesture
     handlers).
-  - "Left-handed mode" (`state.settings.leftHandedMode`, default `false`): `body.left-handed-mode
-    #map-controls{...}` — deliberately scoped to `#map-controls` alone (not a body-wide RTL/mirroring
-    mechanism), matching the spec's explicit "does not mirror anything else in the app." Desktop and mobile
-    need DIFFERENT left offsets: desktop's rule is `left:calc(var(--sidebar-width) + 14px)`, not a flat
-    `14px` — the 330px sidebar is a persistent LEFT COLUMN on desktop (unlike mobile, where it collapses to a
-    bottom sheet), so a flat offset rendered the icon cluster on top of the sidebar's own content; this is
-    the exact same class of body-level-sibling-vs-sidebar collision already documented and fixed this same
-    way for `#active-trip-chip` in an earlier session, caught here via live testing (not assumed) — the first
-    render attempt visibly showed the icon column sitting inside the sidebar's dark background. Mobile's
-    override (inside the `max-width:760px` media query) is a flat `14px`, correct as-is since mobile's
-    sidebar isn't a left column and has nothing there to clear.
-  - **Known, spec-acknowledged tradeoff, confirmed via live mobile-simulated testing, not silently
-    papered over**: on mobile, left-handed mode's relocated icon cluster (bottom-left) visibly overlaps
-    `#floating-info-stack` (the coords/scale/trip/active-layers chip column, ALSO bottom-left on mobile) —
-    filter/locate/download icons render directly on top of chip text. This is a direct, foreseeable
-    consequence of the task's own explicit scope line ("does not mirror anything else in the app... chips"):
-    the chip stack deliberately stays put rather than also moving to avoid the collision, since expanding the
-    mirror to cover it would have contradicted that instruction. No fix was attempted within the narrow
-    scope actually asked for; flagged here as the first thing to revisit if this collision proves disruptive
-    in real use, rather than expanding scope unprompted.
+  - "Show zoom buttons" (`state.settings.showZoomButtons`, default `true`): `zoom-in-btn`/`zoom-out-btn` carry
+    an extra `.zoom-btn` class; `#map-controls.zoom-buttons-hidden .zoom-btn{display:none;}` is the only CSS
+    involved, toggled by `applyReachabilitySettings()`. `north-reset-btn` deliberately has no `.zoom-btn`
+    class and is never affected — orientation reset has no gesture equivalent, unlike zoom (pinch/scroll,
+    both confirmed still fully enabled — `map.scrollZoom.isEnabled()`/`map.touchZoomRotate.isEnabled()` —
+    regardless of this setting, since it only ever touches the buttons' own visibility, never the gesture
+    handlers).
+  - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`:
+    NavigationControl confirmed gone from top-left, all 8 icons (zoom in/out, north-reset, search, layers,
+    filter, locate, download — Filter and Download were both still in this cluster as of this session; they
+    moved out to the Tools menu the following session, see "Mobile layout overhaul" below) render correctly
+    in the reachable cluster in the same round style; zoom-in/zoom-out/north-reset all confirmed functionally
+    correct via direct map-state inspection (bearing/pitch reset to 0, zoom level changes) — one testing
+    wrinkle hit and resolved along the way: an automated background browser tab
+    (`document.visibilityState === 'hidden'`) throttles `requestAnimationFrame` hard enough that MapLibre's
+    `easeTo`-based zoom/rotate animations can sit "stuck" mid-flight for many seconds of real wall-clock time
+    before completing — confirmed as a test-harness artifact, not an app bug, by re-checking after a
+    foreground-forcing screenshot action and seeing the queued zoom change land correctly (this same artifact,
+    and the same resolution, recurred in the following session too — see that entry); "Show zoom buttons"
+    off/on confirmed hiding/showing exactly the two zoom buttons while north-reset stays and scroll/touch-zoom
+    stay enabled. Real touch-gesture (double-tap-drag) verification could not be performed in this sandbox (no
+    touch hardware/emulation — see that entry above) and remains the top item for real-device verification.
+    Zero console errors observed. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
+    blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE bumped v136 → v137.
+- Mobile layout overhaul, compass redesign, Tools menu additions, left-handed mode removal (Session 28):
+  - Compass/north-reset icon redesign (both platforms): the two `<path>`s inside `#north-reset-icon-svg`
+    were each only a thin partial wedge, not a real triangle — the north path went apex→right-mid→
+    near-center (`M10 2 L13 10 L10 8.3 Z`) instead of using BOTH middle vertices, so only alternating right/
+    left halves ever rendered. Fixed by completing each triangle to share the full horizontal midline
+    (`M10 2 L13.5 10 L6.5 10 Z` / `M10 18 L13.5 10 L6.5 10 Z`), the classic two-tone compass-needle kite —
+    solid `var(--danger)` red (north, top) and solid white (south, bottom), meeting along y=10. Purely a
+    fill/geometry change: `map.on('rotate', updateNorthResetIcon)` and the tap-to-reset click handler
+    (`map.easeTo({bearing:0,pitch:0})`), both from Session 27, are completely untouched.
+  - Filter and Download relocation (both platforms): `filter-btn`/`offline-btn` removed from `#map-controls`
+    entirely — not hidden, not gated by breakpoint — and replaced with two new Tools-sheet cells
+    (`#sheet-filter-btn`/`#sheet-offline-btn`, same `.sheet-cell` grid as Measure/Settings/Export/etc.,
+    `.bottom-sheet-overlay` has no media-query gating so this is identical on desktop and mobile). Each new
+    button's click handler is the old button's handler plus one line (`tools-sheet` gets hidden first),
+    mirroring `sheet-settings-btn`'s own close-then-open pattern exactly — `#filter-panel`'s and
+    `openOfflineModal()`'s own behavior is completely unchanged, only the trigger moved. `#map-controls` is
+    down to 6 icons: zoom in/out, north/reset, search, layers, locate.
+  - Mobile chip row (`#floating-info-stack`): vertical bottom-left column → horizontal top-anchored row,
+    full width (`top:14px;left:14px;right:14px`), replacing the column AND the `body.sidebar-open
+    #floating-info-stack{bottom:calc(55vh + 160px)}` push-up rule that came with it — a top-anchored row is
+    never in the expanding bottom sheet's way (the sheet only ever grows from the bottom edge), so there was
+    nothing left here to dodge, and the rule was simply deleted rather than adapted. The three "full" chips
+    (`#center-readout-mobile`, `#scale-bar`, `#active-trip-chip`) share `flex:1;min-width:0;height:40px` for
+    an even split of the row's width regardless of which chips are actually visible at any moment (both
+    `active-trip-chip` and `active-layers-chip` toggle a real `hidden` class, and flex:1 on the survivors
+    naturally redistributes their share when one is absent — no JS involved). One real spec gap caught only
+    by measuring computed styles, not by eyeballing a screenshot: `#active-trip-chip`'s desktop CSS uses a
+    20px pill `border-radius` (a deliberate "always-visible status pill" look from the Active Trip project),
+    which doesn't match the other three chips' 8px — "uniform corner radius" in the spec means all four
+    chips in the row share one radius, so a mobile-only `border-radius:8px` override was added specifically
+    for this one chip.
+  - Active-layers chip, mobile: half the height of its row-mates (20px vs 40px, same 8px radius), and always
+    single-line now instead of the old up-to-2-stacked-`<div>`s layout (`updateActiveLayersChip()` still
+    builds one `<div class="active-layers-line">` per active Habitat/Migration layer — completely unchanged,
+    both here and on desktop, which keeps the old 2-line stacking). The single-line behavior is a CSS-only
+    mobile override: `.active-layers-line` switches from block to `display:inline` (so multiple divs flow
+    together instead of stacking), `#active-layers-chip-lines` takes over nowrap+ellipsis truncation as ONE
+    unit instead of each line truncating independently, and `.active-layers-line + .active-layers-line::before
+    {content:' · '}` generates a separator between lines where the old vertical stacking used to be the only
+    visual divider. Verified with a real long single line (truncates to "…" correctly) and a real two-line
+    case ("Elk · Deer" — confirmed rendering intact, unclipped, when short enough to fit; confirmed truncating
+    correctly when not, exactly as expected from nowrap+ellipsis on the combined text).
+  - Search bar, mobile: now renders below the new chip row instead of overlapping it — the shared/desktop
+    rule anchors `#map-search-bar` at `top:14px`, the exact same top edge the chip row now also uses, and the
+    search bar's z-index (1300) sits above the chip row's (1000), so without a mobile override an opened
+    search bar rendered directly on top of the chips. Fixed with `top:62px` (14px chip-row offset + 40px
+    tallest-chip height + 8px gap) in the mobile media query. Confirmed live: chip row bottom edge at 54px,
+    search bar top edge at 62px, no overlap.
+  - Icon row, mobile: vertical bottom-right column → horizontal bottom row, full width
+    (`bottom:90px;left:14px;right:14px`, same 90px offset as the old column — still just clearing the
+    collapsed sidebar bar, a constraint the column-to-row shape change doesn't affect), `justify-content:
+    space-between` spreading the 6 round `.map-icon-btn`s evenly without stretching or resizing them.
+    `body.sidebar-open #map-controls{opacity:0;pointer-events:none}` (Session 26) needed no changes and still
+    fades the row out correctly when the bottom sheet expands.
+  - Real, newly-introduced collision caught and fixed (not pre-existing): `#draw-bar`/`#measure-result`/
+    `#polygon-bar`/`#elev-bar`/`#bearing-bar` were ALSO at `bottom:90px` on mobile, but centered
+    (`max-width:340px`) rather than full-width — previously this never collided with the OLD right-side
+    icon COLUMN (different horizontal regions entirely), but the new FULL-WIDTH icon ROW at the same 90px
+    offset now directly underlaps these bars' own bottom portion. Fixed by bumping these five selectors to
+    `bottom:138px` (90 + 38px icon height + 10px margin) — confirmed live with the Measure tool: a real
+    2-tap measurement result bar renders fully clear of the icon row beneath it, no overlap.
+  - Panel/drawer audit (explicitly not assumed complete without checking): every panel in the app —
+    Layers, Wildlife Layers, Filter, Settings, GMU state picker, Trip picker — is `.floating-panel`, and
+    `#view-drawer`/`#compass-panel`/`#sunrise-panel`/`#cluster-panel` are each their own ids but ALL
+    positioned via `bottom:88-98px` clearing the collapsed sidebar bar specifically, with NO reference
+    anywhere (CSS selector, JS geometry read, or comment) to `#map-controls` or `#floating-info-stack`'s
+    shape or position — confirmed by grepping every match of both ids across the whole file, not by
+    inspecting only the "obviously-named" ones. None needed changes. The one thing found that looked
+    related but wasn't: `#wildlife-panel` has always had a fixed inline `width:300px` (pre-existing, not
+    touched this session, confirmed via `git diff` showing zero changes to that line) that keeps it
+    narrower than the other full-width mobile panels — a real, pre-existing quirk, but unrelated to the
+    icon/chip repositioning and out of this session's scope.
+  - Left-handed mode removal: deleted the setting (`state.settings.leftHandedMode` + its `loadState` fixup),
+    its Settings-panel checkbox row, `applyReachabilitySettings()`'s body-class toggle, both CSS rules
+    (`body.left-handed-mode #map-controls` on desktop and mobile), and the change-listener wiring — all from
+    Session 27. `applyReachabilitySettings()` itself was kept (still needed for "Show zoom buttons") but
+    trimmed to just that one class toggle. Confirmed via a repo-wide case-insensitive grep for "left.hand"
+    across every `.html`/`.js`/`.json` file (matching how the West Goose Lake POC removal was verified in an
+    earlier session) that zero references remain anywhere.
   - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`
-    (after the now-standard service-worker-unregister + Cache-Storage-clear step — hit the same stale-
-    SHELL_CACHE gotcha documented in prior sessions when a CSS fix was tested right after editing, resolved
-    the same way): NavigationControl confirmed gone from top-left, all 8 icons (zoom in/out, north-reset,
-    search, layers, filter, locate, download) render correctly in the reachable cluster in the same round
-    style; zoom-in/zoom-out/north-reset all confirmed functionally correct via direct map-state inspection
-    (bearing/pitch reset to 0, zoom level changes) — one testing wrinkle hit and resolved along the way: an
-    automated background browser tab (`document.visibilityState === 'hidden'`) throttles `requestAnimationFrame`
-    hard enough that MapLibre's `easeTo`-based zoom/rotate animations can sit "stuck" mid-flight for many
-    seconds of real wall-clock time before completing — confirmed as a test-harness artifact, not an app bug,
-    by re-checking after a foreground-forcing screenshot action and seeing the queued zoom change land
-    correctly; "Show zoom buttons" off/on confirmed hiding/showing exactly the two zoom buttons while
-    north-reset stays and scroll/touch-zoom stay enabled; "Left-handed mode" confirmed mirroring the cluster
-    correctly on desktop (clear of the sidebar after the offset fix) and on mobile (with the chip-stack
-     collision above, confirmed and flagged, not fixed). Real touch-gesture (double-tap-drag) verification
-    could not be performed in this sandbox (no touch hardware/emulation — see that entry above) and remains
-    the top item for real-device verification. Zero console errors observed. `node --check` confirmed clean
-    syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE
-    bumped v136 → v137.
+    (after the standard service-worker-unregister + Cache-Storage-clear step). Mobile verification used a
+    stronger technique than prior sessions' CSS-injection workaround: an actual `<iframe>` (390×844,
+    `src` pointed at the same local server URL) genuinely renders at that CSS pixel width and triggers the
+    real `@media (max-width:760px)` query naturally, rather than requiring the real mobile CSS to be
+    hand-retyped as an override — this verifies the ACTUAL shipped file, not a manually-reconstructed
+    approximation of it, and is what caught the `#active-trip-chip` border-radius gap above (a hand-retyped
+    override would likely have silently "fixed" that gap by only including the rules I remembered to
+    duplicate). Confirmed via this real-width iframe: both rows span full width with no clipping; all 4
+    chips measured via `getBoundingClientRect()`/`getComputedStyle()` at the exact spec'd heights (40/40/40/
+    20px) and one uniform 8px radius; all 6 icons measured at 38×38px, evenly spaced edge-to-edge; Layers →
+    Wildlife Layers → Habitats opens correctly in place; Filter and Download both confirmed working from
+    Tools on desktop; Settings panel confirmed ending at "Show zoom buttons" with no "Left-handed mode" row
+    anywhere. Compass confirmed still live-rotating with bearing and still resetting bearing+pitch on tap
+    (same background-tab `requestAnimationFrame`-throttling artifact from the prior session recurred here
+    for the CSS opacity transition specifically — `body.sidebar-open`'s fade-out sat "stuck" at opacity:1
+    for several seconds in the automated tab before a foreground-forcing screenshot let it complete
+    correctly — confirmed as the same known test-harness limitation, not a new bug). Zero console errors.
+    `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+    2.31.0 → 2.32.0, SHELL_CACHE bumped v137 → v138.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1495,3 +1593,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   the established mobile-CSS-injection workaround. Zero console errors. `node --check` confirmed clean syntax
   on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE bumped v136 →
   v137.
+- Session 28: A mobile-focused follow-up pass — see Architecture notes' "Mobile layout overhaul, compass
+  redesign, Tools menu additions, left-handed mode removal" entry for full detail on every part. Redesigned
+  the compass/north-reset icon (two full solid triangles, red north/white south, meeting at the center —
+  fixing a real rendering bug where each half was only a thin partial wedge, not a complete triangle) on both
+  platforms; the live-rotate and tap-to-reset behavior from Session 27 was untouched. Moved Filter and
+  Download out of `#map-controls` entirely into two new Tools-sheet entries, on both platforms — same
+  underlying panel/modal, just triggered from Tools now, bringing the icon cluster down to 6. On mobile only:
+  turned both the floating chip stack and the icon cluster from vertical columns into full-width horizontal
+  rows (top and bottom respectively), made the active-layers chip permanently single-line at half the height
+  of its row-mates (a CSS-only change; the JS that builds its content was untouched), moved the search bar to
+  render below the new chip row instead of overlapping it, and audited every panel/drawer in the app for any
+  dependency on the old column shapes — found and fixed one real, newly-introduced collision (the draw/
+  measure/polygon/elevation/bearing status bars, previously never overlapping the old right-side icon column,
+  now needed a higher offset to clear the new full-width row) and confirmed every actual panel (Layers,
+  Wildlife Layers, Filter, Settings, GMU picker, Trip picker, view drawer, compass panel, sunrise panel,
+  cluster panel) was already positioned independently of both the icon cluster and chip stack, needing no
+  changes. Removed "Left-handed mode" entirely — setting, checkbox, CSS, and wiring — confirmed via a
+  repo-wide grep afterward that nothing references it anywhere, the same verification pattern used for the
+  West Goose Lake POC removal. Mobile verification used a genuine `<iframe>` at real mobile CSS dimensions
+  (390×844) rather than the CSS-injection workaround used in prior sessions, so the real `@media` rule was
+  exercised directly rather than a hand-retyped approximation of it — this is what caught a real spec gap
+  (the active-trip chip's pill-shaped desktop radius not matching the other three chips' 8px, a mismatch a
+  manually-reconstructed override would likely have missed). Zero console errors. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.31.0 → 2.32.0, SHELL_CACHE
+  bumped v137 → v138.

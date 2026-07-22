@@ -648,18 +648,6 @@
      #map-controls' own class (not a body-level class) since this is the only place .zoom-btn
      exists. */
   #map-controls.zoom-buttons-hidden .zoom-btn{display:none;}
-  /* Left-handed mode (Session 27) — mirrors ONLY this one relocated icon cluster (zoom, north/
-     reset, search, layers, filter, locate, download) to the opposite edge; deliberately scoped
-     to #map-controls alone, not a broader RTL/mirroring mechanism, per spec ("does not mirror
-     anything else in the app"). Desktop offset is calc(var(--sidebar-width) + 14px), not a flat
-     14px — the sidebar is a persistent 330px LEFT COLUMN on desktop (unlike mobile, where it
-     collapses to a bottom sheet — see the #publicland-legend mobile comment's own note on this
-     exact distinction), so a flat 14px would render the icon cluster on top of/underneath the
-     sidebar's own content rather than clear of it — the same class of body-level-sibling-vs-
-     sidebar collision already documented and fixed this same way for #active-trip-chip in an
-     earlier session. The mobile override below replaces this with a flat 14px, since mobile's
-     sidebar isn't a left column and has nothing here to clear. */
-  body.left-handed-mode #map-controls{left:calc(var(--sidebar-width) + 14px);right:auto;}
   .map-icon-btn{
     width:40px;height:40px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
@@ -947,39 +935,75 @@
 
     /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
-    /* Floating info stack, mobile (Session 26): lower-left now, not top-left — a prior session
-       tried top-left (top:105px, clearing MapLibre's NavigationControl and the search bar), but
-       moved back down here per explicit follow-up feedback. Anchored by `bottom` only (no
-       `top`), so the box's bottom edge stays fixed and it grows UPWARD as chips are added — the
-       same trick #scale-bar/#center-readout-mobile used pre-consolidation, just applied to the
-       whole stack instead of two separately-guessed offsets. bottom:108px reuses that same
-       pre-consolidation number verbatim (already proven clear of #map-controls' bottom:90px
-       icon column and the collapsed sidebar bar/attribution line). Width is 140px now, not
-       desktop's 230px — narrower, "closer to the old pre-consolidation 130px sizing" per
-       explicit feedback; the active-layers chip is the one child whose content can actually
-       overflow this width (a long species/migration name), and it's expected to truncate via
-       its own ellipsis rather than widen the chip (see .active-layers-line) — this is a
-       deliberate width/truncation tradeoff for mobile, not a bug. */
+    /* Floating info stack, mobile (Session 28 — full layout overhaul): a single horizontal row
+       spanning the top of the screen, replacing the old bottom-left vertical column entirely
+       (that column, and the "push up above the bottom sheet when it's open" rule that came with
+       it, are both gone — a top-anchored row is never in the expanded bottom sheet's way, since
+       the sheet only ever grows from the screen's bottom edge, so there's nothing left here to
+       dodge). flex-direction:row + stretch-height children (see the per-chip rules below) is
+       the whole layout; width is the full viewport (minus margins) rather than a fixed 140/230px
+       column, which is what makes the active-layers chip's single-line truncation actually work
+       without a two-line fallback (see that chip's own rule below). */
     #floating-info-stack{
-      top:auto;right:auto;bottom:108px;left:14px;
-      width:140px;max-width:calc(100vw - 28px);
+      top:14px;left:14px;right:14px;bottom:auto;
+      flex-direction:row;align-items:stretch;gap:6px;
+      width:auto;max-width:none;
     }
-    /* When the bottom sheet is open, push the whole stack up above it — same idea as the old
-       pre-consolidation body.sidebar-open rules for #center-readout-mobile/#scale-bar
-       individually, now just one rule for the whole stack. */
-    body.sidebar-open #floating-info-stack{ bottom:calc(55vh + 160px); }
+    /* The three "full-height" chips (coords/elevation, scale bar, active trip) — uniform 40px
+       height and equal flex:1 width so the row divides evenly regardless of which chips are
+       actually visible (active-trip-chip and active-layers-chip both toggle a real `hidden`
+       class off/on; flex:1 on the survivors naturally redistributes their share of the row's
+       width when one is absent, no JS involved). min-width:0 is required for the same reason
+       it's required on #active-trip-chip-label/#active-layers-chip-lines elsewhere in this file
+       — a flex item's default min-width:auto refuses to shrink below its own content's natural
+       width, which would silently break every truncation rule below it. */
+    #center-readout-mobile,#scale-bar,#active-trip-chip{
+      flex:1;min-width:0;height:40px;box-sizing:border-box;
+    }
     /* Mobile equivalent of #center-readout-float — same two-row layout (coords, then elevation
-       below) since the bubble is too narrow for one line of both; no longer independently
-       positioned, just a plain child of #floating-info-stack now (see that rule's comment). */
+       below) since the chip is too narrow for one line of both; no longer independently
+       positioned, just a flex:1 child of the row now (see #floating-info-stack's own comment). */
     #center-readout-mobile{
-      display:block;cursor:pointer;
-      font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      cursor:pointer;
+      font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
       background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
-      padding:5px 9px;box-sizing:border-box;text-align:center;
+      padding:0 8px;text-align:center;
     }
-    #center-readout-mobile-coords{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    #center-readout-mobile-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    #center-readout-mobile-coords{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+    #center-readout-mobile-elev{display:none;font-size:9px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
     #center-readout-mobile-elev.show{display:block;}
+    /* #scale-bar keeps its own flex-direction:column (bar graphic, then label) from the shared
+       non-mobile rule above — this just adds the row-membership sizing and centers that column
+       vertically within the taller 40px chip. */
+    #scale-bar{justify-content:center;padding:0 9px;}
+    /* #active-trip-chip keeps its own single-row (dot + label) layout from the shared rule —
+       same addition as #scale-bar, just centered in the taller box instead of column-stacked.
+       border-radius:8px overrides its desktop 20px pill shape — "uniform corner radius" in the
+       spec means all four chips in the row share one radius, and this is the one chip whose
+       desktop styling didn't already match the other three's 8px. */
+    #active-trip-chip{justify-content:center;padding:0 12px;border-radius:8px;}
+    /* Active-layers chip — HALF the height of its three row-mates (20px vs 40px), same corner
+       radius (inherited from the shared #active-layers-chip rule, untouched), always single-line
+       now instead of the old up-to-2-stacked-divs layout (one div per active Habitat/Migration
+       layer — see updateActiveLayersChip). The row's full width finally gives this chip enough
+       room that collapsing 2 lines into 1 doesn't just immediately truncate everything — per
+       spec, two-line wrapping is no longer needed at this width. Implemented as a CSS-only
+       override (updateActiveLayersChip's own JS, and desktop's rendering, are both completely
+       unchanged): .active-layers-line switches from block (stacked) to inline (flows together on
+       one line), and the PARENT takes over the nowrap+ellipsis truncation as one unit instead of
+       each line truncating independently. A generated " · " separator between multiple inline
+       lines replaces the old vertical stacking as the visual divider when both Habitat and
+       Migration are active at once. */
+    #active-layers-chip{
+      flex:1;min-width:0;height:20px;box-sizing:border-box;
+      padding:0 8px;
+    }
+    #active-layers-chip-lines{
+      display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .active-layers-line{display:inline;white-space:nowrap;}
+    .active-layers-line + .active-layers-line::before{content:' · ';}
 
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
     .leaflet-control-zoom{display:none !important;}
@@ -988,29 +1012,31 @@
     .leaflet-bottom.leaflet-left{margin-bottom:88px;transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
-    /* When sidebar is open, push attribution up above sort row + list — #scale-bar no longer
-       needs its own push-up rule now that it lives in the top-anchored info stack instead of
-       docked near the bottom sheet. */
-    body.sidebar-open .leaflet-bottom.leaflet-left{ margin-bottom:calc(55vh + 140px); }
+    /* Search bar (Session 28): now renders BELOW the new top chip row instead of overlapping it
+       — the shared/desktop rule anchors it at top:14px, the exact same top edge the chip row now
+       also uses, and #map-search-bar's z-index (1300) sits above the chip row's (1000), so
+       without this override an opened search bar would render directly on top of the chips
+       rather than beside or below them. 62px clears the row's own 40px-tall chips (the row's
+       tallest children) plus its top:14px offset plus an 8px gap (14+40+8=62). */
+    #map-search-bar{width:calc(100% - 28px);top:62px;}
 
-    /* Search bar stays centered now that native zoom controls are hidden */
-    #map-search-bar{width:calc(100% - 28px);}
-
-    /* Map controls: push above bottom sheet */
-    #map-controls{bottom:90px;gap:8px;}
-    /* Fade out (not display:none, so the fade transition can run) the side controls
-       — search/layers/filter/locate/download — while the bottom sheet is expanded, so they
-       don't overlap or clutter the expanded pin list. */
+    /* Icon cluster (Session 28): single horizontal row across the bottom, full width, replacing
+       the old bottom-right vertical column — trimmed to the 6 icons that still live here (zoom
+       in/out, north/reset, search, layers, locate; Filter and Download moved into the Tools
+       sheet this same session, see #map-controls' own HTML comment). bottom:90px is unchanged
+       from the old column's own bottom offset — still just clearing the collapsed sidebar bar,
+       a constraint that has nothing to do with the column-vs-row shape change. justify-content:
+       space-between spreads the 6 round buttons evenly across the full width rather than
+       stretching or resizing them — .map-icon-btn's own 38px size is untouched. */
+    #map-controls{
+      bottom:90px;left:14px;right:14px;top:auto;
+      flex-direction:row;justify-content:space-between;gap:0;
+      width:auto;
+    }
+    /* Fade out (not display:none, so the fade transition can run) the icon row while the bottom
+       sheet is expanded, so it doesn't overlap or clutter the expanded pin list. */
     body.sidebar-open #map-controls{opacity:0;pointer-events:none;}
     .map-icon-btn{width:38px;height:38px;}
-    /* Left-handed mode, mobile override: flat 14px, not the desktop rule's sidebar-width
-       offset — mobile's sidebar is a bottom sheet, not a left column (see #publicland-legend's
-       own comment above), so there's nothing at the left edge to clear. This DOES sit in the
-       same corner as #floating-info-stack's own mobile position (bottom-left, see that rule's
-       comment) — a known, spec-acknowledged tradeoff: the task this shipped under explicitly
-       scoped mirroring to #map-controls alone ("does not mirror... chips"), so the chip stack
-       deliberately stays put rather than also moving to avoid this collision. */
-    body.left-handed-mode #map-controls{left:14px;right:auto;}
 
     /* Floating panels: full-width above bottom sheet */
     .floating-panel{
@@ -1079,9 +1105,13 @@
     }
     /* Times list visibility in docked mode controlled by JS only */
 
-    /* Draw bar, polygon bar, elev bar: centered above bottom sheet */
+    /* Draw bar, polygon bar, elev bar: centered above bottom sheet. bottom:138px (not 90px, this
+       row's old value) — Session 28 turned #map-controls into a full-width horizontal row at
+       bottom:90px (was previously a narrow right-side column these centered bars never actually
+       overlapped), so these now need to clear ITS full width too: 90px + 38px icon height + 10px
+       margin = 138px. */
     #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar{
-      bottom:90px;
+      bottom:138px;
       left:50%;right:auto;
       transform:translateX(-50%);
       font-size:12px;
@@ -1285,7 +1315,11 @@
        live-rotated via map.on('rotate', ...) to keep pointing true north, same visual behavior
        NavigationControl's own compass button had; a tap resets both bearing AND pitch to 0
        (map.easeTo({bearing:0,pitch:0})), matching that control's documented resetNorthPitch()
-       behavior exactly (see the removed addControl call's old comment history). -->
+       behavior exactly (see the removed addControl call's old comment history).
+       filter-btn/offline-btn (Search and filter / Offline maps) removed from this cluster
+       entirely (Session 28) — both now live in the Tools sheet instead (#sheet-filter-btn/
+       #sheet-offline-btn), applies on desktop too, not just mobile. This cluster is down to 6
+       icons: zoom in/out, north/reset, search, layers, locate. -->
   <button class="map-icon-btn zoom-btn" id="zoom-in-btn" aria-label="Zoom in">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
       <line x1="10" y1="3" x2="10" y2="17"/>
@@ -1298,9 +1332,16 @@
     </svg>
   </button>
   <button class="map-icon-btn" id="north-reset-btn" aria-label="Reset north and pitch">
+    <!-- Redesigned (Session 28) — two FULL solid triangles sharing the horizontal midline
+         (x=6.5..13.5 at y=10), not the previous half-triangle slivers (each old path only used
+         ONE of the two middle vertices — e.g. the north path went apex→right-mid→near-center
+         instead of apex→right-mid→left-mid — rendering as a thin partial wedge instead of a
+         real triangle). North (top) is solid var(--danger) red; south (bottom) is solid white,
+         the classic two-tone compass-needle kite. Purely a fill/geometry change — the live
+         map.on('rotate', ...) rotation binding and the tap-to-reset click handler are untouched. -->
     <svg id="north-reset-icon-svg" viewBox="0 0 20 20" width="20" height="20" style="transform-origin:50% 50%;">
-      <path d="M10 2 L13 10 L10 8.3 Z" fill="var(--accent)"/>
-      <path d="M10 18 L7 10 L10 11.7 Z" fill="var(--text-muted)"/>
+      <path d="M10 2 L13.5 10 L6.5 10 Z" fill="var(--danger)"/>
+      <path d="M10 18 L13.5 10 L6.5 10 Z" fill="#ffffff"/>
     </svg>
   </button>
   <button class="map-icon-btn" id="search-toggle-btn" aria-label="Search">
@@ -1316,11 +1357,6 @@
       <path d="M2.5 13.7 L10 18 L17.5 13.7"/>
     </svg>
   </button>
-  <button class="map-icon-btn" id="filter-btn" aria-label="Search and filter">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
-      <path d="M3 4h14l-5 6.5v6L8 18v-7.5Z"/>
-    </svg>
-  </button>
   <button class="map-icon-btn" id="locate-btn" aria-label="Locate me">
     <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <circle cx="10" cy="10" r="3"/>
@@ -1328,13 +1364,6 @@
       <line x1="10" y1="16" x2="10" y2="19.5"/>
       <line x1="0.5" y1="10" x2="4" y2="10"/>
       <line x1="16" y1="10" x2="19.5" y2="10"/>
-    </svg>
-  </button>
-  <button class="map-icon-btn" id="offline-btn" aria-label="Offline maps">
-    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <line x1="10" y1="3" x2="10" y2="13"/>
-      <polyline points="6,9 10,13 14,9"/>
-      <path d="M4 15.5h12"/>
     </svg>
   </button>
 </div>
@@ -1466,11 +1495,6 @@
     <span class="settings-check-pill"></span>
     <span>Show zoom buttons</span>
   </label>
-  <label class="settings-check-row" style="padding-bottom:14px;">
-    <input type="checkbox" id="settings-left-handed-toggle" class="settings-check">
-    <span class="settings-check-pill"></span>
-    <span>Left-handed mode</span>
-  </label>
 </div>
 
 <!-- +Add bottom sheet -->
@@ -1574,6 +1598,29 @@
           </svg>
         </div>
         <div class="sheet-label">Measure</div>
+      </button>
+      <!-- Filter and Download (Session 28) — relocated here from #map-controls' icon cluster
+           (filter-btn/offline-btn removed entirely, both platforms) to make room in that
+           reachable cluster; same target panel/modal, same open logic, just triggered from here
+           now (see these two buttons' own click listeners, which mirror sheet-settings-btn's
+           close-sheet-then-open-target pattern below). -->
+      <button class="sheet-cell" id="sheet-filter-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
+            <path d="M3.5 4.5h17l-6.5 8v7l-4 2v-9Z"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Filter</div>
+      </button>
+      <button class="sheet-cell" id="sheet-offline-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="3" x2="12" y2="15.5"/>
+            <polyline points="7 10.5 12 15.5 17 10.5"/>
+            <path d="M4.5 19h15"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Download</div>
       </button>
       <button class="sheet-cell" id="sheet-settings-btn">
         <div class="sheet-icon">
@@ -2722,7 +2769,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.31.0';
+  var APP_VERSION = '2.32.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2835,13 +2882,11 @@
       clusterPins: true,
       defaultSort: 'chronological',
       terrain3dOn: false,
-      // Reachability (Session 27) — device-only display/layout preferences, same reasoning as
-      // gpsFollow/clusterPins above for why these live in state.settings rather than being
-      // synced: purely "how THIS device's UI should look," not data. showZoomButtons defaults
-      // true (matches the always-on native NavigationControl it replaces); leftHandedMode
-      // defaults false (most users are right-handed; opt-in, not opt-out).
+      // Reachability (Session 27) — device-only display/layout preference, same reasoning as
+      // gpsFollow/clusterPins above for why this lives in state.settings rather than being
+      // synced: purely "how THIS device's UI should look," not data. Defaults true, matching
+      // the always-on native NavigationControl it replaces.
       showZoomButtons: true,
-      leftHandedMode: false,
       // Active Trip (Stage 2 of the Active Trip project) — device-only, deliberately inside
       // state.settings rather than a synced field: settings are never part of
       // getSyncableState's payload, so this naturally never syncs to Firestore, matching the
@@ -11313,18 +11358,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('settings-area-labels-toggle').checked = state.settings.showAreaLabels !== false;
     document.getElementById('settings-terrain3d-toggle').checked = !!state.settings.terrain3dOn;
     document.getElementById('settings-zoom-buttons-toggle').checked = state.settings.showZoomButtons !== false;
-    document.getElementById('settings-left-handed-toggle').checked = !!state.settings.leftHandedMode;
     applyReachabilitySettings();
   }
 
-  // "Show zoom buttons" and "Left-handed mode" (Session 27) — both pure device-local
-  // display/layout toggles with no data or map-source implications, so unlike most settings
-  // here there's no separate setXOn() with side effects to call; applying them is just these
-  // two class toggles. Called from applySettingsUI() (boot + every settings-panel open, both
-  // idempotent) and directly from each checkbox's own change listener.
+  // "Show zoom buttons" (Session 27) — a pure device-local display toggle with no data or
+  // map-source implications, so unlike most settings here there's no separate setXOn() with
+  // side effects to call; applying it is just this one class toggle. Called from
+  // applySettingsUI() (boot + every settings-panel open, both idempotent) and directly from
+  // the checkbox's own change listener.
   function applyReachabilitySettings(){
     document.getElementById('map-controls').classList.toggle('zoom-buttons-hidden', state.settings.showZoomButtons === false);
-    document.body.classList.toggle('left-handed-mode', !!state.settings.leftHandedMode);
   }
 
   function toggleGpsFollow(){
@@ -15003,7 +15046,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.activeTripId === undefined) state.settings.activeTripId = null;
             if (state.settings.terrain3dOn === undefined) state.settings.terrain3dOn = false;
             if (state.settings.showZoomButtons === undefined) state.settings.showZoomButtons = true;
-            if (state.settings.leftHandedMode === undefined) state.settings.leftHandedMode = false;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
@@ -15738,11 +15780,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       applyReachabilitySettings();
       scheduleSave();
     });
-    document.getElementById('settings-left-handed-toggle').addEventListener('change', function(){
-      state.settings.leftHandedMode = this.checked;
-      applyReachabilitySettings();
-      scheduleSave();
-    });
     document.getElementById('settings-default-layer').addEventListener('change', function(){
       state.settings.defaultBaseLayer = this.value;
       state.settings.maplibreStyle = this.value;
@@ -15961,8 +15998,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 ;
 
-    document.getElementById('filter-btn').addEventListener('click', function(e){
+    document.getElementById('sheet-filter-btn').addEventListener('click', function(e){
       e.stopPropagation();
+      document.getElementById('tools-sheet').classList.add('hidden');
       var panel = document.getElementById('filter-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
@@ -16361,7 +16399,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('tag-save-btn').addEventListener('click', saveTagFromForm);
     document.getElementById('tag-cancel-edit-btn').addEventListener('click', cancelTagEdit);
 
-    document.getElementById('offline-btn').addEventListener('click', function(){
+    document.getElementById('sheet-offline-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
       closeAllPanels();
       openOfflineModal();
     });
