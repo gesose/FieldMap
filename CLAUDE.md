@@ -1301,6 +1301,48 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     working Mapbox access — this remains the one thing that could not be produced from this sandbox.
     `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and on service-worker.js.
     APP_VERSION bumped 2.35.0 → 2.36.0, SHELL_CACHE bumped v141 → v142.
+  - Session 33 — replaced Session 32's per-tile clone+arrayBuffer logging entirely with a true network-level
+    total, per explicit follow-up request: that approach only ever saw bytes for tiles `fetchAndCacheTile`
+    itself explicitly logged (vectorbase only, and only ones it actually fetched — a cache hit via the
+    `existing` early-return was invisible to it), added real per-tile overhead, and had no way to catch
+    anything else fetched during the same download window if that ever mattered. `window.FieldMapDebug` now
+    exposes `captureRealDownloadTotal(startFn)` (clears `performance.clearResourceTimings()`, calls `startFn`,
+    reads back every `performance.getEntriesByType('resource')` entry created during that window with no
+    filtering by name, sums `transferSize` — falling back to `encodedBodySize` for cache-served/opaque
+    responses where `transferSize` reads 0 — and buckets by URL pattern: vectorbase `.vector.pbf`, DEM
+    `terrain-rgb`, glyphs `/fonts/v1/`, sprite `/sprite`, everything else `other/uncategorized` so anything
+    genuinely unaccounted-for stays visible rather than silently dropped or misfiled) and
+    `triggerTestDownload(swLat, swLng, neLat, neLng, minZ, maxZ, layerIds)` (a non-interactive way to run the
+    real `computeTileList()` → `downloadTileList()` → `fetchAndCacheTile()` → `fetch()` path
+    `startOfflineDownload()` itself uses, without that function's blocking `prompt()` for the area name, which
+    makes an automated/repeated measurement impossible). `fetchAndCacheTile()`'s `layerId` parameter (added in
+    Session 32 only to support the now-removed per-tile log) was removed along with it.
+    A real bug was caught and fixed only by testing this live, not by reading the code: an initial version of
+    `captureRealDownloadTotal` read `performance.getEntriesByType('resource')` immediately after `startFn()`'s
+    promise resolved, which — confirmed via a live test against a real (if 403-blocked) Mapbox endpoint, with
+    `window.fetch` monkey-patched to independently log every URL actually fetched — under-counted real entries
+    (12 of 13 fetch calls captured on one run, 0 of 13 on another with the added monkey-patch hop): Resource
+    Timing entries can lag slightly behind the fetch() promise that triggered them, and the gap gets worse the
+    more async plumbing sits in front of the response (here, the service worker's own `respondWith()`
+    intercepting every `api.mapbox.com` request). Fixed with `waitForResourceBufferToSettle()` — polls the
+    entry count every 50ms and only resolves once it's been stable for 3 consecutive checks, rather than
+    reading the buffer exactly once. Re-verified after the fix with the same monkey-patched-fetch technique:
+    13/13, 8/8 (mixed vectorbase+DEM), and 3/3 (vectorbase + a genuinely uncategorizable local `manifest.json`
+    fetch) — fetch-call count exactly matched Resource Timing entry count on every run, category buckets
+    always summed exactly to the reported grand total, and the uncategorizable fetch correctly landed in
+    `other/uncategorized` (not silently merged into a real category) rather than just showing 0 there by
+    coincidence.
+    Re-confirmed fresh (not assumed carried over) that this sandbox's Mapbox v4 access is still 403 Forbidden —
+    unchanged from every prior session, unrelated to this change. This means the "real bytes" figures captured
+    live here (e.g. 299 bytes across 13 vectorbase requests for a small Wasatch-Range-area z12-13 test) reflect
+    13 tiny 403 error bodies (~23 bytes each), not real Mapbox tile payloads, and cannot be used to judge
+    whether the bathymetry fix reduces real transferred bytes — that comparison genuinely requires a real
+    device with working Mapbox access. For the record (mechanism-correctness only, not a real-world number):
+    the picker's own static pre-download estimate for that same 13-tile area would be 13 × `avgKB:35` = 455 KB,
+    dramatically higher than the "real" 0.3 KB captured — entirely an artifact of the 403 responses' near-empty
+    bodies, not evidence about actual tile sizes either direction.
+    `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+    2.36.0 → 2.37.0, SHELL_CACHE bumped v142 → v143.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1961,3 +2003,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   by the fix being broken or a stale cache masking it — real confirmation still requires the new instrumentation
   run on an actual device. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
   on service-worker.js. APP_VERSION bumped 2.35.0 → 2.36.0, SHELL_CACHE bumped v141 → v142.
+- Session 33: Replaced Session 32's per-tile clone+arrayBuffer byte logging with a true network-level total,
+  per explicit follow-up request — see Architecture notes' "Bathymetry removal from vectorbase" entry's own
+  "Session 33" sub-bullet for full detail. `window.FieldMapDebug.captureRealDownloadTotal(startFn)` now reads
+  every `performance.getEntriesByType('resource')` entry created during a download window (no filtering by
+  request name), sums real `transferSize` (falling back to `encodedBodySize` for cache-served/opaque
+  responses), and auto-categorizes by URL pattern (vectorbase/DEM/glyphs/sprite/other-uncategorized) so
+  anything genuinely unaccounted for stays visible instead of being silently dropped or misfiled. Added
+  `triggerTestDownload(...)` alongside it — a non-interactive way to run the app's real
+  `computeTileList → downloadTileList → fetchAndCacheTile → fetch()` path without `startOfflineDownload()`'s
+  blocking `prompt()` for the area name, making a repeatable automated measurement possible at all. A real bug
+  was caught only through live testing, not code review: reading the Resource Timing buffer immediately after
+  the download promise resolved under-counted real entries (confirmed via monkey-patching `window.fetch` to
+  independently log every URL actually fetched, then diffing against what Resource Timing captured — 12 of 13
+  entries on one run, 0 of 13 on another) — entries can lag slightly behind the fetch() promise that triggered
+  them, worse with more async plumbing in front of the response (here, the service worker's own
+  `respondWith()`). Fixed with a poll-until-stable wait (`waitForResourceBufferToSettle()`) rather than a
+  single immediate read; re-verified after the fix with the same monkey-patched-fetch technique across three
+  different test configurations (13/13, 8/8 mixed-layer, 3/3 with a deliberately uncategorizable extra fetch)
+  — fetch-call count exactly matched captured-entry count every time, and category buckets always summed
+  exactly to the reported grand total. Re-confirmed fresh that this sandbox's Mapbox v4 access is still 403
+  Forbidden, unchanged and unrelated to this change — so the "real bytes" this sandbox can capture (13 tiny
+  403 error bodies, ~299 bytes total, for a small Wasatch-Range z12-13 test area) cannot be used to judge
+  whether the bathymetry fix reduces real transferred bytes; that comparison still requires a real device with
+  working Mapbox access. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+  APP_VERSION bumped 2.36.0 → 2.37.0, SHELL_CACHE bumped v142 → v143.

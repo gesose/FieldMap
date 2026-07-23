@@ -2823,7 +2823,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.36.0';
+  var APP_VERSION = '2.37.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -12999,30 +12999,90 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     store.set(OFFLINE_AREAS_KEY, JSON.stringify(areas));
   }
 
-  // Real-bytes tile logging (Session 32) — OFF by default, zero cost/behavior change to a
-  // normal download. estimateSizeMB/area.sizeMB (see below) are a static tile-count ×
-  // avgKB-per-layer guess computed BEFORE any fetch happens — that number is mathematically
-  // incapable of ever reflecting a real change in a tileset's actual byte size (e.g. this
-  // session's bathymetry-v2 removal), which is why a before/after comparison of the app's own
-  // displayed "size" can never show a difference regardless of what really changed over the
-  // wire. This is the one way to get real transferred bytes instead. To use on a real device
-  // (with real Mapbox access — this sandbox's own Mapbox v4 access returns 403 for every
-  // request, confirmed independently of this change, so this can't be exercised here): open
-  // devtools console, run `window.FieldMapDebug.logTileBytes = true`, download a test area,
-  // then run `window.FieldMapDebug.summarizeTileBytes()` for a total/average across whatever
-  // layer(s) were downloaded (vectorbase specifically is what this session's fix touches).
+  // Real network-level download-size capture (Session 33) — replaces Session 32's per-tile
+  // clone+arrayBuffer logging (logTileBytes/tileByteLog/summarizeTileBytes, removed outright).
+  // That approach only ever saw bytes for tiles fetchAndCacheTile itself explicitly logged
+  // (vectorbase only, and only ones it fetched — a cache hit via the `existing` early-return
+  // just above was invisible to it), added a real per-tile cost (cloning + reading every body),
+  // and had no way to catch anything else the browser fetched during the same download window
+  // (DEM tiles, glyphs, sprite) if one of those turned out to matter. The Resource Timing API
+  // (performance.getEntriesByType('resource')) sees every network request in a time window —
+  // metadata the browser already tracks — with zero added fetch cost and no per-tile code path
+  // to keep in sync with whatever DOWNLOAD_LAYERS grows to later.
   window.FieldMapDebug = window.FieldMapDebug || {};
-  window.FieldMapDebug.logTileBytes = false;
-  window.FieldMapDebug.tileByteLog = [];
-  window.FieldMapDebug.summarizeTileBytes = function(layerId){
-    var rows = window.FieldMapDebug.tileByteLog.filter(function(r){ return !layerId || r.layerId === layerId; });
-    if (rows.length === 0){ console.log('[TILE-BYTES] no logged tiles yet — set window.FieldMapDebug.logTileBytes = true before downloading'); return; }
-    var total = rows.reduce(function(sum, r){ return sum + r.bytes; }, 0);
-    console.log('[TILE-BYTES] ' + rows.length + ' tiles' + (layerId ? (' (' + layerId + ')') : '') +
-      ', total ' + (total/1024).toFixed(1) + ' KB, avg ' + (total/rows.length/1024).toFixed(2) + ' KB/tile');
+  var REAL_DOWNLOAD_CATEGORY_PATTERNS = [
+    { label:'vectorbase (vector tiles: streets+terrain)', re:/\.vector\.pbf/ },
+    { label:'DEM (terrain-rgb)', re:/terrain-rgb/ },
+    { label:'glyphs/fonts', re:/\/fonts\/v1\// },
+    { label:'sprite', re:/\/sprite/ }
+  ];
+  // Convenience real trigger for a repeatable, non-interactive test download: the real app's
+  // own "Download this area" button goes through startOfflineDownload(), which blocks on a
+  // prompt() for the area name — unusable for an automated/repeated measurement. This calls the
+  // exact same real computeTileList() -> downloadTileList() -> fetchAndCacheTile() -> fetch()
+  // path startOfflineDownload() itself uses, just without the naming prompt around it.
+  window.FieldMapDebug.triggerTestDownload = function(swLat, swLng, neLat, neLng, minZ, maxZ, layerIds){
+    var bounds = new maplibregl.LngLatBounds([swLng, swLat], [neLng, neLat]);
+    var tileList = computeTileList(bounds, minZ, maxZ, layerIds || ['vectorbase']);
+    return downloadTileList(tileList, function(){}, function(){ return false; });
+  };
+  // captureRealDownloadTotal(startFn) — startFn is whatever actually triggers the download
+  // (triggerTestDownload above for a repeatable test, or any other function returning a
+  // promise/thenable that resolves once the download work is done). Clears the performance
+  // buffer first so only requests from this window are counted, no filtering by request name —
+  // real total bytes (transferSize; falls back to encodedBodySize when transferSize reads 0,
+  // which happens for cache-served/opaque responses) across literally everything fetched during
+  // the window, plus an auto-categorized breakdown so anything genuinely unaccounted for is
+  // visible in "other/uncategorized" rather than silently dropped or misfiled.
+  // Resource Timing entries can lag slightly behind the fetch() promise that triggered them —
+  // confirmed via real testing here, where reading the buffer immediately after the download
+  // promise resolved under-counted real entries (worse the more async plumbing sits between the
+  // page's fetch() call and the response, e.g. a service worker's own respondWith() in front of
+  // it). Poll until the entry count stops growing (3 consecutive stable checks, 50ms apart)
+  // instead of reading the buffer exactly once right when the download promise settles.
+  function waitForResourceBufferToSettle(){
+    return new Promise(function(resolve){
+      var lastCount = -1, stableTicks = 0;
+      (function check(){
+        var count = performance.getEntriesByType('resource').length;
+        stableTicks = (count === lastCount) ? stableTicks + 1 : 0;
+        lastCount = count;
+        if (stableTicks >= 3) return resolve();
+        setTimeout(check, 50);
+      })();
+    });
+  }
+  window.FieldMapDebug.captureRealDownloadTotal = function(startFn){
+    performance.clearResourceTimings();
+    return Promise.resolve(startFn()).then(function(downloadResult){
+      return waitForResourceBufferToSettle().then(function(){ return downloadResult; });
+    }).then(function(downloadResult){
+      var entries = performance.getEntriesByType('resource');
+      var categories = {};
+      REAL_DOWNLOAD_CATEGORY_PATTERNS.forEach(function(c){ categories[c.label] = { count:0, bytes:0 }; });
+      categories['other/uncategorized'] = { count:0, bytes:0 };
+      var totalBytes = 0;
+      entries.forEach(function(e){
+        var bytes = e.transferSize || e.encodedBodySize || 0;
+        totalBytes += bytes;
+        var match = REAL_DOWNLOAD_CATEGORY_PATTERNS.filter(function(c){ return c.re.test(e.name); })[0];
+        var label = match ? match.label : 'other/uncategorized';
+        categories[label].count++;
+        categories[label].bytes += bytes;
+      });
+      var summary = {
+        requestCount: entries.length,
+        totalBytes: totalBytes,
+        totalKB: +(totalBytes/1024).toFixed(1),
+        categories: categories,
+        downloadResult: downloadResult
+      };
+      console.log('[REAL-DOWNLOAD-TOTAL]', JSON.stringify(summary, null, 2));
+      return summary;
+    });
   };
 
-  function fetchAndCacheTile(cache, url, layerId){
+  function fetchAndCacheTile(cache, url){
     return cache.match(url).then(function(existing){
       if (existing) return 'skipped';
       // Plain CORS-mode fetch (the default) — NOT mode:'no-cors'. All the tile hosts this app
@@ -13039,11 +13099,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // instead of silently caching a useless entry.
       return fetch(url).then(function(resp){
         if (!resp.ok) return 'failed';
-        if (window.FieldMapDebug.logTileBytes){
-          resp.clone().arrayBuffer().then(function(buf){
-            window.FieldMapDebug.tileByteLog.push({ layerId:layerId, url:url, bytes:buf.byteLength });
-          }).catch(function(){});
-        }
         return cache.put(url, resp).then(function(){ return 'downloaded'; });
       }).catch(function(){ return 'failed'; });
     });
@@ -13066,7 +13121,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         function worker(){
           if (isCancelled() || idx >= total){ activeWorkers--; finishIfDone(); return; }
           var item = tileList[idx++];
-          fetchAndCacheTile(cache, item.url, item.layerId).then(function(status){
+          fetchAndCacheTile(cache, item.url).then(function(status){
             if (status === 'failed') failed++; else completed++;
             onProgress(completed + failed, total);
             worker();
