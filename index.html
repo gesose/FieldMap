@@ -1048,13 +1048,18 @@
     .leaflet-bottom.leaflet-left{margin-bottom:88px;transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
-    /* Search bar (Session 28): now renders BELOW the new top chip row instead of overlapping it
-       — the shared/desktop rule anchors it at top:14px, the exact same top edge the chip row now
-       also uses, and #map-search-bar's z-index (1300) sits above the chip row's (1000), so
-       without this override an opened search bar would render directly on top of the chips
-       rather than beside or below them. 62px clears the row's own 40px-tall chips (the row's
-       tallest children) plus its top:14px offset plus an 8px gap (14+40+8=62). */
-    #map-search-bar{width:calc(100% - 28px);top:62px;}
+    /* Search bar (Session 28): renders BELOW the top chip row(s) instead of overlapping them —
+       the shared/desktop rule anchors it at top:14px, the exact same top edge the chip row also
+       uses, and #map-search-bar's z-index (1300) sits above the chip row's (1000), so without
+       some override an opened search bar would render directly on top of the chips rather than
+       below them. No `top` value here on purpose (Session 30) — a flat hardcoded number here
+       (previously 62px) drifts stale the moment row heights change or a second chip row
+       (active-layers) appears/disappears, which is exactly what happened: it was computed once
+       for a 40px-tall row1 with no second row ever accounted for, then silently went wrong when
+       row1 grew to 44px and again whenever the active-layers row was showing. `top` is now set
+       live by updateSearchBarPosition() (JS), which reads #floating-info-stack's own actual
+       rendered bottom edge — see that function's own comment. */
+    #map-search-bar{width:calc(100% - 28px);}
 
     /* Icon cluster (Session 28): single horizontal row across the bottom, full width, replacing
        the old bottom-right vertical column — trimmed to the 6 icons that still live here (zoom
@@ -2818,7 +2823,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.33.0';
+  var APP_VERSION = '2.34.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5643,7 +5648,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function updateScaleBar(){
     var centerLat = map.getCenter().lat;
     var metersPerPixel = 40075016.686 * Math.cos(centerLat * Math.PI/180) / (256 * Math.pow(2, map.getZoom()));
-    var maxBarPx = 120;
+    // maxBarPx (Session 30 fix) — was a flat 120 regardless of the chip's actual available
+    // width, which is why the bar graphic (unlike the label text, which just wraps/sits inside
+    // the padding box normally) could render wider than #scale-bar's own padded content area and
+    // visibly touch/overflow the chip's edges on mobile, where a row1 chip's real content width
+    // (~95-115px after Session 29's padding fix) is narrower than 120. Desktop's chip is wide
+    // enough (~212px content width) that 120 was never actually a problem there, so Math.min
+    // keeps desktop's bar exactly as it always rendered (still capped at 120) while mobile now
+    // correctly caps at whatever room is actually available inside the padding, never overflowing
+    // it regardless of chip width — this also makes it correct if the chip's width or padding
+    // ever changes again, since it's read live rather than assumed.
+    var scaleBarEl = document.getElementById('scale-bar');
+    var scaleBarCs = getComputedStyle(scaleBarEl);
+    var availableBarPx = scaleBarEl.clientWidth - parseFloat(scaleBarCs.paddingLeft) - parseFloat(scaleBarCs.paddingRight);
+    var maxBarPx = Math.min(120, availableBarPx);
     var maxFeetFit = maxBarPx * metersPerPixel * 3.28084;
     var maxMilesFit = maxFeetFit / 5280;
     var feetSteps = [10,20,50,100,200,500,1000,2000,5000];
@@ -5663,6 +5681,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var barPx = (barFeet / 3.28084) / metersPerPixel;
     document.getElementById('scale-bar-line').style.width = Math.max(4, Math.round(barPx)) + 'px';
     document.getElementById('scale-bar-label').textContent = label + ' · Z' + map.getZoom().toFixed(1);
+  }
+
+  // Keeps the mobile search bar positioned directly below whichever chip rows are actually
+  // visible right now (Session 30) — the persistent 3-chip row (#floating-info-row1) always,
+  // plus the active-layers row when a Habitat/Migration layer is on. Reads
+  // #floating-info-stack's own real rendered bottom edge (getBoundingClientRect, which reflects
+  // both rows' actual heights AND whether the second one is even present) rather than a second
+  // hardcoded pixel offset — the previous flat `top:62px` was computed for a since-changed row
+  // height (Session 29 bumped row1 from 40px to 44px without updating this number) and never
+  // accounted for the active-layers row's presence at all, so it always sat too high whenever
+  // that row was showing, overlapping it. Desktop is untouched: its search bar has its own
+  // independent top:14px, centered rather than right-aligned like the chip stack, so this clears
+  // any stale inline style and returns immediately above the mobile breakpoint, letting the CSS
+  // rule apply exactly as before.
+  function updateSearchBarPosition(){
+    var searchBar = document.getElementById('map-search-bar');
+    if (window.innerWidth > 760){
+      searchBar.style.top = '';
+      return;
+    }
+    var stackRect = document.getElementById('floating-info-stack').getBoundingClientRect();
+    searchBar.style.top = (stackRect.bottom + 8) + 'px';
   }
 
   function setMaplibreStyle(styleName){
@@ -14543,9 +14583,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       lines.push(escapeHtml(migrationActiveSpecies) + ' migration');
     }
 
-    if (!lines.length){ chip.classList.add('hidden'); return; }
-    linesEl.innerHTML = lines.map(function(l){ return '<div class="active-layers-line">' + l + '</div>'; }).join('');
-    chip.classList.remove('hidden');
+    if (!lines.length){
+      chip.classList.add('hidden');
+    } else {
+      linesEl.innerHTML = lines.map(function(l){ return '<div class="active-layers-line">' + l + '</div>'; }).join('');
+      chip.classList.remove('hidden');
+    }
+    // This row's presence/absence is the one thing that changes #floating-info-stack's total
+    // height on mobile (see updateSearchBarPosition's own comment) — recompute unconditionally,
+    // both branches, right after the class toggle above (a layout-read property like
+    // getBoundingClientRect forces a synchronous reflow, so this always sees the up-to-date box).
+    updateSearchBarPosition();
   }
 
   // Opens the Wildlife Layers panel (the species-picker one, #wildlife-panel) directly from a
@@ -16029,6 +16077,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('center-readout-float').addEventListener('click', toggleCenterReadoutMode);
     document.getElementById('center-readout-mobile').addEventListener('click', toggleCenterReadoutMode);
     updateCenterReadoutModeIcon();
+    // Initial placement (mirrors updateActiveLayersChip's own call for later changes) + keep it
+    // correct across viewport size changes (rotation, or resizing across the mobile/desktop
+    // breakpoint) — see updateSearchBarPosition's own comment for why this can't just be a
+    // second hardcoded number.
+    updateSearchBarPosition();
+    window.addEventListener('resize', updateSearchBarPosition);
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
     document.getElementById('zoom-in-btn').addEventListener('click', function(){ map.zoomIn(); });
     document.getElementById('zoom-out-btn').addEventListener('click', function(){ map.zoomOut(); });
@@ -16247,7 +16301,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       e.stopPropagation();
       var bar = document.getElementById('map-search-bar');
       var isOpen = bar.classList.toggle('search-open');
-      if (isOpen){ document.getElementById('map-search-input').focus(); }
+      if (isOpen){
+        updateSearchBarPosition(); // defensive recompute right as it becomes visible
+        document.getElementById('map-search-input').focus();
+      }
       else {
         document.getElementById('map-search-input').value = '';
         document.getElementById('map-search-results').innerHTML = '';

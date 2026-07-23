@@ -97,6 +97,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   stands out from the other two's 8px). The active-trip chip's border now matches its own dot's accent color
   whenever a trip is active, on both platforms. See Architecture notes' "Chip sizing, mobile active-layers
   row, padding, active-trip stroke" entry for the full design.
+- Scale bar overflow + dynamic search bar position (Session 30): the Session 29 padding fix only ever
+  inset the scale-bar chip's own box — it never touched the bar *graphic*'s own width calculation
+  (`updateScaleBar()`'s `maxBarPx`, a flat 120 regardless of the chip's real available width), so on mobile's
+  narrower chips the bar could still be computed wider than the padded content area and visibly overflow past
+  it — confirmed via an actual cropped screenshot, not just computed-style checks, both before fixing (bug
+  reproduced) and after (11px/11px symmetric inset at an artificially narrowed 50px test width). `maxBarPx`
+  is now `Math.min(120, availableContentWidth)`, read live from the chip's own `clientWidth` minus its
+  padding, so it can never exceed real available space at any chip width, mobile or desktop. Also made the
+  mobile search bar's vertical position fully dynamic — `updateSearchBarPosition()` reads
+  `#floating-info-stack`'s real rendered bottom edge (`getBoundingClientRect`) instead of a second hardcoded
+  offset, so it correctly renders below the active-layers row when one's showing and below just the
+  persistent row when it isn't, verified both ways via live screenshots. See Architecture notes' "Scale bar
+  overflow fix, dynamic search bar position" entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1104,6 +1117,56 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     confirmed at 44px height / 6px-10px padding / equal ~116px width each; active-trip chip's mobile border
     confirmed matching accent too. Zero console errors. `node --check` confirmed clean syntax on all 4
     extracted inline `<script>` blocks. APP_VERSION bumped 2.32.0 → 2.33.0, SHELL_CACHE bumped v138 → v139.
+- Scale bar overflow fix, dynamic search bar position (Session 30):
+  - Scale bar graphic overflow — a real bug the Session 29 padding fix didn't actually catch, confirmed on a
+    real device screenshot after being marked verified. Session 29's fix added real padding to `#scale-bar`'s
+    own box, and that padding DOES correctly inset `#scale-bar-label` (plain text, naturally sits inside the
+    padding box) — but the bar *graphic* (`#scale-bar-line`) has never been sized by CSS at all; its width is
+    set directly in JS (`updateScaleBar()`) as an explicit pixel value computed from `maxBarPx`, which was a
+    flat, unconditional `120` with no relationship to the chip's actual available content width. Desktop's
+    chip is wide enough (~212px content width after padding) that 120 never overflowed there, which is
+    exactly why this shipped unnoticed — mobile's narrower per-chip width (~95-115px content width after
+    Session 29's own padding) is what actually exposed it, and a padding fix to the CONTAINER can't fix a
+    width miscalculation on a CHILD that's sized independently of it. Fixed by computing `maxBarPx` live:
+    `Math.min(120, scaleBarEl.clientWidth - paddingLeft - paddingRight)` — `clientWidth` includes padding, so
+    subtracting both sides gives the exact content-box width the bar can safely fill without ever exceeding
+    it, at any chip width, without changing desktop's behavior at all (120 stays smaller than desktop's
+    available space, so `Math.min` always picks 120 there, identical to before).
+  - Dynamic search bar position — the mobile `#map-search-bar` used a flat hardcoded `top` value (Session 28:
+    62px, silently wrong the moment Session 29 bumped row1's height 40px→44px without updating it; also never
+    accounted for the active-layers row's presence at all, so it always sat too high whenever that row was
+    showing, overlapping it). Replaced with `updateSearchBarPosition()`, a JS function that reads
+    `#floating-info-stack`'s real rendered bottom edge (`getBoundingClientRect().bottom` — which reflects
+    row1's actual height AND whether the active-layers row is even present, automatically, with no manual sum
+    of per-row heights) and sets `top` to that plus an 8px gap. Above the mobile breakpoint
+    (`window.innerWidth > 760`) it clears any inline `top` instead, letting desktop's own independent
+    `top:14px` CSS rule apply unchanged — desktop's search bar is centered, not right-aligned like the chip
+    stack, and was never part of this bug. The mobile CSS's own hardcoded `top:62px` was deleted outright
+    (not just fixed to a new number) specifically so this class of bug — a hardcoded pixel value silently
+    drifting out of sync with a later, unrelated change to row height or row count — can't recur; there is no
+    longer a static fallback value to go stale. Wired into `updateActiveLayersChip()` (unconditionally, both
+    its hidden and shown branches — the ONE thing that changes the stack's total height on mobile), a
+    `window.resize` listener, one boot-time call, and a defensive recompute right as the search bar opens.
+  - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
+    using the same real-width `<iframe>` technique from Sessions 28-29 (390×844, genuine `@media` match).
+    Scale bar: verified with an actual cropped screenshot at the bar's real rendered position (not just
+    computed styles) showing clear inset on all sides at the current zoom; then stress-tested by capturing
+    the live `Map` instance (via the established `Map.prototype` method monkey-patch) and artificially
+    shrinking `#scale-bar` to 50px while forcing a real `updateScaleBar()` recompute via `map.panBy()` —
+    confirmed the bar recalculated to a symmetric 11px/11px inset with zero overflow even at that stress
+    width, proving the fix responds to real container width rather than being coincidentally correct only at
+    the width first tested. Search bar: confirmed via `getBoundingClientRect()` AND a real screenshot in both
+    states — no overlay active (search top 66px, 8px gap below row1 only) and an overlay active (search top
+    94px, 8px gap below the overlay row instead) — plus the reverse transition (turning the overlay back off
+    and reopening search, confirming it returns to 66px, not stuck at the taller offset). Desktop confirmed
+    completely unaffected — inline `top` cleared, falls back to the unchanged `top:14px` CSS rule. One
+    testing-methodology gotcha hit and resolved along the way: an artificial DOM-narrowing test on the scale
+    bar briefly read as still overflowing because the change hadn't actually triggered a real
+    `updateScaleBar()` recompute yet (a plain CSS width change on the container doesn't itself re-run JS) —
+    resolved by triggering a genuine `map.panBy()` call so the real `move` event listener fired the real
+    recompute, not by trusting the stale pre-recompute measurement. Zero console errors. `node --check`
+    confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.33.0 → 2.34.0,
+    SHELL_CACHE bumped v139 → v140.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1694,3 +1757,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   when hidden, chip padding confirmed with no content clipping via `scrollHeight`/`clientHeight` equality.
   Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
   APP_VERSION bumped 2.32.0 → 2.33.0, SHELL_CACHE bumped v138 → v139.
+- Session 30: Fixed a real bug the prior session's own padding fix missed — reported (and re-confirmed via
+  real device screenshot, not just re-trusting the earlier "verified" claim) that the scale-bar chip's bar
+  *graphic* still touched its chip edges on mobile even after Session 29 added padding. Root cause: Session
+  29's padding fix only ever inset `#scale-bar`'s own box (which correctly insets the text label, since
+  that's plain content flowing inside the padding), but the bar graphic's width has always been set directly
+  in JS (`updateScaleBar()`) from a flat, unconditional `maxBarPx = 120`, entirely independent of the chip's
+  real available content width — no padding fix to the container could ever have caught this, since the bug
+  was in a sibling calculation, not the box model. Fixed by computing `maxBarPx` live from the chip's actual
+  `clientWidth` minus its own padding (capped at the original 120 so desktop's wider chip renders identically
+  to before). Verified this time with actual cropped screenshots showing real inset on all sides, plus a
+  stress test that artificially narrowed the chip and forced a genuine recompute via `map.panBy()` (not just
+  a CSS change) to confirm the bar dynamically re-caps rather than being coincidentally correct at one width.
+  Also made the mobile search bar's position fully dynamic — it previously used a second hardcoded offset
+  (`top:62px`) that was already stale (never updated when row1's height changed) and never accounted for the
+  active-layers row's presence at all; replaced with a JS function reading `#floating-info-stack`'s actual
+  rendered bottom edge, so it now correctly sits below whichever chip rows are visible in real time, verified
+  live with real screenshots in both the overlay-active and overlay-inactive states plus the transition
+  between them. See Architecture notes' "Scale bar overflow fix, dynamic search bar position" entry for full
+  detail on both fixes and how each was verified. Zero console errors. `node --check` confirmed clean syntax
+  on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.33.0 → 2.34.0, SHELL_CACHE bumped v139 →
+  v140.
