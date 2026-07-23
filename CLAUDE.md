@@ -115,12 +115,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   download code, kept matching each other. Confirmed before removing that its only consumer anywhere
   (`water-depth`, a fill layer on source-layer `depth`) has `maxzoom:8`, below the offline downloader's
   own minimum zoom and any zoom this hunting/field app is realistically used at — `hillshade` (the actual
-  terrain-shading layer, from mapbox-terrain-v2, unrelated) was deliberately left untouched. See Architecture
-  notes' "Bathymetry removal from vectorbase" entry for the full design and — importantly — a sandbox
-  limitation hit while trying to measure the real download-size impact live (Mapbox's classic v4 tile API
-  returned 403 Forbidden for every request in this environment despite a verified-valid token, blocking real
-  before/after byte measurement here; real verification should happen via an actual on-device offline
-  download size comparison once this ships, not a synthetic sandbox fetch).
+  terrain-shading layer, from mapbox-terrain-v2, unrelated) was deliberately left untouched. Session 32 found
+  and fixed the actual reason a real-device before/after test of this fix showed "no meaningful size
+  difference": the app's displayed offline-area size was never a real byte measurement to begin with — see
+  Architecture notes' "Bathymetry removal from vectorbase" entry, its own "Session 32" sub-bullet, for the
+  full root-cause finding and the new real-bytes logging hook it added (`window.FieldMapDebug`).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1227,6 +1226,81 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   not a synthetic sandbox substitute for it. Zero console errors from the change itself. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.34.0 → 2.35.0,
   SHELL_CACHE bumped v140 → v141.
+  - Session 32 — root-caused the real-device "no meaningful size difference" report: a real on-device before/
+    after test of the bathymetry removal above showed no measurable change, which contradicted Session 31's
+    "verified" claim — rightly so, since that claim only ever covered structural correctness (valid JSON,
+    water-depth being the sole consumer), never actual transferred bytes, because Mapbox's v4 API was 403'd
+    in this sandbox the whole time. This session's mandate was explicit: find a REAL answer backed by
+    evidence, not another round of "the code looks correct."
+    Re-confirmed fresh, not assumed carried over from Session 31: a direct browser `fetch()` (from inside the
+    live page context, not Node — Node's own `fetch()` to this host crashes with a libuv assertion error in
+    this environment) against both the OLD and NEW composite tile URLs returned `403 Forbidden`/23 bytes for
+    BOTH, identically — confirming again that this sandbox genuinely cannot fetch real Mapbox v4 bytes at all,
+    for either URL, and that this blocker is unrelated to which URL is used.
+    Given that, the investigation shifted to what CAN be proven from the code with certainty, and found the
+    real, airtight cause — not a caching bug, not a stale-service-worker issue, and not disproof that the fix
+    reduces real bytes: **the app's own displayed offline-area size was never wired to a real byte count in
+    the first place.** `estimateSizeMB()` (index.html) computes `tile_count × DOWNLOAD_LAYERS[layerId].avgKB`
+    — a flat, hand-set-once constant (`avgKB:35` for vectorbase) — and this is called and stored as
+    `areaEntry.sizeMB` BEFORE `downloadTileList()` ever fetches a single real byte (`startOfflineDownload()`),
+    then displayed as-is by both the pre-download size picker and `renderOfflineAreasList()`'s per-area "X MB"
+    line for every already-downloaded area. `avgKB` was not (and, without real Mapbox access, could not
+    responsibly be) adjusted down when bathymetry-v2 was dropped from the URL — so the number the app shows
+    the user is, by construction, bit-for-bit identical before and after this fix for the same bounds/zoom/
+    layers, regardless of what actually changed on the wire. This fully explains the observed "no difference"
+    as a property of how the app measures/reports size, not evidence the fix itself is ineffective — but it
+    also means this UI-displayed number can never be used to verify a fix like this one; only real transferred
+    bytes can.
+    Also completed, per the task's explicit checklist, using a fresh grep rather than trusting memory:
+    - Confirmed there is exactly ONE source of truth for the vectorbase tile URL anywhere in the codebase —
+      `computeTileList()` → `tileUrlForLayer()` → `DOWNLOAD_LAYERS.vectorbase.urlTemplate` — with no other
+      hardcoded composite-tileset string, cached TileJSON response, or independently-derived URL builder
+      found anywhere else in index.html. The only other `api.mapbox.com` references are the unrelated aerial
+      style URL, the `refresh-style.js` token-placeholder regexes (comments/string templates, not runtime
+      requests), and the separate `mapbox.terrain-rgb` DEM endpoint (own layer, own URL, untouched by this
+      change) — none of them independently reference or cache the composite tileset list.
+    - Re-read service-worker.js fresh (not from recalled/summarized memory) and confirmed: `TILE_CACHE`
+      (service-worker.js) and `TILE_CACHE_NAME` (index.html) are the literal same Cache Storage name
+      (`'fieldmap-tiles-v1'`) by design, and the `activate` handler's cache-clearing loop explicitly preserves
+      it (`if (key !== SHELL_CACHE && key !== TILE_CACHE && key !== GMU_DATA_CACHE){ delete }`) — so a
+      SHELL_CACHE bump genuinely does NOT clear previously-downloaded tiles, confirmed directly in code, not
+      inferred. This is intentional, pre-existing behavior (the file's own comment: "keeps existing offline
+      tiles intact across app updates"), not a bug. Whether this could explain "no difference" for a
+      genuinely NEW url string (as the bathymetry fix produces) was reasoned through and rejected as the
+      cause: `fetchAndCacheTile()`'s own `cache.match(url)` check (page-level, i.e. the offline-downloader's
+      own per-tile dedup, separate from the service worker's own stale-while-revalidate `cache.match(req)` for
+      `api.mapbox.com` requests generally) matches by exact URL string — a genuinely different URL (old
+      3-tileset list vs. new 2-tileset list) is a guaranteed cache MISS on first use regardless of any prior
+      cached entry under the old URL, forcing a real fetch. The one real caveat flagged, not silently glossed
+      over: this reasoning assumes the real device was actually running the POST-fix JS (i.e. a real page
+      reload happened between the "before" and "after" test, not just a backgrounded/still-open tab) — an
+      already-open tab's in-memory `DOWNLOAD_LAYERS.vectorbase.urlTemplate` value would not update just
+      because `skipWaiting()`/`clients.claim()` let a new service worker take over; only an actual navigation/
+      reload re-parses the page's own JS. This wasn't confirmable from here (no way to know the real tester's
+      exact steps) and is offered as a secondary, plausible contributing factor alongside the primary,
+      code-proven `avgKB`-is-static finding above — not as an alternative conclusion to it.
+    Added real-bytes instrumentation per the task's request (task item #1), gated OFF by default so a normal
+    download's behavior/performance is completely unchanged: `window.FieldMapDebug` (`logTileBytes: false`,
+    `tileByteLog: []`, `summarizeTileBytes(layerId)`). `fetchAndCacheTile()` now accepts the tile's `layerId`
+    and, only when `window.FieldMapDebug.logTileBytes` is set to `true` first, clones the real network
+    response and records its actual `arrayBuffer().byteLength` — real transferred bytes, not the static
+    estimate. Usage for a real future on-device test: `window.FieldMapDebug.logTileBytes = true` in the
+    console, download a genuinely NOT-already-cached test area (fetchAndCacheTile's own dedup means an
+    already-cached tile is skipped before ever reaching the logging fetch — re-downloading the exact same
+    already-downloaded area would log nothing new), then `window.FieldMapDebug.summarizeTileBytes('vectorbase')`
+    for a real total/average. This could not be exercised end-to-end in this sandbox (same confirmed Mapbox
+    v4 403 blocker), but was verified to load correctly with zero console errors and the expected default
+    state (`logTileBytes:false`, `summarizeTileBytes` a real function) via a fresh page load through the local
+    `python -m http.server`, after unregistering the service worker/clearing Cache Storage first.
+    Bottom line reported to the user: the fix itself (dropping bathymetry-v2 from the composite URL) remains
+    structurally correct and, absent any evidence to the contrary, should reduce real transferred bytes for
+    areas with actual bathymetry data — but the specific "no difference" observation is explained, with code-
+    level certainty, by the app's displayed size never having been a real measurement in the first place, not
+    by the fix failing to route to real bytes or by a stale cache silently serving old data. Getting a real
+    verified byte-count number still requires the new `window.FieldMapDebug` hook run on an actual device with
+    working Mapbox access — this remains the one thing that could not be produced from this sandbox.
+    `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and on service-worker.js.
+    APP_VERSION bumped 2.35.0 → 2.36.0, SHELL_CACHE bumped v141 → v142.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1859,3 +1933,31 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   substitute. Verified live via style-switching between all 3 edited styles with zero console errors. `node
   --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.34.0 →
   2.35.0, SHELL_CACHE bumped v140 → v141.
+- Session 32: A real on-device before/after test of Session 31's bathymetry fix showed no meaningful size
+  difference, directly contradicting that session's "verified" claim — correctly so, since that verification
+  only ever covered structural correctness, never actual transferred bytes (blocked by the same Mapbox v4 403
+  the whole time). Explicit mandate this session: find the real cause, backed by evidence, not another round
+  of "the code looks correct." Re-confirmed fresh (not assumed) that the 403 blocker is real and identical for
+  both the old and new composite URLs, ruling it out as a difference-causing factor between them. Root-caused
+  the actual "no difference" result with code-level certainty: `estimateSizeMB()` computes
+  `tile_count × DOWNLOAD_LAYERS[layerId].avgKB` — a flat constant never tied to real bytes — and this exact
+  number, computed BEFORE any tile is fetched, is what both the pre-download size picker and every saved
+  area's "X MB" line in `renderOfflineAreasList()` display; `avgKB` (35 for vectorbase) was never adjusted by
+  the bathymetry removal, so the app's own displayed size is mathematically incapable of ever reflecting this
+  fix, regardless of what the fix actually did on the wire. Also completed, via fresh greps rather than
+  memory: confirmed `DOWNLOAD_LAYERS.vectorbase.urlTemplate` is the single source of truth for this tile URL
+  anywhere in the codebase (no other cached/hardcoded/independently-derived composite reference found), and
+  re-read service-worker.js directly to confirm `TILE_CACHE`/`TILE_CACHE_NAME` are the same Cache Storage name
+  by design and are deliberately excluded from the `activate` handler's SHELL_CACHE-bump cache-clearing — but
+  reasoned that a genuinely different URL string is still a guaranteed `cache.match()` miss regardless, so
+  this isn't the cause either (flagged one caveat: this assumes the real device actually reloaded to the
+  post-fix JS between tests, which couldn't be confirmed from here). Added real-bytes instrumentation per the
+  task's request — `window.FieldMapDebug` (`logTileBytes`/`tileByteLog`/`summarizeTileBytes()`), off by default,
+  logging actual `arrayBuffer().byteLength` per tile only when explicitly enabled — for a future real on-device
+  test to get real numbers instead of the static estimate; verified it loads cleanly with zero console errors,
+  but (same 403 blocker) could not be exercised end-to-end here. See Architecture notes' "Bathymetry removal
+  from vectorbase" entry's own "Session 32" sub-bullet for full detail. Reported clearly to the user: the fix
+  remains correct, the "no difference" result is explained by the display never being a real measurement, not
+  by the fix being broken or a stale cache masking it — real confirmation still requires the new instrumentation
+  run on an actual device. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+  on service-worker.js. APP_VERSION bumped 2.35.0 → 2.36.0, SHELL_CACHE bumped v141 → v142.
