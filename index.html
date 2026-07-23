@@ -928,6 +928,30 @@
   .pub-land-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;}
   .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
 
+  /* Slope Angle color-band legend (Session 38) — same floating-chip-row pattern as
+     #publicland-legend, deliberately anchored to the opposite corner (bottom-left, that one's
+     bottom-center) so both can be visible at once without overlapping. */
+  #slope-legend{
+    position:absolute;bottom:14px;left:14px;
+    z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.1);border-radius:10px;
+    padding:7px 12px;display:flex;align-items:center;gap:6px;
+    max-width:calc(100vw - 28px);overflow-x:auto;flex-wrap:nowrap;
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #slope-legend.hidden{display:none;}
+  .slope-legend-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,0.4);}
+
+  /* Elevation Range's paired slider+number min/max rows, plus its own opacity row — same
+     .opacity-row show/hide convention (hidden until the toggle is checked), just wrapping more
+     than one control. */
+  .elevrange-controls{display:none;flex-direction:column;gap:6px;margin-top:8px;}
+  .elevrange-controls.show{display:flex;}
+  .elevrange-minmax-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);}
+  .elevrange-minmax-row label{display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;}
+  .elevrange-minmax-row input[type=number]{width:64px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 5px;font-size:12px;}
+  .elevrange-minmax-row input[type=range]{flex:1;accent-color:var(--accent);}
+
   .wildlife-tab-btn{
     flex:1;padding:8px 4px;font-size:12px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;
     transition:background .15s,color .15s;
@@ -1180,6 +1204,10 @@
 
     /* Public land legend: hide on mobile (legend is in layers panel) */
     #publicland-legend{display:none !important;}
+    /* Same reasoning as Public Land's legend above — Slope Angle's color-band key is also
+       available in the layers panel (its own info popover), so it's not needed as a second
+       floating panel competing for mobile's limited vertical space. */
+    #slope-legend{display:none !important;}
     /* On mobile the sidebar is a bottom sheet, not a left column, so there's no sidebar-width
        offset to account for — but it still needs to clear the collapsed bottom bar/sheet
        handle, and to be pushed further up while the sheet is expanded (same treatment as
@@ -1367,6 +1395,8 @@
   <span style="color:#4A7FC9;">State</span>
   <span style="color:#C0C0C0;">Local</span>
 </div>
+
+<div id="slope-legend" class="hidden"></div>
 
 <div id="map-controls">
   <!-- Zoom + north/reset (Session 27) — relocated here from MapLibre's built-in
@@ -2069,6 +2099,44 @@
       <div class="layer-info-panel" id="lh-fireperimeters">
         <div class="layer-info-desc">Current/active wildland fire perimeters — re-fetched live each time this layer is turned on. Contained and stale small fires are dropped by the source service automatically.</div>
         <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about" target="_blank">Source: NIFC WFIGS</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="slopeangle-toggle"> Slope angle <button class="layer-hint-btn" data-layer-id="lh-slopeangle" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="slopeangle-opacity-row"><input type="range" id="slopeangle-opacity" min="20" max="100" value="60"></div>
+      <div class="layer-info-panel" id="lh-slopeangle">
+        <div class="layer-info-desc">Per-pixel slope steepness, color-banded starting at 20° — terrain gentler than that isn't shaded.</div>
+        <div class="layer-info-legend">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#43A047;color:#fff;">20-25°</span>
+            <span class="legend-swatch" style="background:#FDD835;color:#000;">25-30°</span>
+            <span class="legend-swatch" style="background:#FB8C00;color:#fff;">30-35°</span>
+            <span class="legend-swatch" style="background:#E53935;color:#fff;">35-40°</span>
+            <span class="legend-swatch" style="background:#8E24AA;color:#fff;">40-45°</span>
+            <span class="legend-swatch" style="background:#1E88E5;color:#fff;">45°+</span>
+          </div>
+        </div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Computed on your device from the same elevation data as Elevation (DEM), in a background thread — no extra download, and it stops rendering past the same max zoom DEM itself has.</div>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="elevrange-toggle"> Elevation range <button class="layer-hint-btn" data-layer-id="lh-elevrange" title="About">?</button>
+      </label>
+      <div class="elevrange-controls" id="elevrange-controls-row">
+        <div class="elevrange-minmax-row">
+          <label>Min <input type="number" id="elevrange-min-num" step="50"> ft</label>
+          <input type="range" id="elevrange-min-slider" min="-1000" max="14500" step="50">
+        </div>
+        <div class="elevrange-minmax-row">
+          <label>Max <input type="number" id="elevrange-max-num" step="50"> ft</label>
+          <input type="range" id="elevrange-max-slider" min="-1000" max="14500" step="50">
+        </div>
+        <div class="opacity-row show" id="elevrange-opacity-row"><input type="range" id="elevrange-opacity" min="20" max="100" value="65"></div>
+      </div>
+      <div class="layer-info-panel" id="lh-elevrange">
+        <div class="layer-info-desc">Highlights terrain within the min/max elevation band you set — a blank tool with no built-in presets, for whatever range matters to you right now.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Computed on your device from the same elevation data as Elevation (DEM), in a background thread — no extra download. Min/max and opacity are remembered, but this layer's on/off state isn't — it's meant for one task at a time, so it always starts off when you reopen the app.</div>
       </div>
     </div>
   </div>
@@ -2838,7 +2906,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.40.0';
+  var APP_VERSION = '2.41.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -2943,6 +3011,16 @@
       snowDepthOn: false, snowDepthOpacity: 0.75,
       nlcdOpacity: 0.7, fireperimetersOn: false, fireperimetersOpacity: 0.55,
       nlcdOn: false, usfsBoundariesOn: false, usfsBoundariesOpacity: 0.9, hillshadeOn: false,
+      // Slope Angle / Custom Elevation Range (Session 38) — both purely client-computed from
+      // DEM data, see the "Slope Angle and Custom Elevation Range overlays" Architecture notes
+      // entry for the full design. elevRangeMinFt/MaxFt default to a wide, non-suggestive
+      // starting range (not tuned to any species/habitat) purely because a slider needs SOME
+      // initial value on a brand-new install — deliberately not a "preset," per the explicit
+      // "blank tool" spec. elevRangeOn is intentionally never restored at boot (see
+      // loadState()'s fixup block and the boot-restore block, both of which force it back to
+      // false unconditionally) even though it's written here and kept live during a session.
+      slopeAngleOn: false, slopeAngleOpacity: 0.6,
+      elevRangeOn: false, elevRangeOpacity: 0.65, elevRangeMinFt: 0, elevRangeMaxFt: 10000,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'topo',
@@ -5014,6 +5092,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function createMap(){
     maplibregl.accessToken = MAPBOX_TOKEN;
+    registerTerrainOverlayProtocols(); // once, global — see that function's own comment
     var styleName = state.settings.maplibreStyle || 'topo';
 
     loadStyle(styleName)
@@ -5915,6 +5994,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     publicLandLegendLoaded = true;
   }
 
+  // Slope Angle's floating color-band legend — same build-once/toggle-visibility pattern as
+  // loadPublicLandLegend() just above, and the exact same 6 bands/colors as
+  // terrain-overlay-worker.js's own SLOPE_BANDS (kept in sync manually — the worker can't
+  // import from this file or vice versa, being a separate script).
+  var slopeLegendLoaded = false;
+  var SLOPE_LEGEND = [
+    { label:'20-25°', color:'#43A047' },
+    { label:'25-30°', color:'#FDD835' },
+    { label:'30-35°', color:'#FB8C00' },
+    { label:'35-40°', color:'#E53935' },
+    { label:'40-45°', color:'#8E24AA' },
+    { label:'45°+',   color:'#1E88E5' }
+  ];
+  function loadSlopeLegend(){
+    if (slopeLegendLoaded) return;
+    var wrap = document.getElementById('slope-legend');
+    wrap.innerHTML = '';
+    SLOPE_LEGEND.forEach(function(b){
+      var chip = document.createElement('div');
+      chip.className = 'slope-legend-chip';
+      chip.textContent = b.label;
+      chip.style.background = b.color;
+      wrap.appendChild(chip);
+    });
+    slopeLegendLoaded = true;
+  }
+
   // ── Shared label-point generation (GMU AZ/OR, USFS boundaries) ──
   // A text-field symbol layer placed directly on a Polygon/MultiPolygon source repeats its
   // label once per tile the feature's geometry crosses — GeoJSON sources get tiled
@@ -6767,6 +6873,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('nlcd-opacity-row').classList.toggle('show', on);
   }
 
+  function setSlopeAngleOn(on){
+    state.settings.slopeAngleOn = on;
+    if (map && map.getLayer('slopeangle-raster')) map.setLayoutProperty('slopeangle-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('slopeangle-opacity-row').classList.toggle('show', on);
+    if (on) loadSlopeLegend();
+    document.getElementById('slope-legend').classList.toggle('hidden', !on);
+  }
+
+  // elevRangeOn IS written to state.settings here (kept live/consistent during the session,
+  // matching every other setXOn function's shape) even though it's deliberately never read back
+  // at boot — see the settings-defaults/loadState/boot-restore comments for the full reasoning.
+  function setElevRangeOn(on){
+    state.settings.elevRangeOn = on;
+    if (map && map.getLayer('elevrange-raster')) map.setLayoutProperty('elevrange-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('elevrange-controls-row').classList.toggle('show', on);
+  }
+
+  // Rebuilds elevrange-source's own tile URL template with the new min/max baked in and calls
+  // .setTiles() — the min/max values live in the tile URL itself (see the elevrange addProtocol
+  // handler's own comment), so this is what actually makes a changed min/max produce freshly
+  // computed tiles instead of MapLibre reusing ones cached under the old URL.
+  function setElevRangeMinMax(minFt, maxFt){
+    state.settings.elevRangeMinFt = minFt;
+    state.settings.elevRangeMaxFt = maxFt;
+    if (map && map.getSource('elevrange-source')){
+      map.getSource('elevrange-source').setTiles(['elevrange://{z}/{x}/{y}?min=' + minFt + '&max=' + maxFt]);
+    }
+  }
+
   // ---------- Filtering (shared by pins and tracks) ----------
   function dateLabelFor(ts){
     if (!ts) return null;
@@ -7509,6 +7644,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         source: 'snowdepth-source',
         layout: { visibility: state.settings.snowDepthOn ? 'visible' : 'none' },
         paint: { 'raster-opacity': state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75 }
+      });
+    }
+
+    // Slope Angle — computed client-side from the same DEM tile grid the 'dem' download layer
+    // and elevation lookups already use, via the custom 'slopeangle://' protocol registered once
+    // in registerTerrainOverlayProtocols(). maxzoom:14 matches DEM's own native cap exactly —
+    // the same "over-zoom (upscale) the last native tile" behavior every other zoom-capped
+    // raster source here already relies on (see Public Land's own comment above).
+    if (!map.getSource('slopeangle-source')){
+      map.addSource('slopeangle-source', {
+        type: 'raster',
+        tiles: ['slopeangle://{z}/{x}/{y}'],
+        tileSize: 256,
+        maxzoom: 14
+      });
+    }
+    if (!map.getLayer('slopeangle-raster')){
+      map.addLayer({
+        id: 'slopeangle-raster',
+        type: 'raster',
+        source: 'slopeangle-source',
+        layout: { visibility: state.settings.slopeAngleOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.slopeAngleOpacity != null ? state.settings.slopeAngleOpacity : 0.6 }
+      });
+    }
+    if (state.settings.slopeAngleOn) loadSlopeLegend(); // survives a style switch same as the layer itself
+
+    // Custom Elevation Range — same DEM-derived approach as Slope Angle above, via the
+    // 'elevrange://' protocol. min/max are baked into the tile URL itself (see that protocol's
+    // own comment), so the source is seeded with whatever min/max is currently in
+    // state.settings — a style switch mid-session must preserve the user's current band, not
+    // reset it (only a fresh app launch resets elevRangeOn itself — see setElevRangeOn's
+    // comment — min/max and opacity are unaffected either way).
+    if (!map.getSource('elevrange-source')){
+      map.addSource('elevrange-source', {
+        type: 'raster',
+        tiles: ['elevrange://{z}/{x}/{y}?min=' + state.settings.elevRangeMinFt + '&max=' + state.settings.elevRangeMaxFt],
+        tileSize: 256,
+        maxzoom: 14
+      });
+    }
+    if (!map.getLayer('elevrange-raster')){
+      map.addLayer({
+        id: 'elevrange-raster',
+        type: 'raster',
+        source: 'elevrange-source',
+        layout: { visibility: state.settings.elevRangeOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.elevRangeOpacity != null ? state.settings.elevRangeOpacity : 0.65 }
       });
     }
 
@@ -8603,6 +8786,121 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var ft = Math.round(meters / 0.3048);
     if (ft < DEM_ELEV_MIN_FT || ft > DEM_ELEV_MAX_FT) return null;
     return ft;
+  }
+
+  // ── Slope Angle / Custom Elevation Range (Session 38) ──
+  // Both overlays are pure client-side derivatives of the exact same terrain-rgb DEM bytes
+  // fetchDemTileImageData() fetches/caches above — no new network requests, and every tile they
+  // compute is the SAME z/x/y grid as the 'dem' DOWNLOAD_LAYERS entry, so neither needs (or
+  // has) its own DOWNLOAD_LAYERS entry. The actual per-pixel classification (slope gradient
+  // math, elevation-range thresholding) runs in terrain-overlay-worker.js, off the main thread.
+  // This block is the glue: one shared Worker instance, a pending-request map correlating async
+  // responses back to the right tile fetch, and two maplibregl.addProtocol handlers that
+  // MapLibre's normal raster-tile pipeline calls into exactly like a real network tile fetch —
+  // see reinitializeLayers() for the ordinary type:'raster' source/layer pair that actually uses
+  // them (registered once here, not per style-switch — addProtocol is a global maplibregl-level
+  // registration, independent of any one map instance's lifecycle).
+  var terrainOverlayWorker = null;
+  var terrainOverlayPending = {};
+  var terrainOverlayReqSeq = 0;
+  function getTerrainOverlayWorker(){
+    if (!terrainOverlayWorker){
+      terrainOverlayWorker = new Worker('terrain-overlay-worker.js');
+      terrainOverlayWorker.onmessage = function(e){
+        var pending = terrainOverlayPending[e.data.id];
+        if (pending){ delete terrainOverlayPending[e.data.id]; pending.resolve(e.data.rgba); }
+      };
+    }
+    return terrainOverlayWorker;
+  }
+  // demImageData is the SHARED, cached object demTileCache holds for every consumer (elevation
+  // lookups, track profiles, both of these overlays) — its underlying buffer must never be
+  // transferred to the worker directly, since transferring detaches it and would corrupt that
+  // shared cache for everyone else. Copying it first is what makes the transfer safe.
+  function computeTerrainOverlayTile(type, demImageData, extra){
+    return new Promise(function(resolve, reject){
+      var id = ++terrainOverlayReqSeq;
+      terrainOverlayPending[id] = { resolve: resolve, reject: reject };
+      var demBytesCopy = new Uint8ClampedArray(demImageData.data);
+      var payload = { id: id, type: type, width: demImageData.width, height: demImageData.height, demBytes: demBytesCopy.buffer };
+      for (var k in extra) payload[k] = extra[k];
+      getTerrainOverlayWorker().postMessage(payload, [demBytesCopy.buffer]);
+    });
+  }
+  // Real-world ground resolution (meters/pixel) for a Web Mercator tile at zoom z, evaluated at
+  // the tile's own center latitude — the standard formula, needed so Slope Angle's gradient math
+  // divides by real meters, not raw pixel units. tileCenterLat is the tile-Y-to-latitude inverse
+  // of the same Web Mercator projection lngLatToTilePixel (above) uses in the other direction.
+  function tileCenterLat(z, y){
+    var n = Math.pow(2, z);
+    var latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)));
+    return latRad * 180 / Math.PI;
+  }
+  function metersPerPixelAtZoom(z, latDeg){
+    return 156543.03392 * Math.cos(latDeg * Math.PI / 180) / Math.pow(2, z);
+  }
+  function rgbaBufferToPngArrayBuffer(rgbaBuffer){
+    var rgba = new Uint8ClampedArray(rgbaBuffer);
+    var imgData = new ImageData(rgba, 256, 256);
+    var canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    canvas.getContext('2d').putImageData(imgData, 0, 0);
+    return new Promise(function(resolve){
+      canvas.toBlob(function(blob){
+        if (!blob){ resolve(null); return; }
+        blob.arrayBuffer().then(resolve);
+      }, 'image/png');
+    });
+  }
+  function registerTerrainOverlayProtocols(){
+    maplibregl.addProtocol('slopeangle', function(params, callback){
+      var m = params.url.match(/^slopeangle:\/\/(\d+)\/(\d+)\/(\d+)/);
+      if (!m){ callback(new Error('bad slopeangle tile url')); return { cancel: function(){} }; }
+      var z = +m[1], x = +m[2], y = +m[3];
+      var cancelled = false;
+      fetchDemTileImageData(z, x, y).then(function(demData){
+        if (cancelled) return null;
+        if (!demData) throw new Error('no DEM data for this tile');
+        return computeTerrainOverlayTile('slope', demData, { metersPerPixel: metersPerPixelAtZoom(z, tileCenterLat(z, y)) });
+      }).then(function(rgbaBuffer){
+        if (cancelled || !rgbaBuffer) return null;
+        return rgbaBufferToPngArrayBuffer(rgbaBuffer);
+      }).then(function(pngBuf){
+        if (cancelled) return;
+        if (!pngBuf){ callback(new Error('slopeangle tile encode failed')); return; }
+        callback(null, pngBuf, null, null);
+      }).catch(function(err){
+        if (!cancelled) callback(err);
+      });
+      return { cancel: function(){ cancelled = true; } };
+    });
+
+    // min/max are embedded in the tile URL itself (not read from state.settings at compute
+    // time) specifically so changing them mid-session — via .setTiles() on elevrange-source,
+    // see setElevRangeMinMax() — produces a genuinely different tile URL, which MapLibre's own
+    // tile cache correctly treats as a fresh tile to fetch rather than reusing a stale one
+    // computed for the previous min/max.
+    maplibregl.addProtocol('elevrange', function(params, callback){
+      var m = params.url.match(/^elevrange:\/\/(\d+)\/(\d+)\/(\d+)\?min=(-?\d+)&max=(-?\d+)/);
+      if (!m){ callback(new Error('bad elevrange tile url')); return { cancel: function(){} }; }
+      var z = +m[1], x = +m[2], y = +m[3], minFt = +m[4], maxFt = +m[5];
+      var cancelled = false;
+      fetchDemTileImageData(z, x, y).then(function(demData){
+        if (cancelled) return null;
+        if (!demData) throw new Error('no DEM data for this tile');
+        return computeTerrainOverlayTile('elevrange', demData, { minFt: minFt, maxFt: maxFt });
+      }).then(function(rgbaBuffer){
+        if (cancelled || !rgbaBuffer) return null;
+        return rgbaBufferToPngArrayBuffer(rgbaBuffer);
+      }).then(function(pngBuf){
+        if (cancelled) return;
+        if (!pngBuf){ callback(new Error('elevrange tile encode failed')); return; }
+        callback(null, pngBuf, null, null);
+      }).catch(function(err){
+        if (!cancelled) callback(err);
+      });
+      return { cancel: function(){ cancelled = true; } };
+    });
   }
 
   var DEM_BATCH_ZOOM = 12;
@@ -13494,12 +13792,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Grays out an overlay toggle in the Layers panel (same visual language as .btn:disabled)
   // while offline, if no downloaded area's bounds fully cover the current viewport for that
   // overlay's source — a hint that flipping it on won't actually show data right now, not a
-  // hard block (the toggle still works normally; there's just nothing to render). Only the
-  // 3 tile/raster overlays the download system actually covers are checked here — DEM has
-  // no visible Layers-panel toggle of its own, and Hydrography/gauges are always
-  // best-effort live queries (see their own "not included in offline downloads" note) so
-  // graying them the same way would be misleading either way, not just "sometimes covered."
-  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland' };
+  // hard block (the toggle still works normally; there's just nothing to render). Hydrography/
+  // gauges are always best-effort live queries (see their own "not included in offline
+  // downloads" note) so graying them the same way would be misleading either way, not just
+  // "sometimes covered" — those two are deliberately never added here. DEM itself has no
+  // visible Layers-panel toggle of its own to gray, but Slope Angle and Elevation Range (Session
+  // 38) are both entirely DEM-derived (see that entry's own Architecture notes) and DO have
+  // real toggles, so they're mapped to the SAME 'dem' download-layer id — whether they'll
+  // actually render offline depends on whether DEM tiles for this viewport were downloaded, not
+  // on any download of their own (neither has, or needs, its own DOWNLOAD_LAYERS entry).
+  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem' };
   function areaBoundsContainViewport(area, viewportBounds){
     return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
            area.boundsSW[1] <= viewportBounds.getWest() && area.boundsNE[1] >= viewportBounds.getEast();
@@ -15505,6 +15807,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.fireperimetersOpacity === undefined) state.settings.fireperimetersOpacity = 0.55;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
+            if (state.settings.slopeAngleOn === undefined) state.settings.slopeAngleOn = false;
+            if (state.settings.slopeAngleOpacity === undefined) state.settings.slopeAngleOpacity = 0.6;
+            if (state.settings.elevRangeOpacity === undefined) state.settings.elevRangeOpacity = 0.65;
+            if (state.settings.elevRangeMinFt === undefined) state.settings.elevRangeMinFt = 0;
+            if (state.settings.elevRangeMaxFt === undefined) state.settings.elevRangeMaxFt = 10000;
+            // elevRangeOn deliberately has NO fixup line here — see this block's neighboring
+            // settings for the usual "default it if never set" pattern, and see the settings
+            // defaults literal + boot-restore block for why this one field is the exception:
+            // it must never be trusted from a persisted value, always forced false at boot.
             // GMU boundaries migrated from two independent per-state checkboxes to one
             // single-select state — only run once, when the new fields have never been set.
             // Old data could technically have both gmuAzOn/gmuOrOn true at once; Arizona wins
@@ -15629,7 +15940,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
-    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle'],
+    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['habitats-quick-toggle', 'migrations-quick-toggle']
   };
@@ -15932,6 +16243,58 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('nlcd-raster')) map.setPaintProperty('nlcd-raster', 'raster-opacity', state.settings.nlcdOpacity);
       scheduleSave();
     });
+    document.getElementById('slopeangle-toggle').addEventListener('change', function(){
+      setSlopeAngleOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('slopeangle-opacity').addEventListener('input', function(){
+      state.settings.slopeAngleOpacity = this.value / 100;
+      if (map.getLayer('slopeangle-raster')) map.setPaintProperty('slopeangle-raster', 'raster-opacity', state.settings.slopeAngleOpacity);
+      scheduleSave();
+    });
+    document.getElementById('elevrange-toggle').addEventListener('change', function(){
+      setElevRangeOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('elevrange-opacity').addEventListener('input', function(){
+      state.settings.elevRangeOpacity = this.value / 100;
+      if (map.getLayer('elevrange-raster')) map.setPaintProperty('elevrange-raster', 'raster-opacity', state.settings.elevRangeOpacity);
+      scheduleSave();
+    });
+    // Min/max: the slider and number input for each side stay in sync with each other, and min
+    // is clamped to never exceed max (and vice versa) so the highlighted band can never invert.
+    // The actual tile recompute (setElevRangeMinMax, which calls .setTiles() and triggers real
+    // worker work per visible tile) is debounced 150ms — a slider drag fires 'input' many times
+    // a second, and without debouncing that would flood the worker with requests for values the
+    // user has already dragged past. The displayed numbers/slider positions themselves still
+    // update instantly on every input event; only the expensive recompute waits.
+    var elevRangeApplyTimer = null;
+    function applyElevRangeMinMaxFromUI(source){
+      var minEl = document.getElementById('elevrange-min-num'), minSlider = document.getElementById('elevrange-min-slider');
+      var maxEl = document.getElementById('elevrange-max-num'), maxSlider = document.getElementById('elevrange-max-slider');
+      var min = parseInt((source === 'min-slider' ? minSlider.value : minEl.value), 10);
+      var max = parseInt((source === 'max-slider' ? maxSlider.value : maxEl.value), 10);
+      if (isNaN(min)) min = state.settings.elevRangeMinFt;
+      if (isNaN(max)) max = state.settings.elevRangeMaxFt;
+      if (min > max){
+        if (source === 'min-slider' || source === 'min-num') max = min; else min = max;
+      }
+      minEl.value = min; minSlider.value = min;
+      maxEl.value = max; maxSlider.value = max;
+      clearTimeout(elevRangeApplyTimer);
+      elevRangeApplyTimer = setTimeout(function(){
+        setElevRangeMinMax(min, max);
+        scheduleSave();
+      }, 150);
+    }
+    document.getElementById('elevrange-min-slider').addEventListener('input', function(){ applyElevRangeMinMaxFromUI('min-slider'); });
+    document.getElementById('elevrange-max-slider').addEventListener('input', function(){ applyElevRangeMinMaxFromUI('max-slider'); });
+    // Number inputs use 'change' (fires on blur/Enter), not 'input' (fires per keystroke) — a
+    // slider drag is one continuous gesture worth live feedback for, but typing a number is a
+    // sequence of intermediate, often-nonsensical values (e.g. "6" then "60" then "600" while
+    // typing "6000") that shouldn't each trigger a real recompute.
+    document.getElementById('elevrange-min-num').addEventListener('change', function(){ applyElevRangeMinMaxFromUI('min-num'); });
+    document.getElementById('elevrange-max-num').addEventListener('change', function(){ applyElevRangeMinMaxFromUI('max-num'); });
 
     // ── USFS Forest boundaries ── checkbox only, no opacity slider (fixed at
     // usfsBoundariesOpacity's default, no longer user-adjustable — the underlying
@@ -16005,6 +16368,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
     document.getElementById('nlcd-opacity').value = Math.round((state.settings.nlcdOpacity != null ? state.settings.nlcdOpacity : 0.7) * 100);
     document.getElementById('nlcd-opacity-row').classList.toggle('show', !!state.settings.nlcdOn);
+    document.getElementById('slopeangle-toggle').checked = !!state.settings.slopeAngleOn;
+    document.getElementById('slopeangle-opacity').value = Math.round((state.settings.slopeAngleOpacity != null ? state.settings.slopeAngleOpacity : 0.6) * 100);
+    document.getElementById('slopeangle-opacity-row').classList.toggle('show', !!state.settings.slopeAngleOn);
+    if (state.settings.slopeAngleOn) loadSlopeLegend();
+    document.getElementById('slope-legend').classList.toggle('hidden', !state.settings.slopeAngleOn);
+    // elevrange-toggle is deliberately hardcoded unchecked here, NOT read from
+    // state.settings.elevRangeOn — per spec this layer must always start off at app launch
+    // regardless of how the last session left it (its value is inherently task-specific/
+    // temporary even though the layer stays on while in active use). Min/max/opacity ARE
+    // restored normally, same as every other persisted layer setting. state.settings.
+    // elevRangeOn itself is force-reset here too, not just the checkbox — reinitializeLayers()
+    // (called later, once the map's style actually loads) reads state.settings.elevRangeOn
+    // directly for the layer's initial visibility, not the checkbox's .checked value, so both
+    // must agree or the layer would silently start visible again despite the checkbox reading
+    // unchecked.
+    state.settings.elevRangeOn = false;
+    document.getElementById('elevrange-toggle').checked = false;
+    document.getElementById('elevrange-opacity').value = Math.round((state.settings.elevRangeOpacity != null ? state.settings.elevRangeOpacity : 0.65) * 100);
+    document.getElementById('elevrange-min-num').value = state.settings.elevRangeMinFt;
+    document.getElementById('elevrange-min-slider').value = state.settings.elevRangeMinFt;
+    document.getElementById('elevrange-max-num').value = state.settings.elevRangeMaxFt;
+    document.getElementById('elevrange-max-slider').value = state.settings.elevRangeMaxFt;
+    document.getElementById('elevrange-controls-row').classList.toggle('show', false);
     document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
     document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;

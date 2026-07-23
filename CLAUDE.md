@@ -120,6 +120,16 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   difference": the app's displayed offline-area size was never a real byte measurement to begin with — see
   Architecture notes' "Bathymetry removal from vectorbase" entry, its own "Session 32" sub-bullet, for the
   full root-cause finding and the new real-bytes logging hook it added (`window.FieldMapDebug`).
+- Slope Angle and Custom Elevation Range are two new Environmental-section overlay layers (Session 38) —
+  both pure client-side derivatives of the same DEM/terrain-rgb tile bytes already fetched for elevation
+  lookups, computed in a Web Worker and rendered as ordinary MapLibre raster layers via a custom
+  `maplibregl.addProtocol` tile source. Slope Angle: a 6-band color-coded steepness raster (green 20-25°
+  through blue 45°+, under 20° transparent), with its own opacity slider and a floating color-band legend
+  when active. Custom Elevation Range: a user-defined min/max elevation band (feet) highlighted as a solid
+  cyan wash with a deeper-cyan edge line at the band boundary — a deliberately blank tool with no presets.
+  Neither adds anything to offline download size (both ride on the existing 'dem' download layer, no
+  network requests of their own). See Architecture notes' "Slope Angle and Custom Elevation Range overlays"
+  entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1559,6 +1569,149 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   confirming the movement-cancels-the-timer logic. Zero console errors throughout. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.1 → 2.40.0 (minor — a
   restored feature, not just a bug fix), SHELL_CACHE bumped v146 → v147.
+- Slope Angle and Custom Elevation Range overlays (Session 38) — two new Environmental-section layers, both
+  pure client-side derivatives of the exact same terrain-rgb DEM bytes `fetchDemTileImageData()` already
+  fetches/caches (`demTileCache`) for elevation lookups/track profiles — no new network requests, no
+  DOWNLOAD_LAYERS entry, no offline-download size impact.
+  - **Rendering mechanism**: neither overlay is a hand-rolled canvas/image source — both are ordinary
+    `type:'raster'` MapLibre sources (`slopeangle-source`/`elevrange-source`, added in `reinitializeLayers()`
+    with the same idempotent `!map.getSource()/!map.getLayer()` guard every other raster overlay here uses)
+    whose `tiles` template points at a custom scheme (`slopeangle://{z}/{x}/{y}`,
+    `elevrange://{z}/{x}/{y}?min=X&max=Y`) registered once via `maplibregl.addProtocol` in
+    `registerTerrainOverlayProtocols()` (called once from `createMap()`, not per style-switch — addProtocol
+    is a global maplibregl-level registration independent of any one map instance). This was the deliberate
+    choice over inventing a per-tile `type:'image'` source add/remove/pan-tracking scheme from scratch: it
+    reuses MapLibre's own native tile loading/caching/pan/zoom/prefetch machinery for free, and lets the
+    zoom cap (`maxzoom:14`) work via the exact same "over-zoom/upscale the last native tile past its cap"
+    behavior Public Land/DEM already rely on — confirmed live (see Verification below), not just assumed.
+  - **Compute pipeline**: each protocol handler parses z/x/y (and min/max, for elevrange) from the tile URL,
+    calls `fetchDemTileImageData(z,x,y)` for that tile's raw terrain-rgb `ImageData` (the SAME shared,
+    cached object every other DEM consumer uses — its underlying buffer is never transferred directly to
+    the worker, since transferring would detach and corrupt that shared cache; `computeTerrainOverlayTile()`
+    always copies the bytes first), posts a copy to `terrain-overlay-worker.js` (a new same-origin file,
+    added to `service-worker.js`'s `SHELL_FILES` and `SHELL_CACHE` bumped, matching this app's existing
+    "every same-origin script dependency must be durably precached, not left to the browser's own
+    opportunistic HTTP cache" rule — see that file's own `maplibre-gl.js` SHELL_FILES comment for the
+    original iOS-cold-boot-offline failure this pattern already fixed once), and on the worker's response
+    encodes the returned RGBA bytes to a real PNG (`canvas.putImageData` + `toBlob('image/png')` +
+    `blob.arrayBuffer()`) and hands that ArrayBuffer to MapLibre's `callback(null, data)` — exactly the
+    shape a real network tile fetch would return (confirmed via reading the vendored MapLibre v3.6.2 bundle's
+    own request-dispatch code, not guessed: a custom-protocol handler receives `(params, callback)` and
+    `params.type` is `'image'` for a raster tile, whose bytes get decoded downstream the same way regardless
+    of whether they came from `fetch()` or a registered protocol). One shared Worker instance
+    (`getTerrainOverlayWorker()`, lazily created) serves both overlays; a small pending-request map
+    (`terrainOverlayPending`, keyed by an incrementing id) correlates each worker response back to the
+    right in-flight tile request, since multiple tiles are typically being computed concurrently.
+  - **Slope Angle math**: standard 8-neighbor (Horn's method) gradient — the same weighted 3x3 kernel
+    ArcGIS/QGIS's own "Slope" tool uses — computed in real meters via `metersPerPixelAtZoom(z, latDeg)`
+    (the standard Web Mercator ground-resolution formula, evaluated at each tile's own center latitude via
+    `tileCenterLat()`, the inverse of `lngLatToTilePixel`'s own projection math) so the resulting angle is a
+    real degree value, not a raw-pixel-unit artifact. 6 bands: green 20-25°, yellow 25-30°, orange 30-35°,
+    red 35-40°, purple 40-45°, blue 45°+; under 20° stays fully transparent (alpha 0). Edge pixels (tile
+    boundary) clamp to the nearest real pixel rather than fetching neighboring tiles for a true halo — a
+    deliberate simplification (fetching 8 extra neighbor tiles per tile was judged not worth the complexity)
+    that only affects the outermost 1px ring of each 256x256 tile, negligible at the zoom levels this
+    renders at; confirmed visually as a very faint tile-seam line in testing, not a functional problem.
+    Colors were deliberately chosen as saturated, high-contrast Material-Design-600-family shades distinct
+    from every other color-coded layer already in this app (Winter Range's muted lavender `#CECBF6`/
+    `#534AB7`, Corridor's pastel amber-to-coral gradient, Stopover's pink `#D4537E`, Annual Range's teal
+    `#BCE8E1`/`#1D7A68`, Habitat's coral/blue `#c2622d`/`#3a8fd4`) — the general color FAMILY names (purple/
+    orange/blue) unavoidably overlap since the task explicitly specified them, but the specific shades and
+    much higher saturation keep overlapping regions visually distinguishable in practice.
+  - **Custom Elevation Range math**: solid cyan fill (`#00D9E8`) for every pixel whose decoded elevation
+    (rounded to the nearest foot before comparing — see the floating-point note below) falls in
+    `[minFt,maxFt]`, deeper cyan (`#0A7A85`) on the specific pixels where the band's own boundary falls
+    (detected via 4-neighbor in/out-of-range comparison, not a fixed pixel-distance-from-edge heuristic —
+    stays accurate regardless of local terrain steepness, and correctly avoids a false edge line at a tile
+    seam when the highlighted band continues into a neighboring tile, since `clampIdx` replicates the edge
+    pixel rather than treating "off this tile" as "out of range"). A hard-edged fill with a highlighted
+    boundary line was chosen over a soft alpha gradient at the transition (explicitly left to judgment by
+    the task) — it reads more like a legible contour-interval band, the established convention for
+    elevation-band overlays, and needs no alpha-blending pass. min/max are baked into the tile URL itself
+    (`?min=X&max=Y`), not read from `state.settings` at compute time, specifically so changing them calls
+    `map.getSource('elevrange-source').setTiles([...new template...])` (confirmed present in the vendored
+    MapLibre v3.6.2 bundle before relying on it) — a genuinely different tile URL, which MapLibre's own tile
+    cache correctly treats as needing a fresh fetch/compute rather than reusing a stale tile from the
+    previous min/max.
+  - **A real bug found and fixed via a standalone Node test, not live testing**: IEEE 754 floating-point
+    drift through the encode→decode→meters-to-feet chain could put a genuinely-exact boundary elevation
+    (e.g. a pixel encoded as precisely 2000ft) on the WRONG side of a `ft <= maxFt` check (decoding back as
+    `2000.0000000000011`), confirmed with a deliberately exact-2000ft synthetic test pixel. Fixed by
+    rounding to the nearest foot before the range comparison in `computeElevRange` — matching
+    `decodeTerrainRgbElevationFt()` in index.html, which already rounds for exactly this reason.
+  - **No new abstraction for opacity**: every "in-band" pixel is written fully opaque (alpha 255) by the
+    worker; the user's opacity slider is applied afterward via each layer's own `raster-opacity` paint
+    property — the same mechanism every other raster overlay here already uses (Snow Depth/NLCD/Public
+    Land) — so opacity changes are instant with zero recomputation, never re-triggering the worker.
+  - **Elevation Range's on/off-not-persisted requirement**: `elevRangeOn` IS written to `state.settings` live
+    during a session (`setElevRangeOn`, matching every other `setXOn` function's shape) but is deliberately
+    the one persisted-layer setting whose boot-restore code (in `bindUI()`, before the map/style loads)
+    hardcodes it back to `false` unconditionally — both the checkbox's `.checked` AND
+    `state.settings.elevRangeOn` itself are force-reset there, since `reinitializeLayers()` (called later,
+    once the style actually loads) reads `state.settings.elevRangeOn` directly for the layer's initial
+    visibility, not the checkbox — missing either half would have left the layer silently re-enabled despite
+    the checkbox reading unchecked. `elevRangeMinFt`/`MaxFt`/`Opacity` are NOT special-cased and persist
+    normally, matching "last-used values persist, but you must explicitly turn it back on each session."
+  - **Min/max UI**: paired slider + number input for each of min/max (`elevrange-min-slider`/`-min-num`,
+    same for max), synced both directions, with a live clamp (min can never exceed max and vice versa — the
+    side NOT being actively edited moves to match, so the band can never invert). The actual tile recompute
+    (`setElevRangeMinMax`, which calls `.setTiles()` and triggers real worker work per visible tile) is
+    debounced 150ms; the displayed numbers/slider positions update instantly on every input regardless. The
+    two input TYPES are deliberately wired to different events: sliders use `'input'` (live, since a drag is
+    one continuous gesture worth immediate feedback), number inputs use `'change'` (fires on blur/Enter, not
+    per keystroke — typing "6000" passes through "6", "60", "600" as genuinely nonsensical intermediate
+    values that shouldn't each trigger a real recompute).
+  - **Legend**: Slope Angle's floating color-band legend (`#slope-legend`, `loadSlopeLegend()`) copies
+    Public Land's existing `#publicland-legend`/`loadPublicLandLegend()` pattern verbatim (build-once,
+    toggle-visibility-with-the-layer) — deliberately anchored to the OPPOSITE corner (bottom-left vs. Public
+    Land's bottom-center) so both can be visible at once without overlapping, and hidden on mobile the same
+    way Public Land's already is (its own info popover, reachable via the `?` button, carries the same
+    6-swatch key for mobile). Elevation Range has no floating legend — it's a single user-chosen color, not
+    a multi-band scale, and the task didn't ask for one.
+  - **Offline availability graying**: added to the existing `OVERLAY_OFFLINE_TOGGLE_SOURCE` table (which
+    grays a Layers-panel toggle while offline if no downloaded area covers the current viewport for its
+    underlying source) mapped to `'dem'` — extending, not duplicating, the existing mechanism: DEM itself
+    has no toggle of its own to gray (per that table's original comment), but these two DO have real toggles
+    and ARE entirely DEM-derived, so whether they'll actually render offline correctly depends on whether
+    DEM tiles for this viewport were downloaded.
+  - **Verification**: real Mapbox v4 DEM access is confirmed blocked in this sandbox (same blocker
+    documented in every prior session touching DEM/vectorbase), so real terrain-rgb bytes couldn't be
+    fetched here. Verified instead in two complementary ways. (1) A standalone Node test
+    (`test_terrain_worker_math.js`) evaluated the worker's actual compute functions against synthetic,
+    known-value elevation grids — a perfectly flat tile produces fully transparent slope output; a
+    constructed linear ramp at 7 specific known angles (10°, 22°, 27°, 32°, 37°, 42°, 50°) produces exactly
+    the expected transparent/green/yellow/orange/red/purple/blue result for each; a constructed elevation
+    gradient with an exact min/max band produces correct transparent-outside/cyan-fill-inside/deeper-cyan-
+    edge results including at the exact boundary values (this is what caught the floating-point rounding
+    bug above) and confirms no false edge line appears at a tile's own seam for a uniformly in-range tile —
+    14/14 assertions passing. (2) Live in a real browser (already-connected Chrome extension, local `python
+    -m http.server`): patched `HTMLImageElement.prototype.src`'s setter globally to redirect any
+    `terrain-rgb`-containing URL to a locally-generated synthetic PNG data URL (a diagonal 0-8000ft
+    elevation gradient, terrain-rgb-encoded) — this exercises the REAL, unmodified protocol handler → real
+    Worker → real canvas PNG encode → real MapLibre tile decode/render pipeline with only the underlying
+    network image swapped out, not a mocked/bypassed code path. Confirmed live: Elevation Range (min 3000ft/
+    max 5000ft) rendered a correct diagonal cyan band with a clearly visible darker-cyan edge line exactly
+    matching the synthetic gradient; Slope Angle rendered solid green (20-25°) at Z13 and solid purple
+    (40-45°) at Z14 for the same gradient, consistent with the real metersPerPixel shrinking as zoom
+    increases (steeper apparent angle for the same fixed per-pixel elevation rise); zooming from Z14 to Z15
+    (past `maxzoom:14`) left the rendered tile visually identical (same purple, just upscaled) with zero new
+    DEM fetch attempts logged, confirming the zoom cap. The Environmental section's badge correctly read
+    "0/5" fresh and "2/5" with both layers on (Session 36's count mechanism, extended). The offline-download
+    modal's "Additional data" checklist was confirmed to show only the pre-existing 4 entries (Elevation
+    (DEM)/Snow depth/Land cover (NLCD)/Public-private land) — Slope Angle and Elevation Range appear nowhere
+    in it, and its size estimate was unaffected by either being active in the Layers panel. The
+    elevRangeOn-never-restored requirement was verified precisely: set `elevRangeOn:true` in localStorage
+    deliberately, reloaded, and confirmed the checkbox came back unchecked and the layer stayed hidden
+    despite the persisted `true` — while `elevRangeMinFt`/`MaxFt` (3000/5000, set earlier in the same test)
+    and Slope Angle's own on/off state correctly DID survive the same reload, confirming the two layers'
+    deliberately different persistence behavior. Zero console errors throughout, including with the
+    underlying DEM fetch genuinely failing (before the synthetic-data patch was applied), confirming the
+    error path degrades gracefully with no uncaught exceptions or console noise. Main-thread responsiveness
+    during worker computation was not measured with a profiler (architecturally guaranteed by using a real
+    Worker, and the map stayed visually responsive to pan/zoom throughout testing, but this is not a
+    rigorous frame-timing measurement) — flagged rather than silently claimed as fully proven. `node --check`
+    confirmed clean syntax on all 4 extracted inline `<script>` blocks, `terrain-overlay-worker.js`, and
+    `service-worker.js`. APP_VERSION bumped 2.40.0 → 2.41.0, SHELL_CACHE bumped v147 → v148.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2354,3 +2507,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   copy calls; a held-then-moved pointer triggered neither. Zero console errors. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.1 → 2.40.0, SHELL_CACHE
   bumped v146 → v147.
+- Session 38: Built Slope Angle and Custom Elevation Range, two new Environmental-section overlay layers —
+  see Architecture notes' "Slope Angle and Custom Elevation Range overlays" entry for the complete design.
+  Both are pure client-side derivatives of the same terrain-rgb DEM bytes already fetched for elevation
+  lookups, computed in a new `terrain-overlay-worker.js` Web Worker (added to `service-worker.js`'s
+  `SHELL_FILES`) and rendered via ordinary `type:'raster'` MapLibre sources whose tiles resolve through a
+  custom `maplibregl.addProtocol` handler — chosen deliberately over inventing a per-tile image-source
+  scheme, since it reuses MapLibre's own native tile loading/caching/zoom-cap machinery for free. Slope
+  Angle: standard 8-neighbor (Horn's method) gradient in real meters/pixel, 6 color bands (green 20-25°
+  through blue 45°+, under 20° transparent), its own opacity slider, and a floating color-band legend
+  (mirrors Public Land's existing legend pattern, anchored to the opposite corner so both can show at once).
+  Custom Elevation Range: user min/max (feet) as paired slider+number-input pairs with live 2-way sync and
+  a min-never-exceeds-max clamp, rendered as a solid cyan fill (`#00D9E8`) with a deeper-cyan boundary line
+  (`#0A7A85`) detected via neighbor-pixel range-crossing (not a fixed-distance heuristic) — a hard-edged
+  contour-band look chosen over a soft gradient at the transition, left to judgment per the task. Neither
+  overlay has a DOWNLOAD_LAYERS entry — both ride on the 'dem' layer's own tiles, confirmed absent from the
+  offline-download modal and confirmed not to affect its size estimate. Elevation Range's on/off state is
+  deliberately the one persisted-layer setting that's hardcoded back to off at every boot regardless of the
+  saved value (both the checkbox AND `state.settings.elevRangeOn` itself, since `reinitializeLayers()` reads
+  the settings value directly) — min/max/opacity persist normally. A real floating-point bug (an exact
+  boundary elevation could land on the wrong side of a `<=` comparison due to encode/decode drift) was found
+  and fixed via a standalone Node test (`test_terrain_worker_math.js`, 14/14 assertions covering a flat
+  tile, 7 known-angle slope ramps spanning all 6 bands + the transparent case, and elevation-range fill/
+  edge/transparent/no-false-tile-seam behavior) before ever touching the browser. Live verification (real
+  Mapbox v4 DEM access confirmed blocked in this sandbox, same as every prior session) used a global
+  `HTMLImageElement.prototype.src` setter patch redirecting any `terrain-rgb` URL to a locally-generated
+  synthetic PNG — exercising the real, unmodified protocol handler → Worker → canvas-PNG-encode → MapLibre
+  decode/render pipeline with only the underlying network image swapped out: confirmed a correct diagonal
+  cyan band with a visible edge line for Elevation Range, correct green→purple slope colors across zoom
+  levels for Slope Angle (consistent with real metersPerPixel shrinking as zoom increases), and zero new DEM
+  fetch attempts (plus visually identical upscaled tile content) when zooming from Z14 to Z15, confirming
+  the `maxzoom:14` cap. Also verified: the Environmental section's toggle-count badge correctly reads "0/5"/
+  "2/5"; the offline-download modal shows only the pre-existing 4 "Additional data" entries; and — the most
+  precise test in this session — deliberately setting `elevRangeOn:true` in localStorage and reloading
+  confirmed the checkbox and layer both come back off despite the persisted `true`, while
+  `elevRangeMinFt`/`MaxFt` and Slope Angle's own on/off state correctly survived the same reload. Zero
+  console errors throughout, including with the underlying DEM fetch genuinely failing before the synthetic-
+  data patch was applied. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
+  the new worker file, and service-worker.js. APP_VERSION bumped 2.40.0 → 2.41.0, SHELL_CACHE bumped v147 →
+  v148.

@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v147';
+var SHELL_CACHE = 'fieldmap-shell-v148';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it
@@ -49,6 +49,12 @@ var SHELL_FILES = [
   // handler below like any other local file, not just this explicit install-time list.
   './maplibre-gl.js',
   './maplibre-gl.css',
+  // Slope Angle / Custom Elevation Range's Web Worker (Session 38) — same-origin, must be
+  // precached like every other script this app depends on (see the maplibre-gl.js comment
+  // above for why a same-origin file relying only on the browser's opportunistic HTTP cache
+  // isn't durable/offline-guaranteed) — `new Worker('./terrain-overlay-worker.js')` would 404
+  // on a genuine cold boot offline without this.
+  './terrain-overlay-worker.js',
   'https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js',
