@@ -2823,7 +2823,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.37.0';
+  var APP_VERSION = '2.38.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -13054,7 +13054,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
   window.FieldMapDebug.captureRealDownloadTotal = function(startFn){
     performance.clearResourceTimings();
-    return Promise.resolve(startFn()).then(function(downloadResult){
+    var startResult = startFn();
+    if (startResult === undefined){
+      // startOfflineDownload()'s own early-return guards (already downloading, or no base layer
+      // checked / offline panel never opened so offlineCaptureBounds is unset) return undefined
+      // without starting anything — surfacing this explicitly avoids silently reporting a
+      // misleading "0 requests, 0 bytes" that looks like a real (if empty) measurement.
+      console.warn('[REAL-DOWNLOAD-TOTAL] startFn() returned undefined — download never started. ' +
+        'If this is _startOfflineDownload, open the offline panel first (sets offlineCaptureBounds ' +
+        'from the current map view) and make sure at least one base layer checkbox is checked.');
+    }
+    return Promise.resolve(startResult).then(function(downloadResult){
       return waitForResourceBufferToSettle().then(function(){ return downloadResult; });
     }).then(function(downloadResult){
       var entries = performance.getEntriesByType('resource');
@@ -13400,7 +13410,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     bar.style.width = '0%';
     text.textContent = '0 / ' + tileList.length + ' tiles';
 
-    downloadTileList(tileList, function(done, total){
+    // Returns the real tile-download promise (resolves with {completed,failed,cancelled} the
+    // moment network fetching is actually done) so a caller — window.FieldMapDebug.
+    // captureRealDownloadTotal in particular — can await the real "download finished" signal
+    // instead of guessing. The naming prompt + area-save below is deliberately deferred one tick
+    // (setTimeout 0) rather than chained directly onto the same promise: prompt() blocks the JS
+    // thread synchronously, and attaching it as a .then() on the promise this function returns
+    // would block ANY OTHER consumer of that same promise (including a debug caller awaiting it)
+    // until a human dismisses the dialog. Deferring it is invisible to a real end user (still
+    // fires on the very next tick, same net timing as before) but is what makes the returned
+    // promise actually usable by something that only cares about the network transfer itself.
+    return downloadTileList(tileList, function(done, total){
       var pct = total ? Math.round(done/total*100) : 100;
       bar.style.width = pct + '%';
       text.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles';
@@ -13412,33 +13432,45 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (result.cancelled){
         showToast('Download cancelled — ' + result.completed.toLocaleString() + ' tiles already saved before stopping');
         document.getElementById('offline-progress-wrap').classList.add('hidden');
-        return;
+        return result;
       }
 
-      var defaultName = 'Area near ' + offlineCaptureBounds.getCenter().lat.toFixed(3) + ', ' + offlineCaptureBounds.getCenter().lng.toFixed(3);
-      var name = prompt('Name this offline area:', defaultName) || defaultName;
-      var areaEntry = {
-        id: uid(),
-        name: name,
-        boundsSW: [offlineCaptureBounds.getSouth(), offlineCaptureBounds.getWest()],
-        boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
-        minZoom: minZ, maxZoom: maxZ,
-        layerIds: layerIds,
-        sizeMB: sizeMB,
-        createdAt: Date.now()
-      };
-      loadOfflineAreas().then(function(areas){
-        areas.push(areaEntry);
-        saveOfflineAreas(areas);
-        renderOfflineAreasList();
-        renderOfflineBoundaries();
-        updateOverlayOfflineAvailability();
-        document.getElementById('offline-progress-wrap').classList.add('hidden');
-        var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
-        showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
-      });
+      setTimeout(function(){
+        var defaultName = 'Area near ' + offlineCaptureBounds.getCenter().lat.toFixed(3) + ', ' + offlineCaptureBounds.getCenter().lng.toFixed(3);
+        var name = prompt('Name this offline area:', defaultName) || defaultName;
+        var areaEntry = {
+          id: uid(),
+          name: name,
+          boundsSW: [offlineCaptureBounds.getSouth(), offlineCaptureBounds.getWest()],
+          boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
+          minZoom: minZ, maxZoom: maxZ,
+          layerIds: layerIds,
+          sizeMB: sizeMB,
+          createdAt: Date.now()
+        };
+        loadOfflineAreas().then(function(areas){
+          areas.push(areaEntry);
+          saveOfflineAreas(areas);
+          renderOfflineAreasList();
+          renderOfflineBoundaries();
+          updateOverlayOfflineAvailability();
+          document.getElementById('offline-progress-wrap').classList.add('hidden');
+          var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
+          showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
+        });
+      }, 0);
+
+      return result;
     });
   }
+  // Debug-only raw reference to the real production download function (Session 34) — lets
+  // window.FieldMapDebug.captureRealDownloadTotal drive the actual code path a real "Download
+  // this area" click runs, not a parallel test-only implementation. Requires the same real
+  // pre-conditions the button does: the offline panel must already be open (sets
+  // offlineCaptureBounds from the current map viewport) with at least one base layer checked —
+  // if either isn't true, startOfflineDownload()'s own guards return undefined without starting
+  // anything, same as clicking the real button in that state would silently do nothing.
+  window.FieldMapDebug._startOfflineDownload = startOfflineDownload;
 
   function cancelOfflineDownload(){
     offlineDownloadCancelled = true;

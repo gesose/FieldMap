@@ -1343,6 +1343,64 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     bodies, not evidence about actual tile sizes either direction.
     `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
     2.36.0 → 2.37.0, SHELL_CACHE bumped v142 → v143.
+  - Session 34 — closed the exact gap flagged after Session 33: `captureRealDownloadTotal`/`triggerTestDownload`
+    had only ever been verified against a parallel test-only download path, never the real production
+    `startOfflineDownload()` (the actual function `offline-download-btn`'s click handler calls). Before this
+    session, `startOfflineDownload()` returned nothing — fire-and-forget, ending in a synchronous blocking
+    `prompt()` for the area name — so there was no real "download finished" signal an external caller like
+    `captureRealDownloadTotal` could await; the only options were guessing via a timeout or driving it through
+    a simulated UI click, neither of which is the real signal the task asked for.
+    Fixed by making `startOfflineDownload()` itself `return` the real `downloadTileList(...)` promise chain —
+    the exact promise that already resolves with `{completed,failed,cancelled}` the moment network tile
+    fetching is done — instead of returning nothing. The one real subtlety, reasoned through before writing
+    any code: the naming-`prompt()`-and-save logic was already chained via `.then()` directly onto that same
+    promise, attached BEFORE the function returns it. Since `prompt()` blocks the entire JS thread
+    synchronously, and JS resolves multiple `.then()` handlers on one promise in attachment order, ANY external
+    consumer of the returned promise — including `captureRealDownloadTotal`'s own `.then()`, attached after
+    `startFn()` already returned — would still be stuck waiting for that FIRST (internal, prompt-containing)
+    handler's microtask to finish before it could even start, regardless of returning the promise at all. Fixed
+    by deferring the naming/save logic one tick via `setTimeout(fn, 0)` rather than chaining it directly: this
+    pushes it to a macrotask that runs strictly after the current microtask queue drains, so the returned
+    promise's OTHER consumers (like the debug capture) get to run first, in the same microtask flush as the
+    real tile-download completion — invisible to a real end user (the prompt still appears on the very next
+    tick, imperceptibly delayed) but exactly what makes the returned promise usable by anything that only cares
+    about the actual network transfer. `window.FieldMapDebug._startOfflineDownload = startOfflineDownload;` was
+    added right after the function definition (a debug-only raw reference to the real production function, not
+    a separate reimplementation) and `captureRealDownloadTotal` got one added diagnostic: if `startFn()` returns
+    `undefined` (i.e. one of `startOfflineDownload`'s own early-return guards fired — already downloading, or
+    no base layer checked / the offline panel never opened so `offlineCaptureBounds` is unset), it now warns
+    explicitly instead of silently reporting a misleading "0 requests, 0 bytes" that could look like a real
+    (if empty) measurement. `triggerTestDownload()` (Session 33) was kept as-is, still useful for a fully
+    synthetic/no-UI-preconditions test; it is no longer the only path available.
+    Verified live via the already-connected Chrome browser extension, driving the REAL production UI end to
+    end — not a bypass: searched the app's own coordinate search box to `35.35, -111.70` (San Francisco Peaks
+    near Flagstaff, AZ — genuinely mountainous terrain), opened Tools → Download (the real
+    `openOfflineModal()`, which sets `offlineCaptureBounds` from the live map viewport — confirmed via the
+    panel's own "Area centered near 35.350, -111.700" text and its live "56 tiles · approximately 2 MB"
+    estimate), left Topo/vectorbase checked (the default), then ran the EXACT console command from the task —
+    `window.FieldMapDebug.captureRealDownloadTotal(window.FieldMapDebug._startOfflineDownload)` — from the
+    devtools console (with `window.prompt` overridden to auto-return the default name in this one test tab
+    only, so the real deferred dialog never actually blocks the browser automation session — a test-harness
+    accommodation, not an app change). Result: 57 requests, 76,010 bytes total, internally consistent (56
+    vectorbase + 1 glyphs/fonts + 0 DEM + 0 sprite + 0 other = 57; 1,288 + 74,722 = 76,010) — non-zero and
+    driven entirely by the real function, closing the exact gap this session was asked to close. The 56
+    vectorbase tile count matches the picker's own live "56 tiles" estimate exactly, confirming
+    `offlineCaptureBounds`/`computeTileList` are being read correctly by the real code path. One genuinely
+    useful finding this surfaced organically, not searched for: the capture caught a real 74,722-byte
+    `/fonts/v1/` glyph request — MapLibre's own lazy glyph loading, unrelated to the offline download's own
+    tile list — that a tile-only measurement (Session 32's original approach, or anything scoped to just
+    `fetchAndCacheTile`) would have been structurally incapable of seeing at all; concrete evidence the
+    network-level, no-filtering-by-name design is doing real work, not just theoretically more thorough. Also
+    confirmed the real save flow completes correctly end-to-end despite the restructuring: `field-map-offline-
+    areas-v1` in localStorage gained a real entry (`name:"Area near 35.350, -111.700"`, `layerIds:
+    ["vectorbase"]`, `sizeMB:1.914...`) shortly after the capture resolved, and `#offline-progress-wrap`
+    correctly ended up hidden again — the deferred `setTimeout` path runs to completion exactly as before,
+    just no longer blocking an external awaiter. Re-confirmed fresh (not assumed) that the 56 vectorbase
+    tile requests still 403 in this sandbox (byte total for that bucket, 1,288, is ~23 bytes/tile — the known
+    error-body size) — same blocker as every prior session, unrelated to this fix; a real byte-vs-estimate
+    comparison for actual tile content still requires a real device. Zero console errors throughout. `node
+    --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.37.0 →
+    2.38.0, SHELL_CACHE bumped v143 → v144.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2028,3 +2086,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   whether the bathymetry fix reduces real transferred bytes; that comparison still requires a real device with
   working Mapbox access. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
   APP_VERSION bumped 2.36.0 → 2.37.0, SHELL_CACHE bumped v142 → v143.
+- Session 34: Closed the exact gap flagged after Session 33 — the capture tool had only ever been verified
+  against `triggerTestDownload()`, a parallel test-only path, never the real production
+  `startOfflineDownload()` that `offline-download-btn`'s real click handler calls. See Architecture notes'
+  "Bathymetry removal from vectorbase" entry's own "Session 34" sub-bullet for full detail. Exposed
+  `window.FieldMapDebug._startOfflineDownload = startOfflineDownload` and made `startOfflineDownload()` itself
+  `return` its real `downloadTileList(...)` promise instead of nothing — the actual signal for "network tile
+  fetching is done." The one real subtlety: the naming `prompt()` + area-save logic was already chained via
+  `.then()` directly onto that same promise, attached before the function returns it — since `prompt()` blocks
+  the JS thread synchronously and promise handlers run in attachment order, simply returning the promise
+  wouldn't have been enough; any external awaiter (the debug capture included) would still be stuck behind that
+  first, prompt-containing handler. Fixed by deferring the naming/save logic one tick via `setTimeout(fn, 0)`
+  so it runs as a macrotask after the current microtask queue (including the debug capture's own `.then()`)
+  drains — imperceptible to a real user, but what makes the returned promise actually usable by an external
+  caller. `captureRealDownloadTotal` also gained a diagnostic for when `startFn()` returns `undefined` (one of
+  `startOfflineDownload`'s own guards fired — already downloading, or no base layer checked/panel never
+  opened) so that case warns explicitly instead of silently reporting a misleading empty "0 requests, 0 bytes."
+  Verified live driving the REAL production UI end to end (not a bypass): searched to `35.35, -111.70` (San
+  Francisco Peaks near Flagstaff, AZ), opened Tools → Download for real (confirmed via the panel's own live
+  "56 tiles · approximately 2 MB" estimate), left Topo checked, then ran the exact task command —
+  `window.FieldMapDebug.captureRealDownloadTotal(window.FieldMapDebug._startOfflineDownload)` — from the
+  console. Result: 57 requests, 76,010 bytes, fully internally consistent (56 vectorbase + 1 glyphs/fonts = 57;
+  1,288 + 74,722 = 76,010) — non-zero and driven entirely by the real function, matching the picker's own live
+  56-tile count exactly. Genuinely useful and unplanned: the capture caught a real 74,722-byte `/fonts/v1/`
+  glyph request (MapLibre's own lazy glyph loading, unrelated to the offline tile list) that a tile-only
+  measurement approach would have been structurally incapable of seeing — real evidence the no-filtering-by-
+  name design is doing real work. Also confirmed the real save flow still completes correctly despite the
+  restructuring — a real entry landed in `field-map-offline-areas-v1` shortly after the capture resolved.
+  Re-confirmed the 56 vectorbase requests still 403 in this sandbox (same blocker as every prior session,
+  unrelated to this fix) — a real byte-vs-estimate comparison for actual tile content still needs a real
+  device. Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
+  blocks and on service-worker.js. APP_VERSION bumped 2.37.0 → 2.38.0, SHELL_CACHE bumped v143 → v144.
