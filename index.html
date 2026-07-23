@@ -641,6 +641,11 @@
      on mobile or desktop. Width widened to match so the label text stays aligned. */
   .layer-section-toggle .layer-section-chevron{font-size:16px;width:14px;flex-shrink:0;}
   .layer-section-toggle .layer-section-title{flex:1;}
+  /* Active-count badge — a sibling after the flex:1 title, so it sits right-justified for free
+     (title absorbs all space not needed by the chevron/badge) rather than needing its own
+     positioning. Base Layer's header has no matching span at all (single-select radio group —
+     always "1/5", never a meaningful count). */
+  .layer-section-toggle .layer-section-count{flex-shrink:0;font-size:11px;color:var(--text-muted);}
   .layer-section-body{border-top:1px solid var(--border);margin-top:4px;}
   .layer-section-body.collapsed{display:none;}
   .layer-section-body > *:first-child{margin-top:6px;padding-top:0;border-top:none;}
@@ -1688,7 +1693,7 @@
       <button class="sheet-cell" id="sheet-export-btn">
         <div class="sheet-icon">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="7 10 12 15 17 10"/>
+            <polyline points="7 8 12 3 17 8"/>
             <line x1="12" y1="3" x2="12" y2="15"/>
             <path d="M5 19h14"/>
           </svg>
@@ -1986,6 +1991,7 @@
     <button type="button" class="layer-section-toggle" data-section-toggle="landboundaries">
       <span class="layer-section-chevron">▸</span>
       <span class="layer-section-title">LAND AND BOUNDARIES</span>
+      <span class="layer-section-count" id="layer-section-count-landboundaries"></span>
     </button>
     <div class="layer-section-body collapsed" id="layer-section-body-landboundaries">
       <label class="layer-overlay-row">
@@ -2018,6 +2024,7 @@
     <button type="button" class="layer-section-toggle" data-section-toggle="environmental">
       <span class="layer-section-chevron">▸</span>
       <span class="layer-section-title">ENVIRONMENTAL</span>
+      <span class="layer-section-count" id="layer-section-count-environmental"></span>
     </button>
     <div class="layer-section-body collapsed" id="layer-section-body-environmental">
       <label class="layer-overlay-row">
@@ -2064,6 +2071,7 @@
     <button type="button" class="layer-section-toggle" data-section-toggle="water">
       <span class="layer-section-chevron">▸</span>
       <span class="layer-section-title">WATER</span>
+      <span class="layer-section-count" id="layer-section-count-water"></span>
     </button>
     <div class="layer-section-body collapsed" id="layer-section-body-water">
       <label class="layer-overlay-row">
@@ -2090,6 +2098,7 @@
     <button type="button" class="layer-section-toggle" data-section-toggle="wildlife">
       <span class="layer-section-chevron">▸</span>
       <span class="layer-section-title">WILDLIFE</span>
+      <span class="layer-section-count" id="layer-section-count-wildlife"></span>
     </button>
     <div class="layer-section-body collapsed" id="layer-section-body-wildlife">
       <div class="layer-compact-row">
@@ -2823,7 +2832,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.39.0';
+  var APP_VERSION = '2.39.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3442,6 +3451,29 @@
   var bulkSelectedPins = {};
   var bulkSelectedTracks = {};
   var bulkSelectedPolygons = {};
+  var bulkSelectedBearings = {};
+  var bulkSelectedRangeRings = {};
+  var bulkSelectedBuffers = {};
+  // All 6 bulk-selection maps, one per sidebar item type — bearing/rangering/buffer used to fall
+  // through to bulkSelectedPolygons (a stale 3-type pin/track/"everything else" assumption from
+  // before those 3 types existed), which silently broke both bulk delete and bulk edit for them:
+  // their ids landed in the polygon bucket, so confirmBulkDelete/applyBulkEdit's own
+  // state.polygons.find()/.filter() calls never matched anything real. bulkSelMapForType is the
+  // single place that routes an item type to its map — every other bulk-mode call site should go
+  // through this rather than repeating the type check.
+  function bulkSelMapForType(type){
+    return type === 'pin' ? bulkSelectedPins :
+      type === 'track' ? bulkSelectedTracks :
+      type === 'bearing' ? bulkSelectedBearings :
+      type === 'rangering' ? bulkSelectedRangeRings :
+      type === 'buffer' ? bulkSelectedBuffers :
+      bulkSelectedPolygons; // 'polygon' (area)
+  }
+  function totalBulkSelectedCount(){
+    return Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length +
+      Object.keys(bulkSelectedPolygons).length + Object.keys(bulkSelectedBearings).length +
+      Object.keys(bulkSelectedRangeRings).length + Object.keys(bulkSelectedBuffers).length;
+  }
   var saveTimer = null;
   var editingTagId = null;
 
@@ -11706,7 +11738,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var v = tagVisualFor(d);
     var row = document.createElement('div');
     row.className = 'pin-row';
-    var selMap = it.type === 'pin' ? bulkSelectedPins : it.type === 'track' ? bulkSelectedTracks : bulkSelectedPolygons;
+    var selMap = bulkSelMapForType(it.type);
     var cb = null;
 
     if (bulkMode){
@@ -11780,7 +11812,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           for (var ri = lo; ri <= hi; ri++){
             var rIt = allItems[ri];
             if (!rIt) continue;
-            var rMap = rIt.type === 'pin' ? bulkSelectedPins : rIt.type === 'track' ? bulkSelectedTracks : bulkSelectedPolygons;
+            var rMap = bulkSelMapForType(rIt.type);
             var rId = rIt.data.id;
             if (targetState) rMap[rId] = true; else delete rMap[rId];
           }
@@ -11975,7 +12007,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ---------- Bulk edit ----------
   function updateBulkBar(){
-    var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length;
+    var n = totalBulkSelectedCount();
     document.getElementById('bulk-count').textContent = n + ' selected';
     document.getElementById('bulk-apply-btn').disabled = (n === 0);
     document.getElementById('bulk-delete-btn').disabled = (n === 0);
@@ -11985,6 +12017,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     bulkMode = true;
     lastBulkClickedIdx = -1;
     bulkSelectedPins = {}; bulkSelectedTracks = {}; bulkSelectedPolygons = {};
+    bulkSelectedBearings = {}; bulkSelectedRangeRings = {}; bulkSelectedBuffers = {};
     document.getElementById('bulk-bar').classList.remove('hidden');
     document.getElementById('bulk-edit-btn').classList.add('active');
     document.getElementById('sidebar').classList.add('open');
@@ -11995,6 +12028,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function exitBulkMode(){
     bulkMode = false;
     bulkSelectedPins = {}; bulkSelectedTracks = {}; bulkSelectedPolygons = {};
+    bulkSelectedBearings = {}; bulkSelectedRangeRings = {}; bulkSelectedBuffers = {};
     document.getElementById('bulk-bar').classList.add('hidden');
     document.getElementById('bulk-edit-btn').classList.remove('active');
     renderPinList();
@@ -12037,7 +12071,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var pinIds = Object.keys(bulkSelectedPins);
     var trackIds = Object.keys(bulkSelectedTracks);
     var polyIds = Object.keys(bulkSelectedPolygons);
-    var total = pinIds.length + trackIds.length + polyIds.length;
+    var bearingIds = Object.keys(bulkSelectedBearings);
+    var rangeRingIds = Object.keys(bulkSelectedRangeRings);
+    var bufferIds = Object.keys(bulkSelectedBuffers);
+    var total = totalBulkSelectedCount();
 
     function applyToItem(item){
       if (addTagIds.length){
@@ -12063,6 +12100,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var p = (state.polygons||[]).find(function(x){ return x.id === id; });
       if (p){ applyToItem(p); refreshPolygonMap(p); }
     });
+    bearingIds.forEach(function(id){
+      var b = (state.bearings||[]).find(function(x){ return x.id === id; });
+      if (b){ applyToItem(b); refreshBearingMap(b); }
+    });
+    rangeRingIds.forEach(function(id){
+      var r = (state.rangeRings||[]).find(function(x){ return x.id === id; });
+      if (r){ applyToItem(r); refreshRangeRingMap(r); }
+    });
+    bufferIds.forEach(function(id){
+      var b = (state.buffers||[]).find(function(x){ return x.id === id; });
+      if (b){ applyToItem(b); refreshBufferMap(b); }
+    });
 
     document.getElementById('bulk-modal').classList.add('hidden');
     exitBulkMode();
@@ -12080,7 +12129,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var pinIds = Object.keys(bulkSelectedPins);
     var trackIds = Object.keys(bulkSelectedTracks);
     var polyIds = Object.keys(bulkSelectedPolygons);
-    var total = pinIds.length + trackIds.length + polyIds.length;
+    var bearingIds = Object.keys(bulkSelectedBearings);
+    var rangeRingIds = Object.keys(bulkSelectedRangeRings);
+    var bufferIds = Object.keys(bulkSelectedBuffers);
+    var total = totalBulkSelectedCount();
     pinIds.forEach(function(id){
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
       recordTombstone(id);
@@ -12095,6 +12147,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.polygons = (state.polygons||[]).filter(function(p){ return p.id !== id; });
       recordTombstone(id);
       removePolygonFromMap(id);
+    });
+    bearingIds.forEach(function(id){
+      state.bearings = (state.bearings||[]).filter(function(b){ return b.id !== id; });
+      recordTombstone(id);
+      removeBearingFromMap(id);
+    });
+    rangeRingIds.forEach(function(id){
+      state.rangeRings = (state.rangeRings||[]).filter(function(r){ return r.id !== id; });
+      recordTombstone(id);
+      removeRangeRingFromMap(id);
+    });
+    bufferIds.forEach(function(id){
+      state.buffers = (state.buffers||[]).filter(function(b){ return b.id !== id; });
+      recordTombstone(id);
+      removeBufferFromMap(id);
     });
     document.getElementById('bulk-delete-modal').classList.add('hidden');
     exitBulkMode();
@@ -13352,7 +13419,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         info.className = 'offline-area-info';
         var nameEl = document.createElement('div'); nameEl.className = 'offline-area-name'; nameEl.textContent = area.name;
         var metaEl = document.createElement('div'); metaEl.className = 'offline-area-meta';
-        var layerLabels = area.layerIds.map(function(id){ return DOWNLOAD_LAYERS[id] ? DOWNLOAD_LAYERS[id].label : id; }).join(', ');
+        // Base-layer source ids (vectorbase/satellite/usgstopo) each describe a SHARED-group
+        // label in DOWNLOAD_LAYERS ("Topo map data (Topo / Topo Dark / Aerial + Topo)"), not the
+        // one checkbox actually selected — area.baseLayerIds (when present) resolves this
+        // precisely via BASE_LAYER_DOWNLOAD_LABELS instead. Older saved areas from before this
+        // field existed fall back to the old group-label behavior — there's no way to know
+        // retroactively which specific checkbox produced them.
+        var offlineBaseSourceIds = ['vectorbase', 'satellite', 'usgstopo'];
+        var baseLabel = (area.baseLayerIds && area.baseLayerIds.length)
+          ? area.baseLayerIds.map(function(id){ return BASE_LAYER_DOWNLOAD_LABELS[id] || id; }).join(', ')
+          : area.layerIds.filter(function(id){ return offlineBaseSourceIds.indexOf(id) !== -1; })
+              .map(function(id){ return DOWNLOAD_LAYERS[id] ? DOWNLOAD_LAYERS[id].label : id; }).join(', ');
+        var overlayLabel = area.layerIds.filter(function(id){ return offlineBaseSourceIds.indexOf(id) === -1; })
+          .map(function(id){ return DOWNLOAD_LAYERS[id] ? DOWNLOAD_LAYERS[id].label : id; }).join(', ');
+        var layerLabels = [baseLabel, overlayLabel].filter(function(s){ return s; }).join(', ');
         var sizeLabel = area.sizeMB >= 1024 ? (area.sizeMB/1024).toFixed(1) + ' GB' : Math.round(area.sizeMB) + ' MB';
         metaEl.textContent = 'Z' + area.minZoom + '–' + area.maxZoom + ' · ' + layerLabels + ' · ' + sizeLabel + ' · ' + new Date(area.createdAt).toLocaleDateString();
         info.appendChild(nameEl); info.appendChild(metaEl);
@@ -13406,6 +13486,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (maxZ < minZ) maxZ = minZ;
     var layerIds = selectedOfflineSourceIds();
     if (layerIds.length === 0) return;
+    // Captured now (not re-read later inside the deferred save below) so it reflects exactly
+    // what was checked at the moment Download was clicked, even if the panel's checkboxes
+    // change before the save actually runs — see the areaEntry.baseLayerIds comment below for
+    // why this is stored separately from layerIds at all.
+    var baseLayerIds = selectedOfflineBaseLayerIds();
 
     var tileList = computeTileList(offlineCaptureBounds, minZ, maxZ, layerIds);
     var sizeMB = estimateSizeMB(tileList);
@@ -13455,6 +13540,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
           minZoom: minZ, maxZoom: maxZ,
           layerIds: layerIds,
+          // The actual base-layer checkbox id(s) selected (e.g. ['topo'], not ['vectorbase']) —
+          // layerIds alone can't reconstruct this for display, since Topo/Topo Dark/Aerial+Topo
+          // all dedupe to the SAME 'vectorbase' source id (and Aerial/Aerial+Topo both dedupe to
+          // 'satellite'), so DOWNLOAD_LAYERS[id].label is necessarily a shared-group description
+          // ("Topo map data (Topo / Topo Dark / Aerial + Topo)"), not the one checkbox actually
+          // ticked. renderOfflineAreasList() uses this instead of layerIds for the base-layer
+          // portion of the label; layerIds itself is untouched and still what actually drives
+          // tile computation/redownload/delete.
+          baseLayerIds: baseLayerIds,
           sizeMB: sizeMB,
           createdAt: Date.now()
         };
@@ -15389,6 +15483,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var toggle = document.querySelector('.layer-section-toggle[data-section-toggle="' + id + '"]');
       if (toggle) toggle.addEventListener('click', function(){ setLayerSectionOpen(id, !isLayerSectionOpen(id)); });
     });
+    updateLayerSectionCounts();
+    // Delegated rather than one listener per checkbox (10 across the 4 counted sections, plus
+    // Base Layer's own radios and every opacity <input type=range> in between) — a single
+    // 'change' listener on the panel itself catches every current and future toggle with no
+    // per-checkbox wiring, and naturally excludes Wildlife's species/type sub-toggles since
+    // those live in the separate #wildlife-panel, outside this element entirely.
+    document.getElementById('layers-panel').addEventListener('change', function(e){
+      if (e.target && e.target.type === 'checkbox') updateLayerSectionCounts();
+    });
+  }
+
+  // Right-justified "X/Y" active-toggle count per collapsible section header — top-level toggles
+  // only (GMU boundaries counts as one item regardless of which state is selected; Habitats/
+  // Migrations each count as one item regardless of how many species/type sub-toggles are on
+  // inside their own separate panel). Base Layer is deliberately excluded — a single-select
+  // radio group always reads "1/5", never a meaningful count.
+  var LAYER_SECTION_TOGGLE_IDS = {
+    landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
+    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle'],
+    water: ['hydro-toggle', 'gauge-toggle'],
+    wildlife: ['habitats-quick-toggle', 'migrations-quick-toggle']
+  };
+  function updateLayerSectionCounts(){
+    Object.keys(LAYER_SECTION_TOGGLE_IDS).forEach(function(section){
+      var ids = LAYER_SECTION_TOGGLE_IDS[section];
+      var active = ids.filter(function(id){
+        var el = document.getElementById(id);
+        return el && el.checked;
+      }).length;
+      var badge = document.getElementById('layer-section-count-' + section);
+      if (badge) badge.textContent = active + '/' + ids.length;
+    });
   }
 
   // ---------- Panel scrim ----------
@@ -16225,7 +16351,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var panel = document.getElementById('layers-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
-      if (willOpen){ panel.classList.remove('hidden'); updateOverlayOfflineAvailability(); }
+      if (willOpen){ panel.classList.remove('hidden'); updateOverlayOfflineAvailability(); updateLayerSectionCounts(); }
     });
     document.getElementById('active-layers-chip').addEventListener('click', function(e){
       e.stopPropagation();
@@ -16602,11 +16728,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       renderBulkTagChips();
       document.getElementById('bulk-trip').value = '';
       document.getElementById('bulk-date').value = '';
-      document.getElementById('bulk-modal-title').textContent = 'Edit ' + (Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length) + ' selected';
+      document.getElementById('bulk-modal-title').textContent = 'Edit ' + totalBulkSelectedCount() + ' selected';
       document.getElementById('bulk-modal').classList.remove('hidden');
     });
     document.getElementById('bulk-delete-btn').addEventListener('click', function(){
-      var n = Object.keys(bulkSelectedPins).length + Object.keys(bulkSelectedTracks).length + Object.keys(bulkSelectedPolygons).length;
+      var n = totalBulkSelectedCount();
       if (n === 0) return;
       document.getElementById('bulk-delete-modal-title').textContent = 'Delete ' + n + ' item' + (n===1?'':'s') + '?';
       document.getElementById('bulk-delete-modal-body').textContent =

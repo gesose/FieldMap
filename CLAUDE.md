@@ -1436,6 +1436,54 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   22→85, exactly reversing the old under/over-estimate pattern the task described. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.38.0 → 2.39.0, SHELL_CACHE
   bumped v144 → v145.
+- Session 36 bug batch — 4 small, unrelated fixes in one pass:
+  - Bulk-edit delete/edit for Bearings, Range Rings, Buffers: `bulkSelMapForType(type)` (index.html, near the
+    other bulk-edit state) is now the single place that routes an item type to its own selection map —
+    `bulkSelectedPins`/`bulkSelectedTracks`/`bulkSelectedPolygons`/`bulkSelectedBearings`/
+    `bulkSelectedRangeRings`/`bulkSelectedBuffers`. Previously a 3-way ternary (`pin ? ... : track ? ... :
+    bulkSelectedPolygons`) treated ANY non-pin/non-track type as a polygon — a leftover from before bearing/
+    rangering/buffer existed. Both `confirmBulkDelete()` and `applyBulkEdit()` now handle all 6 types
+    explicitly (filter own state array + `recordTombstone` + own `removeXFromMap` for delete; `.find()` on
+    own state array + own `refreshXMap` for edit), and `totalBulkSelectedCount()` replaces 4 separate
+    repeated `Object.keys(...).length + ...` sums (the bulk bar count, the bulk-modal title, the bulk-delete
+    button's own count, and the delete-confirmation dialog's count) that had all silently under-counted the
+    same way.
+  - Layers panel section count badges (`.layer-section-count`, right-justified via the existing
+    `.layer-section-title{flex:1}` absorbing remaining space): `LAYER_SECTION_TOGGLE_IDS` maps each of the 4
+    non-base sections to its own top-level toggle checkbox ids, and `updateLayerSectionCounts()` reads
+    `.checked` across just those ids. Wired via one delegated `change` listener on `#layers-panel` itself
+    (catches all current and future checkboxes with no per-checkbox listener, and naturally excludes
+    Wildlife's species/type sub-toggles since those live in the separate `#wildlife-panel`) plus a call at
+    both boot (`initLayerSections()`) and every time the panel is actually opened (covers any checkbox whose
+    `.checked` was set programmatically elsewhere, which wouldn't fire a `change` event).
+  - Export vs. Download icons (Tools sheet): were the same "arrow + tray" glyph at slightly different
+    coordinates. Export's polyline/line now point up-and-out instead of down-and-in — a mirror of Download's
+    icon, matching the universally-recognized upload/download arrow-direction pairing rather than inventing
+    an unrelated glyph.
+  - Offline area base-layer mislabeling: `area.layerIds` (e.g. `['vectorbase']`) is the DEDUPED SOURCE id
+    list computeTileList/redownload/delete actually need — it can't distinguish which of Topo/Topo Dark/
+    Aerial+Topo (all `vectorbase`) or Aerial/Aerial+Topo (both `satellite`) checkbox was actually ticked,
+    which is why `DOWNLOAD_LAYERS[id].label` was always the shared-group description. Fixed by capturing
+    `selectedOfflineBaseLayerIds()` — the real checkbox ids, e.g. `['topo-dark']` — into a new
+    `areaEntry.baseLayerIds` field at download time (in `startOfflineDownload()`, read before the deferred
+    save so it reflects what was actually checked at click-time, not whatever the panel shows later).
+    `renderOfflineAreasList()` uses `baseLayerIds` (resolved via `BASE_LAYER_DOWNLOAD_LABELS`) for the
+    base-layer portion of the label when present, falling back to the old group-label behavior for areas
+    saved before this field existed (no way to know retroactively which checkbox produced them).
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`:
+  created a real bearing/range-ring/buffer through the actual creation UI, bulk-selected and deleted all 3,
+  and confirmed via `localStorage` (not just the UI list disappearing) that `state.bearings`/`.rangeRings`/
+  `.buffers` all emptied and exactly 3 tombstones were recorded. Layer section badges confirmed reading
+  "0/3"/"0/3"/"0/2"/"0/2" fresh and updating live to "2/3" after checking two toggles. Export/Download icons
+  confirmed visually distinct. Downloaded a real area with "Topo Dark" specifically selected and confirmed
+  both in `localStorage` (`baseLayerIds:["topo-dark"]`) and in the live saved-areas list, which now reads
+  "Topo Dark" instead of the old ambiguous "Topo map data (Topo / Topo Dark / Aerial + Topo)" label. One
+  real testing gotcha, not an app bug: triggering the download without first overriding `window.prompt` let
+  the real native dialog (from Session 34's deferred-save `setTimeout`) block the CDP automation channel —
+  the same class of limitation already documented in this file for `confirm()` dialogs — resolved by
+  redoing the test in a fresh tab with `window.prompt` overridden first. `node --check` confirmed clean
+  syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.0 → 2.39.1, SHELL_CACHE bumped
+  v145 → v146.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2170,3 +2218,43 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   isn't byte-identical to the original real-device measurement area. `node --check` confirmed clean syntax
   on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.38.0 → 2.39.0, SHELL_CACHE bumped v144 →
   v145.
+- Session 36: A batch of 4 small, unrelated bug fixes (patch version — no new features). See Architecture
+  notes' "Session 36 bug batch" entry for full detail on each.
+  1. Bulk-edit delete (and, found as the same root cause, bulk-edit's field-apply too) silently no-op'd for
+     Bearings, Range Rings, and Buffers — a stale 3-way pin/track/"everything else assumed polygon" type
+     check (`bulkSelMapForType`, new) that predated those 3 object types being added at all. Their ids were
+     landing in `bulkSelectedPolygons` alongside real area ids, so `confirmBulkDelete`/`applyBulkEdit`'s own
+     `state.polygons` lookups silently matched nothing for them. Fixed with 3 new dedicated selection maps
+     and a single routing helper, used everywhere the old 3-way ternary was repeated.
+  2. Layers panel section headers (Land and boundaries / Environmental / Water / Wildlife — Base Layer
+     deliberately excluded, a single-select radio group) now show a right-justified "X/Y" active-toggle
+     count badge, counting only each section's own top-level toggles (GMU boundaries counts as one item
+     regardless of state selected; Habitats/Migrations each count as one regardless of their own sub-toggles,
+     which live in a separate panel entirely). Updates live via one delegated 'change' listener on the panel.
+  3. Export and Download in the Tools sheet used the same "arrow into a tray" glyph, just with slightly
+     different coordinates — visually indistinguishable at a glance. Export's arrow now points up-and-out
+     (mirrors Download's down-and-in), a well-recognized opposite pairing.
+  4. Saved offline areas always displayed the base layer as the shared-source-group label ("Topo map data
+     (Topo / Topo Dark / Aerial + Topo)") regardless of which single checkbox was actually selected, since
+     `area.layerIds` stores deduped SOURCE ids (`vectorbase`/`satellite`) which 3 or 2 different base-layer
+     checkboxes all legitimately share — there was no way to reconstruct which one was actually checked from
+     `layerIds` alone. Fixed by capturing `selectedOfflineBaseLayerIds()` at download time into a new
+     `areaEntry.baseLayerIds` field (the specific checkbox ids, e.g. `['topo-dark']`) used for the base-layer
+     portion of the display label; `layerIds` itself is untouched and still drives all tile computation.
+     Older saved areas from before this field existed fall back to the old group-label behavior.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`:
+  created one real bearing, range ring, and buffer through the actual creation UI, entered bulk-edit mode,
+  selected all 3, and deleted — confirmed via `localStorage` (not just the UI list) that all 3 arrays
+  emptied and exactly 3 tombstones were recorded, not just a visual list refresh. Layer section badges
+  confirmed showing "0/3"/"0/3"/"0/2"/"0/2" on a fresh load and updating live to "2/3" after checking two
+  Land-and-boundaries toggles. Export/Download icons confirmed visually distinct in a live screenshot.
+  Downloaded a real (if 403-blocked, same confirmed sandbox limitation as every prior session) offline area
+  with "Topo Dark" specifically checked (not the default "Topo") — confirmed both in `localStorage`
+  (`baseLayerIds:["topo-dark"]`) and in the live saved-areas list UI, which now reads "Topo Dark" instead of
+  the old ambiguous group label. One real testing gotcha hit along the way, not an app bug: triggering a real
+  download without first overriding `window.prompt` in the test tab caused the native dialog (fired from the
+  Session 34 deferred-save `setTimeout`) to block the CDP automation channel — matching a limitation already
+  documented in this file for `confirm()` dialogs; resolved by closing that tab and redoing the test in a
+  fresh one with `window.prompt` overridden first. Zero console errors. `node --check` confirmed clean syntax
+  on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.0 → 2.39.1, SHELL_CACHE bumped v145 →
+  v146.
