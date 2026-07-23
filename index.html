@@ -928,15 +928,27 @@
   .pub-land-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;}
   .pub-land-chip:hover::after{content:attr(title);position:absolute;bottom:28px;background:#111;color:#fff;padding:3px 6px;border-radius:4px;font-size:10px;white-space:nowrap;pointer-events:none;}
 
-  /* Slope Angle color-band legend (Session 38) — same floating-chip-row pattern as
-     #publicland-legend, deliberately anchored to the opposite corner (bottom-left, that one's
-     bottom-center) so both can be visible at once without overlapping. */
+  /* Slope Angle color-band legend (Session 38, repositioned Session 39) — same floating-chip-row
+     pattern as #publicland-legend. #slope-legend is a body-level sibling of <main id="map">, not
+     a child of it (same as #publicland-legend, #map-controls, etc.), so a plain left:50% here
+     centers across the FULL BROWSER WINDOW, not the map area — on desktop that overlaps the
+     sidebar, since the sidebar (--sidebar-width, 330px) eats into the left side of that window
+     width without the map area actually starting until after it. Centered horizontally within
+     the map viewport specifically (sidebar's right edge to the window's right edge) using the
+     same --sidebar-width variable #view-drawer's own max-width calc() already relies on for an
+     equivalent problem: the map area's own midpoint is sidebar-width + half of what's left, and
+     translateX(-50%) shifts the (unknown-width) box left by half itself to actually center on
+     that point rather than just start there. Bottom anchor (14px) is unaffected — this is purely
+     a horizontal fix. Mobile is untouched — the media-query rule below already force-hides this
+     element there entirely, so these values never render on mobile regardless. */
   #slope-legend{
-    position:absolute;bottom:14px;left:14px;
+    position:absolute;bottom:14px;
+    left:calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
+    transform:translateX(-50%);
     z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     border:1px solid rgba(255,255,255,0.1);border-radius:10px;
     padding:7px 12px;display:flex;align-items:center;gap:6px;
-    max-width:calc(100vw - 28px);overflow-x:auto;flex-wrap:nowrap;
+    max-width:calc(100vw - var(--sidebar-width) - 28px);overflow-x:auto;flex-wrap:nowrap;
     box-shadow:0 2px 10px rgba(0,0,0,0.4);
   }
   #slope-legend.hidden{display:none;}
@@ -2906,7 +2918,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.41.0';
+  var APP_VERSION = '2.41.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';

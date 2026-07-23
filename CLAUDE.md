@@ -1663,11 +1663,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     values that shouldn't each trigger a real recompute).
   - **Legend**: Slope Angle's floating color-band legend (`#slope-legend`, `loadSlopeLegend()`) copies
     Public Land's existing `#publicland-legend`/`loadPublicLandLegend()` pattern verbatim (build-once,
-    toggle-visibility-with-the-layer) — deliberately anchored to the OPPOSITE corner (bottom-left vs. Public
-    Land's bottom-center) so both can be visible at once without overlapping, and hidden on mobile the same
-    way Public Land's already is (its own info popover, reachable via the `?` button, carries the same
-    6-swatch key for mobile). Elevation Range has no floating legend — it's a single user-chosen color, not
-    a multi-band scale, and the task didn't ask for one.
+    toggle-visibility-with-the-layer), and is hidden on mobile the same way Public Land's already is (its
+    own info popover, reachable via the `?` button, carries the same 6-swatch key for mobile). Elevation
+    Range has no floating legend — it's a single user-chosen color, not a multi-band scale, and the task
+    didn't ask for one. Desktop positioning was corrected in Session 39 — see that entry for the fix; this
+    entry's original "anchored bottom-left" description is superseded.
   - **Offline availability graying**: added to the existing `OVERLAY_OFFLINE_TOGGLE_SOURCE` table (which
     grays a Layers-panel toggle while offline if no downloaded area covers the current viewport for its
     underlying source) mapped to `'dem'` — extending, not duplicating, the existing mechanism: DEM itself
@@ -1712,6 +1712,29 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     rigorous frame-timing measurement) — flagged rather than silently claimed as fully proven. `node --check`
     confirmed clean syntax on all 4 extracted inline `<script>` blocks, `terrain-overlay-worker.js`, and
     `service-worker.js`. APP_VERSION bumped 2.40.0 → 2.41.0, SHELL_CACHE bumped v147 → v148.
+  - Session 39 — fixed Slope Angle's legend overlapping the sidebar on desktop. Root cause: `#slope-legend`
+    is a body-level sibling of `<main id="map">`, not a child of it (same as `#publicland-legend`,
+    `#map-controls`, etc.) — its Session 38 CSS (`left:14px`) positioned it 14px from the WHOLE BROWSER
+    WINDOW's left edge, which sits inside the sidebar's own column (`--sidebar-width`, 330px) rather than
+    at the actual left edge of the map area, which only starts after the sidebar. Fixed by centering it
+    within the map viewport specifically: `left:calc(var(--sidebar-width) + (100vw - var(--sidebar-width))
+    / 2)` computes the map area's own horizontal midpoint (sidebar's right edge plus half of whatever's
+    left), and `transform:translateX(-50%)` shifts the box left by half its own (unknown, content-driven)
+    width to actually center on that point — the same `--sidebar-width`-aware `calc()` technique
+    `#view-drawer`'s own `max-width` already relies on for an equivalent problem. `max-width` was updated
+    the same way (`100vw - var(--sidebar-width) - 28px`, not the old `100vw - 28px`) so the box can't grow
+    wide enough to spill back past the sidebar boundary even with more chips than fit today. Mobile
+    untouched — the existing `@media (max-width:760px) #slope-legend{display:none !important;}` rule
+    already hides it there regardless of these values, confirmed still true at a genuine 386px width via a
+    real same-origin `<iframe>` (not a hand-retyped CSS override), matching this codebase's own established
+    mobile-verification convention. Flagged, not silently fixed: `#publicland-legend` almost certainly has
+    the identical latent bug (same body-level-sibling-plus-`left:50%`-across-the-whole-window pattern), but
+    the task named only Slope Angle's legend, so Public Land's was left untouched — worth a follow-up if
+    ever reported. Verified live via the already-connected Chrome browser extension against a local `python
+    -m http.server`: measured `#slope-legend`'s and `#sidebar`'s real `getBoundingClientRect()`s and
+    confirmed the legend's center lands exactly on the map area's own midpoint (0px error) with zero
+    overlap with the sidebar. Zero console errors. `node --check` confirmed clean syntax on all 4 extracted
+    inline `<script>` blocks. APP_VERSION bumped 2.41.0 → 2.41.1, SHELL_CACHE bumped v148 → v149.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2546,3 +2569,16 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   data patch was applied. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
   the new worker file, and service-worker.js. APP_VERSION bumped 2.40.0 → 2.41.0, SHELL_CACHE bumped v147 →
   v148.
+- Session 39: Fixed Slope Angle's legend overlapping the sidebar's item list on desktop — see Architecture
+  notes' "Slope Angle and Custom Elevation Range overlays" entry's own "Session 39" sub-bullet for full
+  detail. Root cause: `#slope-legend` is a body-level sibling of `<main id="map">`, so its Session 38
+  `left:14px` positioned it 14px from the whole BROWSER WINDOW's edge — inside the sidebar's own column,
+  not the map area, which only starts after `--sidebar-width` (330px). Fixed with a `--sidebar-width`-aware
+  `calc()` (the same technique `#view-drawer`'s own `max-width` already uses) that centers the legend
+  within the map viewport specifically, plus a matching `max-width` adjustment so it can't grow back past
+  the sidebar boundary with more chips. Mobile untouched — already correctly hidden there, reconfirmed at a
+  genuine 386px width via a real `<iframe>`. Flagged: `#publicland-legend` almost certainly has the
+  identical latent bug, but wasn't in scope for this task and was left untouched. Verified live: measured
+  real bounding boxes and confirmed the legend's center lands exactly on the map area's midpoint (0px
+  error) with zero sidebar overlap. Zero console errors. `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks. APP_VERSION bumped 2.41.0 → 2.41.1, SHELL_CACHE bumped v148 → v149.
