@@ -51,16 +51,34 @@
     display:flex;flex-direction:column;gap:8px;
     width:230px;
   }
+  /* Desktop default for the row1 wrapper — a no-op box (its children stack directly in the
+     outer #floating-info-stack column, exactly as if this div weren't there at all). Mobile
+     overrides this to a real flex row; see that rule's own comment. */
+  #floating-info-row1{display:contents;}
+  /* Uniform height/corner-radius across the 3 persistent chips (coords+elevation, scale bar,
+     active trip) — confirmed via screenshot as visibly inconsistent before this (the trip chip
+     in particular used a 20px pill radius the other two never had, and each chip's height was
+     purely content-driven, so all three ended up a few px apart). active-layers-chip is
+     deliberately NOT part of this group, on desktop or mobile — it was never specified to match
+     the other three's sizing, only its own (see that chip's own rule). Desktop keeps its
+     existing 230px-wide vertical stack — this is sizing/radius consistency only, not a layout
+     change the way mobile got. */
+  #center-readout-float,#scale-bar,#active-trip-chip{
+    height:40px;box-sizing:border-box;border-radius:8px;justify-content:center;
+  }
   /* Floating coordinate + elevation readout (replaces old topbar), CalTopo-style —
      live-updates as the map pans, elevation via the DEM→GPS→EPQS hierarchy (getElevationFt),
      UNLESS toggled to current-location mode (see toggleCenterReadoutMode) — tap anywhere in the
-     bubble to switch. */
+     bubble to switch. display:flex (added for the uniform-height rule above's justify-content
+     to have any effect — this chip previously had no display:flex of its own, relying on
+     text-align:center instead) keeps its two rows (coords, then elevation) stacked exactly as
+     before, just vertically centered within the new fixed height now. */
   #center-readout-float{
-    cursor:pointer;
+    cursor:pointer;display:flex;flex-direction:column;
     font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
     background:var(--bg-elevated);border:1px solid var(--border);
-    padding:5px 9px;border-radius:8px;white-space:nowrap;
-    box-sizing:border-box;text-align:center;
+    padding:5px 9px;white-space:nowrap;
+    text-align:center;
   }
   #center-readout-float:hover{color:var(--text);border-color:var(--accent);}
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
@@ -71,13 +89,13 @@
   #center-readout-row, #center-readout-mobile-row{display:flex;align-items:center;justify-content:center;gap:4px;}
   .center-readout-icon{display:inline-flex;flex-shrink:0;}
 
-  /* Active Trip persistent indicator — now just a plain child of #floating-info-stack (see
+  /* Active Trip persistent indicator — now just a plain child of #floating-info-row1 (see
      that rule's own comment for why the old per-child pixel-offset stacking was replaced). */
   #active-trip-chip{
     cursor:pointer;
     font-family:var(--font-sans);font-size:12px;font-weight:600;color:var(--text);
     background:rgba(34,41,35,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-    border:1px solid rgba(255,255,255,0.12);border-radius:20px;
+    border:1px solid rgba(255,255,255,0.12);
     padding:7px 14px;box-sizing:border-box;
     display:flex;align-items:center;gap:6px;
     box-shadow:0 4px 14px rgba(0,0,0,0.35);
@@ -85,6 +103,11 @@
   #active-trip-chip.hidden{display:none;}
   #active-trip-chip:hover{border-color:var(--accent);}
   #active-trip-chip::before{content:'●';color:var(--accent);font-size:9px;flex-shrink:0;}
+  /* Active state (a real trip selected, i.e. NOT .no-active-trip) — border now matches the dot's
+     own accent color instead of the default neutral rgba(255,255,255,0.12), so the whole chip
+     reads as "active" at a glance instead of just the small dot. Applies on both desktop and
+     mobile (no breakpoint-specific override needed — same selector, same border property). */
+  #active-trip-chip:not(.no-active-trip){border-color:var(--accent);}
   /* min-width:0 is the actual fix, not just overflow/ellipsis/nowrap alone — a flex item's
      default min-width:auto means it refuses to shrink below its own text's full unwrapped
      width, so without this the ellipsis never actually engaged and long trip names wrapped
@@ -92,7 +115,7 @@
   #active-trip-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
   /* No-active-trip state — same chip, same tap target (still opens the switcher), just muted
      styling so it doesn't read as "a trip named No active trip" is currently active. */
-  #active-trip-chip.no-active-trip{color:var(--text-muted);font-weight:500;}
+  #active-trip-chip.no-active-trip{color:var(--text-muted);font-weight:500;border-color:rgba(255,255,255,0.12);}
   #active-trip-chip.no-active-trip::before{color:var(--text-muted);}
 
   /* Active layers indicator — replaces the old always-on color-swatch legend (#wildlife-legend
@@ -935,69 +958,82 @@
 
     /* Hide desktop coord readout — no room */
     #center-readout-float{display:none;}
-    /* Floating info stack, mobile (Session 28 — full layout overhaul): a single horizontal row
-       spanning the top of the screen, replacing the old bottom-left vertical column entirely
-       (that column, and the "push up above the bottom sheet when it's open" rule that came with
-       it, are both gone — a top-anchored row is never in the expanded bottom sheet's way, since
-       the sheet only ever grows from the screen's bottom edge, so there's nothing left here to
-       dodge). flex-direction:row + stretch-height children (see the per-chip rules below) is
-       the whole layout; width is the full viewport (minus margins) rather than a fixed 140/230px
-       column, which is what makes the active-layers chip's single-line truncation actually work
-       without a two-line fallback (see that chip's own rule below). */
+    /* Floating info stack, mobile (Session 28 layout overhaul, restructured Session 29): TWO
+       rows now, not one — #floating-info-row1 (coords/elevation, scale bar, active trip) spans
+       the top full width, and #active-layers-chip is its OWN full-width row directly beneath it
+       (hidden entirely, per spec, whenever no Habitat/Migration layer is active). Session 28
+       originally made all 4 chips flex:1 siblings in a single row, which crammed the
+       active-layers chip inline with — and visibly cramping — the 3 persistent chips instead of
+       giving it its own row; a real layout bug, fixed here by making #floating-info-stack a
+       column again (row1 + active-layers-chip stacked) and pushing the actual horizontal-row
+       behavior down into #floating-info-row1, which only becomes a real flex row on mobile (see
+       that id's desktop default, `display:contents`, near #floating-info-stack's own desktop
+       rule). Width is still the full viewport (minus margins) rather than a fixed column, which
+       is what makes the active-layers chip's single-line truncation work without a two-line
+       fallback (see that chip's own rule below). */
     #floating-info-stack{
       top:14px;left:14px;right:14px;bottom:auto;
-      flex-direction:row;align-items:stretch;gap:6px;
+      flex-direction:column;align-items:stretch;gap:6px;
       width:auto;max-width:none;
     }
-    /* The three "full-height" chips (coords/elevation, scale bar, active trip) — uniform 40px
-       height and equal flex:1 width so the row divides evenly regardless of which chips are
-       actually visible (active-trip-chip and active-layers-chip both toggle a real `hidden`
-       class off/on; flex:1 on the survivors naturally redistributes their share of the row's
-       width when one is absent, no JS involved). min-width:0 is required for the same reason
-       it's required on #active-trip-chip-label/#active-layers-chip-lines elsewhere in this file
-       — a flex item's default min-width:auto refuses to shrink below its own content's natural
-       width, which would silently break every truncation rule below it. */
+    #floating-info-row1{
+      display:flex;flex-direction:row;align-items:stretch;gap:6px;
+    }
+    /* The three "full-height" chips (coords/elevation, scale bar, active trip) — uniform 44px
+       height and equal flex:1 width so row1 divides evenly regardless of which are actually
+       visible (active-trip-chip toggles a real `hidden` class; flex:1 on the survivor(s)
+       naturally redistributes the freed width, no JS involved). min-width:0 is required for the
+       same reason it's required on #active-trip-chip-label/#active-layers-chip-lines elsewhere
+       in this file — a flex item's default min-width:auto refuses to shrink below its own
+       content's natural width, which would silently break every truncation rule below it.
+       padding:6px 10px is a real 4-sided value now (Session 29 fix — the previous horizontal-
+       only 0/8/9/12px paddings left text and the scale-bar graphic sitting flush against every
+       chip's edges with zero vertical breathing room, confirmed via screenshot); 44px (not
+       desktop's 40px) gives this padding enough room for the coords+elevation chip's 2-line
+       content without clipping at mobile's narrower per-chip width. */
     #center-readout-mobile,#scale-bar,#active-trip-chip{
-      flex:1;min-width:0;height:40px;box-sizing:border-box;
+      flex:1;min-width:0;height:44px;box-sizing:border-box;
+      padding:6px 10px;
     }
     /* Mobile equivalent of #center-readout-float — same two-row layout (coords, then elevation
        below) since the chip is too narrow for one line of both; no longer independently
-       positioned, just a flex:1 child of the row now (see #floating-info-stack's own comment). */
+       positioned, just a flex:1 child of #floating-info-row1 now (see that rule's comment). */
     #center-readout-mobile{
       display:flex;flex-direction:column;align-items:center;justify-content:center;
       cursor:pointer;
       font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
       background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
-      padding:0 8px;text-align:center;
+      text-align:center;
     }
     #center-readout-mobile-coords{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
     #center-readout-mobile-elev{display:none;font-size:9px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
     #center-readout-mobile-elev.show{display:block;}
     /* #scale-bar keeps its own flex-direction:column (bar graphic, then label) from the shared
        non-mobile rule above — this just adds the row-membership sizing and centers that column
-       vertically within the taller 40px chip. */
-    #scale-bar{justify-content:center;padding:0 9px;}
-    /* #active-trip-chip keeps its own single-row (dot + label) layout from the shared rule —
-       same addition as #scale-bar, just centered in the taller box instead of column-stacked.
-       border-radius:8px overrides its desktop 20px pill shape — "uniform corner radius" in the
-       spec means all four chips in the row share one radius, and this is the one chip whose
-       desktop styling didn't already match the other three's 8px. */
-    #active-trip-chip{justify-content:center;padding:0 12px;border-radius:8px;}
-    /* Active-layers chip — HALF the height of its three row-mates (20px vs 40px), same corner
-       radius (inherited from the shared #active-layers-chip rule, untouched), always single-line
-       now instead of the old up-to-2-stacked-divs layout (one div per active Habitat/Migration
-       layer — see updateActiveLayersChip). The row's full width finally gives this chip enough
-       room that collapsing 2 lines into 1 doesn't just immediately truncate everything — per
-       spec, two-line wrapping is no longer needed at this width. Implemented as a CSS-only
-       override (updateActiveLayersChip's own JS, and desktop's rendering, are both completely
-       unchanged): .active-layers-line switches from block (stacked) to inline (flows together on
-       one line), and the PARENT takes over the nowrap+ellipsis truncation as one unit instead of
-       each line truncating independently. A generated " · " separator between multiple inline
-       lines replaces the old vertical stacking as the visual divider when both Habitat and
-       Migration are active at once. */
+       vertically within the taller 44px chip. */
+    #scale-bar{justify-content:center;}
+    /* #active-trip-chip keeps its own single-row (dot + label) layout and border-radius:8px from
+       the shared (now breakpoint-independent) desktop rule — this just adds the row-membership
+       sizing and centers it in the taller box instead of its natural content height. */
+    #active-trip-chip{justify-content:center;}
+    /* Active-layers chip — its own full-width row directly below #floating-info-row1 (see
+       #floating-info-stack's own comment above for the Session 29 fix this is), HALF the height
+       of the row1 chips (22px vs 44px), same corner radius (inherited from the shared
+       #active-layers-chip rule, untouched), always single-line now instead of the old up-to-2-
+       stacked-divs layout (one div per active Habitat/Migration layer — see
+       updateActiveLayersChip). The row's full width finally gives this chip enough room that
+       collapsing 2 lines into 1 doesn't just immediately truncate everything — per spec, two-line
+       wrapping is no longer needed at this width. Implemented as a CSS-only override
+       (updateActiveLayersChip's own JS, and desktop's rendering, are both completely unchanged):
+       .active-layers-line switches from block (stacked) to inline (flows together on one line),
+       and the PARENT takes over the nowrap+ellipsis truncation as one unit instead of each line
+       truncating independently. A generated " · " separator between multiple inline lines
+       replaces the old vertical stacking as the visual divider when both Habitat and Migration
+       are active at once. padding:2px 10px (not row1's 6px vertical) — half the height needs
+       proportionally less vertical padding to leave room for even one line of content. */
     #active-layers-chip{
-      flex:1;min-width:0;height:20px;box-sizing:border-box;
-      padding:0 8px;
+      width:100%;height:22px;box-sizing:border-box;
+      padding:2px 10px;
     }
     #active-layers-chip-lines{
       display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -1239,46 +1275,59 @@
      comment for the full reasoning and the responsive repositioning). Each child keeps its own
      id/JS wiring completely unchanged from before this consolidation; only the positioning
      mechanism (flex column + gap, not per-child position:absolute) and the shared width moved
-     up to the wrapper. -->
+     up to the wrapper.
+     #floating-info-row1 (Session 29) exists ONLY to give mobile a "3 persistent chips share one
+     row, active-layers chip is its own full-width row below them" layout without duplicating any
+     markup for the two breakpoints — on desktop it's `display:contents` (a no-op wrapper; its
+     children stack in the outer column exactly as if this div didn't exist at all), on mobile
+     it becomes the real `display:flex;flex-direction:row` row. This replaces the prior session's
+     approach of making ALL FOUR chips (including active-layers) siblings directly in one mobile
+     row via flex:1 — that put the active-layers chip inline with, and cramping, the 3 persistent
+     chips instead of on its own row beneath them, a real layout bug fixed this session. -->
 <div id="floating-info-stack">
-  <!-- Coords + elevation readout — a single map-center/current-location TOGGLE (tap to switch),
-       not a copy-to-clipboard button anymore (see toggleCenterReadoutMode's own comment for why
-       that tradeoff was made deliberately). The mode icon (crosshair vs. location pin) is a
-       persistent sibling of the coords text, not rebuilt on every update — only its innerHTML
-       swaps, via updateCenterReadoutModeIcon(). -->
-  <div id="center-readout-float">
-    <div id="center-readout-row">
-      <span id="center-readout-mode-icon" class="center-readout-icon"></span>
-      <span id="center-readout-coords">--, --</span>
+  <div id="floating-info-row1">
+    <!-- Coords + elevation readout — a single map-center/current-location TOGGLE (tap to switch),
+         not a copy-to-clipboard button anymore (see toggleCenterReadoutMode's own comment for why
+         that tradeoff was made deliberately). The mode icon (crosshair vs. location pin) is a
+         persistent sibling of the coords text, not rebuilt on every update — only its innerHTML
+         swaps, via updateCenterReadoutModeIcon(). -->
+    <div id="center-readout-float">
+      <div id="center-readout-row">
+        <span id="center-readout-mode-icon" class="center-readout-icon"></span>
+        <span id="center-readout-coords">--, --</span>
+      </div>
+      <div id="center-readout-elev"></div>
     </div>
-    <div id="center-readout-elev"></div>
-  </div>
-  <div id="center-readout-mobile">
-    <div id="center-readout-mobile-row">
-      <span id="center-readout-mobile-mode-icon" class="center-readout-icon"></span>
-      <span id="center-readout-mobile-coords">--, --</span>
+    <div id="center-readout-mobile">
+      <div id="center-readout-mobile-row">
+        <span id="center-readout-mobile-mode-icon" class="center-readout-icon"></span>
+        <span id="center-readout-mobile-coords">--, --</span>
+      </div>
+      <span id="center-readout-mobile-elev"></span>
     </div>
-    <span id="center-readout-mobile-elev"></span>
+    <div id="scale-bar">
+      <div id="scale-bar-line"></div>
+      <span id="scale-bar-label"></span>
+    </div>
+    <!-- Active Trip persistent indicator (Stage 2 of the Active Trip project). Starts "hidden"
+         here only as a pre-JS default (avoids a flash of an unstyled/empty button before boot
+         runs) — updateActiveTripIndicator() always removes it, in both the active and
+         no-active-trip state; see that function's own comment for why this is always-visible
+         now, unlike Stage 2. -->
+    <button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
+      <span id="active-trip-chip-label"></span>
+    </button>
   </div>
-  <div id="scale-bar">
-    <div id="scale-bar-line"></div>
-    <span id="scale-bar-label"></span>
-  </div>
-  <!-- Active Trip persistent indicator (Stage 2 of the Active Trip project). Starts "hidden"
-       here only as a pre-JS default (avoids a flash of an unstyled/empty button before boot
-       runs) — updateActiveTripIndicator() always removes it, in both the active and
-       no-active-trip state; see that function's own comment for why this is always-visible
-       now, unlike Stage 2. -->
-  <button id="active-trip-chip" class="hidden" aria-label="Active trip — tap to switch">
-    <span id="active-trip-chip-label"></span>
-  </button>
   <!-- Active layers indicator — replaces the old always-on #wildlife-legend swatch panel (see
        #active-layers-chip's own CSS comment). Starts hidden for the same pre-JS-flash reason as
        the trip chip above; updateActiveLayersChip() drives visibility from then on, and is the
        one chip of the four that stays hidden (not just emptied) when nothing is active. Now
        tappable (opens the Wildlife Layers panel directly) — the layers-glyph icon (same SVG as
        #layers-btn's own, for at-a-glance consistency) lives in its own persistent span so
-       updateActiveLayersChip() only ever touches #active-layers-chip-lines, never wiping the icon. -->
+       updateActiveLayersChip() only ever touches #active-layers-chip-lines, never wiping the icon.
+       Deliberately OUTSIDE #floating-info-row1 — on mobile this is its own full-width row below
+       the 3 persistent chips, not a 4th member sharing their row (see #floating-info-row1's own
+       comment above). -->
   <div id="active-layers-chip" class="hidden" aria-label="Active overlays — tap to open Wildlife Layers">
     <span class="active-layers-icon">
       <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
@@ -2769,7 +2818,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.32.0';
+  var APP_VERSION = '2.33.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';

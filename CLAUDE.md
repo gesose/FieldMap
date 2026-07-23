@@ -88,6 +88,15 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   wedge instead of a real triangle), applies on both desktop and mobile. See Architecture notes' "Mobile
   layout overhaul" entry for the full design, what else needed to move as a result (search bar, tool-mode
   status bars), and what was audited and found NOT to need changing (every panel/drawer).
+- Chip polish pass (Session 29): fixed a real Session 28 layout bug — the mobile active-layers chip was
+  crammed into the same row as the 3 persistent chips (coords/elevation, scale, active trip) instead of
+  rendering as its own full-width row beneath them; now split into two rows (`#floating-info-row1` for the
+  persistent 3, a `display:contents` no-op on desktop) with real padding on every chip on all sides (was
+  horizontal-only, leaving text/graphics flush against chip edges). Desktop's 3 persistent chips also got the
+  same uniform-height/corner-radius treatment mobile already had (the trip chip's 20px pill radius no longer
+  stands out from the other two's 8px). The active-trip chip's border now matches its own dot's accent color
+  whenever a trip is active, on both platforms. See Architecture notes' "Chip sizing, mobile active-layers
+  row, padding, active-trip stroke" entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -898,8 +907,9 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     rather than silently claimed**: this sandbox's browser reports `navigator.maxTouchPoints === 0` /
     `'ontouchstart' in window === false` — genuinely no touch hardware or emulation available — so the actual
     live gesture (a real double-tap-and-drag) could not be empirically exercised here; the fix is grounded in
-    a specific, source-verified mechanism (not a guess), but real-device verification of the restored gesture
-    is the first thing that should be checked next, per the task's own "verify live on real device" ask.
+    a specific, source-verified mechanism (not a guess). **RESOLVED (Session 29)**: confirmed working on a
+    real mobile device — double-tap-and-drag zoom is restored, closing out the one item this session
+    couldn't verify itself.
   - Zoom/north-reset relocation: removed `map.addControl(new maplibregl.NavigationControl(...), 'top-left')`
     entirely and added three custom buttons (`zoom-in-btn`, `zoom-out-btn`, `north-reset-btn`) to
     `#map-controls`' existing reachable icon cluster (search/layers/filter/locate/download), styled with the
@@ -943,7 +953,7 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     and the same resolution, recurred in the following session too — see that entry); "Show zoom buttons"
     off/on confirmed hiding/showing exactly the two zoom buttons while north-reset stays and scroll/touch-zoom
     stay enabled. Real touch-gesture (double-tap-drag) verification could not be performed in this sandbox (no
-    touch hardware/emulation — see that entry above) and remains the top item for real-device verification.
+    touch hardware/emulation — see that entry above); confirmed working on a real device in Session 29.
     Zero console errors observed. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
     blocks. APP_VERSION bumped 2.30.0 → 2.31.0, SHELL_CACHE bumped v136 → v137.
 - Mobile layout overhaul, compass redesign, Tools menu additions, left-handed mode removal (Session 28):
@@ -1045,6 +1055,55 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     correctly — confirmed as the same known test-harness limitation, not a new bug). Zero console errors.
     `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
     2.31.0 → 2.32.0, SHELL_CACHE bumped v137 → v138.
+- Chip sizing, mobile active-layers row, padding, active-trip stroke (Session 29):
+  - Mobile active-layers-chip position bug: Session 28 made ALL FOUR chips (coords/elevation, scale, active
+    trip, active layers) siblings of one `flex:1` row, which put the active-layers chip inline with — and
+    visibly cramping — the 3 persistent chips instead of on its own row beneath them (confirmed via
+    screenshot: "Ring-ne..." truncating hard against its row-mates). This was never what either the original
+    spec or the actual intent called for. Fixed by introducing `#floating-info-row1`, a new wrapper around
+    just the 3 persistent chips: `display:contents` on desktop (a true no-op — its children stack directly in
+    the outer `#floating-info-stack` column exactly as before this session, zero desktop behavior change) and
+    a real `display:flex;flex-direction:row` on mobile. `#floating-info-stack` itself went back to
+    `flex-direction:column` on mobile (row1 + active-layers-chip stack vertically, `align-items:stretch` so
+    both take the column's full width), and `#active-layers-chip` is now a plain sibling AFTER row1, not one
+    of its flex:1 members — its own `.hidden` class toggle (`updateActiveLayersChip()`, completely unchanged)
+    already made it disappear-with-no-gap correctly, since flexbox `gap` only applies between visible items;
+    the position bug was purely about which row it was IN, never its hide/show logic.
+  - Desktop chip sizing: the 3 persistent chips (`#center-readout-float`, `#scale-bar`, `#active-trip-chip`)
+    get the same uniform-height/corner-radius treatment mobile already had — confirmed via screenshot as
+    visibly inconsistent before this (each chip's height was purely content-driven, so they landed a few px
+    apart, and `#active-trip-chip` used a 20px pill `border-radius` the other two never had). Fixed with one
+    shared rule (`height:40px;box-sizing:border-box;border-radius:8px;justify-content:center`) — desktop
+    keeps its existing 230px-wide vertical stack unchanged, this is sizing/radius consistency only, not a
+    layout change the way mobile's got in Session 28. `#center-readout-float` needed `display:flex;
+    flex-direction:column` added (it previously had no `display:flex` of its own at all, relying on
+    `text-align:center` alone) for `justify-content:center` to have anything to act on.
+  - Mobile chip padding: every chip's mobile padding was horizontal-only (`padding:0 Npx`) — confirmed via
+    screenshot that coordinate text and the scale-bar graphic both sat flush against their chip's top/bottom
+    edges with zero vertical breathing room. Fixed with real 4-sided padding (`padding:6px 10px` for the 3
+    row1 chips, `padding:2px 10px` for the half-height active-layers row — proportionally smaller vertical
+    padding to leave room for even one line of content at 22px total height) — row1's fixed height was bumped
+    40px → 44px in the same change to give the new padding room without clipping the coords+elevation chip's
+    2-line content (confirmed via `scrollHeight`/`clientHeight` equality — no overflow — after the change).
+  - Active-trip chip stroke color: the chip's border was always the default neutral
+    `rgba(255,255,255,0.12)` regardless of active-trip state — only `:hover` ever showed the accent color,
+    even though the chip's own `::before` status dot has always been accent-colored whenever NOT
+    `.no-active-trip`. Fixed with `#active-trip-chip:not(.no-active-trip){border-color:var(--accent);}`,
+    mirroring the dot's own conditional logic exactly — one shared rule, no breakpoint-specific override
+    needed since both platforms use the same selector/property. `.no-active-trip`'s own rule got an explicit
+    (if redundant given `:not()` already excludes it) `border-color:rgba(255,255,255,0.12)` restatement for
+    clarity/future-proofing, not because it changes behavior.
+  - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`.
+    Desktop: all 3 persistent chips confirmed at exactly 40px height / 8px radius via
+    `getBoundingClientRect()`/`getComputedStyle()`; active-trip chip's border confirmed switching to
+    `rgb(194,98,45)` (`--accent`) the moment a real trip was selected via the trip switcher, matching the dot
+    color exactly. Mobile used the same real-width `<iframe>` technique introduced in Session 28 (390×844,
+    genuine `@media` match, not a hand-retyped CSS override) — confirmed the active-layers chip now renders
+    as its own full-width second row (359px wide, 22px tall, 2px/10px padding) directly below row1, with zero
+    gap/overlap when both are visible and zero leftover gap when active-layers is hidden; row1's 3 chips
+    confirmed at 44px height / 6px-10px padding / equal ~116px width each; active-trip chip's mobile border
+    confirmed matching accent too. Zero console errors. `node --check` confirmed clean syntax on all 4
+    extracted inline `<script>` blocks. APP_VERSION bumped 2.32.0 → 2.33.0, SHELL_CACHE bumped v138 → v139.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1579,7 +1638,7 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   handler. Fixed with `pointer-events:none` on the temp marker (it never had any interaction to lose) — a
   genuinely narrow, zero-delay fix, so no long-press fallback was needed. Flagged clearly: this sandbox has
   no touch hardware or emulation (`maxTouchPoints:0`), so the restored gesture itself couldn't be empirically
-  exercised here and is the top item for real-device verification. Relocated zoom (+/-) and north/reset from
+  exercised here (confirmed working on a real device in Session 29). Relocated zoom (+/-) and north/reset from
   MapLibre's top-left NavigationControl into custom buttons in the same reachable right-side icon cluster as
   search/layers/filter/locate/download, matching that cluster's round style exactly; north-reset's needle
   icon live-rotates with bearing and resets both bearing and pitch on tap, matching the removed control's own
@@ -1618,3 +1677,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   manually-reconstructed override would likely have missed). Zero console errors. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.31.0 → 2.32.0, SHELL_CACHE
   bumped v137 → v138.
+- Session 29: A chip-polish follow-up, plus closing out Session 27's one outstanding verification gap —
+  double-tap-and-drag zoom was confirmed working on a real mobile device, resolving the last open item from
+  that session's investigation. See Architecture notes' "Chip sizing, mobile active-layers row, padding,
+  active-trip stroke" entry for full detail on the four fixes. Fixed a real Session 28 bug, not a new ask:
+  the mobile active-layers chip (e.g. "Ring-ne...") was rendering crammed into the same row as the 3
+  persistent chips instead of its own full-width row beneath them — split via a new `#floating-info-row1`
+  wrapper (`display:contents` on desktop, a real flex row on mobile) so the fix touches mobile only despite
+  changing the DOM structure both platforms share. Gave desktop's 3 persistent chips the same uniform-height/
+  corner-radius treatment mobile got in Session 28 (the trip chip's old 20px pill radius no longer stands
+  apart from the other two's 8px), added real 4-sided padding to every mobile chip (was horizontal-only,
+  confirmed via screenshot leaving text/graphics flush against chip edges), and made the active-trip chip's
+  border match its own status dot's accent color whenever a trip is active, on both platforms. Verified live
+  on desktop (exact height/radius/border-color via computed styles) and mobile (the same real-width `<iframe>`
+  technique from Session 28) — active-layers chip confirmed on its own full-width row with zero leftover gap
+  when hidden, chip padding confirmed with no content clipping via `scrollHeight`/`clientHeight` equality.
+  Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+  APP_VERSION bumped 2.32.0 → 2.33.0, SHELL_CACHE bumped v138 → v139.
