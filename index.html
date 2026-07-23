@@ -2823,7 +2823,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.34.0';
+  var APP_VERSION = '2.35.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -12862,7 +12862,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // differently (confirmed identical "composite" source across all 3 style JSON files) —
     // downloading it once covers all three; BASE_LAYER_SOURCES maps each of them to this
     // one source id so selecting more than one automatically dedupes via computeTileList.
-    vectorbase: { label:'Topo map data (Topo / Topo Dark / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2,mapbox.mapbox-bathymetry-v2/{z}/{x}/{y}.vector.pbf?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:16, avgKB:35 },
+    // mapbox-bathymetry-v2 dropped from this composite tileset list (Session 31) — its only
+    // consumer in all 3 styles is the `water-depth` fill layer (source-layer 'depth'), which
+    // has maxzoom:8, well below OFFLINE_DEFAULT_MIN_ZOOM (9) and any zoom this hunting/field
+    // app is actually used at interactively — confirmed still true (not just assumed) via a
+    // fresh audit of all 3 style JSONs before removing it, not carried forward from a stale
+    // prior check. Must be kept in sync with the style JSONs' own composite source string —
+    // both were updated together, not just this one.
+    vectorbase: { label:'Topo map data (Topo / Topo Dark / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:16, avgKB:35 },
     // Aerial and Aerial + Topo's satellite backdrop share this same raster tileset too.
     satellite:  { label:'Satellite imagery (Aerial / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:19, avgKB:45 },
     usgstopo:   { label:'USGS Topo', urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:18 },

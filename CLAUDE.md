@@ -110,6 +110,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   offset, so it correctly renders below the active-layers row when one's showing and below just the
   persistent row when it isn't, verified both ways via live screenshots. See Architecture notes' "Scale bar
   overflow fix, dynamic search bar position" entry for the full design.
+- Dropped `mapbox.mapbox-bathymetry-v2` from the combined vectorbase composite tileset URL (Session 31) —
+  both the 3 style JSONs' own `composite` source and `DOWNLOAD_LAYERS.vectorbase`'s URL in the offline-
+  download code, kept matching each other. Confirmed before removing that its only consumer anywhere
+  (`water-depth`, a fill layer on source-layer `depth`) has `maxzoom:8`, below the offline downloader's
+  own minimum zoom and any zoom this hunting/field app is realistically used at — `hillshade` (the actual
+  terrain-shading layer, from mapbox-terrain-v2, unrelated) was deliberately left untouched. See Architecture
+  notes' "Bathymetry removal from vectorbase" entry for the full design and — importantly — a sandbox
+  limitation hit while trying to measure the real download-size impact live (Mapbox's classic v4 tile API
+  returned 403 Forbidden for every request in this environment despite a verified-valid token, blocking real
+  before/after byte measurement here; real verification should happen via an actual on-device offline
+  download size comparison once this ships, not a synthetic sandbox fetch).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1167,6 +1178,55 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     recompute, not by trusting the stale pre-recompute measurement. Zero console errors. `node --check`
     confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.33.0 → 2.34.0,
     SHELL_CACHE bumped v139 → v140.
+- Bathymetry removal from vectorbase (Session 31): the combined vectorbase composite tileset (used by Topo,
+  Topo Dark, and Aerial + Topo, and downloaded offline as one dedup'd source per `BASE_LAYER_SOURCES`) used
+  to list 3 Mapbox tilesets — `mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2,mapbox.mapbox-bathymetry-v2`
+  — and now lists 2, with `mapbox-bathymetry-v2` dropped. Verified BEFORE removing (not assumed carried
+  forward from a stale prior check) via a fresh audit of all 3 style JSONs: every `source:"composite"` layer
+  across all 3 files, cross-referenced by `source-layer`, confirmed `depth` (bathymetry's own source-layer)
+  is consumed by exactly one layer anywhere — `water-depth` (fill, `maxzoom:8`) — with no other layer, in any
+  of the 3 styles, referencing it. `maxzoom:8` sits below `OFFLINE_DEFAULT_MIN_ZOOM` (9) and below any zoom
+  this hunting/field app is realistically used at interactively, matching the removal's premise exactly.
+  `hillshade` (fill, source-layer `hillshade`, from mapbox-terrain-v2 — genuinely a different tileset,
+  despite both being terrain-adjacent) was independently confirmed unaffected — its own layer definition
+  wasn't touched at all, only the composite SOURCE's tileset list changed. One flagged nuance, not silently
+  omitted: the offline-download zoom picker technically allows selecting min zoom as low as Z1 (not hard-
+  floored at 9 — that's only the pre-selected default), so "invisible at every zoom the app actually
+  downloads" is true in the overwhelmingly common case, not as an absolute enforced floor; this doesn't
+  change the removal's correctness since a Z1-Z8 offline download or interactive view was never a
+  bathymetry-relevant use case for a hunting/pin-tracking app to begin with.
+  Both places were edited to match exactly: the 3 style JSONs' own `composite` source (edited via a precise
+  string replacement — read as plain text, not JSON.parse/stringify, specifically so these large minified
+  single-line files stay byte-identical everywhere except the one targeted substring, with each file's exact
+  occurrence count of the string verified as exactly 1 before writing and full JSON-parse validity confirmed
+  after) and `DOWNLOAD_LAYERS.vectorbase`'s `urlTemplate` in the offline-download code. `refresh-style.js`
+  (re-fetches these same 3 files fresh from Mapbox Studio) was checked and flagged, not silently ignored: if
+  it's ever run again, it will overwrite all 3 style JSONs with whatever composite source Studio's own
+  account-side style config currently has — if that still lists bathymetry-v2, running the refresh script
+  would silently re-introduce it here. This fix only touches the local files' current content, not Studio's
+  own configuration (outside this codebase, no access to change it from here).
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`:
+  all 3 edited style JSONs load and parse correctly through the app's own `loadStyle()`/`setMaplibreStyle()`
+  pipeline with zero console errors when switching between Topo, Topo Dark, and Aerial + Topo (confirmed via
+  the actual `<input>` radio state, not just visual inspection, that `aerial-streets` was genuinely selected
+  and not plain `aerial`). **A live before/after download-size comparison could not be completed in this
+  sandbox, flagged rather than fabricated**: attempting to fetch real tile bytes (both directly via `fetch()`
+  and by checking the live map's own tile loading) found that Mapbox's classic `/v4/` API — tiles, TileJSON,
+  DEM, and satellite alike — returns `403 Forbidden` for every request in this environment, while
+  `tokens/v2` confirms the token itself is genuinely valid (`"code":"TokenValid"`) and `styles/v1` (a
+  different Mapbox API surface) succeeds normally. This affects the OLD and NEW composite URLs identically
+  (both are `/v4/`), so it isn't something this change caused, and it also means the app's own interactive
+  map isn't actually rendering vector tiles at all right now in this sandbox (confirmed via a blank
+  basemap screenshot) — a more precise, more severe version of the "no network access to Mapbox's satellite
+  tile servers" limitation noted in an earlier session, which undersold the scope of what's actually blocked
+  (the entire v4 surface, not just satellite). Per explicit user direction after this was surfaced: the
+  code change stands as already-verified-correct on its own terms (structural JSON validity + the water-
+  depth/hillshade audit above), the live byte-count comparison is accepted as not independently measurable
+  here, and the real test for this specific change should be an actual on-device offline-download size
+  comparison (before this change vs. after) once it ships — a more meaningful real-world measurement anyway,
+  not a synthetic sandbox substitute for it. Zero console errors from the change itself. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.34.0 → 2.35.0,
+  SHELL_CACHE bumped v140 → v141.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -1778,3 +1838,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   detail on both fixes and how each was verified. Zero console errors. `node --check` confirmed clean syntax
   on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.33.0 → 2.34.0, SHELL_CACHE bumped v139 →
   v140.
+- Session 31: Dropped `mapbox.mapbox-bathymetry-v2` from the vectorbase composite tileset (Topo/Topo Dark/
+  Aerial+Topo's shared style source, and the matching offline-download URL) — see Architecture notes'
+  "Bathymetry removal from vectorbase" entry for full detail. Re-confirmed, via a fresh audit rather than
+  trusting a prior claim, that `water-depth` (maxzoom:8) is bathymetry's only consumer anywhere across all 3
+  styles and that `hillshade` (a different tileset entirely) was correctly left untouched. Edited all 3 style
+  JSONs via precise text replacement (not a JSON parse/stringify round-trip) so these large minified files
+  stay byte-identical apart from the one targeted substring, verified each file's occurrence count before
+  writing and JSON validity after. Flagged, not silently ignored: `refresh-style.js` would silently
+  reintroduce this if run again, since it re-fetches these same files fresh from Mapbox Studio's own
+  account-side config, which this fix has no way to touch from here. Attempted a live before/after real
+  download-size comparison as asked, but hit a genuine sandbox blocker: Mapbox's classic `/v4/` API (tiles,
+  TileJSON, DEM, satellite) returned 403 Forbidden for every request despite a token that verifies as valid
+  via `tokens/v2` — confirmed this affects the old and new URLs identically (not caused by this change) and
+  that it also blocks the app's own live interactive tile rendering right now in this sandbox, a more precise
+  and more severe finding than an earlier session's "no network access to Mapbox's satellite tile servers"
+  note. Surfaced this to the user rather than fabricating numbers; per their explicit direction, accepted the
+  code change as already-verified-correct on its own terms, and noted that the real test for this specific
+  change should be an actual on-device offline-download size comparison once shipped, not a synthetic sandbox
+  substitute. Verified live via style-switching between all 3 edited styles with zero console errors. `node
+  --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.34.0 →
+  2.35.0, SHELL_CACHE bumped v140 → v141.
