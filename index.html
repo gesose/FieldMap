@@ -79,6 +79,10 @@
     background:var(--bg-elevated);border:1px solid var(--border);
     padding:5px 9px;white-space:nowrap;
     text-align:center;
+    /* Long-press here triggers copyCurrentReadoutCoords (Session 37) — without these, a real
+       held-touch on mobile first shows the OS's own text-selection/callout UI over the chip
+       instead of (or racing with) the custom gesture. */
+    -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
   }
   #center-readout-float:hover{color:var(--text);border-color:var(--accent);}
   #center-readout-elev{display:none;font-size:10px;opacity:0.8;margin-top:1px;}
@@ -1009,6 +1013,8 @@
       font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
       background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
       text-align:center;
+      /* Same long-press-vs-OS-text-selection reasoning as #center-readout-float. */
+      -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
     }
     #center-readout-mobile-coords{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
     #center-readout-mobile-elev{display:none;font-size:9px;opacity:0.8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
@@ -2832,7 +2838,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.39.1';
+  var APP_VERSION = '2.40.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3403,12 +3409,13 @@
   var compassHeadingDeg = null; // from DeviceOrientationEvent when GPS heading unavailable
   var lastGpsLatLng = null;
   var lastGpsAltitudeM = null, lastGpsAltitudeTime = 0; // from the GPS dot watcher, used by getElevationFt()'s GPS fallback tier
-  // Coords/elevation readout chip's own map-center/current-location toggle — entirely
-  // independent of gpsDotState/lastGpsLatLng (the locate button's own GPS tracking) and of
-  // Compass's gpsWatchIdCompass/currentGpsLatLng, mirroring this file's existing "each
-  // GPS-consuming feature gets its own dedicated watchPosition" pattern rather than sharing
-  // state across unrelated features (which risked the chip's tap silently interfering with the
-  // locate button's own tri-state behavior, or vice versa). See toggleCenterReadoutMode().
+  // Coords/elevation readout chip's own map-center/current-location toggle. Its own STATE stays
+  // entirely independent of gpsDotState/lastGpsLatLng (the locate button's own GPS tracking) and
+  // of Compass's currentGpsLatLng — sharing state across these would risk the chip's tap
+  // silently interfering with the locate button's own tri-state behavior, or vice versa. As of
+  // Session 37 the underlying device GPS POLL (not the state) is shared across all three via
+  // subscribeSharedGps/unsubscribeSharedGps — see that entry's own comment, just above
+  // toggleCenterReadoutMode(), for the full design.
   var centerReadoutMode = 'center'; // 'center' | 'gps'
   var centerReadoutGpsLatLng = null;
   var centerReadoutGpsAltitudeM = null;
@@ -5602,21 +5609,141 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (el) el.innerHTML = svg;
     });
   }
+  // Shared GPS watcher (Session 37) — the locate button, Compass, and this coords/elevation
+  // toggle each used to run their own completely independent navigator.geolocation.
+  // watchPosition() (three separate live device GPS polls whenever more than one was active at
+  // once). subscribeSharedGps/unsubscribeSharedGps consolidate that into ONE underlying
+  // watchPosition, fanned out to however many consumers are currently subscribed — reference-
+  // counted, so the real device watch only starts on the first subscriber and only stops once
+  // the last one unsubscribes. Deliberately just a transport change: every consumer keeps its
+  // own state (lastGpsLatLng/currentGpsLatLng/centerReadoutGpsLatLng), its own on/off triggers,
+  // and its own error handling exactly as before — this only replaces the literal
+  // watchPosition()/clearWatch() calls each one made directly. The one real behavioral note: all
+  // 3 consumers previously used a mix of options (locate button and this toggle both passed
+  // {enableHighAccuracy:true, maximumAge:3000}; Compass passed just {enableHighAccuracy:true},
+  // i.e. maximumAge defaulting to 0) — the single shared watch necessarily uses ONE options
+  // object ({enableHighAccuracy:true, maximumAge:3000}, matching 2 of the 3 already), which only
+  // affects whether an already-cached position fix up to 3s old may satisfy a call immediately;
+  // it does not change the ongoing update cadence a real GPS receiver delivers while being
+  // watched, so this is not expected to be user-perceptible for Compass either.
+  var sharedGpsWatchId = null;
+  var sharedGpsSubscribers = {}; // subscriberId -> { onPosition(pos), onError(err)|null }
+  var sharedGpsSubscriberSeq = 0;
+  function subscribeSharedGps(onPosition, onError){
+    if (!navigator.geolocation) return null;
+    var id = 'gps' + (++sharedGpsSubscriberSeq);
+    sharedGpsSubscribers[id] = { onPosition: onPosition, onError: onError };
+    if (sharedGpsWatchId === null){
+      sharedGpsWatchId = navigator.geolocation.watchPosition(function(pos){
+        Object.keys(sharedGpsSubscribers).forEach(function(sid){ sharedGpsSubscribers[sid].onPosition(pos); });
+      }, function(err){
+        Object.keys(sharedGpsSubscribers).forEach(function(sid){
+          if (sharedGpsSubscribers[sid].onError) sharedGpsSubscribers[sid].onError(err);
+        });
+      }, { enableHighAccuracy: true, maximumAge: 3000 });
+    }
+    return id;
+  }
+  function unsubscribeSharedGps(id){
+    if (id == null) return;
+    delete sharedGpsSubscribers[id];
+    if (Object.keys(sharedGpsSubscribers).length === 0 && sharedGpsWatchId !== null){
+      navigator.geolocation.clearWatch(sharedGpsWatchId);
+      sharedGpsWatchId = null;
+    }
+  }
+
+  // Generic long-press gesture (Session 37 — no equivalent existed anywhere in this file before,
+  // confirmed via a repo-wide search for "longpress"/"long-press" turning up nothing). Fires
+  // onLongPress after `ms` of a held pointer, cancelled by more than a small movement tolerance
+  // (so a scroll/drag doesn't also register as a long-press). A completed press-release still
+  // fires a native 'click' on the same element regardless of how long it was held — this also
+  // suppresses that trailing click so a long-press doesn't ALSO trigger whatever plain 'click'
+  // listener already lives on the element. That suppressor relies on running before the other
+  // listener: same-element listeners fire in registration order regardless of capture, so
+  // attachLongPress(el, ...) must be called BEFORE el.addEventListener('click', ...) elsewhere.
+  function attachLongPress(el, onLongPress, ms){
+    var timer = null, startX = 0, startY = 0, fired = false;
+    var MOVE_TOLERANCE = 10;
+    function start(e){
+      fired = false;
+      var pt = e.touches ? e.touches[0] : e;
+      startX = pt.clientX; startY = pt.clientY;
+      timer = setTimeout(function(){
+        timer = null;
+        fired = true;
+        onLongPress(e);
+      }, ms);
+    }
+    function move(e){
+      if (!timer) return;
+      var pt = e.touches ? e.touches[0] : e;
+      if (Math.abs(pt.clientX - startX) > MOVE_TOLERANCE || Math.abs(pt.clientY - startY) > MOVE_TOLERANCE){
+        clearTimeout(timer); timer = null;
+      }
+    }
+    function cancel(){
+      if (timer){ clearTimeout(timer); timer = null; }
+    }
+    el.addEventListener('pointerdown', start);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', cancel);
+    el.addEventListener('pointercancel', cancel);
+    el.addEventListener('pointerleave', cancel);
+    el.addEventListener('click', function(e){
+      if (fired){ fired = false; e.stopImmediatePropagation(); e.preventDefault(); }
+    });
+  }
+
+  // Restored (Session 37) — this exact clipboard-with-fallback-and-toast pattern is what the
+  // coords chip's single tap used to do directly, before the map-center/current-location toggle
+  // took over that gesture (see toggleCenterReadoutMode's own comment). Kept verbatim rather
+  // than rewritten, since it's already the established copy-to-clipboard pattern in this file.
+  function copyCoordsText(text){
+    function fallbackCopy(){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied ' + text); }
+      catch(e){ showToast('Could not copy — coordinates: ' + text, 4000); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+        showToast('Copied ' + text);
+      }).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  }
+
+  // Copies whichever coordinates are CURRENTLY DISPLAYED — map-center or current-GPS-location,
+  // matching centerReadoutMode exactly like updateCenterReadout()'s own display logic — always
+  // at full 6-decimal precision regardless of the chip's own 3-decimal display truncation, same
+  // as the original copyMapCenterCoords did for map-center before this toggle existed.
+  function copyCurrentReadoutCoords(){
+    var usingGps = centerReadoutMode === 'gps' && centerReadoutGpsLatLng;
+    var c = usingGps ? centerReadoutGpsLatLng : map.getCenter();
+    copyCoordsText(c.lat.toFixed(6) + ', ' + c.lng.toFixed(6));
+  }
+
   // Tap the coords/elevation chip to switch what it describes — map center (crosshair icon,
   // the default) or current GPS location (pin icon) — both values always switch together since
-  // they share one bubble and must describe the same point. This REPLACES the chip's previous
-  // tap-to-copy-coordinates behavior (copyMapCenterCoords/copyCoordsText, now dead code and
-  // removed) — a deliberate trade explicitly called for by the tap spec, not an oversight; there
-  // was no room to keep both a single-tap toggle and a single-tap copy on the same gesture.
-  // Uses its own dedicated watchPosition (centerReadoutGpsWatchId), never gpsDotState/
-  // lastGpsLatLng or Compass's gpsWatchIdCompass/currentGpsLatLng — see this file's other two
-  // independent GPS watches for the established precedent this follows.
+  // they share one bubble and must describe the same point. Long-press restores the pre-toggle
+  // tap-to-copy-coordinates gesture (attachLongPress + copyCurrentReadoutCoords above) — a
+  // single tap can't drive both the toggle and a copy action, so the toggle kept the tap and
+  // copy moved to a long-press instead of being dropped outright.
+  // Uses the shared GPS watcher above (subscribeSharedGps/unsubscribeSharedGps) — own state
+  // (centerReadoutGpsLatLng etc.) and on/off triggers are unchanged, only the underlying device
+  // GPS poll is now shared with the locate button and Compass.
   function toggleCenterReadoutMode(){
     if (centerReadoutMode === 'gps'){
       centerReadoutMode = 'center';
       centerReadoutGpsLatLng = null;
       centerReadoutGpsAltitudeM = null;
-      if (centerReadoutGpsWatchId !== null){ navigator.geolocation.clearWatch(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
+      if (centerReadoutGpsWatchId !== null){ unsubscribeSharedGps(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
       updateCenterReadoutModeIcon();
       updateCenterReadout();
       return;
@@ -5624,14 +5751,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!navigator.geolocation){ showToast('Location not available on this device'); return; }
     centerReadoutMode = 'gps';
     updateCenterReadoutModeIcon();
-    centerReadoutGpsWatchId = navigator.geolocation.watchPosition(function(pos){
+    centerReadoutGpsWatchId = subscribeSharedGps(function(pos){
       centerReadoutGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       centerReadoutGpsAltitudeM = pos.coords.altitude != null ? pos.coords.altitude : null;
       updateCenterReadout();
     }, function(){
       showToast('Location error — check permissions');
       centerReadoutMode = 'center';
-      if (centerReadoutGpsWatchId !== null){ navigator.geolocation.clearWatch(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
+      if (centerReadoutGpsWatchId !== null){ unsubscribeSharedGps(centerReadoutGpsWatchId); centerReadoutGpsWatchId = null; }
       updateCenterReadoutModeIcon();
       updateCenterReadout();
     }, { enableHighAccuracy: true, maximumAge: 3000 });
@@ -11402,7 +11529,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     window.addEventListener('deviceorientation', onOrientation, true);
     _gpsDotInit._removeOrientation = function(){ window.removeEventListener('deviceorientation', onOrientation, true); };
 
-    gpsDotWatchId = navigator.geolocation.watchPosition(function(pos){
+    gpsDotWatchId = subscribeSharedGps(function(pos){
       lastGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       if (pos.coords.altitude != null){ lastGpsAltitudeM = pos.coords.altitude; lastGpsAltitudeTime = Date.now(); }
       var heading = _effectiveHeading(pos.coords);
@@ -11421,7 +11548,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }, function(err){
       showToast('Location error — check permissions');
       _gpsDotTurnOff();
-    }, { enableHighAccuracy: true, maximumAge: 3000 });
+    });
     return true;
   }
 
@@ -11435,7 +11562,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     gpsDotState = 'off';
     compassHeadingDeg = null; lastGpsLatLng = null; lastGpsAltitudeM = null; lastGpsAltitudeTime = 0;
     document.getElementById('locate-btn').classList.remove('active', 'locate-free');
-    if (gpsDotWatchId !== null){ navigator.geolocation.clearWatch(gpsDotWatchId); gpsDotWatchId = null; }
+    if (gpsDotWatchId !== null){ unsubscribeSharedGps(gpsDotWatchId); gpsDotWatchId = null; }
     if (_gpsDotInit._removeOrientation){ _gpsDotInit._removeOrientation(); _gpsDotInit._removeOrientation = null; }
     if (gpsDotMarker){ gpsDotMarker.remove(); gpsDotMarker = null; }
     gpsAccCircle = null;
@@ -14044,12 +14171,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     deactivateAllTools('compass');
     document.getElementById('compass-panel').classList.remove('hidden');
     compassActive = true;
-    // Get GPS position and watch it
+    // Get GPS position and watch it — shared with the locate button and coords/elevation
+    // toggle's own device GPS poll as of Session 37, see subscribeSharedGps's own comment.
     if (navigator.geolocation){
-      gpsWatchIdCompass = navigator.geolocation.watchPosition(function(pos){
+      gpsWatchIdCompass = subscribeSharedGps(function(pos){
         currentGpsLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         updateCompassMapLines();
-      }, null, { enableHighAccuracy:true });
+      }, null);
     } else {
       document.getElementById('compass-status').textContent = 'Location not available — tap map for bearing from fixed point';
     }
@@ -14182,7 +14310,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     compassActive = false;
     compassHeading = null;
     compassUseCenter = false;
-    if (gpsWatchIdCompass != null){ navigator.geolocation && navigator.geolocation.clearWatch(gpsWatchIdCompass); gpsWatchIdCompass = null; }
+    if (gpsWatchIdCompass != null){ unsubscribeSharedGps(gpsWatchIdCompass); gpsWatchIdCompass = null; }
     window.removeEventListener('deviceorientation', handleCompassOrientation, true);
     window.removeEventListener('deviceorientationabsolute', handleCompassOrientation, true);
     if (map && map.getSource('compass-dashed-source')) map.getSource('compass-dashed-source').setData({ type:'FeatureCollection', features: [] });
@@ -16329,9 +16457,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.tracks.forEach(applyFilterToTrack);
       renderPinList();
     });
-    // Tap either readout (desktop or mobile) to toggle map-center vs. current-location mode —
-    // see toggleCenterReadoutMode's own comment for why this replaced the previous tap-to-copy
-    // behavior (copyMapCenterCoords/copyCoordsText, removed — no longer referenced anywhere).
+    // Tap either readout (desktop or mobile) to toggle map-center vs. current-location mode;
+    // long-press restores the tap-to-copy gesture that toggle displaced (Session 37) — see
+    // attachLongPress/copyCurrentReadoutCoords, defined just above toggleCenterReadoutMode.
+    // attachLongPress must be called BEFORE the plain 'click' listener below is registered on
+    // the same element — its own internal click-suppressor relies on running first.
+    attachLongPress(document.getElementById('center-readout-float'), copyCurrentReadoutCoords, 450);
+    attachLongPress(document.getElementById('center-readout-mobile'), copyCurrentReadoutCoords, 450);
     document.getElementById('center-readout-float').addEventListener('click', toggleCenterReadoutMode);
     document.getElementById('center-readout-mobile').addEventListener('click', toggleCenterReadoutMode);
     updateCenterReadoutModeIcon();

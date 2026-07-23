@@ -1484,6 +1484,81 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   redoing the test in a fresh tab with `window.prompt` overridden first. `node --check` confirmed clean
   syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.0 → 2.39.1, SHELL_CACHE bumped
   v145 → v146.
+- Shared GPS watcher + restored long-press-to-copy coordinates (Session 37): the locate button, Compass, and
+  the coords/elevation readout's map-center/current-location toggle each used to run a fully independent
+  `navigator.geolocation.watchPosition()` — a deliberate "each GPS-consuming feature gets its own watch"
+  pattern going back to when the toggle was first built (see that entry's own original comment, now
+  rewritten). `subscribeSharedGps(onPosition, onError)`/`unsubscribeSharedGps(id)` (defined just above
+  `toggleCenterReadoutMode`, the earliest of the 3 consumers in file order) consolidate this into ONE real
+  `watchPosition` call, reference-counted: the real device watch starts on the first subscriber and stops
+  only once the last one unsubscribes, fanning every position update out to however many consumers are
+  currently subscribed. This is deliberately just a transport change — each consumer keeps its own state
+  (`lastGpsLatLng`/`currentGpsLatLng`/`centerReadoutGpsLatLng`), its own on/off triggers, and its own error
+  handling exactly as before; only the literal `watchPosition()`/`clearWatch()` calls were swapped for
+  `subscribeSharedGps`/`unsubscribeSharedGps` in `_gpsDotInit`/`_gpsDotTurnOff` (locate button),
+  `openCompassPanel`/`closeCompassPanel` (Compass), and `toggleCenterReadoutMode` (coords/elevation toggle).
+  One real, flagged option-harmonization: the 3 original watches used a mix of options (locate button and
+  the coords toggle both passed `{enableHighAccuracy:true, maximumAge:3000}`; Compass passed just
+  `{enableHighAccuracy:true}`, i.e. `maximumAge` defaulting to 0) — the single shared watch necessarily uses
+  ONE options object (`{enableHighAccuracy:true, maximumAge:3000}`, matching 2 of the 3 already), which only
+  affects whether an already-cached position fix up to 3s old may satisfy a call immediately, not the
+  ongoing update cadence a real GPS receiver delivers while being watched — not expected to be
+  user-perceptible for Compass either, but noted rather than silently glossed over.
+  (Found and deliberately left untouched, out of scope: `gpsFollowWatchId`/`toggleGpsFollow()` — a 4th,
+  fully separate GPS-watching mechanism tied to the Settings panel's "GPS follow" checkbox — is genuinely
+  dead code, confirmed via a full-file grep: `toggleGpsFollow()` is defined but never called from anywhere,
+  the checkbox's own real change listener just sets `state.settings.gpsFollow` directly with no other effect,
+  and the function's own body calls `map.setView(...)`, a Leaflet-only method that doesn't exist on a
+  MapLibre `Map` instance and would throw if ever actually invoked — a pre-MapLibre-migration leftover, not
+  one of this task's 3 named consumers, not touched.)
+  Long-press-to-copy (`attachLongPress`, generic — no long-press gesture existed anywhere else in this file
+  before, confirmed via a repo-wide grep for "longpress"/"long-press" — and `copyCurrentReadoutCoords`, both defined
+  alongside the shared GPS watcher) restores the coords chip's pre-toggle tap-to-copy gesture, which the
+  map-center/current-location toggle displaced entirely when it shipped (single tap can't drive both a
+  toggle and a copy). `copyCoordsText(text)` — the clipboard-with-`execCommand`-fallback-and-toast helper —
+  is restored verbatim from the pre-toggle implementation (recovered via `git log -S` against the commit
+  that deleted it), not rewritten. `copyCurrentReadoutCoords()` copies whichever coordinates are CURRENTLY
+  DISPLAYED (map-center or current-GPS-location, mirroring `updateCenterReadout()`'s own mode check) at full
+  6-decimal precision, matching the original tap-to-copy's own "always precise enough to paste elsewhere,
+  regardless of the chip's 3-decimal display truncation" behavior. `attachLongPress(el, onLongPress, ms)`
+  fires after `ms` of a held pointer (450ms here) with a 10px movement-cancels-it tolerance (so a scroll/
+  drag through the chip doesn't also register as a long-press), and suppresses the native 'click' that still
+  fires when the pointer is released after a long hold (a completed press-release cycle fires 'click'
+  regardless of duration) via `stopImmediatePropagation()` — this relies on `attachLongPress` being called
+  BEFORE the chip's own plain `click`→`toggleCenterReadoutMode` listener is registered on the same element,
+  since same-element listeners fire in registration order regardless of capture; both call sites were
+  ordered accordingly. `-webkit-touch-callout:none`/`user-select:none` added to both
+  `#center-readout-float`/`#center-readout-mobile` so a real held-touch doesn't first show the OS's own
+  text-selection/callout UI over the chip.
+  One premise in the original task request didn't match the actual code, surfaced rather than silently
+  built on top of: it described the locate button and Compass as "already sharing" a GPS watcher before this
+  change, but they were always two of the three fully independent watches (confirmed via grep and via this
+  file's own prior session history, which explicitly documents that separation as deliberate) — the actual
+  work here is a 3-way (or 4-way, counting the dead `gpsFollowWatchId`) consolidation down to one, not a
+  2-way-already-shared-plus-a-3rd. Likewise, "the tap-anywhere long-press" the task asked to confirm no
+  conflict with doesn't exist — tap-anywhere is a plain `click` handler, not a long-press gesture, confirmed
+  via the same repo-wide long-press grep that found nothing anywhere in the file before this session; there
+  is nothing for the new gesture to have conflicted with.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
+  with `navigator.geolocation.watchPosition`/`clearWatch` monkey-patched to count real calls (this sandbox
+  has no real device GPS) and one real injected position fix. Activating all 3 consumers in sequence via the
+  real UI (locate button → Compass → coords chip toggle) held `watchCalls` at exactly 1 throughout — no
+  second or third real watch ever started. Injecting one position through the single registered callback
+  updated all 3 surfaces correctly and independently: the coords chip showed the injected lat/lng/altitude,
+  Compass's status line switched to its GPS-available text and drew its north/facing lines from that same
+  point, and the locate button's own follow-mode re-centered the map there. Unsubscribing one consumer at a
+  time (Compass close → coords toggle off → locate button off) kept `clearCalls` at 0 until the very last
+  one, at which point it became exactly 1 — confirming the reference-counted start-on-first/stop-on-last
+  lifecycle precisely, not just "eventually cleans up." Re-activating afterward correctly started a genuinely
+  new watch (`watchCalls` → 2). Long-press verified via synthetic `PointerEvent`s (no real touch hardware in
+  this sandbox): a 600ms held press correctly copied the full-precision currently-displayed coordinates
+  (confirmed via a monkey-patched `navigator.clipboard.writeText`) AND left `centerReadoutMode` unchanged —
+  the trailing click's toggle was genuinely suppressed, not just coincidentally not observed; a 120ms short
+  press correctly toggled the mode with zero clipboard calls, confirming the normal tap gesture is completely
+  unaffected; and a held-then-moved-40px pointer correctly triggered neither the copy nor a stray toggle,
+  confirming the movement-cancels-the-timer logic. Zero console errors throughout. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.1 → 2.40.0 (minor — a
+  restored feature, not just a bug fix), SHELL_CACHE bumped v146 → v147.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2258,3 +2333,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   fresh one with `window.prompt` overridden first. Zero console errors. `node --check` confirmed clean syntax
   on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.0 → 2.39.1, SHELL_CACHE bumped v145 →
   v146.
+- Session 37: Consolidated the locate button's, Compass's, and the coords/elevation toggle's 3 fully
+  independent `watchPosition()` calls into one shared, reference-counted GPS watcher
+  (`subscribeSharedGps`/`unsubscribeSharedGps`), and restored the coords chip's pre-toggle tap-to-copy
+  gesture as a long-press (`attachLongPress` + `copyCurrentReadoutCoords`, 450ms, full-precision, suppresses
+  the toggle's own click). See Architecture notes' "Shared GPS watcher + restored long-press-to-copy
+  coordinates" entry for full detail, including two premises in the original request that didn't match the
+  actual code (the locate button and Compass were never already sharing a watcher — all 3 were independent
+  by deliberate prior design; and no long-press gesture, "tap-anywhere" or otherwise, existed anywhere in the
+  file before this session, so there was nothing to conflict with) and a genuinely dead 4th GPS mechanism
+  (`gpsFollowWatchId`/`toggleGpsFollow()`, calls the Leaflet-only `map.setView()` and is never actually
+  invoked from anywhere) found and deliberately left untouched as out of scope. Verified live with
+  `navigator.geolocation.watchPosition`/`clearWatch` monkey-patched to count real calls: activating all 3
+  consumers in sequence via the real UI held the real watch count at exactly 1 throughout, one injected
+  position updated all 3 surfaces correctly and independently, and unsubscribing one at a time kept the real
+  `clearWatch` count at 0 until the last consumer turned off, at which point it fired exactly once — the
+  reference-counted lifecycle confirmed precisely, not just "eventually cleans up." Long-press verified via
+  synthetic `PointerEvent`s (no touch hardware in this sandbox): a 600ms hold copied the correct
+  full-precision coordinates and left the toggle un-fired; a 120ms short press toggled normally with zero
+  copy calls; a held-then-moved pointer triggered neither. Zero console errors. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.1 → 2.40.0, SHELL_CACHE
+  bumped v146 → v147.
