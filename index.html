@@ -2823,7 +2823,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.38.0';
+  var APP_VERSION = '2.39.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -12869,21 +12869,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // fresh audit of all 3 style JSONs before removing it, not carried forward from a stale
     // prior check. Must be kept in sync with the style JSONs' own composite source string —
     // both were updated together, not just this one.
-    vectorbase: { label:'Topo map data (Topo / Topo Dark / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:16, avgKB:35 },
+    // avgKB values below (except snowdepth/nlcd, not remeasured) were corrected in Session 35
+    // from hand-set-once guesses to real measured averages — multiple real device tests,
+    // cache-cleared and network-verified via Chrome DevTools, across 2 different geographic
+    // areas. See CLAUDE.md's "DOWNLOAD_LAYERS avgKB correction" entry for the full measured
+    // ranges and the DEM terrain-dependency caveat.
+    vectorbase: { label:'Topo map data (Topo / Topo Dark / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:16, avgKB:10 },
     // Aerial and Aerial + Topo's satellite backdrop share this same raster tileset too.
-    satellite:  { label:'Satellite imagery (Aerial / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:19, avgKB:45 },
-    usgstopo:   { label:'USGS Topo', urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:18 },
+    satellite:  { label:'Satellite imagery (Aerial / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:19, avgKB:23 },
+    usgstopo:   { label:'USGS Topo', urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:16 },
     // DEM matches FIELDMAP_DEM_SOURCE exactly (mapbox.terrain-rgb, not the style-embedded
     // mapbox-dem source — see the terrain block in reinitializeLayers for why those two are
-    // deliberately different sources).
-    dem:        { label:'Elevation (DEM)', urlTemplate:'https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.pngraw?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:14, avgKB:22 },
+    // deliberately different sources). avgKB:85 was the most consequential Session 35 fix —
+    // previously underestimated in the OPPOSITE direction from the other layers (22 vs. a
+    // measured 75.3-97.4 KB/tile), the primary reason DEM-inclusive combos sometimes exceeded
+    // their own pre-download estimate. Real cost is meaningfully terrain-dependent (rougher
+    // terrain measured ~30% higher than gentler terrain in this data) — 85 is a reasonable
+    // single average, not a precise per-area figure.
+    dem:        { label:'Elevation (DEM)', urlTemplate:'https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.pngraw?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:14, avgKB:85 },
     // Snow depth and NLCD are WMS/export endpoints keyed by a computed Web Mercator bbox per
     // tile (matching the {bbox-epsg-3857} MapLibre substitutes at runtime — see
     // SNOWDEPTH_TILE_URL/NLCD_TILE_URL), not a plain {z}/{x}/{y} path, so they use
-    // bboxUrlBuilder instead of urlTemplate.
+    // bboxUrlBuilder instead of urlTemplate. Not remeasured in Session 35 — left as-is.
     snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
     nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
-    publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:9 }
+    publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 }
   };
 
   // Which underlying source(s) each of the 5 user-facing base layers actually needs.

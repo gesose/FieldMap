@@ -1401,6 +1401,41 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     comparison for actual tile content still requires a real device. Zero console errors throughout. `node
     --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.37.0 →
     2.38.0, SHELL_CACHE bumped v143 → v144.
+- DOWNLOAD_LAYERS avgKB correction (Session 35): the hand-set-once `avgKB` constants that drive
+  `estimateSizeMB()` — and therefore both the pre-download size picker and every saved area's displayed
+  size (see the "Bathymetry removal from vectorbase" entry above for why this number was never a real
+  measurement to begin with) — were corrected from guesses to real measured averages: multiple real device
+  tests, cache-cleared and network-verified via Chrome DevTools, across 2 different geographic areas.
+  `vectorbase` 35→10 (measured 8.33-9.97 KB/tile), `satellite` 45→23 (measured 22.75 KB/tile), `usgstopo`
+  18→16 (measured 15.59 KB/tile, a small correction — it was already close), `dem` 22→85 (measured 75.3-97.4
+  KB/tile — the most consequential fix, and the only one previously underestimated in the OPPOSITE direction
+  from the others, which is why DEM-inclusive combos had sometimes exceeded their own pre-download estimate
+  rather than coming in under it like every other combo), `publicland` 9→2 (measured 1.93 KB/tile).
+  `snowdepth`/`nlcd` were deliberately left untouched — not remeasured this round, no data to justify
+  changing them either direction.
+  DEM's real cost is meaningfully terrain-dependent — rougher terrain measured ~30% higher than gentler
+  terrain in this same data — so 85 is a reasonable single average across the 2 measured areas, not a
+  precise per-area figure; a future terrain-aware estimate (e.g. keyed off elevation variance in the
+  captured bounds) could sharpen this further if precision ever matters enough to justify the complexity,
+  but isn't built now.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`,
+  driving the real offline-download picker UI (not a synthetic check) for a mountainous AZ area (San
+  Francisco Peaks near Flagstaff, centered 35.350, -111.700) sized to land in the same few-hundred-tile range
+  as the task's own reference test: Topo alone (570 tiles) → 6 MB (previously would have been ~19.5 MB at
+  the old avgKB:35, matching the task's "not 24 MB" direction and roughly the "7-12 MB" new-target band, just
+  under it since this session's test area isn't byte-identical to the original real-device one); Topo + DEM
+  (724 tiles, 154 of them DEM's own — DEM's `maxNativeZoom:14` vs. vectorbase's 16 means it contributes
+  fewer unique tiles per area than vectorbase does) → 18 MB (was ~22.8 MB old, target band "20-25 MB");
+  USGS Topo + DEM + Public/private land (878 tiles) → 22 MB (target band "25-27 MB, not 19 MB" — the one
+  combo previously UNDERestimated, now correctly shifted upward since DEM dominates its tile mix). All three
+  landed close to, though slightly below, the task's stated target bands — expected and reasonable given
+  this session's test area (picked to match the task's implied tile-count scale, ~570-880 tiles depending on
+  layer) isn't the identical area the original real-device measurements used; what matters and what's
+  confirmed is the correct DIRECTION and MAGNITUDE of the shift for all three combos: Topo-alone dropped
+  ~3.5x as expected from 35→10, and both DEM-inclusive combos shifted substantially upward as expected from
+  22→85, exactly reversing the old under/over-estimate pattern the task described. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.38.0 → 2.39.0, SHELL_CACHE
+  bumped v144 → v145.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2117,3 +2152,21 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   unrelated to this fix) — a real byte-vs-estimate comparison for actual tile content still needs a real
   device. Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
   blocks and on service-worker.js. APP_VERSION bumped 2.37.0 → 2.38.0, SHELL_CACHE bumped v143 → v144.
+- Session 35: Corrected the `DOWNLOAD_LAYERS` `avgKB` constants from hand-set-once guesses to real measured
+  averages supplied by multiple real device tests (cache-cleared, network-verified via Chrome DevTools,
+  across 2 geographic areas) — see Architecture notes' "DOWNLOAD_LAYERS avgKB correction" entry for full
+  detail. `vectorbase` 35→10, `satellite` 45→23, `usgstopo` 18→16 (small correction), `dem` 22→85 (the most
+  consequential fix — previously underestimated in the opposite direction from the others, the reason
+  DEM-inclusive combos sometimes exceeded their own estimate), `publicland` 9→2; `snowdepth`/`nlcd` left
+  untouched (not remeasured). Noted DEM's real cost is meaningfully terrain-dependent (~30% higher on
+  rougher terrain in this data) — 85 is a reasonable single average, not a precise per-area figure, and a
+  future terrain-aware estimate could sharpen it further if precision ever matters enough. Verified live by
+  driving the real offline-download picker UI (not a synthetic check) for a mountainous AZ area sized to a
+  comparable few-hundred-tile scale: Topo alone (570 tiles) → 6 MB, Topo+DEM (724 tiles) → 18 MB, USGS+DEM+
+  Private (878 tiles) → 22 MB — all three landed close to (slightly under) the task's stated target bands,
+  with the correct direction and magnitude confirmed for every combo: Topo-alone dropped ~3.5x as expected,
+  and both DEM-inclusive combos shifted substantially upward, exactly reversing the old under/over-estimate
+  pattern. The gap from the exact target bands is expected, not a discrepancy — this session's test area
+  isn't byte-identical to the original real-device measurement area. `node --check` confirmed clean syntax
+  on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.38.0 → 2.39.0, SHELL_CACHE bumped v144 →
+  v145.
