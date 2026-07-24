@@ -148,13 +148,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   was already correct and needed no fix; confirmed via live testing, not assumed from code review alone.
 - `#publicland-legend` had the identical off-by-sidebar-width centering bug `#slope-legend` was fixed for in
   Session 39 (flagged as "almost certainly" present at the time, now confirmed and fixed — Session 41).
-- Disturbance History is a new Environmental-section grouping (Session 42) — Wildfires, Timber Harvest, and
-  Timber Thinning, three independently-toggleable live viewport-bbox overlays sourced from NIFC's fire
-  perimeter history and USDA Forest Service FACTS timber data. Unlike Slope Angle/Elevation Range/Aspect,
-  these are real `DOWNLOAD_LAYERS`-backed layers (downloading an area fetches and caches real bytes,
-  contributing accurately to the size estimate) — but, also unlike those tile-based layers, there's a known
-  gap where the live online view doesn't yet read back from that offline-downloaded cache (different query
-  shapes). See Architecture notes' "Disturbance History" entry for the full design and this gap's detail.
+- Disturbance History is an Environmental-section grouping (Session 42, offline-cache bridge added Session
+  43) — Wildfires, Timber Harvest, and Timber Thinning, three independently-toggleable live viewport-bbox
+  overlays sourced from NIFC's fire perimeter history and USDA Forest Service FACTS timber data. These are
+  real `DOWNLOAD_LAYERS`-backed layers (downloading an area fetches and caches real bytes, contributing
+  accurately to the size estimate) AND the live viewport-query path now checks that offline cache first,
+  before falling back to a live network query — so a downloaded area's Wildfires/Timber data genuinely
+  renders while offline, not just contributes a byte count. The one accepted tradeoff: an offline-cached
+  view is a snapshot frozen at download time — it can't gain newly-reported fires/treatments on its own,
+  though Timber's 15-year lookback (now enforced client-side, at apply time) does still correctly age
+  treatments OUT of the window even from a stale cached snapshot. See Architecture notes' "Disturbance
+  History" entry, its own "Session 43" sub-bullet, for the full bridge design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1987,6 +1991,101 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.42.0 → 2.43.0 (minor — new layers; this
     single bump also covers the Session 41 fixes above, shipped in the same release rather than two separate
     patch bumps), SHELL_CACHE bumped v150 → v151.
+  - Session 43 — closed the exact gap Session 42 flagged: the live viewport-query path now checks Cache
+    Storage for offline-downloaded tiles BEFORE issuing a live network query, so a downloaded area's
+    Wildfires/Timber Harvest/Timber Thinning data actually renders while genuinely offline, rather than only
+    contributing to the download's byte count. Per the task's own explicit instruction to investigate before
+    changing anything: confirmed the live path's exact query shape (arbitrary current-viewport bbox, via
+    `map.getBounds()`) and the offline path's exact storage shape (Cache Storage under `TILE_CACHE_NAME`,
+    keyed by the precise per-`{z}/{x}/{y}`-tile URL `DOWNLOAD_LAYERS`' own `bboxUrlBuilder` produces) before
+    designing the bridge — confirming the original Session 42 diagnosis (two different URL shapes that
+    essentially never match) was exactly right, not just plausible.
+    - **The bridge**: `loadDisturbanceLayerFromCache(layerId, bounds)` (new, defined alongside
+      `tileUrlForLayer`/`computeTileList`) computes the DISTURBANCE_MIN_ZOOM tile(s) covering the current
+      viewport via `tilesCoveringBounds()` (the same `lonToTileX`/`latToTileY` grid math `computeTileList`
+      itself uses), reconstructs each tile's exact download-time URL via the SAME `bboxUrlBuilder` function
+      `DOWNLOAD_LAYERS` already registers, and checks `cache.match()` for each. Only resolves non-null (a
+      merged FeatureCollection) if EVERY covering tile is present — a partial hit is treated as a miss,
+      deliberately: silently rendering a viewport with some polygons missing because only some of its tiles
+      happened to be cached would be worse than the existing graceful-degradation behavior (live fetch, or —
+      offline with nothing cached — showing nothing). `loadWildfireHistoryForViewport`/
+      `loadTimberLayerForViewport` were restructured so this cache check runs FIRST, with the existing live
+      fetch logic becoming the fallback path, essentially unchanged, when the cache check misses — this is
+      cache-first regardless of actual connectivity (not gated on `navigator.onLine`), per the task's own
+      literal wording ("check for and use offline-cached data first, before falling back to a live network
+      query") — an online user revisiting a downloaded area gets the cached snapshot too, not a fresh live
+      query, which is the explicit, deliberate tradeoff documented below.
+    - **A real bug found during design, before any code was written**: the bridge only works if the URL the
+      live-check path reconstructs is BYTE-IDENTICAL to the URL the original download wrote under — but
+      Timber's original `fy_completed>='<cutoffYear>'` WHERE clause embedded `timberLookbackCutoffYear()`,
+      itself `new Date().getFullYear() - 15`, meaning the exact same tile requested a year apart would
+      generate two DIFFERENT URLs (different cutoff year baked in), guaranteeing a cache miss the moment a
+      single year boundary crossed — the bridge would have silently stopped working after every New Year's,
+      re-introducing the exact gap it was built to close, on a timer. Fixed by moving the 15-year lookback
+      out of the query URL entirely: `timberOutFieldsWhere()` (live) and `timberHarvestTileUrl`/
+      `timberThinningTileUrl` (offline tile-grid) now both query `where=1%3D1` — a stable, year-independent
+      URL — and the actual filtering moved to a new shared `applyTimberLayerData(kind, data)`, called by
+      BOTH the cache-hit and live-fetch paths, which filters `data.features` against
+      `timberLookbackCutoffYear()` fresh, every time data is applied, regardless of source or age. This is
+      also what makes the "aged OUT" half of the staleness tradeoff below self-correcting even from a
+      months-old cached snapshot: a treatment that was 14 years old at download time correctly disappears
+      the next time that same cached tile is re-applied and it's now 16 years old, since the comparison is
+      against "now," never baked into the cached bytes. Wildfires needed no equivalent fix — its query was
+      already `where=1%3D1` with no time filter (recency bands are a pure display concern, computed
+      client-side via `ageBand` at apply time in `applyWildfireHistoryData`, which already had this same
+      "recompute fresh from cached data" property from Session 42, unmodified here).
+    - **Single fixed zoom, found necessary while designing the bridge, not just a nice-to-have**: Session
+      42's `wildfire`/`timberharvest`/`timberthinning` `DOWNLOAD_LAYERS` entries used `minNativeZoom:1,
+      maxNativeZoom:13`, which — combined with `computeTileList`'s own one-native-zoom-pass-per-distinct-
+      clamped-zUser loop — meant a typical 9-15 download range produced FIVE separate full-area passes
+      (z9-z13), each re-querying the same geographic footprint at a different tile-grid split. This wasn't
+      just wasteful (a real, incidental size-estimate improvement — the same test download dropped from a
+      hypothetical multi-zoom fetch to 131 tiles/2MB total for a small area with all 3 layers checked); it
+      also left the bridge with no single, unambiguous zoom level to check cache against — a live viewport
+      could be "partially covered" at z9 but "fully covered" at z11, with no principled way to prefer one
+      over the other. Fixed by pinning both `minNativeZoom`/`maxNativeZoom` to `DISTURBANCE_MIN_ZOOM` (9,
+      already the proven-safe floor against the ArcGIS 2000-feature cap for the live view) — regardless of
+      the user's selected download zoom range, `computeTileList`'s clamp always resolves to exactly one pass
+      at that single zoom, and the bridge always has exactly one tile grid to check.
+    - **Offline-availability indicator**: re-added `wildfire-toggle`/`timberharvest-toggle`/
+      `timberthinning-toggle` — deliberately NOT to the existing `OVERLAY_OFFLINE_TOGGLE_SOURCE` table (whose
+      `areaBoundsContainViewport` check trusts SAVED AREA METADATA — an area's own recorded bounds and which
+      layer ids were requested at download time — accurate enough for layers whose live tile URL always
+      equals their download tile URL, but only a metadata-trusting proxy otherwise) but to a new, parallel
+      `DISTURBANCE_OFFLINE_TOGGLE_IDS` map, checked via `isDisturbanceLayerCachedForBounds()` — the same
+      tile-covering logic as the render bridge, but existence-only (`cache.match()` truthiness, no response-
+      body parsing) since the indicator only needs a yes/no answer. This answers the literal question the
+      graying indicator exists to answer — "does Cache Storage actually have this" — rather than a proxy for
+      it, and was straightforward to add alongside the render bridge since both share the same
+      `tilesCoveringBounds`/`TILE_CACHE_NAME`/`tileUrlForLayer` foundations.
+    - **The accepted tradeoff, documented in 3 places, not just code comments**: an offline-cached view is a
+      snapshot frozen at download time — a fire or treatment reported AFTER the download can't appear until
+      the area is re-downloaded, no matter how the lookback filtering works. This is inherent to caching
+      anything against a rolling time window, not a bug to chase further. Documented in the Layers panel's
+      existing Timber disclaimer (extended, not replaced, to cover all 3 layers' offline behavior), the
+      offline-download modal's own hint text (rewritten from "won't yet draw from that download while
+      offline" to describe the NEW behavior and its snapshot caveat), and here.
+    - **Verification**: downloaded a real, small test area (Deschutes National Forest, Z9-Z15 default range,
+      131 tiles/2MB) with all 3 Disturbance History layers checked via the live offline-download UI — hit
+      the same native-`prompt()`-blocks-CDP gotcha this codebase has documented before; recovered by opening
+      a fresh tab against the same origin rather than fighting the blocked one, since Cache Storage and
+      localStorage are both origin-scoped, not tab-scoped, and confirmed both were intact in the new tab
+      (`localStorage`'s saved-area record correctly listed all 4 downloaded layer ids including the 3 new
+      ones, `sizeMB:2.04`). Proved the render bridge with a real network-level test, not just code review:
+      monkey-patched `window.fetch` to reject any request to `arcgis.com`/`apps.fs.usda.gov` (simulating
+      "genuinely offline" for exactly the hosts these 3 layers query, without touching Cache Storage, which
+      isn't network-dependent) — toggling on all 3 layers with this patch active rendered real data (368
+      wildfire, 432 harvest, 652 thinning features, confirmed by inspecting each MapLibre source's `_data`
+      directly, not just eyeballing the map) with zero console errors, conclusively proving the data came
+      from Cache Storage and not a live request that happened to still work. Confirmed the 432 cached harvest
+      features' `fy_completed` values all fall within [2021, 2026] with none below the 2011 cutoff — the
+      client-side filter is doing real work, not a no-op. Verified the offline-availability indicator with
+      `navigator.onLine` forced `false`: the 3 rows correctly read available (not grayed) at the downloaded
+      viewport, correctly flipped to unavailable (grayed) after jumping the map to a random, never-downloaded
+      location (Kansas), and correctly flipped back to available on returning — a full round-trip, not just
+      one direction. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+      APP_VERSION bumped 2.43.0 → 2.43.1 (patch — bridges/fixes existing Session 42 functionality, no new
+      user-facing layer), SHELL_CACHE bumped v151 → v152.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2926,3 +3025,40 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.42.0 →
   2.43.0 (minor — new layers; this single release also bundles Session 41's fixes above rather than shipping
   a separate patch), SHELL_CACHE bumped v150 → v151.
+- Session 43: Closed the exact offline-cache gap Session 42 flagged — the live viewport-query path for
+  Wildfires/Timber Harvest/Timber Thinning now checks Cache Storage for previously-downloaded tiles before
+  issuing a live network query, so a downloaded area's data genuinely renders while offline instead of only
+  contributing to the download's byte count — see Architecture notes' "Disturbance History" entry, its own
+  "Session 43" sub-bullet, for the complete bridge design. Investigated both sides (live query shape, offline
+  storage shape) before writing any code, per explicit instruction, and confirmed Session 42's own diagnosis
+  was exactly right: the two URL shapes never matched. Found and fixed a real bug during design, before
+  writing the bridge itself — Timber's WHERE clause embedded the current year's rolling-lookback cutoff
+  directly in the query URL, meaning the bridge would have silently broken every New Year's as the
+  reconstructed check-time URL drifted from the download-time URL; moved that filtering out of the URL
+  entirely (now a stable `where=1%3D1`) and into a shared client-side filter applied fresh at data-apply time
+  regardless of source, which also happens to make the "aged out" half of the rolling window self-correcting
+  even from a months-old cached snapshot. Also fixed, found necessary while designing the bridge rather than
+  as a separate ask: Session 42's `wildfire`/`timberharvest`/`timberthinning` `DOWNLOAD_LAYERS` entries used a
+  5-zoom-level range (z9-z13), which both bloated typical download size ~5x for these layers AND left the
+  bridge with no single unambiguous tile grid to check cache against — pinned all 3 to one fixed zoom
+  (`DISTURBANCE_MIN_ZOOM`) to fix both at once. Re-added the 3 toggles to the offline-availability graying
+  indicator, but via a new precise per-tile Cache Storage check rather than the existing table's
+  metadata-trusting bounds check, since the metadata-trusting version was never actually accurate for these
+  3 layers even now that the bridge exists. Documented the one deliberately-accepted tradeoff — an
+  offline-cached view is frozen at download time and can't gain newly-reported data on its own — in the
+  Layers panel's Timber disclaimer, the offline-download modal's own hint text, and CLAUDE.md, not just code
+  comments, per explicit instruction. Verified live via the already-connected Chrome browser extension:
+  downloaded a real small test area (Deschutes National Forest) with all 3 layers checked through the actual
+  UI (hit the known native-`prompt()`-blocks-CDP gotcha, recovered by opening a fresh tab against the same
+  origin since Cache Storage/localStorage are both origin- not tab-scoped, and confirmed both were intact);
+  proved the render bridge with a real network-level test — monkey-patched `window.fetch` to reject requests
+  to the exact ArcGIS/USFS hosts these layers query (leaving Cache Storage itself untouched, since it isn't
+  network-dependent) and confirmed all 3 layers still rendered real cached data (368/432/652 features
+  respectively, read directly from each MapLibre source, not just eyeballed on the map) with zero console
+  errors; confirmed the cached harvest features' completion years all correctly fall within the 15-year
+  window with none below the cutoff, proving the client-side filter does real work; confirmed the
+  offline-availability indicator with `navigator.onLine` forced false through a full round-trip — available
+  at the downloaded viewport, correctly grayed at a random never-downloaded location, correctly available
+  again on return. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+  APP_VERSION bumped 2.43.0 → 2.43.1 (patch — bridges existing functionality, no new user-facing layer),
+  SHELL_CACHE bumped v151 → v152.

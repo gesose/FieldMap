@@ -2217,7 +2217,7 @@
         <div class="layer-info-desc">Reported timber stand improvement / thinning activity from the last 15 years. Tap an area for its completion year.</div>
         <a class="layer-info-src" href="https://data.fs.usda.gov/geodata/edw/edw_resources/meta/S_USA.Activity_SilvTSI.xml" target="_blank">Source: USDA Forest Service EDW (FACTS)</a>
       </div>
-      <p class="gmu-disclaimer">Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn't historically required, so both layers are known to be incomplete.</p>
+      <p class="gmu-disclaimer">Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn't historically required, so both layers are known to be incomplete. Viewing any of the 3 Disturbance History layers from a downloaded offline area shows data as of download day — newly-reported fires/treatments won't appear until you re-download (Timber's 15-year window still correctly drops treatments that age past it in the meantime, even from that same frozen download).</p>
 
       <label class="layer-overlay-row">
         <input type="checkbox" id="slopeangle-toggle"> Slope angle <button class="layer-hint-btn" data-layer-id="lh-slopeangle" title="About">?</button>
@@ -2827,7 +2827,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfires/Timber harvest/Timber thinning download real data and count toward your size estimate, but — like Hydrography — won't yet draw from that download while you're actually offline; they'll only show whatever you've recently browsed there too.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfires/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -3025,7 +3025,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.43.0';
+  var APP_VERSION = '2.43.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -7042,13 +7042,41 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openHydroPopup = popup;
   }
 
-  // ── Disturbance History: Wildfires, Timber Harvest, Timber Thinning (Session 42) — live
-  // viewport-bbox queries, same pattern as Hydrography just above ──
-  function wildfireHistoryBboxQueryString(){
-    var b = map.getBounds();
+  // ── Disturbance History: Wildfires, Timber Harvest, Timber Thinning (Session 42, offline-
+  // cache bridge added Session 43) — live viewport-bbox queries, same pattern as Hydrography
+  // just above, EXCEPT these 3 first check whether an offline download already covers the
+  // current viewport (loadDisturbanceLayerFromCache, defined near the offline-download tile
+  // machinery further down this file, alongside tileUrlForLayer/computeTileList) and use that
+  // cached data instead of a live fetch when it's complete — this is what makes a downloaded
+  // area's Wildfires/Timber data actually render while genuinely offline, closing the gap
+  // Session 42 shipped with and explicitly flagged. See CLAUDE.md's "Disturbance History" entry,
+  // its own "Session 43" sub-bullet, for the full bridge design and the staleness tradeoff this
+  // deliberately accepts (a cached snapshot can't age forward or gain newly-reported data on its
+  // own — see applyTimberLayerData's own comment for how the "aged OUT" half of that is still
+  // handled correctly even from a stale cache).
+  function wildfireHistoryBboxQueryString(bounds){
+    var b = bounds || map.getBounds();
     return 'where=1%3D1&geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
       '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
+  }
+
+  // Shared by both the cache-hit and live-fetch paths so ageBand is always computed fresh at
+  // apply time regardless of data source — a fire that was "1-3yr" in a snapshot cached a year
+  // ago correctly re-buckets to "4-7yr" when that same cached snapshot is re-applied today.
+  function applyWildfireHistoryData(data){
+    if (!state.settings.wildfireHistoryOn || !data || !data.features) return;
+    var currentYear = new Date().getFullYear();
+    // Precompute ageBand once here (not a runtime MapLibre expression — there's no "current
+    // year" primitive available to a paint expression), same schema-normalize-at-merge-time
+    // approach Migration corridors already established for a similar per-feature-property
+    // derivation.
+    data.features.forEach(function(f){
+      var year = f.properties && f.properties.FIRE_YEAR_INT;
+      f.properties.ageBand = (year != null) ? wildfireAgeBandIndex(currentYear - year) : 3;
+    });
+    wildfireHistoryCache = data;
+    if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData(data);
   }
 
   function loadWildfireHistoryForViewport(){
@@ -7058,24 +7086,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!wildfireHistoryZoomHintShown){ showToast('Zoom in to load wildfire history'); wildfireHistoryZoomHintShown = true; }
       return;
     }
-    var currentYear = new Date().getFullYear();
-    fetch(WILDFIRE_HISTORY_URL + '?' + wildfireHistoryBboxQueryString())
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(data){
-        if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
-        if (!data || !data.features) return;
-        // Precompute ageBand once here (not a runtime MapLibre expression — there's no "current
-        // year" primitive available to a paint expression), same schema-normalize-at-merge-time
-        // approach Migration corridors already established for a similar per-feature-property
-        // derivation.
-        data.features.forEach(function(f){
-          var year = f.properties && f.properties.FIRE_YEAR_INT;
-          f.properties.ageBand = (year != null) ? wildfireAgeBandIndex(currentYear - year) : 3;
-        });
-        wildfireHistoryCache = data;
-        if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData(data);
-      })
-      .catch(function(err){ console.error('[FieldMap] Wildfire history fetch failed:', err); });
+    var bounds = map.getBounds();
+    loadDisturbanceLayerFromCache('wildfire', bounds).then(function(cached){
+      if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
+      if (cached){ applyWildfireHistoryData(cached); return; }
+      fetch(WILDFIRE_HISTORY_URL + '?' + wildfireHistoryBboxQueryString(bounds))
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(data){
+          if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
+          applyWildfireHistoryData(data);
+        })
+        .catch(function(err){ console.error('[FieldMap] Wildfire history fetch failed:', err); });
+    });
   }
 
   function scheduleWildfireHistoryRefresh(){
@@ -7126,7 +7148,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       sourceId: 'timberharvest-source',
       onKey: 'timberHarvestOn',
       layerIdsCss: ['timberharvest-fill', 'timberharvest-line'],
-      opacityRowId: 'timberharvest-opacity-row'
+      opacityRowId: 'timberharvest-opacity-row',
+      downloadLayerId: 'timberharvest'
     },
     thinning: {
       baseUrl: function(){ return TIMBER_THINNING_URL; },
@@ -7134,12 +7157,43 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       sourceId: 'timberthinning-source',
       onKey: 'timberThinningOn',
       layerIdsCss: ['timberthinning-fill', 'timberthinning-line'],
-      opacityRowId: 'timberthinning-opacity-row'
+      opacityRowId: 'timberthinning-opacity-row',
+      downloadLayerId: 'timberthinning'
     }
   };
+  // NOTE (Session 43): deliberately no `fy_completed>=` WHERE clause here anymore — see
+  // timberHarvestTileUrl/timberThinningTileUrl's own comment for why the 15-year lookback moved
+  // from a server-side URL parameter to a client-side filter applied in applyTimberLayerData
+  // below. This keeps the query URL stable/year-independent, which is what lets an
+  // offline-downloaded tile's cache entry stay findable by URL indefinitely instead of going
+  // stale the moment a year boundary crosses.
   function timberOutFieldsWhere(){
-    return 'where=' + encodeURIComponent("fy_completed>='" + timberLookbackCutoffYear() + "'") +
-      '&outFields=fy_completed,gis_acres,activity_name&inSR=4269&outSR=4326&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geojson';
+    return 'where=1%3D1&outFields=fy_completed,gis_acres,activity_name&inSR=4269&outSR=4326&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geojson';
+  }
+  // Shared by both the cache-hit and live-fetch paths, exactly like applyWildfireHistoryData
+  // above — the 15-year lookback is enforced HERE, evaluated fresh against `timberLookbackCutoffYear()`
+  // every time data is applied, regardless of whether it came from a live fetch or an
+  // offline-cached snapshot from months ago. This is what makes the "aged OUT" half of the
+  // rolling window self-correcting even from a stale cache: a treatment that was 14 years old
+  // when a tile was downloaded correctly disappears once it crosses 15, the next time that same
+  // cached tile is re-applied, because the comparison is against "now," not baked into the
+  // cached bytes. The "aged IN" half — a treatment completed since the download, which the
+  // frozen cache was never told about — can't be recovered without a fresh fetch; that's the
+  // genuine, inherent limitation documented in CLAUDE.md and the offline-download modal's own
+  // hint text, not something this filter can paper over.
+  function applyTimberLayerData(kind, data){
+    var cfg = TIMBER_KIND_CONFIG[kind];
+    if (!state.settings[cfg.onKey] || !data) return;
+    var cutoff = timberLookbackCutoffYear();
+    var filtered = {
+      type: 'FeatureCollection',
+      features: (data.features || []).filter(function(f){
+        var fy = parseInt(f.properties && f.properties.fy_completed, 10);
+        return !isNaN(fy) && fy >= cutoff;
+      })
+    };
+    if (kind === 'harvest') timberHarvestCache = filtered; else timberThinningCache = filtered;
+    if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData(filtered);
   }
   function loadTimberLayerForViewport(kind){
     var cfg = TIMBER_KIND_CONFIG[kind];
@@ -7152,19 +7206,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
       return;
     }
-    var b = map.getBounds();
-    var geom = encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth());
-    var qs = timberOutFieldsWhere() + '&geometry=' + geom;
-    Promise.all(cfg.layerIds().map(function(layerId){
-      return fetch(cfg.baseUrl() + '/' + layerId + '/query?' + qs)
-        .then(function(r){ return r.ok ? r.json() : null; })
-        .catch(function(){ return null; });
-    })).then(function(results){
+    var bounds = map.getBounds();
+    loadDisturbanceLayerFromCache(cfg.downloadLayerId, bounds).then(function(cached){
       if (!state.settings[cfg.onKey]) return; // toggled off while this was in flight
-      var merged = { type: 'FeatureCollection', features: [] };
-      results.forEach(function(fc){ if (fc && fc.features) merged.features = merged.features.concat(fc.features); });
-      if (kind === 'harvest') timberHarvestCache = merged; else timberThinningCache = merged;
-      if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData(merged);
+      if (cached){ applyTimberLayerData(kind, cached); return; }
+      var geom = encodeURIComponent(bounds.getWest() + ',' + bounds.getSouth() + ',' + bounds.getEast() + ',' + bounds.getNorth());
+      var qs = timberOutFieldsWhere() + '&geometry=' + geom;
+      Promise.all(cfg.layerIds().map(function(layerId){
+        return fetch(cfg.baseUrl() + '/' + layerId + '/query?' + qs)
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .catch(function(){ return null; });
+      })).then(function(results){
+        if (!state.settings[cfg.onKey]) return; // toggled off while this was in flight
+        var merged = { type: 'FeatureCollection', features: [] };
+        results.forEach(function(fc){ if (fc && fc.features) merged.features = merged.features.concat(fc.features); });
+        applyTimberLayerData(kind, merged);
+      });
     });
   }
   function scheduleTimberHarvestRefresh(){
@@ -14044,35 +14101,53 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
     nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
     publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 },
-    // Disturbance History (Session 42) — real network-fetched vector data (dense polygon
-    // geometry, not raster tiles or a compact .pbf), so per-tile bytes are notably larger than
-    // every other entry above; avgKB below is derived from live sample queries against a
-    // known-dense forested test area (not device-measured — no live device available in this
-    // sandbox, same limitation noted for other layers' avgKB history), and real per-tile size
-    // will vary a lot by feature density, same caveat as DEM's own terrain-dependent variance.
-    // KNOWN GAP, flagged rather than silently glossed over: unlike every entry above (whose
-    // live-browse tile URL is byte-identical to its offline-download tile URL — same {z}/{x}/{y}
-    // scheme both ways), these 3 fetch an ARBITRARY live-viewport bbox online (see
-    // loadWildfireHistoryForViewport/loadTimberLayerForViewport) but a FIXED tile-grid bbox when
-    // downloaded (tileLatLngBbox, via this bboxUrlBuilder) — two different URL shapes that
-    // essentially never match, so an offline-downloaded area's cached bytes are NOT actually
-    // read back by the live online view while genuinely offline (Cache Storage keys by exact
-    // URL). This still satisfies the actual ask driving this table's existence — "download this
-    // area" performs a real network fetch and contributes a real, non-zero byte count to the
-    // size estimate, unlike a client-only derivative such as Slope Angle — but does not yet
-    // deliver the deeper "browse this data while offline" promise DEM/snowdepth/NLCD/publicland
-    // genuinely have. This is why these 3 toggles are also deliberately absent from
-    // OVERLAY_OFFLINE_TOGGLE_SOURCE (see that table's own comment) rather than showing a
-    // "should work offline" hint that wouldn't actually hold.
-    // Timber Harvest/Thinning's offline copy is additionally narrower than the online view in a
-    // second way: it only covers the "2021 - Current" decade sub-layer (layer id 11/9 — see
+    // Disturbance History (Session 42, offline-cache bridge added Session 43) — real
+    // network-fetched vector data (dense polygon geometry, not raster tiles or a compact .pbf),
+    // so per-tile bytes are notably larger than every other entry above; avgKB below is derived
+    // from live sample queries against a known-dense forested test area (not device-measured —
+    // no live device available in this sandbox, same limitation noted for other layers' avgKB
+    // history), and real per-tile size will vary a lot by feature density, same caveat as DEM's
+    // own terrain-dependent variance.
+    // minNativeZoom === maxNativeZoom === DISTURBANCE_MIN_ZOOM (Session 43 fix) — deliberately a
+    // SINGLE fixed zoom, not a range. Session 42 originally left these at minNativeZoom:1,
+    // maxNativeZoom:13, which — combined with computeTileList's own "one native-zoom pass per
+    // distinct clamped zUser" loop — meant a typical 9-15 download range produced FIVE separate
+    // full-area passes (z9, z10, z11, z12, z13), each independently re-querying the same
+    // geographic footprint: wasteful for vector polygon data, where (unlike raster imagery)
+    // finer zoom doesn't mean "more visual detail," just a finer tile-grid split of the same
+    // underlying features. Pinning both to DISTURBANCE_MIN_ZOOM (already the proven-safe floor
+    // against the ArcGIS 2000-feature-per-query cap for the live view, see that constant's own
+    // comment) collapses this to exactly one pass regardless of the user's selected zoom range,
+    // cutting typical download size for these 3 layers roughly 5x AND — the reason this mattered
+    // enough to fix now, not just as a size optimization — gives the live-query cache bridge one
+    // single, unambiguous tile grid to check against (loadDisturbanceLayerFromCache, defined
+    // below near tileUrlForLayer) instead of an ambiguous choice among 5 candidate zoom levels.
+    // BRIDGE (Session 43): the live viewport-query path (loadWildfireHistoryForViewport/
+    // loadTimberLayerForViewport) now checks Cache Storage for the DISTURBANCE_MIN_ZOOM tiles
+    // covering the current viewport BEFORE issuing a live network query, using this exact same
+    // bboxUrlBuilder to reconstruct the same URLs the offline downloader wrote under — when
+    // every covering tile is present, the cached data is used directly, satisfying the actual
+    // "browse this while offline" promise DEM/snowdepth/NLCD/publicland already had (Session 42
+    // only delivered the size-estimate/real-fetch half of that promise, not this half — see
+    // CLAUDE.md's "Disturbance History" entry, its own "Session 43" sub-bullet, for the full
+    // design and its one deliberately-accepted tradeoff: a cached snapshot is frozen at download
+    // time and can't gain newly-reported data or a rolling window's newly-eligible edge on its
+    // own until the area is re-downloaded — surfaced in the offline-download modal's own hint
+    // text and the Layers panel's Timber disclaimer, not just in this comment).
+    // Timber Harvest/Thinning's offline copy is still narrower than the online view in one
+    // remaining way: it only covers the "2021 - Current" decade sub-layer (layer id 11/9 — see
     // TIMBER_HARVEST_LAYER_IDS/TIMBER_THINNING_LAYER_IDS' own comment for why 2 ids are queried
     // live) — the 1-URL-per-tile-per-source download model can't merge 2 separate sub-layer
     // endpoints into one downloadable entry without either doubling tile requests for every
-    // other layer too or adding 2 more confusing checklist rows the spec didn't ask for.
-    wildfire:       { label:'Wildfire history', bboxUrlBuilder: wildfireHistoryTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:180 },
-    timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:120 },
-    timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:120 }
+    // other layer too or adding 2 more confusing checklist rows the spec didn't ask for. This no
+    // longer matters in practice for the "aged OUT" side of the lookback window (now enforced
+    // client-side at apply time — see applyTimberLayerData) but does mean a genuinely very old
+    // treatment that only exists in an earlier decade sub-layer (id 1, "2001-2010", etc.) will
+    // never appear even when cached, live or offline, until a 3rd id is added — same "years from
+    // now" horizon already noted on TIMBER_HARVEST_LAYER_IDS itself.
+    wildfire:       { label:'Wildfire history', bboxUrlBuilder: wildfireHistoryTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 },
+    timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 }
   };
 
   // Which underlying source(s) each of the 5 user-facing base layers actually needs.
@@ -14134,18 +14209,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
   }
+  // NOTE (Session 43): no `fy_completed>=` WHERE clause here anymore — see timberOutFieldsWhere's
+  // own comment (the live-query counterpart of this function) for why. Keeping this URL free of
+  // any "now"-dependent parameter is what lets a tile downloaded this year still be found by an
+  // exact-URL Cache Storage lookup next year, instead of the lookup silently missing because the
+  // reconstructed URL embeds a different cutoff year than the one baked into the cached entry.
   function timberHarvestTileUrl(z, x, y){
     var b = tileLatLngBbox(z, x, y);
-    var where = "fy_completed>='" + timberLookbackCutoffYear() + "'";
-    return TIMBER_HARVEST_URL + '/11/query?where=' + encodeURIComponent(where) +
+    return TIMBER_HARVEST_URL + '/11/query?where=1%3D1' +
       '&geometry=' + encodeURIComponent(b.join(',')) +
       '&geometryType=esriGeometryEnvelope&inSR=4269&outSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=fy_completed,gis_acres,activity_name&f=geojson';
   }
   function timberThinningTileUrl(z, x, y){
     var b = tileLatLngBbox(z, x, y);
-    var where = "fy_completed>='" + timberLookbackCutoffYear() + "'";
-    return TIMBER_THINNING_URL + '/9/query?where=' + encodeURIComponent(where) +
+    return TIMBER_THINNING_URL + '/9/query?where=1%3D1' +
       '&geometry=' + encodeURIComponent(b.join(',')) +
       '&geometryType=esriGeometryEnvelope&inSR=4269&outSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=fy_completed,gis_acres,activity_name&f=geojson';
@@ -14156,6 +14234,65 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!def) return null;
     if (def.bboxUrlBuilder) return def.bboxUrlBuilder(z, x, y);
     return def.urlTemplate.replace('{z}', z).replace('{y}', y).replace('{x}', x);
+  }
+
+  // ── Disturbance History offline-cache bridge (Session 43) ──────────────────────────────────
+  // Computes the set of DISTURBANCE_MIN_ZOOM tiles (the single fixed zoom these 3 layers'
+  // DOWNLOAD_LAYERS entries use — see that entry's own comment) that cover a given map-bounds
+  // rectangle, using the exact same lonToTileX/latToTileY grid math computeTileList itself uses
+  // for every other layer, so "was this viewport downloaded" and "which tiles did the
+  // downloader actually fetch for this viewport" are always asking the identical question.
+  function tilesCoveringBounds(bounds, z){
+    var xMin = lonToTileX(bounds.getWest(), z), xMax = lonToTileX(bounds.getEast(), z);
+    var yMin = latToTileY(bounds.getNorth(), z), yMax = latToTileY(bounds.getSouth(), z);
+    var tiles = [];
+    for (var x = xMin; x <= xMax; x++){
+      for (var y = yMin; y <= yMax; y++){
+        tiles.push({ z: z, x: x, y: y });
+      }
+    }
+    return tiles;
+  }
+  // Resolves a merged FeatureCollection ONLY if every tile covering `bounds` for `layerId` is
+  // already present in the offline tile cache (TILE_CACHE_NAME — the same Cache Storage
+  // namespace downloadTileList/fetchAndCacheTile write into, confirmed via that constant's own
+  // declaration to be the literal same cache the service worker also shares); resolves null on
+  // any miss (or if the Cache Storage API isn't available at all) so the caller falls back to a
+  // live network query exactly as it always did before this bridge existed. A partial hit
+  // deliberately still counts as a miss here — rendering a viewport with silently-missing
+  // polygons because only some of its tiles happened to be cached would be worse than just
+  // doing the live fetch (or, offline with no cache, showing nothing and letting the existing
+  // fetch-failure handling degrade gracefully, same as it already did pre-bridge).
+  function loadDisturbanceLayerFromCache(layerId, bounds){
+    if (!('caches' in window)) return Promise.resolve(null);
+    var tiles = tilesCoveringBounds(bounds, DISTURBANCE_MIN_ZOOM);
+    if (!tiles.length) return Promise.resolve(null);
+    return caches.open(TILE_CACHE_NAME).then(function(cache){
+      return Promise.all(tiles.map(function(t){
+        return cache.match(tileUrlForLayer(layerId, t.z, t.x, t.y)).then(function(resp){
+          return resp ? resp.json().catch(function(){ return null; }) : null;
+        });
+      }));
+    }).then(function(results){
+      if (results.some(function(r){ return !r; })) return null; // any missing/uncached tile — incomplete, fall back live
+      var merged = { type: 'FeatureCollection', features: [] };
+      results.forEach(function(fc){ if (fc && fc.features) merged.features = merged.features.concat(fc.features); });
+      return merged;
+    }).catch(function(){ return null; });
+  }
+  // Existence-only counterpart of the above — same tile set, same cache, but never parses
+  // response bodies (cache.match() truthiness is enough) since callers here (the "offline
+  // available" toggle-graying indicator) only need a yes/no answer, not the data itself. Reuses
+  // tilesCoveringBounds/TILE_CACHE_NAME/tileUrlForLayer rather than duplicating that logic.
+  function isDisturbanceLayerCachedForBounds(layerId, bounds){
+    if (!('caches' in window)) return Promise.resolve(false);
+    var tiles = tilesCoveringBounds(bounds, DISTURBANCE_MIN_ZOOM);
+    if (!tiles.length) return Promise.resolve(false);
+    return caches.open(TILE_CACHE_NAME).then(function(cache){
+      return Promise.all(tiles.map(function(t){
+        return cache.match(tileUrlForLayer(layerId, t.z, t.x, t.y)).then(function(r){ return !!r; });
+      }));
+    }).then(function(results){ return results.length > 0 && results.every(Boolean); }).catch(function(){ return false; });
   }
 
   // Maps the user's selections (5 base-layer checkboxes + additional-data checkboxes) down
@@ -14526,16 +14663,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // real toggles, so they're mapped to the SAME 'dem' download-layer id — whether they'll
   // actually render offline depends on whether DEM tiles for this viewport were downloaded, not
   // on any download of their own (neither has, or needs, its own DOWNLOAD_LAYERS entry).
-  // Disturbance History's 3 toggles are deliberately NOT in this table (Session 42) — unlike
-  // every layer below, whose live-browse tile URL is byte-identical to its offline-download
-  // tile URL (same {z}/{x}/{y} scheme both ways, so "was this exact tile downloaded" is a
-  // meaningful, accurate question), Wildfires/Timber Harvest/Timber Thinning fetch an arbitrary
-  // live-viewport bbox online but a fixed tile-grid bbox when downloaded — two different URLs
-  // that basically never match. Adding them here would gray out (or fail to gray out) the
-  // toggle based on a coverage check that doesn't actually predict whether the live query will
-  // work while offline, which is worse than no hint at all. See DOWNLOAD_LAYERS' own comment on
-  // the 'wildfire'/'timberharvest'/'timberthinning' entries for the full gap.
+  // Disturbance History's 3 toggles were deliberately excluded from this table in Session 42,
+  // when their live-browse and offline-download URLs genuinely never matched — re-added in
+  // Session 43 now that the underlying gap is actually fixed (see DOWNLOAD_LAYERS' own comment
+  // on the 'wildfire'/'timberharvest'/'timberthinning' entries, and loadDisturbanceLayerFromCache
+  // just above, for the full bridge). They're handled by DISTURBANCE_OFFLINE_TOGGLE_IDS below,
+  // NOT by the plain sourceId-lookup path every other entry in this table uses — the generic
+  // areaBoundsContainViewport check trusts SAVED AREA METADATA (an area's own recorded bounds +
+  // which layer ids were requested at download time), which is accurate enough for layers whose
+  // live tile URL always equals their download tile URL, but would be a strictly weaker,
+  // metadata-trusting stand-in for these 3 when a real, precise "is this tile actually still in
+  // Cache Storage" check (isDisturbanceLayerCachedForBounds) is just as cheap to run and answers
+  // the literal question the graying indicator exists to answer.
   var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
+  var DISTURBANCE_OFFLINE_TOGGLE_IDS = { 'wildfire-toggle': 'wildfire', 'timberharvest-toggle': 'timberharvest', 'timberthinning-toggle': 'timberthinning' };
   function areaBoundsContainViewport(area, viewportBounds){
     return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
            area.boundsSW[1] <= viewportBounds.getWest() && area.boundsNE[1] >= viewportBounds.getEast();
@@ -14544,8 +14685,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!map) return;
     var offline = !navigator.onLine;
     var toggleIds = Object.keys(OVERLAY_OFFLINE_TOGGLE_SOURCE);
+    var disturbanceToggleIds = Object.keys(DISTURBANCE_OFFLINE_TOGGLE_IDS);
+    var allToggleIds = toggleIds.concat(disturbanceToggleIds);
     if (!offline){
-      toggleIds.forEach(function(toggleId){
+      allToggleIds.forEach(function(toggleId){
         var input = document.getElementById(toggleId);
         var row = input && input.closest('.layer-overlay-row');
         if (row) row.classList.remove('offline-unavailable');
@@ -14563,6 +14706,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           return area.layerIds.indexOf(sourceId) !== -1 && areaBoundsContainViewport(area, viewportBounds);
         });
         row.classList.toggle('offline-unavailable', !covered);
+      });
+    });
+    disturbanceToggleIds.forEach(function(toggleId){
+      var input = document.getElementById(toggleId);
+      var row = input && input.closest('.layer-overlay-row');
+      if (!row) return;
+      var layerId = DISTURBANCE_OFFLINE_TOGGLE_IDS[toggleId];
+      isDisturbanceLayerCachedForBounds(layerId, viewportBounds).then(function(cached){
+        row.classList.toggle('offline-unavailable', !cached);
       });
     });
   }
