@@ -2184,17 +2184,40 @@
       <div class="layer-subsection-title">Disturbance History</div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-toggle"> Wildfires <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
+        <input type="checkbox" id="wildfire-recent-toggle"> Wildfire History — Recent (0-20 yrs) <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
       </label>
-      <div class="opacity-row" id="wildfire-opacity-row"><input type="range" id="wildfire-opacity" min="20" max="100" value="55"></div>
+      <div class="opacity-row" id="wildfire-recent-opacity-row"><input type="range" id="wildfire-recent-opacity" min="20" max="100" value="55"></div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="wildfire-older-toggle"> Wildfire History — Older (20-50 yrs)
+      </label>
+      <div class="opacity-row" id="wildfire-older-opacity-row"><input type="range" id="wildfire-older-opacity" min="20" max="100" value="55"></div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="wildfire-evenolder-toggle"> Wildfire History — Even Older (50+ yrs)
+      </label>
+      <div class="opacity-row" id="wildfire-evenolder-opacity-row"><input type="range" id="wildfire-evenolder-opacity" min="20" max="100" value="55"></div>
       <div class="layer-info-panel" id="lh-wildfire">
-        <div class="layer-info-desc">Historical wildland fire perimeters, color-coded by how long ago each fire burned — freshest in light yellow-orange, oldest in deep red/maroon. Re-queried live as you pan and zoom.</div>
+        <div class="layer-info-desc">Historical wildland fire perimeters, split into 3 independently-toggleable time ranges — turn on only the ones you need to keep loading fast. Each range has its own internal recency-gradient (freshest in light yellow-orange, oldest in deep red/maroon). Any combination can be active at once; a fire only ever falls in one range. Re-queried live as you pan and zoom.</div>
         <div class="layer-info-legend">
-          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
-            <span class="legend-swatch" style="background:#FCE29A;color:#000;">Past year</span>
-            <span class="legend-swatch" style="background:#F2A153;color:#000;">1-3 yrs</span>
-            <span class="legend-swatch" style="background:#C85A34;color:#fff;">4-7 yrs</span>
-            <span class="legend-swatch" style="background:#6E2020;color:#fff;">7+ yrs</span>
+          <div style="margin-top:6px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Recent (0-20 yrs)</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px;">
+            <span class="legend-swatch" style="background:#FCE29A;color:#000;">&lt;1 yr</span>
+            <span class="legend-swatch" style="background:#CDA171;color:#000;">1-5 yrs</span>
+            <span class="legend-swatch" style="background:#9D6149;color:#fff;">5-10 yrs</span>
+            <span class="legend-swatch" style="background:#6E2020;color:#fff;">10-20 yrs</span>
+          </div>
+          <div style="margin-top:8px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Older (20-50 yrs)</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px;">
+            <span class="legend-swatch" style="background:#FCE29A;color:#000;">20-30 yrs</span>
+            <span class="legend-swatch" style="background:#B5815D;color:#fff;">30-40 yrs</span>
+            <span class="legend-swatch" style="background:#6E2020;color:#fff;">40-50 yrs</span>
+          </div>
+          <div style="margin-top:8px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Even Older (50+ yrs)</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px;">
+            <span class="legend-swatch" style="background:#FCE29A;color:#000;">50-75 yrs</span>
+            <span class="legend-swatch" style="background:#B5815D;color:#fff;">75-100 yrs</span>
+            <span class="legend-swatch" style="background:#6E2020;color:#fff;">100+ yrs</span>
           </div>
         </div>
         <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::interagencyfireperimeterhistory-all-years-view/about" target="_blank">Source: NIFC Interagency Fire Perimeter History</a>
@@ -2827,7 +2850,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfires/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -3025,7 +3048,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.43.1';
+  var APP_VERSION = '2.44.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3147,13 +3170,18 @@
       // this guarantees the two mutually-exclusive layers can never both already be true at
       // boot without needing extra defensive logic in reinitializeLayers().
       aspectOn: false, aspectOpacity: 0.6,
-      // Disturbance History (Session 42) — Wildfires/Timber Harvest/Timber Thinning, three
+      // Disturbance History (Session 42) — Wildfire History/Timber Harvest/Timber Thinning,
       // independently-toggleable live viewport-bbox overlays (see the "Disturbance History"
       // Architecture notes entry). Unlike Slope Angle/Elevation Range/Aspect these persist
       // normally on/off, matching Fire Perimeters/Hydrography's own persistence — they're real
       // DOWNLOAD_LAYERS-backed data layers, not client-only DEM derivatives with a reason to
-      // force-reset at boot.
-      wildfireHistoryOn: false, wildfireHistoryOpacity: 0.55,
+      // force-reset at boot. Wildfire History was split into 3 independent time-tiers (Session
+      // 44, all default OFF, per spec) — see the "Disturbance History" entry's own "Session 44"
+      // sub-bullet for why (fetch/render efficiency: checking only "Recent" queries a fraction
+      // of the full ~98K-feature/125-year dataset instead of everything).
+      wildfireRecentOn: false, wildfireRecentOpacity: 0.55,
+      wildfireOlderOn: false, wildfireOlderOpacity: 0.55,
+      wildfireEvenOlderOn: false, wildfireEvenOlderOpacity: 0.55,
       timberHarvestOn: false, timberHarvestOpacity: 0.7,
       timberThinningOn: false, timberThinningOpacity: 0.7,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
@@ -3400,13 +3428,14 @@
   var fireperimetersCache = null; // last-fetched FeatureCollection — only used to reseed the source across a style switch; setFirePerimetersOn always re-fetches fresh on toggle-on since this is live data
   var openFirePerimeterPopup = null;
 
-  // ── Disturbance History (Session 42): Wildfires, Timber Harvest, Timber Thinning ──
-  // Wildfires is the full multi-agency fire perimeter HISTORY (all years, ~98,168 features
-  // nationwide, confirmed via a live returnCountOnly query before building this) — a completely
-  // different service from FIRE_PERIMETERS_URL above (which is CURRENT/active fires only, a much
-  // smaller live dataset already safe to bulk-fetch). Like Hydrography/gauge stations, this is
-  // too large to bulk-fetch once, so it's a live viewport-bbox query, re-issued on every pan/zoom
-  // while its toggle is on.
+  // ── Disturbance History (Session 42, offline-cache bridge Session 43, Wildfire History split
+  // into 3 time-tiers Session 44): Wildfire History, Timber Harvest, Timber Thinning ──
+  // Wildfire History is the full multi-agency fire perimeter HISTORY (all years, ~98,168
+  // features nationwide, confirmed via a live returnCountOnly query before building this) — a
+  // completely different service from FIRE_PERIMETERS_URL above (which is CURRENT/active fires
+  // only, a much smaller live dataset already safe to bulk-fetch). Like Hydrography/gauge
+  // stations, this is too large to bulk-fetch once, so it's a live viewport-bbox query, re-issued
+  // on every pan/zoom while a tier's toggle is on.
   var WILDFIRE_HISTORY_URL = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/InterAgencyFirePerimeterHistory_All_Years_View/FeatureServer/0/query';
   // Both timber services split their data across fixed decade sub-layers (confirmed via each
   // service's own /MapServer?f=json layer list — "2021 - Current", "2011 - 2020", "2001 - 2010",
@@ -3423,31 +3452,105 @@
   var TIMBER_THINNING_LAYER_IDS = [9, 0]; // "2021 - Current", "2011 - 2020"
   var TIMBER_LOOKBACK_YEARS = 15; // matches onX's own convention, per spec
   var DISTURBANCE_MIN_ZOOM = 9; // below this a bbox query spans too much area and risks the 2000-feature server-side cap — same reasoning as HYDRO_MIN_ZOOM/GAUGE_MIN_ZOOM above
-  // Recency-gradient bands for Wildfires — light yellow-orange (freshest) through deep
-  // red/maroon (oldest). Bucket boundaries read literally off the 4 stated band names (not an
-  // arbitrary split): "past year" = age 0 only, "1-3 years" = age 1-3, "4-7 years" = age 4-7,
-  // "7+ years" = age 8+ — zero overlap, zero gaps. See wildfireAgeBandIndex().
-  var WILDFIRE_AGE_BANDS = [
-    { fill: '#FCE29A', stroke: '#C9932E', label: 'Past year' },
-    { fill: '#F2A153', stroke: '#B36A22', label: '1–3 years' },
-    { fill: '#C85A34', stroke: '#8A3A1C', label: '4–7 years' },
-    { fill: '#6E2020', stroke: '#3D0F0F', label: '7+ years' }
-  ];
-  function wildfireAgeBandIndex(age){
-    if (age <= 0) return 0;
-    if (age <= 3) return 1;
-    if (age <= 7) return 2;
-    return 3;
+  // Wildfire History's 3 time tiers (Session 44) — deliberately independent toggles, NOT
+  // exclusive tabs like Slope Angle/Aspect: those two fully color-wash the SAME terrain pixels
+  // and would visually fight if both were on, but a single fire can only ever fall in exactly
+  // one age bucket, so any number of these 3 can be active together with zero visual conflict —
+  // "all 3 on" is just "all wildfire history," split for fetch/render efficiency, not for
+  // mutual exclusivity. That efficiency win is the actual point: the original single-layer
+  // design queried the FULL unfiltered ~98K-feature/125-year dataset for every viewport
+  // regardless of which ages anyone actually cared about, which is what caused real-world slow
+  // load times on a cellular connection — wildfireTierWhereClause() below is what makes checking
+  // only "Recent" query just that tier's own FIRE_YEAR_INT range server-side, not everything.
+  // Each tier's bandUpperBounds/bandLabels/fills/strokes describe an INDEPENDENT light-yellow-
+  // orange-to-deep-maroon gradient across that tier's own band count (4/3/3 = 10 total) — not
+  // one continuous 10-step gradient split across tiers — so any single tier reads as a complete,
+  // legible gradient on its own even with the other two off. Colors were generated by linearly
+  // interpolating the original single-layer design's own endpoint colors (fill #FCE29A→#6E2020,
+  // stroke #C9932E→#3D0F0F) across each tier's own band count, not eyeballed per band, so every
+  // tier's freshest/oldest band lands on the exact same two anchor colors regardless of how many
+  // internal steps that tier has (older/evenOlder, both 3 bands, land on identical hex values —
+  // expected and harmless, since the two are never rendered for the same feature).
+  var WILDFIRE_TIERS = {
+    recent: {
+      id: 'recent', label: 'Recent (0-20 years)', minAge: 0, maxAge: 20,
+      bandUpperBounds: [1, 5, 10, Infinity], // internal split points; last is open, bounded by maxAge in practice
+      bandLabels: ['<1 yr', '1-5 yrs', '5-10 yrs', '10-20 yrs'],
+      fills: ['#FCE29A', '#CDA171', '#9D6149', '#6E2020'],
+      strokes: ['#C9932E', '#9A6724', '#6C3B19', '#3D0F0F'],
+      toggleId: 'wildfire-recent-toggle', opacityId: 'wildfire-recent-opacity', opacityRowId: 'wildfire-recent-opacity-row',
+      onKey: 'wildfireRecentOn', opacityKey: 'wildfireRecentOpacity',
+      sourceId: 'wildfire-recent-source', fillLayerId: 'wildfire-recent-fill', lineLayerId: 'wildfire-recent-line',
+      downloadLayerId: 'wildfirerecent',
+      cache: null, zoomHintShown: false, refreshTimer: null
+    },
+    older: {
+      id: 'older', label: 'Older (20-50 years)', minAge: 20, maxAge: 50,
+      bandUpperBounds: [30, 40, Infinity],
+      bandLabels: ['20-30 yrs', '30-40 yrs', '40-50 yrs'],
+      fills: ['#FCE29A', '#B5815D', '#6E2020'],
+      strokes: ['#C9932E', '#83511F', '#3D0F0F'],
+      toggleId: 'wildfire-older-toggle', opacityId: 'wildfire-older-opacity', opacityRowId: 'wildfire-older-opacity-row',
+      onKey: 'wildfireOlderOn', opacityKey: 'wildfireOlderOpacity',
+      sourceId: 'wildfire-older-source', fillLayerId: 'wildfire-older-fill', lineLayerId: 'wildfire-older-line',
+      downloadLayerId: 'wildfireolder',
+      cache: null, zoomHintShown: false, refreshTimer: null
+    },
+    evenOlder: {
+      id: 'evenOlder', label: 'Even Older (50+ years)', minAge: 50, maxAge: Infinity,
+      bandUpperBounds: [75, 100, Infinity],
+      bandLabels: ['50-75 yrs', '75-100 yrs', '100+ yrs'],
+      fills: ['#FCE29A', '#B5815D', '#6E2020'],
+      strokes: ['#C9932E', '#83511F', '#3D0F0F'],
+      toggleId: 'wildfire-evenolder-toggle', opacityId: 'wildfire-evenolder-opacity', opacityRowId: 'wildfire-evenolder-opacity-row',
+      onKey: 'wildfireEvenOlderOn', opacityKey: 'wildfireEvenOlderOpacity',
+      sourceId: 'wildfire-evenolder-source', fillLayerId: 'wildfire-evenolder-fill', lineLayerId: 'wildfire-evenolder-line',
+      downloadLayerId: 'wildfireevenolder',
+      cache: null, zoomHintShown: false, refreshTimer: null
+    }
+  };
+  var WILDFIRE_TIER_IDS = ['recent', 'older', 'evenOlder'];
+  function wildfireTierBandIndex(tierId, age){
+    var bounds = WILDFIRE_TIERS[tierId].bandUpperBounds;
+    for (var i = 0; i < bounds.length; i++){
+      if (age < bounds[i]) return i;
+    }
+    return bounds.length - 1;
+  }
+  // Server-side age filter, per tier — the actual mechanism behind the fetch-efficiency win
+  // described above: only this tier's own FIRE_YEAR_INT range is ever requested, computed fresh
+  // from the current year on every call (never hardcoded), same "rolling, not frozen" approach
+  // TIMBER_LOOKBACK_YEARS' own client-side filter uses.
+  function wildfireTierWhereClause(tierId){
+    var cfg = WILDFIRE_TIERS[tierId];
+    var currentYear = new Date().getFullYear();
+    var parts = [];
+    if (cfg.minAge > 0) parts.push('FIRE_YEAR_INT<=' + (currentYear - cfg.minAge));
+    if (isFinite(cfg.maxAge)) parts.push('FIRE_YEAR_INT>' + (currentYear - cfg.maxAge));
+    return parts.length ? parts.join(' AND ') : '1=1';
+  }
+  // Builds a MapLibre `['match', ['get','ageBand'], 0, c0, 1, c1, ..., fallback]` paint
+  // expression from a tier's own fills/strokes array — shared so all 3 tiers (4 bands for
+  // Recent, 3 for Older/Even Older) use the identical construction rather than 3 hand-written
+  // match expressions of different lengths.
+  function wildfireMatchExpression(colors){
+    var expr = ['match', ['get', 'ageBand']];
+    colors.forEach(function(c, i){ expr.push(i, c); });
+    expr.push(colors[colors.length - 1]); // fallback: the oldest band's own color
+    return expr;
   }
   // Fixed colors (not a gradient) — completion year is shown on tap-to-identify instead, per
   // spec. Diagonal hatch fill (buildDisturbanceHatchPattern), not a flat wash, so both remain
   // visually distinct from every flat/gradient-wash overlay already in this app (Winter Range,
-  // Corridor, Habitat, Wildfires above) even where they overlap.
+  // Corridor, Habitat, Wildfire History above) even where they overlap.
   var TIMBER_HARVEST_COLOR = '#8B4225', TIMBER_THINNING_COLOR = '#B8963E';
-  var wildfireHistoryCache = null, timberHarvestCache = null, timberThinningCache = null; // reseed sources across a style switch only — always re-queried fresh on toggle-on/viewport-move, same as hydro/gauge
+  var timberHarvestCache = null, timberThinningCache = null; // reseed sources across a style switch only — always re-queried fresh on toggle-on/viewport-move, same as hydro/gauge
+  // One shared popup var for all 3 wildfire tiers (only one popup is ever open at a time
+  // regardless of which tier's polygon was tapped) — same pattern as every other single-popup
+  // overlay in this file.
   var openWildfireHistoryPopup = null, openTimberHarvestPopup = null, openTimberThinningPopup = null;
-  var wildfireHistoryZoomHintShown = false, timberHarvestZoomHintShown = false, timberThinningZoomHintShown = false;
-  var wildfireHistoryRefreshTimer = null, timberHarvestRefreshTimer = null, timberThinningRefreshTimer = null;
+  var timberHarvestZoomHintShown = false, timberThinningZoomHintShown = false;
+  var timberHarvestRefreshTimer = null, timberThinningRefreshTimer = null;
   // NHDPlus HR (USGS hydrography) — unlike GMU/USFS/fire, this is a genuinely nationwide,
   // very-high-feature-count dataset (flowline layer alone caps at maxRecordCount:2000 per
   // query), so it can't be bulk-fetched once like those — it's queried live for just the
@@ -5650,30 +5753,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseleave', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = ''; });
 
       // Disturbance History click-to-identify — same mode-aware pass-through pattern as fire
-      // perimeters above.
-      function handleWildfireHistoryClick(e){
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        if (e.originalEvent) e.originalEvent.stopPropagation();
-        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
-          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
-          if (bearingMode){ handleBearingMapTap(latlng); return; }
-          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
-          if (compassActive){ handleCompassMapTap(latlng); return; }
-          if (measureMode){ handleMeasureClick(latlng); return; }
-          if (drawMode){ handleDrawClick(latlng); return; }
-          if (polygonMode){ handlePolygonClick(latlng); return; }
-          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
-          return;
-        }
-        var f = e.features && e.features[0];
-        if (!f) return;
-        openWildfireHistoryPopupAt(f.properties, e.lngLat);
+      // perimeters above. One handler factory shared across Wildfire History's 3 independent
+      // tiers (Session 44), parameterized by tierId, mirroring handleTimberClick(kind) below.
+      function handleWildfireTierClick(tierId){
+        return function(e){
+          if (e.defaultPrevented) return;
+          e.preventDefault();
+          if (e.originalEvent) e.originalEvent.stopPropagation();
+          var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+            if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+            if (bearingMode){ handleBearingMapTap(latlng); return; }
+            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+            if (compassActive){ handleCompassMapTap(latlng); return; }
+            if (measureMode){ handleMeasureClick(latlng); return; }
+            if (drawMode){ handleDrawClick(latlng); return; }
+            if (polygonMode){ handlePolygonClick(latlng); return; }
+            if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+            return;
+          }
+          var f = e.features && e.features[0];
+          if (!f) return;
+          openWildfireHistoryPopupAt(f.properties, e.lngLat, tierId);
+        };
       }
-      map.on('click', 'wildfirehistory-fill', handleWildfireHistoryClick);
-      map.on('mouseenter', 'wildfirehistory-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'wildfirehistory-fill', function(){ map.getCanvas().style.cursor = ''; });
+      WILDFIRE_TIER_IDS.forEach(function(tierId){
+        var fillLayerId = WILDFIRE_TIERS[tierId].fillLayerId;
+        map.on('click', fillLayerId, handleWildfireTierClick(tierId));
+        map.on('mouseenter', fillLayerId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', fillLayerId, function(){ map.getCanvas().style.cursor = ''; });
+      });
 
       function handleTimberClick(kind){
         return function(e){
@@ -5880,8 +5989,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('moveend', scheduleHydroRefresh);
       map.on('zoomend', scheduleGaugeRefresh);
       map.on('moveend', scheduleGaugeRefresh);
-      map.on('zoomend', scheduleWildfireHistoryRefresh);
-      map.on('moveend', scheduleWildfireHistoryRefresh);
+      WILDFIRE_TIER_IDS.forEach(function(tierId){
+        map.on('zoomend', function(){ scheduleWildfireTierRefresh(tierId); });
+        map.on('moveend', function(){ scheduleWildfireTierRefresh(tierId); });
+      });
       map.on('zoomend', scheduleTimberHarvestRefresh);
       map.on('moveend', scheduleTimberHarvestRefresh);
       map.on('zoomend', scheduleTimberThinningRefresh);
@@ -7042,30 +7153,34 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openHydroPopup = popup;
   }
 
-  // ── Disturbance History: Wildfires, Timber Harvest, Timber Thinning (Session 42, offline-
-  // cache bridge added Session 43) — live viewport-bbox queries, same pattern as Hydrography
-  // just above, EXCEPT these 3 first check whether an offline download already covers the
-  // current viewport (loadDisturbanceLayerFromCache, defined near the offline-download tile
-  // machinery further down this file, alongside tileUrlForLayer/computeTileList) and use that
-  // cached data instead of a live fetch when it's complete — this is what makes a downloaded
-  // area's Wildfires/Timber data actually render while genuinely offline, closing the gap
-  // Session 42 shipped with and explicitly flagged. See CLAUDE.md's "Disturbance History" entry,
-  // its own "Session 43" sub-bullet, for the full bridge design and the staleness tradeoff this
-  // deliberately accepts (a cached snapshot can't age forward or gain newly-reported data on its
-  // own — see applyTimberLayerData's own comment for how the "aged OUT" half of that is still
-  // handled correctly even from a stale cache).
-  function wildfireHistoryBboxQueryString(bounds){
+  // ── Disturbance History: Wildfire History (3 independent time-tiers, Session 44), Timber
+  // Harvest, Timber Thinning (Session 42, offline-cache bridge added Session 43) — live
+  // viewport-bbox queries, same pattern as Hydrography just above, EXCEPT these first check
+  // whether an offline download already covers the current viewport
+  // (loadDisturbanceLayerFromCache, defined near the offline-download tile machinery further
+  // down this file, alongside tileUrlForLayer/computeTileList) and use that cached data instead
+  // of a live fetch when it's complete — this is what makes a downloaded area's data actually
+  // render while genuinely offline, closing the gap Session 42 shipped with and explicitly
+  // flagged. See CLAUDE.md's "Disturbance History" entry, its own "Session 43" sub-bullet, for
+  // the full bridge design and the staleness tradeoff this deliberately accepts (a cached
+  // snapshot can't age forward or gain newly-reported data on its own — see
+  // applyTimberLayerData's own comment for how the "aged OUT" half of that is still handled
+  // correctly even from a stale cache). Wildfire History's own 3-tier split (Session 44) is
+  // documented in that same Architecture notes entry's own "Session 44" sub-bullet.
+  function wildfireTierBboxQueryString(tierId, bounds){
     var b = bounds || map.getBounds();
-    return 'where=1%3D1&geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
+    return 'where=' + encodeURIComponent(wildfireTierWhereClause(tierId)) +
+      '&geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
       '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
   }
 
   // Shared by both the cache-hit and live-fetch paths so ageBand is always computed fresh at
-  // apply time regardless of data source — a fire that was "1-3yr" in a snapshot cached a year
-  // ago correctly re-buckets to "4-7yr" when that same cached snapshot is re-applied today.
-  function applyWildfireHistoryData(data){
-    if (!state.settings.wildfireHistoryOn || !data || !data.features) return;
+  // apply time regardless of data source — a fire that was "1-5yr" in a snapshot cached a year
+  // ago correctly re-buckets to "5-10yr" when that same cached snapshot is re-applied today.
+  function applyWildfireTierData(tierId, data){
+    var cfg = WILDFIRE_TIERS[tierId];
+    if (!state.settings[cfg.onKey] || !data || !data.features) return;
     var currentYear = new Date().getFullYear();
     // Precompute ageBand once here (not a runtime MapLibre expression — there's no "current
     // year" primitive available to a paint expression), same schema-normalize-at-merge-time
@@ -7073,50 +7188,60 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // derivation.
     data.features.forEach(function(f){
       var year = f.properties && f.properties.FIRE_YEAR_INT;
-      f.properties.ageBand = (year != null) ? wildfireAgeBandIndex(currentYear - year) : 3;
+      var age = year != null ? currentYear - year : cfg.maxAge;
+      f.properties.ageBand = wildfireTierBandIndex(tierId, age);
     });
-    wildfireHistoryCache = data;
-    if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData(data);
+    cfg.cache = data;
+    if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData(data);
   }
 
-  function loadWildfireHistoryForViewport(){
-    if (!state.settings.wildfireHistoryOn || !map) return;
+  function loadWildfireTierForViewport(tierId){
+    var cfg = WILDFIRE_TIERS[tierId];
+    if (!state.settings[cfg.onKey] || !map) return;
     if (map.getZoom() < DISTURBANCE_MIN_ZOOM){
-      if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData({ type: 'FeatureCollection', features: [] });
-      if (!wildfireHistoryZoomHintShown){ showToast('Zoom in to load wildfire history'); wildfireHistoryZoomHintShown = true; }
+      if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData({ type: 'FeatureCollection', features: [] });
+      if (!cfg.zoomHintShown){ showToast('Zoom in to load wildfire history'); cfg.zoomHintShown = true; }
       return;
     }
     var bounds = map.getBounds();
-    loadDisturbanceLayerFromCache('wildfire', bounds).then(function(cached){
-      if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
-      if (cached){ applyWildfireHistoryData(cached); return; }
-      fetch(WILDFIRE_HISTORY_URL + '?' + wildfireHistoryBboxQueryString(bounds))
+    loadDisturbanceLayerFromCache(cfg.downloadLayerId, bounds).then(function(cached){
+      if (!state.settings[cfg.onKey]) return; // toggled off while this was in flight
+      if (cached){ applyWildfireTierData(tierId, cached); return; }
+      fetch(WILDFIRE_HISTORY_URL + '?' + wildfireTierBboxQueryString(tierId, bounds))
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
-          if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
-          applyWildfireHistoryData(data);
+          if (!state.settings[cfg.onKey]) return; // toggled off while this was in flight
+          applyWildfireTierData(tierId, data);
         })
-        .catch(function(err){ console.error('[FieldMap] Wildfire history fetch failed:', err); });
+        .catch(function(err){ console.error('[FieldMap] Wildfire history (' + tierId + ') fetch failed:', err); });
     });
   }
 
-  function scheduleWildfireHistoryRefresh(){
-    if (wildfireHistoryRefreshTimer) clearTimeout(wildfireHistoryRefreshTimer);
-    wildfireHistoryRefreshTimer = setTimeout(loadWildfireHistoryForViewport, 500);
+  function scheduleWildfireTierRefresh(tierId){
+    var cfg = WILDFIRE_TIERS[tierId];
+    if (cfg.refreshTimer) clearTimeout(cfg.refreshTimer);
+    cfg.refreshTimer = setTimeout(function(){ loadWildfireTierForViewport(tierId); }, 500);
   }
 
-  function setWildfireHistoryLayersVisible(on){
-    ['wildfirehistory-fill', 'wildfirehistory-line'].forEach(function(id){
+  function setWildfireTierLayersVisible(tierId, on){
+    var cfg = WILDFIRE_TIERS[tierId];
+    [cfg.fillLayerId, cfg.lineLayerId].forEach(function(id){
       if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
     });
-    document.getElementById('wildfire-opacity-row').classList.toggle('show', on);
-    if (!on && openWildfireHistoryPopup){ openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; }
+    document.getElementById(cfg.opacityRowId).classList.toggle('show', on);
+    // The shared popup only closes if IT came from this specific tier — turning off "Older"
+    // must not close a popup currently showing a "Recent" fire's details, now that the 3 tiers
+    // are independently toggleable rather than one single layer.
+    if (!on && openWildfireHistoryPopup && openWildfireHistoryPopupTier === tierId){
+      openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; openWildfireHistoryPopupTier = null;
+    }
   }
 
-  function setWildfireHistoryOn(on){
-    state.settings.wildfireHistoryOn = on;
-    setWildfireHistoryLayersVisible(on);
-    if (on) loadWildfireHistoryForViewport();
+  function setWildfireTierOn(tierId, on){
+    var cfg = WILDFIRE_TIERS[tierId];
+    state.settings[cfg.onKey] = on;
+    setWildfireTierLayersVisible(tierId, on);
+    if (on) loadWildfireTierForViewport(tierId);
   }
 
   function wildfireHistoryPopupHtml(props){
@@ -7130,12 +7255,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       '</div>';
   }
 
-  function openWildfireHistoryPopupAt(props, lngLat){
-    if (openWildfireHistoryPopup){ openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; }
+  var openWildfireHistoryPopupTier = null;
+  function openWildfireHistoryPopupAt(props, lngLat, tierId){
+    if (openWildfireHistoryPopup){ openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; openWildfireHistoryPopupTier = null; }
     var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
       .setLngLat(lngLat).setHTML(wildfireHistoryPopupHtml(props)).addTo(map);
-    popup.on('close', function(){ if (openWildfireHistoryPopup === popup) openWildfireHistoryPopup = null; });
+    popup.on('close', function(){ if (openWildfireHistoryPopup === popup){ openWildfireHistoryPopup = null; openWildfireHistoryPopupTier = null; } });
     openWildfireHistoryPopup = popup;
+    openWildfireHistoryPopupTier = tierId;
   }
 
   // Timber Harvest and Timber Thinning share this one implementation, parameterized by `kind`
@@ -7170,7 +7297,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function timberOutFieldsWhere(){
     return 'where=1%3D1&outFields=fy_completed,gis_acres,activity_name&inSR=4269&outSR=4326&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geojson';
   }
-  // Shared by both the cache-hit and live-fetch paths, exactly like applyWildfireHistoryData
+  // Shared by both the cache-hit and live-fetch paths, exactly like applyWildfireTierData
   // above — the 15-year lookback is enforced HERE, evaluated fresh against `timberLookbackCutoffYear()`
   // every time data is applied, regardless of whether it came from a live fetch or an
   // offline-cached snapshot from months ago. This is what makes the "aged OUT" half of the
@@ -8443,49 +8570,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // Disturbance History (Session 42) — Wildfires/Timber Harvest/Timber Thinning. All three
-    // start empty and get populated live by loadWildfireHistoryForViewport/
-    // loadTimberLayerForViewport once their own toggle is on — same "sources start empty, a
-    // live viewport-bbox query fills them in" pattern as Hydrography just below (see that
-    // entry's own comment for why this can't be a one-time bulk fetch — wildfire history alone
-    // is ~98K features nationwide, confirmed via a live count query before building this).
+    // Disturbance History (Session 42) — Wildfire History (3 independent time-tiers, Session
+    // 44)/Timber Harvest/Timber Thinning. All start empty and get populated live by
+    // loadWildfireTierForViewport/loadTimberLayerForViewport once their own toggle is on — same
+    // "sources start empty, a live viewport-bbox query fills them in" pattern as Hydrography
+    // just below (see that entry's own comment for why this can't be a one-time bulk fetch —
+    // wildfire history alone is ~98K features nationwide, confirmed via a live count query
+    // before building this).
     if (!map.hasImage('timber-harvest-pattern')){
       map.addImage('timber-harvest-pattern', buildDisturbanceHatchPattern(TIMBER_HARVEST_COLOR));
     }
     if (!map.hasImage('timber-thinning-pattern')){
       map.addImage('timber-thinning-pattern', buildDisturbanceHatchPattern(TIMBER_THINNING_COLOR));
     }
-    if (!map.getSource('wildfirehistory-source')){
-      map.addSource('wildfirehistory-source', { type: 'geojson', data: wildfireHistoryCache || { type: 'FeatureCollection', features: [] } });
-    }
-    if (!map.getLayer('wildfirehistory-fill')){
-      map.addLayer({
-        id: 'wildfirehistory-fill',
-        type: 'fill',
-        source: 'wildfirehistory-source',
-        layout: { visibility: state.settings.wildfireHistoryOn ? 'visible' : 'none' },
-        paint: {
-          'fill-color': ['match', ['get', 'ageBand'],
-            0, WILDFIRE_AGE_BANDS[0].fill, 1, WILDFIRE_AGE_BANDS[1].fill, 2, WILDFIRE_AGE_BANDS[2].fill,
-            WILDFIRE_AGE_BANDS[3].fill],
-          'fill-opacity': state.settings.wildfireHistoryOpacity != null ? state.settings.wildfireHistoryOpacity : 0.55
-        }
-      });
-    }
-    if (!map.getLayer('wildfirehistory-line')){
-      map.addLayer({
-        id: 'wildfirehistory-line',
-        type: 'line',
-        source: 'wildfirehistory-source',
-        layout: { visibility: state.settings.wildfireHistoryOn ? 'visible' : 'none', 'line-join': 'round' },
-        paint: {
-          'line-color': ['match', ['get', 'ageBand'],
-            0, WILDFIRE_AGE_BANDS[0].stroke, 1, WILDFIRE_AGE_BANDS[1].stroke, 2, WILDFIRE_AGE_BANDS[2].stroke,
-            WILDFIRE_AGE_BANDS[3].stroke],
-          'line-width': 1, 'line-opacity': 0.9
-        }
-      });
-    }
+    WILDFIRE_TIER_IDS.forEach(function(tierId){
+      var cfg = WILDFIRE_TIERS[tierId];
+      if (!map.getSource(cfg.sourceId)){
+        map.addSource(cfg.sourceId, { type: 'geojson', data: cfg.cache || { type: 'FeatureCollection', features: [] } });
+      }
+      if (!map.getLayer(cfg.fillLayerId)){
+        map.addLayer({
+          id: cfg.fillLayerId,
+          type: 'fill',
+          source: cfg.sourceId,
+          layout: { visibility: state.settings[cfg.onKey] ? 'visible' : 'none' },
+          paint: {
+            'fill-color': wildfireMatchExpression(cfg.fills),
+            'fill-opacity': state.settings[cfg.opacityKey] != null ? state.settings[cfg.opacityKey] : 0.55
+          }
+        });
+      }
+      if (!map.getLayer(cfg.lineLayerId)){
+        map.addLayer({
+          id: cfg.lineLayerId,
+          type: 'line',
+          source: cfg.sourceId,
+          layout: { visibility: state.settings[cfg.onKey] ? 'visible' : 'none', 'line-join': 'round' },
+          paint: {
+            'line-color': wildfireMatchExpression(cfg.strokes),
+            'line-width': 1, 'line-opacity': 0.9
+          }
+        });
+      }
+    });
     if (!map.getSource('timberharvest-source')){
       map.addSource('timberharvest-source', { type: 'geojson', data: timberHarvestCache || { type: 'FeatureCollection', features: [] } });
     }
@@ -8528,7 +8655,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         paint: { 'line-color': TIMBER_THINNING_COLOR, 'line-width': 1, 'line-opacity': 0.9 }
       });
     }
-    if (state.settings.wildfireHistoryOn) loadWildfireHistoryForViewport();
+    WILDFIRE_TIER_IDS.forEach(function(tierId){
+      if (state.settings[WILDFIRE_TIERS[tierId].onKey]) loadWildfireTierForViewport(tierId);
+    });
     if (state.settings.timberHarvestOn) loadTimberLayerForViewport('harvest');
     if (state.settings.timberThinningOn) loadTimberLayerForViewport('thinning');
 
@@ -12491,13 +12620,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // controls overall strength the same way it does for every flat-color fill layer in this app.
   // Same 3-line diagonal-stripe technique as buildOfflinePlaceholderPattern above, just without
   // the opaque background fill.
+  // Session 45: tile size shrunk 16→10 (tighter line spacing, ~1.6x more stripes per unit area)
+  // and stroke width bumped 2→3 (1.5x thicker) — both dimensions scale from `size` alone, so this
+  // is the only change needed. Session 42's original 16px/2px pattern read too sparse against
+  // Topo on a real device screenshot; combined, this lands the requested ~1.5-2x density increase
+  // without the pattern reading as a near-solid block.
   function buildDisturbanceHatchPattern(colorHex){
-    var size = 16;
+    var size = 10;
     var canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     var ctx = canvas.getContext('2d');
     ctx.strokeStyle = colorHex;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(0, size); ctx.lineTo(size, 0);
     ctx.moveTo(-size / 2, size / 2); ctx.lineTo(size / 2, -size / 2);
@@ -14122,7 +14256,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // enough to fix now, not just as a size optimization — gives the live-query cache bridge one
     // single, unambiguous tile grid to check against (loadDisturbanceLayerFromCache, defined
     // below near tileUrlForLayer) instead of an ambiguous choice among 5 candidate zoom levels.
-    // BRIDGE (Session 43): the live viewport-query path (loadWildfireHistoryForViewport/
+    // BRIDGE (Session 43): the live viewport-query path (loadWildfireTierForViewport/
     // loadTimberLayerForViewport) now checks Cache Storage for the DISTURBANCE_MIN_ZOOM tiles
     // covering the current viewport BEFORE issuing a live network query, using this exact same
     // bboxUrlBuilder to reconstruct the same URLs the offline downloader wrote under — when
@@ -14145,7 +14279,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // treatment that only exists in an earlier decade sub-layer (id 1, "2001-2010", etc.) will
     // never appear even when cached, live or offline, until a 3rd id is added — same "years from
     // now" horizon already noted on TIMBER_HARVEST_LAYER_IDS itself.
-    wildfire:       { label:'Wildfire history', bboxUrlBuilder: wildfireHistoryTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    // Wildfire History (Session 44): one DOWNLOAD_LAYERS entry per time-tier, not one shared
+    // entry — each tier's own bboxUrlBuilder embeds that tier's own wildfireTierWhereClause, so
+    // downloading (and later cache-bridging) "Recent" alone genuinely only fetches/caches that
+    // tier's own fraction of the full dataset, matching the live-query efficiency win this
+    // 3-tier split exists for in the first place — a single shared entry covering all years
+    // would have defeated that entirely for the offline-download path.
+    wildfirerecent:    { label:'Wildfire history — Recent (0-20 yrs)', bboxUrlBuilder: wildfireRecentTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireolder:     { label:'Wildfire history — Older (20-50 yrs)', bboxUrlBuilder: wildfireOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireevenolder: { label:'Wildfire history — Even Older (50+ yrs)', bboxUrlBuilder: wildfireEvenOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
     timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 },
     timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 }
   };
@@ -14203,12 +14345,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return [west, south, east, north];
   }
   function timberLookbackCutoffYear(){ return new Date().getFullYear() - TIMBER_LOOKBACK_YEARS; }
-  function wildfireHistoryTileUrl(z, x, y){
+  // One tile-URL builder per Wildfire History tier (Session 44) — same `wildfireTierWhereClause`
+  // used by the live-query path, so the offline-download tile URL and the live-query bridge's
+  // reconstructed URL always agree exactly, same requirement Timber's own tile URLs already
+  // satisfy for the offline-cache bridge (Session 43).
+  function wildfireTierTileUrl(tierId, z, x, y){
     var b = tileLatLngBbox(z, x, y);
-    return WILDFIRE_HISTORY_URL + '?where=1%3D1&geometry=' + encodeURIComponent(b.join(',')) +
+    return WILDFIRE_HISTORY_URL + '?where=' + encodeURIComponent(wildfireTierWhereClause(tierId)) +
+      '&geometry=' + encodeURIComponent(b.join(',')) +
       '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
       '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
   }
+  function wildfireRecentTileUrl(z, x, y){ return wildfireTierTileUrl('recent', z, x, y); }
+  function wildfireOlderTileUrl(z, x, y){ return wildfireTierTileUrl('older', z, x, y); }
+  function wildfireEvenOlderTileUrl(z, x, y){ return wildfireTierTileUrl('evenOlder', z, x, y); }
   // NOTE (Session 43): no `fy_completed>=` WHERE clause here anymore — see timberOutFieldsWhere's
   // own comment (the live-query counterpart of this function) for why. Keeping this URL free of
   // any "now"-dependent parameter is what lets a tile downloaded this year still be found by an
@@ -14547,7 +14697,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function renderOfflineOverlayChecks(){
     var wrap = document.getElementById('offline-overlay-checks');
     wrap.innerHTML = '';
-    ['dem', 'snowdepth', 'nlcd', 'publicland', 'wildfire', 'timberharvest', 'timberthinning'].forEach(function(id){
+    ['dem', 'snowdepth', 'nlcd', 'publicland', 'wildfirerecent', 'wildfireolder', 'wildfireevenolder', 'timberharvest', 'timberthinning'].forEach(function(id){
       var def = DOWNLOAD_LAYERS[id];
       var label = document.createElement('label');
       label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
@@ -14666,17 +14816,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Disturbance History's 3 toggles were deliberately excluded from this table in Session 42,
   // when their live-browse and offline-download URLs genuinely never matched — re-added in
   // Session 43 now that the underlying gap is actually fixed (see DOWNLOAD_LAYERS' own comment
-  // on the 'wildfire'/'timberharvest'/'timberthinning' entries, and loadDisturbanceLayerFromCache
-  // just above, for the full bridge). They're handled by DISTURBANCE_OFFLINE_TOGGLE_IDS below,
-  // NOT by the plain sourceId-lookup path every other entry in this table uses — the generic
-  // areaBoundsContainViewport check trusts SAVED AREA METADATA (an area's own recorded bounds +
-  // which layer ids were requested at download time), which is accurate enough for layers whose
-  // live tile URL always equals their download tile URL, but would be a strictly weaker,
-  // metadata-trusting stand-in for these 3 when a real, precise "is this tile actually still in
-  // Cache Storage" check (isDisturbanceLayerCachedForBounds) is just as cheap to run and answers
-  // the literal question the graying indicator exists to answer.
+  // on the wildfire tier/'timberharvest'/'timberthinning' entries, and
+  // loadDisturbanceLayerFromCache just above, for the full bridge). They're handled by
+  // DISTURBANCE_OFFLINE_TOGGLE_IDS below, NOT by the plain sourceId-lookup path every other
+  // entry in this table uses — the generic areaBoundsContainViewport check trusts SAVED AREA
+  // METADATA (an area's own recorded bounds + which layer ids were requested at download time),
+  // which is accurate enough for layers whose live tile URL always equals their download tile
+  // URL, but would be a strictly weaker, metadata-trusting stand-in for these when a real,
+  // precise "is this tile actually still in Cache Storage" check
+  // (isDisturbanceLayerCachedForBounds) is just as cheap to run and answers the literal question
+  // the graying indicator exists to answer. Wildfire History's 3 time-tiers (Session 44) each
+  // get their own entry here too, mapped to their own downloadLayerId — the same reasoning, one
+  // level more granular now that Wildfire History itself is 3 independently-cached layers.
   var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
-  var DISTURBANCE_OFFLINE_TOGGLE_IDS = { 'wildfire-toggle': 'wildfire', 'timberharvest-toggle': 'timberharvest', 'timberthinning-toggle': 'timberthinning' };
+  var DISTURBANCE_OFFLINE_TOGGLE_IDS = {
+    'wildfire-recent-toggle': 'wildfirerecent',
+    'wildfire-older-toggle': 'wildfireolder',
+    'wildfire-evenolder-toggle': 'wildfireevenolder',
+    'timberharvest-toggle': 'timberharvest',
+    'timberthinning-toggle': 'timberthinning'
+  };
   function areaBoundsContainViewport(area, viewportBounds){
     return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
            area.boundsSW[1] <= viewportBounds.getWest() && area.boundsNE[1] >= viewportBounds.getEast();
@@ -16704,8 +16863,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             // it must never be trusted from a persisted value, always forced false at boot.
             if (state.settings.aspectOpacity === undefined) state.settings.aspectOpacity = 0.6;
             // aspectOn has NO fixup line either, same exception, same reason — see setAspectOn.
-            if (state.settings.wildfireHistoryOn === undefined) state.settings.wildfireHistoryOn = false;
-            if (state.settings.wildfireHistoryOpacity === undefined) state.settings.wildfireHistoryOpacity = 0.55;
+            if (state.settings.wildfireRecentOn === undefined) state.settings.wildfireRecentOn = false;
+            if (state.settings.wildfireRecentOpacity === undefined) state.settings.wildfireRecentOpacity = 0.55;
+            if (state.settings.wildfireOlderOn === undefined) state.settings.wildfireOlderOn = false;
+            if (state.settings.wildfireOlderOpacity === undefined) state.settings.wildfireOlderOpacity = 0.55;
+            if (state.settings.wildfireEvenOlderOn === undefined) state.settings.wildfireEvenOlderOn = false;
+            if (state.settings.wildfireEvenOlderOpacity === undefined) state.settings.wildfireEvenOlderOpacity = 0.55;
             if (state.settings.timberHarvestOn === undefined) state.settings.timberHarvestOn = false;
             if (state.settings.timberHarvestOpacity === undefined) state.settings.timberHarvestOpacity = 0.7;
             if (state.settings.timberThinningOn === undefined) state.settings.timberThinningOn = false;
@@ -16834,7 +16997,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
-    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
+    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['habitats-quick-toggle', 'migrations-quick-toggle']
   };
@@ -17217,14 +17380,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('fireperimeters-fill')) map.setPaintProperty('fireperimeters-fill', 'fill-opacity', state.settings.fireperimetersOpacity);
       scheduleSave();
     });
-    document.getElementById('wildfire-toggle').addEventListener('change', function(){
-      setWildfireHistoryOn(this.checked);
-      scheduleSave();
-    });
-    document.getElementById('wildfire-opacity').addEventListener('input', function(){
-      state.settings.wildfireHistoryOpacity = this.value / 100;
-      if (map.getLayer('wildfirehistory-fill')) map.setPaintProperty('wildfirehistory-fill', 'fill-opacity', state.settings.wildfireHistoryOpacity);
-      scheduleSave();
+    WILDFIRE_TIER_IDS.forEach(function(tierId){
+      var cfg = WILDFIRE_TIERS[tierId];
+      document.getElementById(cfg.toggleId).addEventListener('change', function(){
+        setWildfireTierOn(tierId, this.checked);
+        scheduleSave();
+      });
+      document.getElementById(cfg.opacityId).addEventListener('input', function(){
+        state.settings[cfg.opacityKey] = this.value / 100;
+        if (map.getLayer(cfg.fillLayerId)) map.setPaintProperty(cfg.fillLayerId, 'fill-opacity', state.settings[cfg.opacityKey]);
+        scheduleSave();
+      });
     });
     document.getElementById('timberharvest-toggle').addEventListener('change', function(){
       setTimberHarvestOn(this.checked);
@@ -17338,9 +17504,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
     document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
     document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
-    document.getElementById('wildfire-toggle').checked = !!state.settings.wildfireHistoryOn;
-    document.getElementById('wildfire-opacity').value = Math.round((state.settings.wildfireHistoryOpacity != null ? state.settings.wildfireHistoryOpacity : 0.55) * 100);
-    document.getElementById('wildfire-opacity-row').classList.toggle('show', !!state.settings.wildfireHistoryOn);
+    WILDFIRE_TIER_IDS.forEach(function(tierId){
+      var cfg = WILDFIRE_TIERS[tierId];
+      document.getElementById(cfg.toggleId).checked = !!state.settings[cfg.onKey];
+      document.getElementById(cfg.opacityId).value = Math.round((state.settings[cfg.opacityKey] != null ? state.settings[cfg.opacityKey] : 0.55) * 100);
+      document.getElementById(cfg.opacityRowId).classList.toggle('show', !!state.settings[cfg.onKey]);
+    });
     document.getElementById('timberharvest-toggle').checked = !!state.settings.timberHarvestOn;
     document.getElementById('timberharvest-opacity').value = Math.round((state.settings.timberHarvestOpacity != null ? state.settings.timberHarvestOpacity : 0.7) * 100);
     document.getElementById('timberharvest-opacity-row').classList.toggle('show', !!state.settings.timberHarvestOn);

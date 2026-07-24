@@ -149,16 +149,21 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
 - `#publicland-legend` had the identical off-by-sidebar-width centering bug `#slope-legend` was fixed for in
   Session 39 (flagged as "almost certainly" present at the time, now confirmed and fixed — Session 41).
 - Disturbance History is an Environmental-section grouping (Session 42, offline-cache bridge added Session
-  43) — Wildfires, Timber Harvest, and Timber Thinning, three independently-toggleable live viewport-bbox
-  overlays sourced from NIFC's fire perimeter history and USDA Forest Service FACTS timber data. These are
-  real `DOWNLOAD_LAYERS`-backed layers (downloading an area fetches and caches real bytes, contributing
-  accurately to the size estimate) AND the live viewport-query path now checks that offline cache first,
-  before falling back to a live network query — so a downloaded area's Wildfires/Timber data genuinely
-  renders while offline, not just contributes a byte count. The one accepted tradeoff: an offline-cached
-  view is a snapshot frozen at download time — it can't gain newly-reported fires/treatments on its own,
-  though Timber's 15-year lookback (now enforced client-side, at apply time) does still correctly age
-  treatments OUT of the window even from a stale cached snapshot. See Architecture notes' "Disturbance
-  History" entry, its own "Session 43" sub-bullet, for the full bridge design.
+  43, Wildfire History split into 3 time-tiers Session 44) — Wildfire History, Timber Harvest, and Timber
+  Thinning, independently-toggleable live viewport-bbox overlays sourced from NIFC's fire perimeter history
+  and USDA Forest Service FACTS timber data. These are real `DOWNLOAD_LAYERS`-backed layers (downloading an
+  area fetches and caches real bytes, contributing accurately to the size estimate) AND the live
+  viewport-query path checks that offline cache first, before falling back to a live network query — so a
+  downloaded area's data genuinely renders while offline, not just contributes a byte count. The one
+  accepted tradeoff: an offline-cached view is a snapshot frozen at download time — it can't gain
+  newly-reported fires/treatments on its own, though Timber's 15-year lookback (enforced client-side, at
+  apply time) does still correctly age treatments OUT of the window even from a stale cached snapshot.
+  Wildfire History (renamed from "Wildfires") is no longer one layer — it's 3 independently-toggleable time
+  ranges (Recent 0-20yr, Older 20-50yr, Even Older 50+yr, all default off), each with its own 4/3/3-band
+  internal recency-gradient and its own server-side year filter, so checking only "Recent" (the common case)
+  fetches and renders a fraction of the full ~98K-feature/125-year dataset instead of everything — the fix
+  for a real-world slow-load report on cellular. See Architecture notes' "Disturbance History" entry, its
+  own "Session 43"/"Session 44" sub-bullets, for the full bridge and tier-split designs.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2086,6 +2091,97 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       one direction. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
       APP_VERSION bumped 2.43.0 → 2.43.1 (patch — bridges/fixes existing Session 42 functionality, no new
       user-facing layer), SHELL_CACHE bumped v151 → v152.
+  - Session 44 — renamed "Wildfires" to "Wildfire History" and split it from one layer into 3
+    independently-toggleable time-tiers (Recent 0-20yr / Older 20-50yr / Even Older 50+yr, all default off,
+    per spec), each fetching and rendering only its own `FIRE_YEAR_INT` range — the direct fix for a
+    real-world report of slow loading on cellular, since the original single-layer design queried the FULL
+    unfiltered ~98K-feature/125-year dataset for every viewport regardless of which ages anyone actually
+    wanted. Also increased Timber Harvest/Thinning's hatch density ~1.6x/1.5x (tile size 16→10px, stroke
+    width 2→3px), confirmed too sparse against Topo on a real device screenshot.
+    - **Independent, not exclusive**: unlike Slope Angle/Aspect (mutually exclusive because they fully
+      color-wash the SAME terrain pixels), Wildfire History's 3 tiers are deliberately NOT exclusive — a
+      single fire can only ever fall in exactly one age bucket, so any number of tiers can be active
+      together with zero visual conflict. "All 3 on" is just "all wildfire history," split for fetch/render
+      efficiency only, confirmed via live testing (turning 2 tiers off left the 3rd's own visibility/data
+      completely untouched) rather than assumed from the design alone.
+    - **`WILDFIRE_TIERS`** (new, replacing `WILDFIRE_AGE_BANDS`) holds each tier's `minAge`/`maxAge` (outer
+      bounds, feeding the server-side WHERE clause), `bandUpperBounds` (internal split points — 4 for
+      Recent, 3 each for Older/Even Older, 10 total), and precomputed `fills`/`strokes` hex arrays. Each
+      tier's colors are an INDEPENDENT light-yellow-orange-to-deep-maroon gradient across that tier's own
+      band count (generated by linearly interpolating the original single-layer design's own endpoint colors
+      — fill `#FCE29A`→`#6E2020`, stroke `#C9932E`→`#3D0F0F` — across N steps), not one continuous 10-step
+      gradient split across tiers — chosen so any single tier reads as a complete, legible gradient on its
+      own even with the other two off (a user with only "Even Older" checked still sees a real light→dark
+      progression, not just 3 near-identical dark shades). Older/Even Older's 3-band gradients land on
+      identical hex values to each other — expected and harmless, since the two are never rendered for the
+      same feature. `wildfireMatchExpression()` builds the MapLibre `['match', ['get','ageBand'], ...]`
+      paint expression from a tier's own fills/strokes array generically, so Recent's 4-color and
+      Older/EvenOlder's 3-color expressions share one construction rather than 3 hand-written expressions.
+    - **The actual performance mechanism — `wildfireTierWhereClause()`**: `FIRE_YEAR_INT<=(currentYear-
+      minAge)` and/or `FIRE_YEAR_INT>(currentYear-maxAge)`, computed fresh from the current year on every
+      call (never hardcoded), same "rolling, not frozen" approach `TIMBER_LOOKBACK_YEARS`' own client-side
+      filter established in Session 43. This is genuinely what delivers the fetch-efficiency win — the WHERE
+      clause is sent to ArcGIS and filters server-side, so checking only "Recent" means the ~98K-feature
+      dataset is never fully transferred, not merely filtered after the fact. Band boundaries were chosen to
+      read literally off each tier's own stated sub-range names ("<1yr", "1-5yrs", etc.) with a consistent
+      half-open-interval convention (lower bound inclusive, upper bound exclusive) throughout, so there's
+      exactly one correct tier and one correct band for any given fire age with no ambiguity at any
+      boundary — verified exhaustively (not just spot-checked) via a standalone Node test
+      (`test_wildfire_tiers.js`) checking every integer year from 1900 to 2026 against all 3 tiers' WHERE-
+      clause logic and confirming each one matches EXACTLY one tier, plus 26 targeted band-boundary/WHERE-
+      clause-string assertions — 31/31 passing.
+    - **Shared implementation, not 3 copies**: `loadWildfireTierForViewport(tierId)` (replacing
+      `loadWildfireHistoryForViewport`), `applyWildfireTierData(tierId, data)`, `wildfireTierBboxQueryString`,
+      `scheduleWildfireTierRefresh`, `setWildfireTierLayersVisible`/`setWildfireTierOn`, and the click-handler
+      factory `handleWildfireTierClick(tierId)` are all parameterized by tier, mirroring the
+      `TIMBER_KIND_CONFIG`-driven shared-implementation pattern Session 42 already established for Timber
+      Harvest/Thinning's 2 kinds — generalized here to 3. Per-tier mutable state (`cache`, `zoomHintShown`,
+      `refreshTimer`) lives as properties directly on each `WILDFIRE_TIERS[tierId]` object rather than
+      separate top-level vars, since a 3-way ternary (as Timber's 2-kind version used) doesn't scale cleanly
+      to a 3rd option.
+    - **One shared popup, tier-aware close**: all 3 tiers still share a single `openWildfireHistoryPopup` var
+      (only one popup is ever open regardless of which tier's polygon was tapped) — but a real bug was
+      caught before shipping, not after: the original single-layer `setWildfireHistoryLayersVisible` closed
+      the shared popup unconditionally whenever the layer turned off, which — generalized naively to 3
+      independent tiers — would have closed a popup showing a "Recent" fire's details the moment the user
+      toggled "Older" off, even though "Recent" was untouched. Fixed by tracking which tier the currently-
+      open popup came from (`openWildfireHistoryPopupTier`, set in `openWildfireHistoryPopupAt`) and only
+      auto-closing on toggle-off when it matches the tier being turned off.
+    - **Offline-download / cache-bridge parity**: `wildfire`'s single `DOWNLOAD_LAYERS` entry became 3
+      (`wildfirerecent`/`wildfireolder`/`wildfireevenolder`), each with its own `bboxUrlBuilder`
+      (`wildfireTierTileUrl`) embedding that same tier's own `wildfireTierWhereClause` — required, not
+      optional, since a single shared entry covering all years would have defeated the Session 44 fetch-
+      efficiency win specifically for the offline-download/cache-bridge path (downloading "Recent" alone
+      must not silently pull and cache the full history). `DISTURBANCE_OFFLINE_TOGGLE_IDS`
+      (offline-availability graying, Session 43) and `LAYER_SECTION_TOGGLE_IDS.environmental` (badge count)
+      both extended from 1 wildfire entry to 3.
+    - **Hatch density**: `buildDisturbanceHatchPattern`'s tile `size` (governs line spacing) shrunk 16→10px
+      and `lineWidth` (stroke thickness) bumped 2→3px — both dimensions derive from the single `size`
+      variable, so this was a 2-number change, not a redesign. Landed within the requested ~1.5-2x range:
+      ~1.6x tighter spacing (16/10) combined with 1.5x thicker strokes.
+    - **Verification**: standalone Node test (31/31 assertions, see above) confirmed the tier boundary/WHERE-
+      clause math before touching the browser. Live via the already-connected Chrome browser extension
+      against a local `python -m http.server`, navigated to the Deschutes National Forest (real known
+      fire-history terrain): confirmed the Layers panel now shows 3 independently-toggleable "Wildfire
+      History" rows (renamed from "Wildfires") under one shared "?" info panel with the new 3-group/10-swatch
+      legend; confirmed via real captured network requests that toggling all 3 on fired 3 distinct live
+      queries with the EXACT predicted WHERE clauses (`FIRE_YEAR_INT>2006`, `FIRE_YEAR_INT<=2006 AND
+      FIRE_YEAR_INT>1976`, `FIRE_YEAR_INT<=1976` for a 2026 "now") — not just correctly-shaped code, but the
+      real, live request; confirmed turning 2 tiers off left the 3rd's own checkbox/visibility/source data
+      completely unaffected, proving true independence. Measured the actual performance win directly, not
+      assumed from the WHERE clause alone: fetched the OLD unfiltered query and the NEW "Recent"-only query
+      for the identical real bounding box and compared real response bytes — 870,238 bytes/48 features (old,
+      full history) vs. 478,485 bytes/9 features (new, Recent only), a 45% byte reduction and 81% feature
+      reduction for the single most common case (checking only Recent). Confirmed the 3 tiers exhaustively
+      partition the real dataset with zero gaps/overlap by separately fetching all 3 tiers' real feature
+      counts for the same bbox (9 + 17 + 22 = 48) and confirming the sum exactly equals the old unfiltered
+      total. Confirmed a real "Two Bulls" (2014, 12 years old) fire correctly renders in Recent's own
+      "10-20yr" band (deep maroon) and its popup resolves correctly. Confirmed the offline-download
+      checklist now lists 3 correctly-renamed/labeled entries in place of the old single "Wildfire history"
+      row. Confirmed the timber hatch pattern renders visibly denser via a zoomed screenshot comparison.
+      Zero console errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline
+      `<script>` blocks. APP_VERSION bumped 2.43.1 → 2.44.0 (minor — restructured layer), SHELL_CACHE bumped
+      v152 → v153.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3062,3 +3158,32 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   again on return. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
   APP_VERSION bumped 2.43.0 → 2.43.1 (patch — bridges existing functionality, no new user-facing layer),
   SHELL_CACHE bumped v151 → v152.
+- Session 44: Renamed "Wildfires" to "Wildfire History" and split it from one layer into 3 independently-
+  toggleable time-tiers (Recent 0-20yr, Older 20-50yr, Even Older 50+yr, all default off) — see Architecture
+  notes' "Disturbance History" entry, its own "Session 44" sub-bullet, for the complete design. This was the
+  direct fix for a real-world report of slow loading on cellular: the original single-layer design queried
+  the full unfiltered ~98K-feature/125-year dataset for every viewport regardless of which ages anyone
+  actually cared about; each tier now fetches and renders only its own `FIRE_YEAR_INT` range, filtered
+  server-side via a WHERE clause computed fresh from the current year every time (never hardcoded). The 3
+  tiers are deliberately independent, not exclusive like Slope Angle/Aspect — a fire can only ever fall in
+  one age bucket, so any combination can be active with zero visual conflict, confirmed via live testing
+  that turning tiers off/on doesn't cross-affect the others. Generalized Timber Harvest/Thinning's existing
+  `TIMBER_KIND_CONFIG`-driven shared-implementation pattern from 2 kinds to 3, rather than writing 3 parallel
+  copies of the fetch/render/click-handler logic. Found and fixed one real bug before shipping: the shared
+  wildfire popup used to close unconditionally whenever the (single, pre-split) layer turned off — naively
+  carried over to 3 independent tiers, this would have closed a popup showing a "Recent" fire the moment
+  "Older" was toggled off; fixed by tracking which tier the open popup actually came from. Separately,
+  increased Timber Harvest/Thinning's hatch density (~1.6x tighter spacing, 1.5x thicker strokes), confirmed
+  too sparse against Topo on a real device screenshot. Verified the tier boundary/WHERE-clause math with a
+  standalone Node test before touching the browser (31/31 assertions, including an exhaustive check that
+  every year from 1900-2026 matches exactly one tier with no gaps or overlap), then verified live via the
+  already-connected Chrome browser extension: real captured network requests confirmed all 3 tiers fire with
+  the exact predicted WHERE clauses; a real before/after byte comparison for the same bounding box showed a
+  45% byte reduction and 81% feature reduction for checking only "Recent" versus the old full-history query;
+  fetching all 3 tiers' real feature counts for that same bbox summed to exactly the old unfiltered total
+  (9+17+22=48), proving the partition has zero gaps or overlap against real data, not just the math;
+  confirmed a real fire correctly renders in its own tier's own age band with a working popup; confirmed the
+  offline-download checklist and Layers panel both show the renamed/split entries correctly; confirmed the
+  denser timber hatch pattern via a zoomed screenshot. Zero console errors throughout. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.43.1 → 2.44.0
+  (minor — restructured layer), SHELL_CACHE bumped v152 → v153.
