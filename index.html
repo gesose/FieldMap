@@ -853,30 +853,52 @@
   #account-sync-indicator{transition:background .3s;}
   /* sync dot removed — status shown in Settings panel only */
 
-  #cluster-panel{
+  /* Tap-stack panel (Session 46) — repurposed from the old #cluster-panel (was dead code:
+     openClusterPanel had zero callers anywhere, a leftover from before pin clustering was
+     disabled; its "list of items at one point, tap a row to open" shape is exactly what the
+     tap-stack needed, so its DOM/CSS was renamed and generalized rather than building a
+     parallel one from scratch). Same visual structure and ids/classes, just generic (no
+     per-pin dot/icon/edit/delete — those were pin-specific and dropped along with the rename). */
+  #tap-stack-panel{
     position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
     z-index:1500;min-width:260px;max-width:340px;width:max-content;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
     box-shadow:0 4px 16px rgba(0,0,0,0.5);overflow:hidden;
   }
-  #cluster-panel.hidden{display:none;}
-  #cluster-panel-header{
+  #tap-stack-panel.hidden{display:none;}
+  #tap-stack-panel-header{
     display:flex;align-items:center;justify-content:space-between;
     padding:10px 14px;border-bottom:1px solid var(--border);
     font-size:12px;font-weight:600;color:var(--text-muted);
   }
-  #cluster-panel-title{font-size:13px;font-weight:600;color:var(--text);}
-  #cluster-panel-list{max-height:260px;overflow-y:auto;}
-  .cluster-item-row{
+  #tap-stack-panel-title{font-size:13px;font-weight:600;color:var(--text);}
+  #tap-stack-panel-list{max-height:260px;overflow-y:auto;}
+  .tap-stack-item-row{
     display:flex;align-items:center;gap:10px;padding:9px 14px;
     border-bottom:1px solid var(--border);cursor:pointer;
   }
-  .cluster-item-row:last-child{border-bottom:none;}
-  .cluster-item-row:hover{background:var(--bg-elevated-2);}
-  .cluster-item-name{flex:1;font-size:13px;font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .cluster-item-meta{font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .cluster-item-text{flex:1;min-width:0;}
-  .cluster-item-actions{display:flex;gap:5px;flex-shrink:0;}
+  .tap-stack-item-row:last-child{border-bottom:none;}
+  .tap-stack-item-row:hover{background:var(--bg-elevated-2);}
+  .tap-stack-item-name{flex:1;font-size:13px;font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .tap-stack-item-meta{font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .tap-stack-item-text{flex:1;min-width:0;}
+  /* Back-to-list affordance (Session 46) — a small, always-screen-anchored pill, deliberately
+     NOT injected into the view-drawer/popup DOM itself (those surfaces are heterogeneous —
+     some screen-anchored, some point-anchored at the tap location — a fixed top-center pill
+     works identically regardless of which kind of detail surface is currently showing beneath
+     it). Only ever shown when a detail view was reached BY TAPPING A STACK ROW — see
+     openTapStackItemDetail/hideTapStackBackBar. */
+  #tap-stack-back-bar{
+    position:fixed;top:14px;left:50%;transform:translateX(-50%);
+    z-index:2200;
+  }
+  #tap-stack-back-bar.hidden{display:none;}
+  #tap-stack-back-btn{
+    background:var(--bg-elevated);color:var(--text);border:1px solid var(--border);
+    border-radius:20px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #tap-stack-back-btn:hover{background:var(--bg-elevated-2);}
 
   #measure-result{
     position:absolute;bottom:24px;right:64px;z-index:1200;
@@ -1265,11 +1287,11 @@
     #draw-bar-actions,#polygon-bar-actions{gap:9px;justify-content:space-between;}
 
     /* Cluster panel: full-width above bottom sheet */
-    #cluster-panel{
+    #tap-stack-panel{
       bottom:98px;left:14px;right:14px;
       max-width:none;transform:none;
     }
-    #cluster-panel-list{max-height:200px;}
+    #tap-stack-panel-list{max-height:200px;}
 
     /* Public land legend: hide on mobile (legend is in layers panel) */
     #publicland-legend{display:none !important;}
@@ -2184,19 +2206,26 @@
       <div class="layer-subsection-title">Disturbance History</div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-recent-toggle"> Wildfire History — Recent (0-20 yrs) <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
+        <input type="checkbox" id="wildfire-recent-toggle"> Wildfire — Recent (0-20 yrs)
       </label>
       <div class="opacity-row" id="wildfire-recent-opacity-row"><input type="range" id="wildfire-recent-opacity" min="20" max="100" value="55"></div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-older-toggle"> Wildfire History — Older (20-50 yrs)
+        <input type="checkbox" id="wildfire-older-toggle"> Wildfire — Older (20-50 yrs)
       </label>
       <div class="opacity-row" id="wildfire-older-opacity-row"><input type="range" id="wildfire-older-opacity" min="20" max="100" value="55"></div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-evenolder-toggle"> Wildfire History — Even Older (50+ yrs)
+        <input type="checkbox" id="wildfire-evenolder-toggle"> Wildfire — Even Older (50+ yrs)
       </label>
       <div class="opacity-row" id="wildfire-evenolder-opacity-row"><input type="range" id="wildfire-evenolder-opacity" min="20" max="100" value="55"></div>
+      <!-- Session 47: the "?" used to sit inline on the Recent row's own label, but its ~20px
+           width was exactly enough to push THAT row (and only that row) to 2 lines despite its
+           text being shorter than its siblings' — moved to its own line, shared by all 3 tiers,
+           so every row gets the full row width and none of them wrap. -->
+      <div style="display:flex;justify-content:flex-end;margin-top:2px;">
+        <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
+      </div>
       <div class="layer-info-panel" id="lh-wildfire">
         <div class="layer-info-desc">Historical wildland fire perimeters, split into 3 independently-toggleable time ranges — turn on only the ones you need to keep loading fast. Each range has its own internal recency-gradient (freshest in light yellow-orange, oldest in deep red/maroon). Any combination can be active at once; a fire only ever falls in one range. Re-queried live as you pan and zoom.</div>
         <div class="layer-info-legend">
@@ -2513,13 +2542,20 @@
   </div>
 </div>
 
-<!-- Cluster item list panel -->
-<div id="cluster-panel" class="hidden">
-  <div id="cluster-panel-header">
-    <span id="cluster-panel-title">Items here</span>
-    <button id="cluster-panel-close" class="link-btn" style="font-size:16px;line-height:1;">×</button>
+<!-- Tap-stack item list panel (Session 46) — shown when 2+ tappable features overlap at one
+     point; renamed/generalized from the old, never-called openClusterPanel/#cluster-panel. -->
+<div id="tap-stack-panel" class="hidden">
+  <div id="tap-stack-panel-header">
+    <span id="tap-stack-panel-title">Items here</span>
+    <button id="tap-stack-panel-close" class="link-btn" style="font-size:16px;line-height:1;">×</button>
   </div>
-  <div id="cluster-panel-list"></div>
+  <div id="tap-stack-panel-list"></div>
+</div>
+
+<!-- Back-to-list pill (Session 46) — only ever shown after tapping a row in the tap-stack
+     panel above; hidden again on any background tap or when a new tap-stack is shown. -->
+<div id="tap-stack-back-bar" class="hidden">
+  <button id="tap-stack-back-btn">← Back to list</button>
 </div>
 
 <datalist id="trip-suggestions"></datalist>
@@ -3048,7 +3084,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.44.0';
+  var APP_VERSION = '2.45.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5478,6 +5514,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // After the map finishes rendering, sync HTML marker visibility with cluster state
       map.on('idle', updateMarkerVisibility);
 
+      // Tap-stack pre-check (Session 46) — registered FIRST, before every layer-scoped click
+      // handler below, so it can call e.preventDefault() (which every one of them already
+      // checks via `if (e.defaultPrevented) return`, the same mechanism they use for mode
+      // pass-through) BEFORE any of them "win" the click and silently open only their own
+      // feature — the pre-existing gap this closes: when 2+ different layers (or 2+ features in
+      // the same layer) all matched one tap point, only the first-registered handler ever did
+      // anything, with zero indication to the user that anything else was even there. A
+      // genuine no-op for every other case — 0 or 1 candidates, or any tool mode active — so
+      // every single-feature tap and every mode-tap-through path below is completely
+      // unaffected, exactly as before this feature existed.
+      map.on('click', function(e){
+        if (e.defaultPrevented) return;
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode) return;
+        var candidates = collectTapStackCandidates(e.point);
+        if (candidates.length < 2) return;
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        openTapStackPanel(candidates, e.lngLat);
+      });
+
       // Cluster circle click — zoom in to expand
       map.on('click', 'cluster-circles', function(e){
         // map.on('click', layerId, fn) is internally just another listener on the same
@@ -5939,7 +5995,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // bearings-line-touch/wildlife-*-fill/gmu-*-fill/usfs-boundaries-fill/
         // draw-preview-line — see cluster-circles handler above for why that check is necessary at all.
         if (e.defaultPrevented) return;
-        closeClusterPanel();
+        closeTapStackPanel();
+        hideTapStackBackBar();
         // Captured BEFORE closeAllPanels() runs below — tap-anywhere (see the addMode-less
         // branch at the bottom) must not fire on a tap whose only job was dismissing
         // something that was already open (a floating panel or the view drawer), per its
@@ -9380,46 +9437,261 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     map.setTerrain({ source: FIELDMAP_DEM_SOURCE, exaggeration: on ? 1.5 : 0 });
   }
 
-  function openClusterPanel(members){
-    var panel = document.getElementById('cluster-panel');
-    var listEl = document.getElementById('cluster-panel-list');
-    document.getElementById('cluster-panel-title').textContent = members.length + ' items here';
-    listEl.innerHTML = '';
-    members.forEach(function(m){
-      var p = m.pin;
-      var row = document.createElement('div');
-      row.className = 'cluster-item-row';
-      var v = tagVisualFor(p);
-      var dot = document.createElement('div');
-      var sc = STATUS_COLORS[p.status || 'escout'] || STATUS_COLORS.escout;
-      dot.className = 'pin-dot';
-      dot.style.cssText = 'background:' + sc.bg + ';flex-shrink:0;margin-top:0;display:flex;align-items:center;justify-content:center;';
-      dot.innerHTML = renderMarkerIcon(iconKeyForItem(p), 10);
-      var textEl = document.createElement('div'); textEl.className = 'cluster-item-text';
-      var nameEl = document.createElement('div'); nameEl.className = 'cluster-item-name'; nameEl.textContent = p.name;
-      var metaEl = document.createElement('div'); metaEl.className = 'cluster-item-meta';
-      var tag = tagById((p.tags && p.tags[0]) || 'uncategorized');
-      metaEl.textContent = (tag ? tag.label : '') + (p.state ? ' · ' + p.state : '') + (tripDisplayName(p) ? ' · ' + tripDisplayName(p) : '');
-      textEl.appendChild(nameEl); textEl.appendChild(metaEl);
-      var actions = document.createElement('div'); actions.className = 'cluster-item-actions';
-      var editBtn = document.createElement('button'); editBtn.className = 'btn btn-small'; editBtn.textContent = 'Edit';
-      editBtn.addEventListener('click', function(e){ e.stopPropagation(); closeClusterPanel(); FieldMap.editPin(p.id); });
-      var delBtn = document.createElement('button'); delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = '×';
-      delBtn.title = 'Delete'; delBtn.addEventListener('click', function(e){ e.stopPropagation(); if(confirm('Delete "'+p.name+'"?')){ closeClusterPanel(); FieldMap.deletePin(p.id); } });
-      actions.appendChild(editBtn); actions.appendChild(delBtn);
-      row.appendChild(dot); row.appendChild(textEl); row.appendChild(actions);
-      row.addEventListener('click', function(){
-        closeClusterPanel();
-        map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
-        setTimeout(function(){ if(markersById[p.id]) markersById[p.id].openPopup(); }, 400);
+  // ── Tap-stack (Session 46): every tappable object/layer type, one shared list-panel + one
+  // shared "back to list" affordance ─────────────────────────────────────────────────────────
+  // TAP_STACK_TYPES is the single registry describing every content type a map tap can hit, EXCEPT
+  // Pins (a DOM-marker click, not a MapLibre layer click — the marker's own listener already calls
+  // e.stopPropagation() before this dispatch is ever reached, so tapping a pin's own icon
+  // continues to always show just that pin, unchanged — see buildPinMarkerHtml's click wiring)
+  // and mode-only layers (cluster-circles: a "zoom to expand" action, not a content item with its
+  // own detail view; draw-preview-line: only meaningful mid-draw, already excluded since the
+  // pre-check handler below returns immediately whenever any tool mode is active). Each entry:
+  //   queryLayers() — the MapLibre layer id(s) to query at the tap point for this type. A
+  //     function, not a plain array, because several types' real layer ids are computed from
+  //     other tables (GMU_STATES, WILDLIFE_CATEGORIES, WILDFIRE_TIER_IDS) that may not all exist
+  //     in the current style yet — collectTapStackCandidates filters to map.getLayer(id) truthy
+  //     before querying, so this never has to special-case "not loaded yet" itself.
+  //   getKey(f) — a per-type dedup key. Only actually matters for bearings (their line and their
+  //     separate target-arrow layer share one id-space and can both be hit by one tap near the
+  //     endpoint) — every other type queries exactly one layer per feature, so collisions can't
+  //     happen, but a key is still computed uniformly for a single consistent dedup pass.
+  //   label(f) — returns {title, meta} for the stack row, or null if the underlying record is
+  //     gone (e.g. deleted between render and tap) — a null skips that candidate entirely rather
+  //     than showing a broken row.
+  //   open(f, lngLat) — calls the EXISTING, unmodified open*PopupAt/open*DrawerAt function for
+  //     this type — the single-feature detail view itself is completely untouched by this feature.
+  var TAP_STACK_TYPES = [
+    {
+      type: 'track', queryLayers: function(){ return ['tracks-line-touch']; },
+      getKey: function(f){ return f.properties.id; },
+      label: function(f){
+        var t = state.tracks.find(function(x){ return x.id === f.properties.id; });
+        if (!t) return null;
+        return { title: t.name || 'Route', meta: formatDist(t.distMiles !== undefined ? t.distMiles : trackDistanceMiles(t.points)) };
+      },
+      open: function(f, lngLat){
+        var t = state.tracks.find(function(x){ return x.id === f.properties.id; });
+        if (t) openTrackPopupAt(t, lngLat);
+      }
+    },
+    {
+      type: 'polygon', queryLayers: function(){ return ['polygons-fill']; },
+      getKey: function(f){ return f.properties.id; },
+      label: function(f){
+        var p = state.polygons.find(function(x){ return x.id === f.properties.id; });
+        if (!p) return null;
+        return { title: p.name || 'Area', meta: polygonAreaDisplayForDrawer(p) || 'Area' };
+      },
+      open: function(f, lngLat){
+        var p = state.polygons.find(function(x){ return x.id === f.properties.id; });
+        if (p) openPolygonPopupAt(p, lngLat);
+      }
+    },
+    {
+      type: 'bearing', queryLayers: function(){ return ['bearings-line-touch', 'bearing-target-arrow']; },
+      getKey: function(f){ return f.properties.id; },
+      label: function(f){
+        var b = state.bearings.find(function(x){ return x.id === f.properties.id; });
+        if (!b) return null;
+        return { title: b.name || 'Bearing', meta: bearingCardinalLabel(b.bearingDeg) + ' ' + Math.round(b.bearingDeg) + '°' };
+      },
+      open: function(f, lngLat){
+        var b = state.bearings.find(function(x){ return x.id === f.properties.id; });
+        if (b) openBearingPopupAt(b, lngLat);
+      }
+    },
+    {
+      type: 'rangering', queryLayers: function(){ return ['rangerings-line-touch']; },
+      getKey: function(f){ return f.properties.id; },
+      label: function(f){
+        var r = state.rangeRings.find(function(x){ return x.id === f.properties.id; });
+        if (!r) return null;
+        var radiiText = (r.radii || []).map(function(v){ return formatRangeRingUnit(v, r.unit); }).join(', ');
+        return { title: r.name || 'Range ring', meta: radiiText || 'Range ring' };
+      },
+      open: function(f){
+        var r = state.rangeRings.find(function(x){ return x.id === f.properties.id; });
+        if (r) openRangeRingPopupAt(r);
+      }
+    },
+    {
+      type: 'buffer', queryLayers: function(){ return ['buffers-fill']; },
+      getKey: function(f){ return f.properties.id; },
+      label: function(f){
+        var b = state.buffers.find(function(x){ return x.id === f.properties.id; });
+        if (!b) return null;
+        return { title: b.name || 'Buffer', meta: formatBufferWidth(b.width, b.unit) };
+      },
+      open: function(f){
+        var b = state.buffers.find(function(x){ return x.id === f.properties.id; });
+        if (b) openBufferPopupAt(b);
+      }
+    },
+    {
+      type: 'wildlife', queryLayers: function(){ return WILDLIFE_CATEGORIES.map(function(cat){ return 'wildlife-' + cat + '-fill'; }); },
+      getKey: function(f){ return f.layer.id + '|' + f.id; },
+      label: function(f){ return { title: wildlifeDisplayName(f.properties.species_common_name), meta: 'Habitat' }; },
+      open: function(f, lngLat){ openWildlifePopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'migration', queryLayers: function(){ return ['migration-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){
+        return { title: f.properties.herd_name || 'Migration herd', meta: MIGRATION_CATEGORY_LABELS[f.properties.geometry_category] || f.properties.geometry_category };
+      },
+      open: function(f, lngLat){ openMigrationPopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'gmu', queryLayers: function(){ return Object.keys(GMU_STATES).map(function(k){ return 'gmu-' + k + '-fill'; }); },
+      getKey: function(f){ return f.layer.id + '|' + f.id; },
+      label: function(f){
+        var stateKey = f.layer.id.slice(4, -5); // 'gmu-XX-fill' -> 'XX'
+        var def = GMU_STATES[stateKey];
+        var title = (def && def.popupTitle ? def.popupTitle(f.properties) : '') || 'GMU';
+        return { title: String(title), meta: 'GMU boundary' };
+      },
+      open: function(f){
+        var stateKey = f.layer.id.slice(4, -5);
+        openGmuPopupAt(stateKey, f.properties);
+      }
+    },
+    {
+      type: 'usfs', queryLayers: function(){ return ['usfs-boundaries-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.forestname || 'National Forest', meta: 'USFS boundary' }; },
+      open: function(f){ openUsfsBoundaryPopupAt(f.properties); }
+    },
+    {
+      type: 'fireperimeter', queryLayers: function(){ return ['fireperimeters-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.poly_IncidentName || 'Active fire', meta: 'Active fire perimeter' }; },
+      open: function(f, lngLat){ openFirePerimeterPopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'wildfirehistory', queryLayers: function(){ return WILDFIRE_TIER_IDS.map(function(t){ return WILDFIRE_TIERS[t].fillLayerId; }); },
+      getKey: function(f){ return f.layer.id + '|' + f.id; },
+      label: function(f){
+        var year = f.properties.FIRE_YEAR_INT != null ? f.properties.FIRE_YEAR_INT : 'Unknown year';
+        return { title: f.properties.INCIDENT || 'Unnamed fire', meta: year + ' wildfire' };
+      },
+      open: function(f, lngLat){
+        var tierId = WILDFIRE_TIER_IDS.filter(function(t){ return WILDFIRE_TIERS[t].fillLayerId === f.layer.id; })[0];
+        openWildfireHistoryPopupAt(f.properties, lngLat, tierId);
+      }
+    },
+    {
+      type: 'timberharvest', queryLayers: function(){ return ['timberharvest-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.activity_name || 'Timber harvest', meta: 'Completed FY' + f.properties.fy_completed }; },
+      open: function(f, lngLat){ openTimberHarvestPopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'timberthinning', queryLayers: function(){ return ['timberthinning-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.activity_name || 'Timber thinning', meta: 'Completed FY' + f.properties.fy_completed }; },
+      open: function(f, lngLat){ openTimberThinningPopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'hydroflowline', queryLayers: function(){ return ['hydro-flowline-touch']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.gnis_name || 'Unnamed stream', meta: 'Stream' }; },
+      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'flowline', lngLat); }
+    },
+    {
+      type: 'hydrowaterbody', queryLayers: function(){ return ['hydro-waterbody-fill']; },
+      getKey: function(f){ return f.id; },
+      label: function(f){ return { title: f.properties.gnis_name || 'Unnamed lake/pond', meta: 'Lake/pond' }; },
+      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'waterbody', lngLat); }
+    },
+    {
+      type: 'gauge', queryLayers: function(){ return ['gauge-stations-circle']; },
+      getKey: function(f){ return f.properties.monitoring_location_number || f.id; },
+      label: function(f){ return { title: f.properties.monitoring_location_name || 'Gauge station', meta: 'Stream gauge' }; },
+      open: function(f, lngLat){ openGaugePopupAt(f.properties, lngLat); }
+    }
+  ];
+
+  // Queries every TAP_STACK_TYPES entry at `point` (a screen-pixel [x,y], as MapLibre's own
+  // click event's own `e.point`) and returns a flat, deduped candidate list. Layers not
+  // currently in the style (e.g. a GMU state never toggled on this session) are filtered out
+  // via map.getLayer() before querying, so this never has to know which layers exist ahead of
+  // time — queryRenderedFeatures itself already skips any layer with visibility:none, so an
+  // inactive-but-loaded layer (the other 5 GMU states, whichever wildlife categories are off,
+  // etc.) naturally contributes nothing without any extra checks here either.
+  function collectTapStackCandidates(point){
+    var candidates = [];
+    var seen = {};
+    TAP_STACK_TYPES.forEach(function(def){
+      var layers = def.queryLayers().filter(function(id){ return !!map.getLayer(id); });
+      if (!layers.length) return;
+      var features = map.queryRenderedFeatures(point, { layers: layers });
+      features.forEach(function(f){
+        var key = def.type + ':' + def.getKey(f);
+        if (seen[key]) return;
+        var label = def.label(f);
+        if (!label) return; // underlying record gone (e.g. deleted between render and tap)
+        seen[key] = true;
+        candidates.push({ type: def.type, key: key, feature: f, label: label, openFn: def.open });
       });
+    });
+    return candidates;
+  }
+
+  var tapStackLastCandidates = null; // remembered so "← Back to list" can redisplay the same set
+  var tapStackLastLngLat = null;
+
+  function openTapStackPanel(candidates, lngLat){
+    tapStackLastCandidates = candidates;
+    tapStackLastLngLat = lngLat;
+    var panel = document.getElementById('tap-stack-panel');
+    var listEl = document.getElementById('tap-stack-panel-list');
+    document.getElementById('tap-stack-panel-title').textContent = candidates.length + ' items here';
+    listEl.innerHTML = '';
+    candidates.forEach(function(c){
+      var row = document.createElement('div');
+      row.className = 'tap-stack-item-row';
+      var textEl = document.createElement('div'); textEl.className = 'tap-stack-item-text';
+      var nameEl = document.createElement('div'); nameEl.className = 'tap-stack-item-name'; nameEl.textContent = c.label.title;
+      var metaEl = document.createElement('div'); metaEl.className = 'tap-stack-item-meta'; metaEl.textContent = c.label.meta || '';
+      textEl.appendChild(nameEl); textEl.appendChild(metaEl);
+      row.appendChild(textEl);
+      row.addEventListener('click', function(){ openTapStackItemDetail(c); });
       listEl.appendChild(row);
     });
     panel.classList.remove('hidden');
   }
 
-  function closeClusterPanel(){
-    document.getElementById('cluster-panel').classList.add('hidden');
+  function closeTapStackPanel(){
+    document.getElementById('tap-stack-panel').classList.add('hidden');
+  }
+
+  // Opens one candidate's EXISTING, unmodified detail view, then shows the "← Back to list"
+  // pill — the pill only ever appears via this path (tapping a stack row), never from a direct
+  // single-feature tap, satisfying "single-feature taps unaffected" exactly.
+  function openTapStackItemDetail(candidate){
+    closeTapStackPanel();
+    candidate.openFn(candidate.feature, tapStackLastLngLat);
+    document.getElementById('tap-stack-back-bar').classList.remove('hidden');
+  }
+
+  function hideTapStackBackBar(){
+    document.getElementById('tap-stack-back-bar').classList.add('hidden');
+  }
+
+  // "← Back to list" — closes whichever detail surface is currently showing (view-drawer for
+  // the 9 types that route through it, or one of the 6 standalone maplibregl.Popup shims for
+  // the read-only-live-data types that don't) and redisplays the same stack the user came from.
+  // Closing unconditionally-but-safely across all of them (rather than tracking exactly which
+  // one is open) is deliberate: only ever one is actually open at a time, every one of these is
+  // a no-op if already closed, and this avoids needing a 16th per-type "how do I close myself"
+  // entry in TAP_STACK_TYPES just for this one rarely-exercised path.
+  function tapStackGoBack(){
+    hideTapStackBackBar();
+    closeViewDrawer();
+    [openFirePerimeterPopup, openWildfireHistoryPopup, openTimberHarvestPopup, openTimberThinningPopup, openHydroPopup, openGaugePopup].forEach(function(p){
+      if (p) p.remove();
+    });
+    if (tapStackLastCandidates) openTapStackPanel(tapStackLastCandidates, tapStackLastLngLat);
   }
   function trackElevationSectionHtml(track){
     if (track.elevGainFt == null){
@@ -12620,18 +12892,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // controls overall strength the same way it does for every flat-color fill layer in this app.
   // Same 3-line diagonal-stripe technique as buildOfflinePlaceholderPattern above, just without
   // the opaque background fill.
-  // Session 45: tile size shrunk 16→10 (tighter line spacing, ~1.6x more stripes per unit area)
-  // and stroke width bumped 2→3 (1.5x thicker) — both dimensions scale from `size` alone, so this
-  // is the only change needed. Session 42's original 16px/2px pattern read too sparse against
-  // Topo on a real device screenshot; combined, this lands the requested ~1.5-2x density increase
-  // without the pattern reading as a near-solid block.
+  // Session 44's first attempt (size 16→10, lineWidth 2→3) got the direction wrong — a real
+  // zoomed screenshot showed thicker/chunkier stripes with barely more of them, not the finer
+  // dense weave the task actually wanted. Session 45 corrected it: size shrunk further to 6 (from
+  // 16, ~2.7x more stripe repeats per unit area — perpendicular spacing between adjacent parallel
+  // lines is size/√2, so smaller size is what actually adds MORE lines, not thicker ones) and
+  // lineWidth reduced to 1.2 (thinner than even the Session 42 original 2px) — thin, closely-
+  // packed lines read as a genuine dense weave rather than bold, sparse candy-stripes. Verified
+  // against a real zoomed screenshot before considering this done, same standard as before.
   function buildDisturbanceHatchPattern(colorHex){
-    var size = 10;
+    var size = 6;
     var canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     var ctx = canvas.getContext('2d');
     ctx.strokeStyle = colorHex;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.moveTo(0, size); ctx.lineTo(size, 0);
     ctx.moveTo(-size / 2, size / 2); ctx.lineTo(size / 2, -size / 2);
@@ -14285,9 +14560,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // tier's own fraction of the full dataset, matching the live-query efficiency win this
     // 3-tier split exists for in the first place — a single shared entry covering all years
     // would have defeated that entirely for the offline-download path.
-    wildfirerecent:    { label:'Wildfire history — Recent (0-20 yrs)', bboxUrlBuilder: wildfireRecentTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
-    wildfireolder:     { label:'Wildfire history — Older (20-50 yrs)', bboxUrlBuilder: wildfireOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
-    wildfireevenolder: { label:'Wildfire history — Even Older (50+ yrs)', bboxUrlBuilder: wildfireEvenOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfirerecent:    { label:'Wildfire — Recent (0-20 yrs)', bboxUrlBuilder: wildfireRecentTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireolder:     { label:'Wildfire — Older (20-50 yrs)', bboxUrlBuilder: wildfireOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireevenolder: { label:'Wildfire — Even Older (50+ yrs)', bboxUrlBuilder: wildfireEvenOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
     timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 },
     timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 }
   };
@@ -15372,7 +15647,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // Canonical list of floating popover panels — shared by closeAllPanels/closeAllPanels_except
   // so a panel only has to be added in one place to get consistent close-on-switch behavior.
-  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel'];
+  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel', 'tap-stack-panel'];
   // Scrim is scoped to pure configuration/selection popovers that actually overlay the map —
   // deliberately EXCLUDES sunrise-panel and compass-panel, both of which need the map itself
   // still interactive while open (sunrise-panel's sun-arc preview updates live as you pan the
@@ -16574,6 +16849,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // unconditionally) and every other panel/sheet's own open handler, which already calls
     // closeAllPanels() first as a matter of course.
     closeViewDrawer();
+    // The tap-stack "← Back to list" pill (Session 46) isn't a FLOATING_PANEL_IDS member either
+    // (it's a tiny fixed pill, not a panel with a scrim) — same reasoning, hide it here too.
+    hideTapStackBackBar();
   }
 
   // ---------- Cloud sync bridge ----------
@@ -17944,7 +18222,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       markOnboarded('guest');
       document.getElementById('onboarding-modal').classList.add('hidden');
     });
-    document.getElementById('cluster-panel-close').addEventListener('click', closeClusterPanel);
+    document.getElementById('tap-stack-panel-close').addEventListener('click', closeTapStackPanel);
+    document.getElementById('tap-stack-back-btn').addEventListener('click', tapStackGoBack);
     document.getElementById('group-vis-all-btn').addEventListener('click', function(){
       if (listSortMode === 'category') eyeHiddenTags = {};
       else if (listSortMode === 'trip') eyeHiddenTrips = {};
@@ -18455,7 +18734,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (polygonMode) setPolygonMode(false);
         if (elevTapMode) setElevTapMode(false);
         if (compassActive) closeCompassPanel();
-        closeClusterPanel();
+        closeTapStackPanel();
+        hideTapStackBackBar();
         if (measureMode) setMeasureMode(false);
         if (drawMode) setDrawMode(false);
         document.getElementById('map-search-results').innerHTML = '';

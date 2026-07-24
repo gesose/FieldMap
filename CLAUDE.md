@@ -162,8 +162,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   ranges (Recent 0-20yr, Older 20-50yr, Even Older 50+yr, all default off), each with its own 4/3/3-band
   internal recency-gradient and its own server-side year filter, so checking only "Recent" (the common case)
   fetches and renders a fraction of the full ~98K-feature/125-year dataset instead of everything — the fix
-  for a real-world slow-load report on cellular. See Architecture notes' "Disturbance History" entry, its
-  own "Session 43"/"Session 44" sub-bullets, for the full bridge and tier-split designs.
+  for a real-world slow-load report on cellular. Its 3 checkbox labels were shortened Session 47 ("Wildfire
+  History — Recent (0-20 yrs)" → "Wildfire — Recent (0-20 yrs)", same for Older/Even Older) to fix a real
+  text-wrap bug, and Timber Harvest/Thinning's diagonal hatch fill went through two density passes — Session
+  44 moved the wrong dimension (thicker lines, barely more of them), Session 45 corrected it (smaller tile
+  size for genuinely more, thinner lines) — see Architecture notes' "Disturbance History" entry, its own
+  "Session 43"/"Session 44"/"Session 45"/"Session 47" sub-bullets, for the full bridge, tier-split, and hatch/
+  label designs.
+- Tap-stack (Session 46) is a generic disambiguation list covering every tappable object/layer type in the
+  app (16 types — every user-drawn object plus every read-only info layer, pins excluded since they're DOM
+  markers, not map layers) — tapping a point where 2+ features overlap shows a basic list instead of
+  silently opening only whichever one MapLibre's own layer-registration order happened to pick; tapping a row
+  opens that item's existing, completely unmodified detail view, with a "← Back to list" pill shown only when
+  reached that way. A genuine single-feature tap is completely unaffected — see Architecture notes' "Tap-
+  stack" entry for the full design.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2182,6 +2194,129 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       Zero console errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline
       `<script>` blocks. APP_VERSION bumped 2.43.1 → 2.44.0 (minor — restructured layer), SHELL_CACHE bumped
       v152 → v153.
+  - Session 45 — corrected Session 44's own hatch-density change, which had moved in the wrong direction: a
+    real zoomed screenshot showed the tile size 16→10px / stroke width 2→3px change from Session 44 producing
+    visibly thicker, chunkier stripes with barely more of them — "bold and sparse," not the finer, denser
+    weave the original ask actually wanted. Root cause was conflating "more lines" with "thicker lines": for
+    this diagonal 3-segment stripe pattern, the perpendicular spacing between adjacent parallel lines is
+    `size/√2`, so it's a SMALLER tile `size` that packs in more stripe repeats per unit area — stroke width is
+    an orthogonal knob that only controls how bold each individual line reads, and Session 44 had moved both
+    numbers in the direction that increases boldness while barely helping repeat count. Fixed by reducing
+    `size` further to 6 (from the original 16 — ~2.7x more repeats) and reducing `lineWidth` to 1.2 (thinner
+    than even the pre-Session-44 original 2px) — thin, closely-packed lines read as a genuine dense weave
+    rather than fewer bold candy-stripes. Verified via the already-connected Chrome browser extension: enabled
+    Timber Harvest/Thinning against real Forest Service data (`apps.fs.usda.gov/arcx/...EDW_TimberHarvest_01`,
+    reachable in this sandbox even though Mapbox's own v4 tile API is 403-blocked — real 152-acre and
+    9-152-acre polygons found and flown to via a live query rather than guessed coordinates), then took a real
+    zoomed screenshot (`zoom` action, not just a full-page shot) of both the harvest (sienna) and thinning
+    (gold) fill patterns — confirmed a genuinely fine, closely-spaced weave of thin diagonal lines on both,
+    replacing the Session 44 chunky/sparse look. `node --check` confirmed clean syntax on all 4 extracted
+    inline `<script>` blocks.
+  - Session 47 — shortened the Wildfire History sub-layer labels ("Wildfire History — Recent (0-20 yrs)" →
+    "Wildfire — Recent (0-20 yrs)", same pattern for Older/Even Older, in both the Layers panel checkbox rows
+    and the matching `DOWNLOAD_LAYERS` entries) since the repeated "Wildfire History —" prefix was redundant
+    under the already-labeled "Disturbance History" section header and was pushing the Recent row to wrap to
+    2 lines. The rename alone didn't fully fix the wrap, though — live `getBoundingClientRect().height`
+    measurement (46px for Recent vs. 29.8px for Older/Even Older, despite Recent's text being the SHORTEST of
+    the three) isolated the real cause: the shared `?` info-panel-toggle button (`data-layer-id="lh-wildfire"`,
+    one button covering all 3 tiers) lived inline inside the Recent row's own `<label>` specifically, and its
+    ~20px width was exactly enough to push that ONE row over its available space while its siblings, with no
+    button of their own, had the full row width to work with. Fixed by moving the button out of the Recent
+    row entirely onto its own standalone line (`<div style="display:flex;justify-content:flex-end;">`) shared
+    by all 3 tiers, placed after all 3 checkbox rows and before the shared `#lh-wildfire` info panel — every
+    row now gets equal, maximal width. The relocation needed zero JS changes: the existing delegated click
+    handler on `#layers-panel` matches `.layer-hint-btn[data-layer-id]` via `closest()`, which works
+    identically regardless of the button's DOM location. Verified live: all 3 rows confirmed at the identical
+    29.8px single-line height via the same `getBoundingClientRect()` technique that found the bug, and the `?`
+    button confirmed still correctly toggling `#lh-wildfire`'s `show` class (`show`→hide→show round-trip via
+    the real delegated handler, not a direct class manipulation). `node --check` confirmed clean syntax.
+- Tap-stack (Session 46) — a generic "2+ tappable features overlap at one point" disambiguation list,
+  covering every tappable object/layer type in the app: track, polygon, bearing, range ring, buffer,
+  wildlife habitat, migration herd, GMU boundary, USFS forest boundary, active fire perimeter, wildfire
+  history (all 3 tiers), timber harvest, timber thinning, hydrography flowline, hydrography waterbody, and
+  stream gauge — 16 entries total in one `TAP_STACK_TYPES` registry, each a `{type, queryLayers, getKey,
+  label, open}` descriptor. Deliberately excludes pins (they're `maplibregl.Marker` DOM elements, not
+  MapLibre-rendered layers, and their own click handler already calls `e.stopPropagation()` before the event
+  ever reaches MapLibre's canvas-level dispatch — a pin tap has always shown just that pin and continues to,
+  unaffected by this feature's existence), `cluster-circles` (a "zoom to expand" action, not a content item),
+  and `draw-preview-line` (only meaningful mid-draw-mode, already excluded since the pre-check bails whenever
+  any tool mode is active).
+  - **Mechanism — exploits MapLibre's own click-dispatch model, doesn't fight it**: `map.on('click', layerId,
+    fn)` is internally just another listener on the SAME shared 'click' array as a plain `map.on('click', fn)`
+    — MapLibre invokes ALL registered click listeners for a single click event, in REGISTRATION ORDER,
+    regardless of whether they're layer-scoped or generic (confirmed by reading the vendored MapLibre bundle's
+    own dispatch code, not assumed). `e.preventDefault()` only sets a flag; MapLibre itself never checks it —
+    every existing handler in this codebase already manually checks `if (e.defaultPrevented) return;` at its
+    own top specifically to avoid double-processing a click landing on 2+ overlapping layers. The new tap-stack
+    pre-check handler is registered FIRST, before all ~20 existing layer-scoped handlers, and calls
+    `collectTapStackCandidates(e.point)` — a single `map.queryRenderedFeatures(point, {layers: [...]})` call
+    per registry entry, naturally respecting layer visibility (an off layer contributes nothing, no separate
+    state-flag checks needed) — then only calls `preventDefault()` (making every subsequent handler bail out)
+    when 2+ distinct candidates are found; with 0 or 1 candidates, or with any tool mode active, it's a
+    complete no-op and every existing single-feature-tap code path fires exactly as before, untouched. This
+    also incidentally fixes a same-layer overlap gap every existing per-layer handler already had (they only
+    ever read `e.features[0]`, never checking for a second match within the same layer at that point) — the
+    new `queryRenderedFeatures`-based collection naturally returns every matching feature from every queried
+    layer in one flat array.
+  - **Dedup**: each candidate's key is `type + ':' + getKey(f)`. Most types key off `f.properties.id` (the
+    real object id); GMU/wildlife/wildfire-history key off `f.layer.id + '|' + f.id` since those query
+    multiple layers at once (one per state/species/tier) and need the specific matched layer to resolve which
+    one). Bearings are the one type genuinely at risk of a same-object double-match, since they render across
+    TWO different layers/sources (`bearings-line-touch` on `bearings-source`, `bearing-target-arrow` on
+    `bearing-target-source`) — confirmed via `updateBearingsSource()` that both layers' features carry the
+    identical `properties.id = b.id` for the same bearing, so the shared `type+':'+id` key correctly collapses
+    a bearing matched on both layers into exactly one candidate.
+  - **Reused dead code instead of building new UI**: `#cluster-panel`/`openClusterPanel()`/
+    `closeClusterPanel()` were confirmed via grep (zero call sites to `openClusterPanel(`) to be fully dead —
+    a leftover from before pin map-clustering was disabled. Its DOM/CSS/JS shape (list of items at a point,
+    tap a row to open, × to close) was renamed and repurposed wholesale into the new generic
+    `#tap-stack-panel` rather than building parallel UI from scratch — same visual language as the rest of the
+    app for free.
+  - **"← Back to list"**: a separate, always-`position:fixed` pill (`#tap-stack-back-bar`, top-center,
+    `z-index:2200`) rather than trying to inject a back-button into the wildly heterogeneous existing detail
+    surfaces (some via `#view-drawer`, screen-anchored; others via a raw `maplibregl.Popup`, point-anchored at
+    the tap location) — shown/hidden independently of whatever detail surface happens to be open beneath it,
+    avoiding fragile DOM-injection-after-the-fact code entirely. Only ever shown after
+    `openTapStackItemDetail()` opens a row's detail view (never on a normal direct single-feature tap); tapping
+    it calls `tapStackGoBack()`, which hides itself, closes whatever detail surface is open (both
+    `closeViewDrawer()` unconditionally and a `.remove()` sweep across all 6 raw-popup shim vars — cheap and
+    correct regardless of which single one is actually active, since exactly one is ever open at a time), and
+    reopens `openTapStackPanel()` with the SAME cached candidate list (`tapStackLastCandidates`/
+    `tapStackLastLngLat`) rather than re-querying — the list a user returns to is guaranteed identical to the
+    one they left.
+  - **Wiring**: `#tap-stack-panel` joined `FLOATING_PANEL_IDS` (dismissed on background tap or when another
+    panel opens, via the existing `closeAllPanels()`); `#tap-stack-back-bar` is NOT a `FLOATING_PANEL_IDS`
+    member (it's not really a "panel" — no scrim, always-fixed) and instead gets one explicit
+    `hideTapStackBackBar()` call added directly inside `closeAllPanels()`, plus the same call added to the two
+    other pre-existing `closeClusterPanel()` call sites (the final generic map-click handler, the Escape-key
+    handler) that got renamed to `closeTapStackPanel()` alongside it.
+  - **Verified live** via the already-connected Chrome browser extension against a local `python -m
+    http.server`, using real government data rather than synthetic test fixtures: found a genuine 3-feature
+    overlap point (2 timber-harvest polygons + 1 GMU-7W boundary, all real ArcGIS data — confirmed the exact
+    overlap pixel via `map.queryRenderedFeatures` at a point solved by real point-in-polygon math, not
+    guessed) and drove a REAL mouse click there via the browser automation tool (not a synthetic JS dispatch)
+    at the correct on-screen pixel (computed from `map.project()` + the container's real `getBoundingClientRect()`).
+    Confirmed: the tap-stack panel opened showing all 3 real items with correct titles/meta ("GMU 7W/GMU
+    boundary", "Commercial Thin/Completed FY2023", "Precommercial Thin/Completed FY2023"); tapping "GMU 7W"
+    opened the real, completely unmodified `#view-drawer` GMU popup (title/Flagstaff/AZGFD link/disclaimer)
+    with "← Back to list" showing; tapping "← Back to list" returned to the identical 3-item list; tapping a
+    timber row instead opened the real point-anchored `maplibregl.Popup` detail view unchanged ("Commercial
+    Thin / Completed FY2023 · 20 acres"), confirming the back-bar mechanism works identically for both
+    drawer-based and popup-based detail types. Confirmed a genuine single-feature tap elsewhere (only the GMU
+    layer matched, 1 candidate) opens its own view directly with no stack panel ever appearing — the
+    pre-check's `candidates.length < 2` no-op path. Separately confirmed, by reading `openGmuPopupAt`/
+    `showViewDrawer`'s actual source, that leaving some OTHER unrelated panel (e.g. the Layers panel) open in
+    the background across a single-feature tap is pre-existing, consistent behavior across every panel in this
+    app (no per-layer click handler anywhere calls `closeAllPanels()`) — not a new quirk introduced by
+    tap-stack. Confirmed zero console errors across the full interaction sequence. **Tooling gotcha hit and
+    resolved during testing, not an app bug**: the specific browser tab used earlier in this session had a
+    stale Chrome DevTools device-metrics override left over from prior mobile-viewport testing — `window.
+    innerWidth`/`getBoundingClientRect()` reported a tiny ~208×130px viewport while the real backing store
+    (and the CDP screenshot capture) still rendered at full desktop size, which silently corrupted
+    `map.queryRenderedFeatures()`'s pixel-space hit-testing on that one tab (real polygons existed in the data
+    source but queries at their true screen location returned zero matches). Resolved by opening a fresh tab
+    rather than trying to repair the corrupted one — confirmed the fresh tab's `window.innerWidth` matched its
+    real window size before relying on any further pixel-coordinate math.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3187,3 +3322,46 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   denser timber hatch pattern via a zoomed screenshot. Zero console errors throughout. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.43.1 → 2.44.0
   (minor — restructured layer), SHELL_CACHE bumped v152 → v153.
+- Session 45: Corrected Session 44's own timber hatch-density change, which had moved in the wrong direction
+  — see Architecture notes' "Disturbance History" entry, its own "Session 45" sub-bullet, for the full root
+  cause (conflating "more lines" with "thicker lines" — for this diagonal stripe pattern, tile `size` controls
+  repeat count via `size/√2` spacing, stroke width only controls per-line boldness) and the fix (`size` 10→6,
+  `lineWidth` 3→1.2). Verified via a real zoomed screenshot of live Forest Service timber data (found and flown
+  to via a real query against `apps.fs.usda.gov`, not guessed coordinates — this endpoint is reachable in this
+  sandbox even though Mapbox's own v4 tile API remains 403-blocked): confirmed both harvest and thinning fills
+  now render as a genuinely fine, closely-spaced weave of thin lines, replacing the prior chunky/sparse look.
+  `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+- Session 46: Built Tap-stack, a generic disambiguation list for any point where 2+ tappable map features
+  overlap — see Architecture notes' "Tap-stack" entry for the complete design (16-entry `TAP_STACK_TYPES`
+  registry, the `e.defaultPrevented`-based pre-check mechanism that lets it coexist with every existing
+  per-layer click handler with zero changes to any of them, bearing dedup across its 2 layers, the reused-dead-
+  `#cluster-panel` UI, and the always-fixed "← Back to list" pill). Investigated the full click-handler surface
+  first (grepped and read all ~20 `map.on('click', ...)` registrations, both layer-scoped and loop-based) before
+  writing any code, to understand exactly how MapLibre's own dispatch model (all click listeners fire in
+  registration order regardless of layer-scoping; `preventDefault()` is purely a flag every handler checks
+  manually) could be exploited rather than fought. Verified live via the already-connected Chrome browser
+  extension using real overlapping government data — found a genuine 3-feature overlap (2 timber-harvest
+  polygons + 1 GMU boundary) via real point-in-polygon math against live-fetched data, drove an actual mouse
+  click there (not a synthetic JS event), and confirmed: the list shows all 3 correct items; tapping a row opens
+  that item's existing, completely unmodified detail view (tested both a `#view-drawer`-based type [GMU] and a
+  raw-`maplibregl.Popup`-based type [timber]); "← Back to list" appears only after reaching a detail view via
+  the stack and correctly returns to the identical cached list; a genuine single-feature tap elsewhere opens
+  directly with no stack panel ever appearing. Hit and resolved one real tooling gotcha along the way (not an
+  app bug): a stale Chrome DevTools device-metrics override on one test tab (left over from earlier mobile-
+  viewport testing) silently corrupted `queryRenderedFeatures`' pixel-space hit-testing on that tab alone —
+  resolved by testing from a fresh tab instead of trying to repair the corrupted one. Zero console errors
+  throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+- Session 47: Shortened the Wildfire History sub-layer labels (dropped the redundant "Wildfire History —"
+  prefix, since the 3 tiers already live under the "Disturbance History" section header) and fixed a real
+  layout bug the rename alone didn't resolve — see Architecture notes' "Disturbance History" entry, its own
+  "Session 47" sub-bullet, for the full root cause (a shared `?` info-panel button living inline inside the
+  Recent row's own label was eating enough of that ONE row's width to force a wrap, despite Recent's text being
+  the shortest of the three) and the fix (moved the button to its own shared line after all 3 rows; zero JS
+  changes needed since the existing click handler is delegated by `data-layer-id`, not DOM position). Root-
+  caused via live `getBoundingClientRect().height` measurement rather than guessing from the screenshot alone
+  (46px for Recent vs. 29.8px for its siblings, despite shorter text — the actual signal that ruled out the
+  rename itself as an insufficient fix and pointed at the button instead). Verified live: all 3 rows now measure
+  the identical single-line height, and the relocated `?` button confirmed still correctly toggling the shared
+  info panel via the unchanged delegated handler (a real show→hide→show round-trip, not just a DOM presence
+  check). `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+  2.44.0 → 2.45.0 (minor — new feature, tap-stack), SHELL_CACHE bumped v153 → v154.
