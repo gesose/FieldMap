@@ -1,6 +1,6 @@
-// FieldMap terrain overlay worker (Slope Angle + Custom Elevation Range)
+// FieldMap terrain overlay worker (Slope Angle + Custom Elevation Range + Aspect)
 //
-// Both overlays are pure client-side derivatives of the same terrain-rgb DEM bytes the main
+// All three overlays are pure client-side derivatives of the same terrain-rgb DEM bytes the main
 // thread already fetches via fetchDemTileImageData() — no network access happens in this file.
 // The main thread posts one DEM tile's raw RGBA pixel bytes (a COPY, never the live cached
 // ImageData buffer — see the main-thread caller's own comment for why that matters) plus which
@@ -21,6 +21,8 @@ self.onmessage = function(evt){
     computeSlope(demBytes, width, height, msg.metersPerPixel, out);
   } else if (msg.type === 'elevrange'){
     computeElevRange(demBytes, width, height, msg.minFt, msg.maxFt, out);
+  } else if (msg.type === 'aspect'){
+    computeAspect(demBytes, width, height, msg.metersPerPixel, out);
   }
 
   self.postMessage({ id: msg.id, rgba: out.buffer }, [out.buffer]);
@@ -67,27 +69,107 @@ function slopeColorFor(deg){
 // pixel rather than fetching neighboring tiles — a deliberate simplification (see this worker's
 // own file-level comment in CLAUDE.md for the tradeoff) that only affects the outermost 1px
 // ring of each 256x256 tile, negligible at the zoom levels this renders at.
+//
+// Shared by Slope Angle and Aspect (Session 40) — both are the exact same underlying directional
+// gradient vector (dzdx, dzdy); Slope Angle keeps only its magnitude (steepness), Aspect keeps
+// only its direction (compass-facing). Extracted here specifically so neither has to duplicate
+// the 8-neighbor sampling, matching how the two features were described together.
+function gradientAt(demBytes, width, height, x, y, metersPerPixel){
+  var ym = clampIdx(y - 1, height), yp = clampIdx(y + 1, height);
+  var xm = clampIdx(x - 1, width), xp = clampIdx(x + 1, width);
+  var a = decodeElevM(demBytes, ym * width + xm);
+  var b = decodeElevM(demBytes, ym * width + x);
+  var c = decodeElevM(demBytes, ym * width + xp);
+  var d = decodeElevM(demBytes, y * width + xm);
+  var f = decodeElevM(demBytes, y * width + xp);
+  var g = decodeElevM(demBytes, yp * width + xm);
+  var h = decodeElevM(demBytes, yp * width + x);
+  var i = decodeElevM(demBytes, yp * width + xp);
+  return {
+    dzdx: ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * metersPerPixel),
+    dzdy: ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * metersPerPixel)
+  };
+}
 function computeSlope(demBytes, width, height, metersPerPixel, out){
   for (var y = 0; y < height; y++){
-    var ym = clampIdx(y - 1, height), yp = clampIdx(y + 1, height);
     for (var x = 0; x < width; x++){
-      var xm = clampIdx(x - 1, width), xp = clampIdx(x + 1, width);
-      var a = decodeElevM(demBytes, ym * width + xm);
-      var b = decodeElevM(demBytes, ym * width + x);
-      var c = decodeElevM(demBytes, ym * width + xp);
-      var d = decodeElevM(demBytes, y * width + xm);
-      var f = decodeElevM(demBytes, y * width + xp);
-      var g = decodeElevM(demBytes, yp * width + xm);
-      var h = decodeElevM(demBytes, yp * width + x);
-      var i = decodeElevM(demBytes, yp * width + xp);
-      var dzdx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * metersPerPixel);
-      var dzdy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * metersPerPixel);
-      var slopeDeg = Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy)) * 180 / Math.PI;
+      var grad = gradientAt(demBytes, width, height, x, y, metersPerPixel);
+      var slopeDeg = Math.atan(Math.sqrt(grad.dzdx * grad.dzdx + grad.dzdy * grad.dzdy)) * 180 / Math.PI;
       var band = slopeColorFor(slopeDeg);
       if (band){
         var oi = (y * width + x) * 4;
         out[oi] = band.r; out[oi + 1] = band.g; out[oi + 2] = band.b; out[oi + 3] = 255;
       }
+    }
+  }
+}
+
+// Aspect (Session 40) — the compass direction a slope faces (the direction of steepest descent),
+// color-mapped around a temperature/sun-exposure wheel rather than avalanche terminology: N=blue
+// (coldest/most shaded), E=yellow-green (morning sun), S=orange-red (warmest/earliest snowmelt),
+// W=purple (afternoon heat), with NE/SE/SW/NW as smooth blended intermediate hues — a continuous
+// hue sweep, not 8 discrete flat wedges, so it visually matches ASPECT_HUE_ANCHORS' own shortest-
+// path interpolation exactly (see hueForBearing). ASPECT_HUE_ANCHORS is mirrored on the main
+// thread (see index.html's own copy, used to build the legend wheel) — the two must be kept in
+// sync manually, a worker script can't import from the app's own closure or vice versa.
+var ASPECT_HUE_ANCHORS = [
+  { bearing: 0,   hue: 220 }, // N — blue
+  { bearing: 90,  hue: 70 },  // E — yellow-green
+  { bearing: 180, hue: 20 },  // S — red-orange
+  { bearing: 270, hue: 290 }, // W — purple
+  { bearing: 360, hue: 220 }  // wraps back to N
+];
+function hueForBearing(bearing){
+  for (var k = 0; k < ASPECT_HUE_ANCHORS.length - 1; k++){
+    var a = ASPECT_HUE_ANCHORS[k], b = ASPECT_HUE_ANCHORS[k + 1];
+    if (bearing >= a.bearing && bearing <= b.bearing){
+      var t = (bearing - a.bearing) / (b.bearing - a.bearing);
+      // Shortest signed hue delta (range (-180,180]) so the sweep always takes the visually
+      // continuous path around the wheel rather than potentially the "long way" a naive
+      // a.hue + (b.hue-a.hue)*t lerp could take.
+      var diff = ((b.hue - a.hue + 540) % 360) - 180;
+      return (a.hue + diff * t + 360) % 360;
+    }
+  }
+  return ASPECT_HUE_ANCHORS[0].hue;
+}
+// Standard HSL->RGB (h: 0-360, s/l: 0-1) — no browser color-parsing API is available inside a
+// worker, so this is a plain implementation of the well-known algorithm.
+function hslToRgb(h, s, l){
+  var c = (1 - Math.abs(2 * l - 1)) * s;
+  var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  var m = l - c / 2;
+  var r, g, b;
+  if (h < 60){ r = c; g = x; b = 0; }
+  else if (h < 120){ r = x; g = c; b = 0; }
+  else if (h < 180){ r = 0; g = c; b = x; }
+  else if (h < 240){ r = 0; g = x; b = c; }
+  else if (h < 300){ r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+// Terrain flat enough to have no meaningful facing direction (a flat pixel's atan2(0,0) would
+// otherwise resolve to a spurious "due north") stays transparent — a much lower bar than Slope
+// Angle's own 20° hazard threshold, since Aspect's whole premise (thermal cover, snowmelt timing,
+// morning/evening sun) is just as meaningful on a gentle hillside as a steep one; this only
+// exists to suppress noise on genuinely flat ground.
+var ASPECT_MIN_SLOPE_DEG = 3;
+function computeAspect(demBytes, width, height, metersPerPixel, out){
+  for (var y = 0; y < height; y++){
+    for (var x = 0; x < width; x++){
+      var grad = gradientAt(demBytes, width, height, x, y, metersPerPixel);
+      var slopeDeg = Math.atan(Math.sqrt(grad.dzdx * grad.dzdx + grad.dzdy * grad.dzdy)) * 180 / Math.PI;
+      if (slopeDeg < ASPECT_MIN_SLOPE_DEG) continue;
+      // Compass bearing of the descent direction (0=N, 90=E, clockwise) — image-space y+ is
+      // south and x+ is east, so the descent vector in (east,north) is (-dzdx, dzdy); atan2(x,y)
+      // with x=east, y=north gives a standard clockwise-from-north bearing. Verified against
+      // hand-worked cases (elevation rising due north -> aspect faces south/180°; elevation
+      // rising due east -> aspect faces west/270°) before relying on it.
+      var bearing = (Math.atan2(-grad.dzdx, grad.dzdy) * 180 / Math.PI + 360) % 360;
+      var hue = hueForBearing(bearing);
+      var rgb = hslToRgb(hue, 0.70, 0.50);
+      var oi = (y * width + x) * 4;
+      out[oi] = rgb[0]; out[oi + 1] = rgb[1]; out[oi + 2] = rgb[2]; out[oi + 3] = 255;
     }
   }
 }

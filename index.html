@@ -954,6 +954,31 @@
   #slope-legend.hidden{display:none;}
   .slope-legend-chip{display:inline-flex;align-items:center;border-radius:5px;overflow:hidden;flex-shrink:0;padding:4px 7px;font-size:11px;font-weight:700;letter-spacing:0.3px;cursor:default;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,0.4);}
 
+  /* Aspect's compass-wheel legend (Session 40) — same map-viewport-relative centering as
+     #slope-legend just above (using the corrected calc(), not the pre-fix left:14px this was
+     built to avoid repeating). Safe to reuse the exact same position rather than offsetting from
+     #slope-legend the way that one offsets from #publicland-legend, since Aspect and Slope Angle
+     are mutually exclusive — the two floating legends can never actually be visible at once. */
+  #aspect-legend{
+    position:absolute;bottom:14px;
+    left:calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
+    transform:translateX(-50%);
+    z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,0.1);border-radius:10px;
+    padding:10px;box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #aspect-legend.hidden{display:none;}
+  /* Background is a conic-gradient set via JS (loadAspectLegend) computed from the same hue math
+     as the worker's own per-pixel coloring — nothing here hardcodes actual color values. */
+  .aspect-legend-wheel{
+    position:relative;width:72px;height:72px;border-radius:50%;
+    border:1px solid rgba(255,255,255,0.3);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.25);
+  }
+  .aspect-legend-label{
+    position:absolute;font-size:10px;font-weight:700;color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,0.85);pointer-events:none;
+  }
+
   /* Elevation Range's paired slider+number min/max rows, plus its own opacity row — same
      .opacity-row show/hide convention (hidden until the toggle is checked), just wrapping more
      than one control. */
@@ -1220,6 +1245,8 @@
        available in the layers panel (its own info popover), so it's not needed as a second
        floating panel competing for mobile's limited vertical space. */
     #slope-legend{display:none !important;}
+    /* Same reasoning again — Aspect's compass wheel is also reachable via its own "?" popover. */
+    #aspect-legend{display:none !important;}
     /* On mobile the sidebar is a bottom sheet, not a left column, so there's no sidebar-width
        offset to account for — but it still needs to clear the collapsed bottom bar/sheet
        handle, and to be pushed further up while the sheet is expanded (same treatment as
@@ -1409,6 +1436,15 @@
 </div>
 
 <div id="slope-legend" class="hidden"></div>
+
+<div id="aspect-legend" class="hidden">
+  <div class="aspect-legend-wheel" id="aspect-legend-wheel">
+    <span class="aspect-legend-label" style="top:2px;left:50%;transform:translateX(-50%);">N</span>
+    <span class="aspect-legend-label" style="top:50%;right:2px;transform:translateY(-50%);">E</span>
+    <span class="aspect-legend-label" style="bottom:2px;left:50%;transform:translateX(-50%);">S</span>
+    <span class="aspect-legend-label" style="top:50%;left:2px;transform:translateY(-50%);">W</span>
+  </div>
+</div>
 
 <div id="map-controls">
   <!-- Zoom + north/reset (Session 27) — relocated here from MapLibre's built-in
@@ -2130,6 +2166,15 @@
           </div>
         </div>
         <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Computed on your device from the same elevation data as Elevation (DEM), in a background thread — no extra download, and it stops rendering past the same max zoom DEM itself has.</div>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="aspect-toggle"> Aspect <button class="layer-hint-btn" data-layer-id="lh-aspect" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="aspect-opacity-row"><input type="range" id="aspect-opacity" min="20" max="100" value="60"></div>
+      <div class="layer-info-panel" id="lh-aspect">
+        <div class="layer-info-desc">Which way each slope faces, color-mapped around temperature and sun exposure: blue (north) is coldest and holds snow/moisture longest; green-yellow (east) gets morning sun; orange-red (south) is warmest, with earliest snowmelt and green-up; purple (west) gets the afternoon heat. Flat ground isn't shaded.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Shares Slope Angle's own underlying gradient calculation, just keeping direction instead of steepness — so the two can't both be on at once (turning one on turns the other off). Computed on your device, in a background thread — no extra download, same max zoom as Elevation (DEM).</div>
       </div>
 
       <label class="layer-overlay-row">
@@ -2918,7 +2963,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.41.1';
+  var APP_VERSION = '2.42.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3033,6 +3078,13 @@
       // false unconditionally) even though it's written here and kept live during a session.
       slopeAngleOn: false, slopeAngleOpacity: 0.6,
       elevRangeOn: false, elevRangeOpacity: 0.65, elevRangeMinFt: 0, elevRangeMaxFt: 10000,
+      // Aspect (Session 40) — shares Slope Angle's own DEM gradient computation, keeping
+      // direction instead of magnitude; mutually exclusive with Slope Angle at runtime (see
+      // setAspectOn/setSlopeAngleOn). aspectOn follows elevRangeOn's own "never restored at
+      // boot" treatment (same loadState fixup + boot-restore force-reset), not Slope Angle's —
+      // this guarantees the two mutually-exclusive layers can never both already be true at
+      // boot without needing extra defensive logic in reinitializeLayers().
+      aspectOn: false, aspectOpacity: 0.6,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'topo',
@@ -6033,6 +6085,51 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     slopeLegendLoaded = true;
   }
 
+  // Aspect's compass-wheel legend (Session 40) — a circular hue sweep, not a linear band list
+  // like Slope Angle's, since Aspect's own coloring is a continuous blend around a compass, not
+  // discrete bands. ASPECT_HUE_ANCHORS/aspectHueForBearing mirror terrain-overlay-worker.js's
+  // own ASPECT_HUE_ANCHORS/hueForBearing exactly (kept in sync manually — a worker can't import
+  // from this file or vice versa, same reasoning as SLOPE_LEGEND's own comment above). Built as
+  // a CSS conic-gradient with stops every 10° (37 stops around the circle) rather than just the
+  // 4 cardinal anchors directly: conic-gradient interpolates BETWEEN stops in RGB space, not
+  // HSL, so a naive 4-stop gradient would produce a muddy/grayed-out transition through the
+  // middle of each quadrant instead of the clean hue sweep the worker actually computes
+  // per-pixel — stops this close together make the RGB-space interpolation between any two
+  // adjacent stops a close enough approximation of the true HSL sweep to look identical at this
+  // legend's small size. "from 0deg" is CSS conic-gradient's own default start point (12
+  // o'clock/north) proceeding clockwise, which already matches compass-bearing convention
+  // exactly — no extra rotation needed.
+  var ASPECT_HUE_ANCHORS = [
+    { bearing: 0,   hue: 220 }, // N — blue
+    { bearing: 90,  hue: 70 },  // E — yellow-green
+    { bearing: 180, hue: 20 },  // S — red-orange
+    { bearing: 270, hue: 290 }, // W — purple
+    { bearing: 360, hue: 220 }  // wraps back to N
+  ];
+  function aspectHueForBearing(bearing){
+    for (var k = 0; k < ASPECT_HUE_ANCHORS.length - 1; k++){
+      var a = ASPECT_HUE_ANCHORS[k], b = ASPECT_HUE_ANCHORS[k + 1];
+      if (bearing >= a.bearing && bearing <= b.bearing){
+        var t = (bearing - a.bearing) / (b.bearing - a.bearing);
+        var diff = ((b.hue - a.hue + 540) % 360) - 180;
+        return (a.hue + diff * t + 360) % 360;
+      }
+    }
+    return ASPECT_HUE_ANCHORS[0].hue;
+  }
+  var aspectLegendLoaded = false;
+  function loadAspectLegend(){
+    if (aspectLegendLoaded) return;
+    var wheel = document.getElementById('aspect-legend-wheel');
+    var stops = [];
+    for (var deg = 0; deg <= 360; deg += 10){
+      var hue = Math.round(aspectHueForBearing(deg));
+      stops.push('hsl(' + hue + ',70%,50%) ' + deg + 'deg');
+    }
+    wheel.style.background = 'conic-gradient(from 0deg, ' + stops.join(', ') + ')';
+    aspectLegendLoaded = true;
+  }
+
   // ── Shared label-point generation (GMU AZ/OR, USFS boundaries) ──
   // A text-field symbol layer placed directly on a Polygon/MultiPolygon source repeats its
   // label once per tile the feature's geometry crosses — GeoJSON sources get tiled
@@ -6885,7 +6982,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('nlcd-opacity-row').classList.toggle('show', on);
   }
 
+  // Slope Angle and Aspect both fully color-wash the same terrain pixels (unlike Elevation
+  // Range, which only ever highlights a user-chosen band) — having both on at once would just
+  // have them visually fight over the same surface, so they're mutually exclusive (Session 40):
+  // turning one on programmatically turns the other off first, with a toast explaining why so
+  // it doesn't read as a bug. Each setXOn only ever checks the OTHER's current state when called
+  // with on=true — the recursive setYOn(false) call this triggers has on=false, so its own guard
+  // is false and it just does a normal turn-off with no further recursion.
   function setSlopeAngleOn(on){
+    if (on && state.settings.aspectOn){
+      setAspectOn(false);
+      document.getElementById('aspect-toggle').checked = false;
+      showToast('Turned off Aspect — Slope Angle and Aspect can\'t both be on at once', 3500);
+      scheduleSave();
+    }
     state.settings.slopeAngleOn = on;
     if (map && map.getLayer('slopeangle-raster')) map.setLayoutProperty('slopeangle-raster', 'visibility', on ? 'visible' : 'none');
     document.getElementById('slopeangle-opacity-row').classList.toggle('show', on);
@@ -6900,6 +7010,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.settings.elevRangeOn = on;
     if (map && map.getLayer('elevrange-raster')) map.setLayoutProperty('elevrange-raster', 'visibility', on ? 'visible' : 'none');
     document.getElementById('elevrange-controls-row').classList.toggle('show', on);
+  }
+
+  // aspectOn is force-reset to false at every boot, same treatment (and same reasoning) as
+  // elevRangeOn above — see the settings-defaults/loadState/boot-restore comments.
+  function setAspectOn(on){
+    if (on && state.settings.slopeAngleOn){
+      setSlopeAngleOn(false);
+      document.getElementById('slopeangle-toggle').checked = false;
+      showToast('Turned off Slope Angle — Aspect and Slope Angle can\'t both be on at once', 3500);
+      scheduleSave();
+    }
+    state.settings.aspectOn = on;
+    if (map && map.getLayer('aspect-raster')) map.setLayoutProperty('aspect-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('aspect-opacity-row').classList.toggle('show', on);
+    if (on) loadAspectLegend();
+    document.getElementById('aspect-legend').classList.toggle('hidden', !on);
   }
 
   // Rebuilds elevrange-source's own tile URL template with the new min/max baked in and calls
@@ -7706,6 +7832,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         paint: { 'raster-opacity': state.settings.elevRangeOpacity != null ? state.settings.elevRangeOpacity : 0.65 }
       });
     }
+
+    // Aspect (Session 40) — same DEM-derived approach as Slope Angle above (shares its own
+    // gradient computation in the worker, keeping direction instead of magnitude), via the
+    // 'aspect://' protocol. Mutually exclusive with Slope Angle (see setAspectOn/setSlopeAngleOn
+    // — turning either on programmatically turns the other off) — state.settings.aspectOn is
+    // force-reset to false at every boot (same treatment as elevRangeOn, see that field's own
+    // comment), which is what guarantees this and slopeAngleOn can never BOTH already be true
+    // when this function runs on initial load, without needing extra defensive logic here.
+    if (!map.getSource('aspect-source')){
+      map.addSource('aspect-source', {
+        type: 'raster',
+        tiles: ['aspect://{z}/{x}/{y}'],
+        tileSize: 256,
+        maxzoom: 14
+      });
+    }
+    if (!map.getLayer('aspect-raster')){
+      map.addLayer({
+        id: 'aspect-raster',
+        type: 'raster',
+        source: 'aspect-source',
+        layout: { visibility: state.settings.aspectOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.aspectOpacity != null ? state.settings.aspectOpacity : 0.6 }
+      });
+    }
+    if (state.settings.aspectOn) loadAspectLegend();
 
     // Wildlife range polygons — one source per category, added first so they render
     // beneath all user-drawn content (pins/tracks/areas/bearings). Sources are seeded
@@ -8800,18 +8952,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return ft;
   }
 
-  // ── Slope Angle / Custom Elevation Range (Session 38) ──
-  // Both overlays are pure client-side derivatives of the exact same terrain-rgb DEM bytes
+  // ── Slope Angle / Custom Elevation Range / Aspect (Session 38, Aspect added Session 40) ──
+  // All three overlays are pure client-side derivatives of the exact same terrain-rgb DEM bytes
   // fetchDemTileImageData() fetches/caches above — no new network requests, and every tile they
-  // compute is the SAME z/x/y grid as the 'dem' DOWNLOAD_LAYERS entry, so neither needs (or
+  // compute is the SAME z/x/y grid as the 'dem' DOWNLOAD_LAYERS entry, so none of them needs (or
   // has) its own DOWNLOAD_LAYERS entry. The actual per-pixel classification (slope gradient
-  // math, elevation-range thresholding) runs in terrain-overlay-worker.js, off the main thread.
-  // This block is the glue: one shared Worker instance, a pending-request map correlating async
-  // responses back to the right tile fetch, and two maplibregl.addProtocol handlers that
-  // MapLibre's normal raster-tile pipeline calls into exactly like a real network tile fetch —
-  // see reinitializeLayers() for the ordinary type:'raster' source/layer pair that actually uses
-  // them (registered once here, not per style-switch — addProtocol is a global maplibregl-level
-  // registration, independent of any one map instance's lifecycle).
+  // math, elevation-range thresholding, aspect direction) runs in terrain-overlay-worker.js, off
+  // the main thread. This block is the glue: one shared Worker instance, a pending-request map
+  // correlating async responses back to the right tile fetch, and maplibregl.addProtocol
+  // handlers that MapLibre's normal raster-tile pipeline calls into exactly like a real network
+  // tile fetch — see reinitializeLayers() for the ordinary type:'raster' source/layer pairs that
+  // actually use them (registered once here, not per style-switch — addProtocol is a global
+  // maplibregl-level registration, independent of any one map instance's lifecycle).
   var terrainOverlayWorker = null;
   var terrainOverlayPending = {};
   var terrainOverlayReqSeq = 0;
@@ -8907,6 +9059,30 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }).then(function(pngBuf){
         if (cancelled) return;
         if (!pngBuf){ callback(new Error('elevrange tile encode failed')); return; }
+        callback(null, pngBuf, null, null);
+      }).catch(function(err){
+        if (!cancelled) callback(err);
+      });
+      return { cancel: function(){ cancelled = true; } };
+    });
+
+    // Same shape as slopeangle's own protocol (no query params — aspect coloring is a fixed
+    // function of the DEM data and zoom, unlike elevrange's user-adjustable min/max).
+    maplibregl.addProtocol('aspect', function(params, callback){
+      var m = params.url.match(/^aspect:\/\/(\d+)\/(\d+)\/(\d+)/);
+      if (!m){ callback(new Error('bad aspect tile url')); return { cancel: function(){} }; }
+      var z = +m[1], x = +m[2], y = +m[3];
+      var cancelled = false;
+      fetchDemTileImageData(z, x, y).then(function(demData){
+        if (cancelled) return null;
+        if (!demData) throw new Error('no DEM data for this tile');
+        return computeTerrainOverlayTile('aspect', demData, { metersPerPixel: metersPerPixelAtZoom(z, tileCenterLat(z, y)) });
+      }).then(function(rgbaBuffer){
+        if (cancelled || !rgbaBuffer) return null;
+        return rgbaBufferToPngArrayBuffer(rgbaBuffer);
+      }).then(function(pngBuf){
+        if (cancelled) return;
+        if (!pngBuf){ callback(new Error('aspect tile encode failed')); return; }
         callback(null, pngBuf, null, null);
       }).catch(function(err){
         if (!cancelled) callback(err);
@@ -13813,7 +13989,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // real toggles, so they're mapped to the SAME 'dem' download-layer id — whether they'll
   // actually render offline depends on whether DEM tiles for this viewport were downloaded, not
   // on any download of their own (neither has, or needs, its own DOWNLOAD_LAYERS entry).
-  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem' };
+  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
   function areaBoundsContainViewport(area, viewportBounds){
     return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
            area.boundsSW[1] <= viewportBounds.getWest() && area.boundsNE[1] >= viewportBounds.getEast();
@@ -15828,6 +16004,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             // settings for the usual "default it if never set" pattern, and see the settings
             // defaults literal + boot-restore block for why this one field is the exception:
             // it must never be trusted from a persisted value, always forced false at boot.
+            if (state.settings.aspectOpacity === undefined) state.settings.aspectOpacity = 0.6;
+            // aspectOn has NO fixup line either, same exception, same reason — see setAspectOn.
             // GMU boundaries migrated from two independent per-state checkboxes to one
             // single-select state — only run once, when the new fields have never been set.
             // Old data could technically have both gmuAzOn/gmuOrOn true at once; Arizona wins
@@ -15952,7 +16130,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
-    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle'],
+    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['habitats-quick-toggle', 'migrations-quick-toggle']
   };
@@ -16273,6 +16451,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('elevrange-raster')) map.setPaintProperty('elevrange-raster', 'raster-opacity', state.settings.elevRangeOpacity);
       scheduleSave();
     });
+    document.getElementById('aspect-toggle').addEventListener('change', function(){
+      setAspectOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('aspect-opacity').addEventListener('input', function(){
+      state.settings.aspectOpacity = this.value / 100;
+      if (map.getLayer('aspect-raster')) map.setPaintProperty('aspect-raster', 'raster-opacity', state.settings.aspectOpacity);
+      scheduleSave();
+    });
     // Min/max: the slider and number input for each side stay in sync with each other, and min
     // is clamped to never exceed max (and vice versa) so the highlighted band can never invert.
     // The actual tile recompute (setElevRangeMinMax, which calls .setTiles() and triggers real
@@ -16403,6 +16590,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('elevrange-max-num').value = state.settings.elevRangeMaxFt;
     document.getElementById('elevrange-max-slider').value = state.settings.elevRangeMaxFt;
     document.getElementById('elevrange-controls-row').classList.toggle('show', false);
+    // aspect-toggle is deliberately hardcoded unchecked here, NOT read from state.settings.
+    // aspectOn — same treatment as elevrange-toggle just above (see that block's own comment for
+    // the full reasoning) rather than Slope Angle's normal persist-on-boot pattern. This also
+    // guarantees aspectOn and slopeAngleOn can never both already be true when reinitializeLayers()
+    // runs on initial load, without needing extra defensive logic there — see setAspectOn/
+    // setSlopeAngleOn's mutual-exclusion handling for the runtime (post-boot) side of that guarantee.
+    state.settings.aspectOn = false;
+    document.getElementById('aspect-toggle').checked = false;
+    document.getElementById('aspect-opacity').value = Math.round((state.settings.aspectOpacity != null ? state.settings.aspectOpacity : 0.6) * 100);
+    document.getElementById('aspect-opacity-row').classList.toggle('show', false);
+    document.getElementById('aspect-legend').classList.toggle('hidden', true);
     document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
     document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;

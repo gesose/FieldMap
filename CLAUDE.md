@@ -130,6 +130,18 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Neither adds anything to offline download size (both ride on the existing 'dem' download layer, no
   network requests of their own). See Architecture notes' "Slope Angle and Custom Elevation Range overlays"
   entry for the full design.
+- Aspect (Session 40) is a third Environmental-section overlay sharing Slope Angle's own DEM gradient
+  computation — keeping the compass-facing direction the gradient already computes, instead of the steepness
+  magnitude Slope Angle keeps. Colors an 8-direction hue wheel framed around temperature/sun-exposure
+  intuition (blue=north/coldest through green-yellow=east, orange-red=south/warmest, purple=west), with its
+  own opacity slider and a compass-wheel-style legend (not a linear band list). Mutually exclusive with
+  Slope Angle at runtime — turning either on automatically turns the other off, with a toast explaining why,
+  since both fully color-wash the same terrain pixels and would otherwise visually fight over the same
+  surface. Its on/off state resets to off at every launch (opacity persists) — deliberately following
+  Elevation Range's persistence pattern, not Slope Angle's own persist-on-boot behavior; see Architecture
+  notes' "Slope Angle and Custom Elevation Range overlays" entry's own "Session 40" sub-bullet for why. Same
+  zoom cap (14) and "no offline download size impact" as Slope Angle/Elevation Range (rides the same 'dem'
+  download layer).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1569,15 +1581,15 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   confirming the movement-cancels-the-timer logic. Zero console errors throughout. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.39.1 → 2.40.0 (minor — a
   restored feature, not just a bug fix), SHELL_CACHE bumped v146 → v147.
-- Slope Angle and Custom Elevation Range overlays (Session 38) — two new Environmental-section layers, both
-  pure client-side derivatives of the exact same terrain-rgb DEM bytes `fetchDemTileImageData()` already
-  fetches/caches (`demTileCache`) for elevation lookups/track profiles — no new network requests, no
-  DOWNLOAD_LAYERS entry, no offline-download size impact.
-  - **Rendering mechanism**: neither overlay is a hand-rolled canvas/image source — both are ordinary
-    `type:'raster'` MapLibre sources (`slopeangle-source`/`elevrange-source`, added in `reinitializeLayers()`
-    with the same idempotent `!map.getSource()/!map.getLayer()` guard every other raster overlay here uses)
-    whose `tiles` template points at a custom scheme (`slopeangle://{z}/{x}/{y}`,
-    `elevrange://{z}/{x}/{y}?min=X&max=Y`) registered once via `maplibregl.addProtocol` in
+- Slope Angle, Custom Elevation Range, and Aspect overlays (Session 38, Aspect added Session 40) — three new
+  Environmental-section layers, all pure client-side derivatives of the exact same terrain-rgb DEM bytes
+  `fetchDemTileImageData()` already fetches/caches (`demTileCache`) for elevation lookups/track profiles —
+  no new network requests, no DOWNLOAD_LAYERS entry, no offline-download size impact.
+  - **Rendering mechanism**: none of the three overlays is a hand-rolled canvas/image source — all are
+    ordinary `type:'raster'` MapLibre sources (`slopeangle-source`/`elevrange-source`/`aspect-source`, added
+    in `reinitializeLayers()` with the same idempotent `!map.getSource()/!map.getLayer()` guard every other
+    raster overlay here uses) whose `tiles` template points at a custom scheme (`slopeangle://{z}/{x}/{y}`,
+    `elevrange://{z}/{x}/{y}?min=X&max=Y`, `aspect://{z}/{x}/{y}`) registered once via `maplibregl.addProtocol` in
     `registerTerrainOverlayProtocols()` (called once from `createMap()`, not per style-switch — addProtocol
     is a global maplibregl-level registration independent of any one map instance). This was the deliberate
     choice over inventing a per-tile `type:'image'` source add/remove/pan-tracking scheme from scratch: it
@@ -1599,7 +1611,7 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     own request-dispatch code, not guessed: a custom-protocol handler receives `(params, callback)` and
     `params.type` is `'image'` for a raster tile, whose bytes get decoded downstream the same way regardless
     of whether they came from `fetch()` or a registered protocol). One shared Worker instance
-    (`getTerrainOverlayWorker()`, lazily created) serves both overlays; a small pending-request map
+    (`getTerrainOverlayWorker()`, lazily created) serves all three overlays; a small pending-request map
     (`terrainOverlayPending`, keyed by an incrementing id) correlates each worker response back to the
     right in-flight tile request, since multiple tiles are typically being computed concurrently.
   - **Slope Angle math**: standard 8-neighbor (Horn's method) gradient — the same weighted 3x3 kernel
@@ -1735,6 +1747,94 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     confirmed the legend's center lands exactly on the map area's own midpoint (0px error) with zero
     overlap with the sidebar. Zero console errors. `node --check` confirmed clean syntax on all 4 extracted
     inline `<script>` blocks. APP_VERSION bumped 2.41.0 → 2.41.1, SHELL_CACHE bumped v148 → v149.
+  - Session 40 — added Aspect, a third Environmental-section overlay reusing Slope Angle's own gradient
+    computation rather than reimplementing it: `terrain-overlay-worker.js`'s `computeSlope` was refactored to
+    extract a shared `gradientAt(demBytes,width,height,x,y,metersPerPixel)` helper (the same Horn's-method
+    8-neighbor `dzdx`/`dzdy` calculation, previously computed inline and only ever reduced to its magnitude)
+    that both `computeSlope` and the new `computeAspect` now call — `computeAspect` keeps the direction
+    component Slope Angle discards. Registered as a fourth `maplibregl.addProtocol` scheme (`aspect://`,
+    no query params — aspect coloring is a fixed function of direction, unlike Elevation Range's user-chosen
+    min/max) feeding an `aspect-source`/`aspect-raster` MapLibre raster layer, same idempotent-add pattern,
+    same shared Worker instance, same zoom cap (14).
+    - Bearing math: the descent-direction compass bearing is `(atan2(-dzdx, dzdy) * 180/pi + 360) % 360` —
+      derived from first principles (image-space x+ = east, y+ = south; descent direction in an
+      (east, north) basis is `(-dzdx, dzdy)`; `atan2(east, north)` is the standard clockwise-from-north
+      compass convention) and verified against 5 constructed directional test cases (N/E/S/W-facing plus a
+      diagonal SE blend) in the same standalone-Node-test pattern as Session 38's slope/elevation-range math
+      — all passing within 5-degree hue tolerance, including the task's own explicit correctness demand: a
+      synthetic slope with elevation rising due north (i.e. facing south) reads hue ~20 (red-orange, warm),
+      not blue, and vice versa for a north-facing slope.
+    - Color wheel: `ASPECT_HUE_ANCHORS` (N=0deg hue220 blue, E=90deg hue70 yellow-green, S=180deg hue20
+      red-orange, W=270deg hue290 purple, wrapping back to hue220 at 360deg) with `hueForBearing()` doing
+      shortest-circular-path linear interpolation between bracketing anchors — NE/SE/SW/NW render as genuine
+      blended intermediate hues, not discrete buckets, confirmed via the SE test case landing almost exactly
+      on the E/S midpoint hue (45deg). `hslToRgb()` is a hand-rolled standard HSL-to-RGB conversion (no
+      browser color API exists inside a Worker context). `ASPECT_MIN_SLOPE_DEG = 3` — deliberately much lower
+      than Slope Angle's 20-degree hazard-terrain threshold, since aspect/sun-exposure is a meaningful read
+      on gentle terrain too, per the task's own framing (thermal cover, snowmelt timing); flat ground (below
+      3 degrees) renders fully transparent, avoiding noisy/meaningless aspect on genuinely flat terrain.
+    - Mutual exclusion with Slope Angle: `setSlopeAngleOn(on)` and `setAspectOn(on)` each check whether the
+      OTHER layer is currently on before turning themselves on, and if so, call the other's setter with
+      `false`, uncheck its checkbox, `showToast()` a one-line explanation ("Turned off Aspect — Slope Angle
+      and Aspect can't both be on at once", 3500ms), and explicitly call `scheduleSave()` (needed since this
+      is a programmatic settings change with no real DOM 'change' event of its own to trigger the normal save
+      path). No infinite-recursion risk — the recursive call always passes `on=false`, whose own guard
+      condition is false. This was a deliberate design response to both new layers being full terrain-pixel
+      color washes over the same surface (unlike Elevation Range, a narrow highlighted band that coexists
+      fine with either) — confirmed via live interaction, not just built and assumed correct, that toggling
+      one off with an explanatory toast reads as an intentional, well-explained constraint rather than a bug;
+      not flagged as feeling wrong in practice.
+    - Persistence — a deliberate interpretation of ambiguous task wording: the task's own phrasing asked for
+      "the same persistence pattern" as Slope Angle, then immediately qualified that with a parenthetical
+      describing Elevation Range's actual behavior instead ("on/off state resets to off at each launch,
+      opacity persists") — those two are NOT the same pattern (Slope Angle's own on/off state DOES persist
+      normally). Resolved by following the more specific, literal parenthetical: `aspectOn` gets the exact
+      same treatment as `elevRangeOn` (no `loadState()` fixup line; force-reset to `false` in both
+      `state.settings` and the checkbox in the boot-restore block, immediately after `elevRangeOn`'s own
+      identical block) rather than Slope Angle's persist-on-boot pattern; `aspectOpacity` persists normally
+      via the standard default+fixup pattern, same as `elevRangeOpacity`/`slopeAngleOpacity`. This also has a
+      structural benefit called out in code comments at every relevant site: since `aspectOn` and
+      `slopeAngleOn` are mutually exclusive by design, always-false-at-boot for `aspectOn` guarantees the two
+      can never already both be `true` when `reinitializeLayers()` runs on initial page load, with no extra
+      defensive logic needed there.
+    - Legend: a compass-wheel (`#aspect-legend`/`.aspect-legend-wheel`), not a linear band list like Slope
+      Angle's — a CSS `conic-gradient(from 0deg, ...)` (whose default start point/direction, 12 o'clock
+      proceeding clockwise, already matches standard compass-bearing convention exactly) with 37 stops (every
+      10 degrees, computed via a main-thread mirror of the worker's own `hueForBearing()` math) rather than
+      just the 4 cardinal colors — `conic-gradient` interpolates between adjacent stops in RGB space, so
+      enough closely-spaced stops are needed to visually approximate the worker's true HSL-space hue sweep; 4
+      stops alone would have produced a visibly muddier/grayer transition than the worker's actual output.
+      Positioned using the exact `--sidebar-width`-aware `calc()`/`transform:translateX(-50%)` centering
+      technique from this same session's own Session 39 fix, applied fresh rather than copy-pasted wrong —
+      confirmed via the identical `getBoundingClientRect()` methodology (0px centering error against the real
+      map viewport, not the whole window).
+    - Verification: extended the same standalone Node test file from Session 38
+      (`test_terrain_worker_math.js`) with Aspect-specific cases — 5 directional bearing/hue assertions (see
+      Bearing math above), a flat-tile-produces-fully-transparent regression, and a below-ASPECT_MIN_SLOPE_DEG
+      transparency check — all passing, plus re-ran every Session 38 slope/elevation-range assertion
+      unchanged to confirm the `gradientAt` extraction didn't regress either (14/14 total). Live in a real
+      browser (already-connected Chrome extension, local `python -m http.server`, guest sign-in — real Mapbox
+      v4 DEM access remains blocked in this sandbox, same standing limitation as every prior session touching
+      DEM): confirmed the Environmental section badge read "0/6" fresh (was "0/5" before this session) and
+      correctly counted whichever ONE of Slope Angle/Aspect was on, never both; confirmed the Aspect toggle
+      renders its compass-wheel legend with the exact specified color mapping (zoomed screenshot: blue at N,
+      yellow-green at E, red-orange at S, purple at W, smooth blended intermediate hues at NE/SE/SW/NW);
+      confirmed the legend's `getBoundingClientRect()` centers with 0px error on the real map viewport's own
+      midpoint, matching Session 39's fix exactly; confirmed turning Slope Angle on while Aspect was active
+      correctly turned Aspect off (checkbox, layer visibility, and legend all updated), and confirmed the
+      reverse direction with the toast text itself visible in a screenshot ("Turned off Slope Angle — Aspect
+      and Slope Angle can't both be on at once"); confirmed the opacity slider genuinely drives the live
+      `aspect-raster` layer's `raster-opacity` paint property (captured the real `Map` instance via the
+      established `Map.prototype.getLayer` monkey-patch technique from Session 26, read `getPaintProperty()`
+      directly — not just checked the slider's own DOM value) and that the value persists to `localStorage`
+      correctly while `aspectOn` does not (confirmed `aspectOn:true` mid-session but understood to
+      force-reset at the next boot, matching Elevation Range's own already-verified behavior from Session
+      38); confirmed via source review (`DOWNLOAD_LAYERS` has no `slopeangle`, `elevrange`, or `aspect` key —
+      only the underlying shared `dem` entry) that Aspect adds nothing to the offline-download checklist or
+      its size estimate, consistent with Slope Angle/Elevation Range. Zero console errors throughout. `node
+      --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks, `terrain-overlay-worker.js`,
+      and `service-worker.js`. APP_VERSION bumped 2.41.1 → 2.42.0 (minor — new layer), SHELL_CACHE bumped
+      v149 → v150.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2582,3 +2682,35 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   real bounding boxes and confirmed the legend's center lands exactly on the map area's midpoint (0px
   error) with zero sidebar overlap. Zero console errors. `node --check` confirmed clean syntax on all 4
   extracted inline `<script>` blocks. APP_VERSION bumped 2.41.0 → 2.41.1, SHELL_CACHE bumped v148 → v149.
+- Session 40: Built Aspect, a third Environmental-section overlay reusing Slope Angle's own DEM gradient
+  computation — see Architecture notes' "Slope Angle, Custom Elevation Range, and Aspect overlays" entry's
+  own "Session 40" sub-bullet for full detail. Refactored `terrain-overlay-worker.js`'s slope calculation to
+  extract a shared `gradientAt()` helper (per the task's own explicit framing that Aspect "uses that same
+  underlying computation, keeping the direction component instead"), rather than duplicating the gradient
+  math; the compass-bearing formula was hand-derived from first principles before writing any code and
+  verified against 5 constructed directional test cases (N/E/S/W plus a diagonal blend) via a standalone
+  Node test, satisfying the task's own explicit correctness demand that a south-facing slope reads warm and
+  a north-facing slope reads cold, not the reverse. Colors an 8-direction hue wheel (blue=north through
+  green-yellow=east, orange-red=south, purple=west, with genuine blended intermediate hues at NE/SE/SW/NW)
+  via its own compass-wheel-style legend (not Slope Angle's linear band list), reusing this same session's
+  Session 39 legend-centering fix. Made mutually exclusive with Slope Angle at runtime — both fully color-
+  wash the same terrain pixels and would otherwise visually fight over the same surface — with a toast
+  explaining why whenever one auto-disables the other; confirmed via live interaction (not just built and
+  assumed) that this reads as an intentional, well-explained constraint rather than a bug. Resolved an
+  internally-contradictory piece of the task's own wording around persistence (asked for "the same
+  persistence pattern" as Slope Angle, then immediately described Elevation Range's actual, different
+  pattern in a parenthetical) by following the more specific literal instruction: Aspect's on/off state
+  resets to off at every launch while its opacity persists, matching Elevation Range's own mechanism, not
+  Slope Angle's — documented explicitly in code comments and here rather than silently picking one reading.
+  Verified live via the already-connected Chrome browser extension against a local `python -m http.server`
+  (guest sign-in; real Mapbox v4 DEM access remains blocked in this sandbox): the Environmental section badge
+  correctly reads "0/6"; the color wheel legend renders with the exact specified mapping (confirmed via a
+  zoomed screenshot); the legend centers with 0px error against the real map viewport, matching Session 39's
+  fix; toggling either overlay on correctly disables the other, both directions, with the toast text
+  confirmed visible in a screenshot; the opacity slider confirmed genuinely driving the live `aspect-raster`
+  layer's `raster-opacity` (captured the real `Map` instance via the Session 26 `Map.prototype` monkey-patch
+  technique, not just read the slider's DOM value); `DOWNLOAD_LAYERS` confirmed via source review to have no
+  `aspect`/`slopeangle`/`elevrange` key, so the offline-download checklist and size estimate are unaffected.
+  Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
+  `terrain-overlay-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.41.1 → 2.42.0 (minor — new
+  layer), SHELL_CACHE bumped v149 → v150.
