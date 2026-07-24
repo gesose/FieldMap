@@ -142,6 +142,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   notes' "Slope Angle and Custom Elevation Range overlays" entry's own "Session 40" sub-bullet for why. Same
   zoom cap (14) and "no offline download size impact" as Slope Angle/Elevation Range (rides the same 'dem'
   download layer).
+- Draw Area/Bearing/Range Ring's in-progress status bars were repositioned to the same anchored bottom-right
+  drawer pattern Pins/Tracks/Buffer already used (Session 41) — they'd been centered bottom pills since first
+  built, an inconsistency never caught until now. Buffer (which reuses Draw Route's own `#draw-bar` directly)
+  was already correct and needed no fix; confirmed via live testing, not assumed from code review alone.
+- `#publicland-legend` had the identical off-by-sidebar-width centering bug `#slope-legend` was fixed for in
+  Session 39 (flagged as "almost certainly" present at the time, now confirmed and fixed — Session 41).
+- Disturbance History is a new Environmental-section grouping (Session 42) — Wildfires, Timber Harvest, and
+  Timber Thinning, three independently-toggleable live viewport-bbox overlays sourced from NIFC's fire
+  perimeter history and USDA Forest Service FACTS timber data. Unlike Slope Angle/Elevation Range/Aspect,
+  these are real `DOWNLOAD_LAYERS`-backed layers (downloading an area fetches and caches real bytes,
+  contributing accurately to the size estimate) — but, also unlike those tile-based layers, there's a known
+  gap where the live online view doesn't yet read back from that offline-downloaded cache (different query
+  shapes). See Architecture notes' "Disturbance History" entry for the full design and this gap's detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -1835,6 +1848,145 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks, `terrain-overlay-worker.js`,
       and `service-worker.js`. APP_VERSION bumped 2.41.1 → 2.42.0 (minor — new layer), SHELL_CACHE bumped
       v149 → v150.
+- Draw-mode status bar anchoring, `#publicland-legend` fix (Session 41) — two unrelated fixes bundled into
+  one small release.
+  - **Draw Area/Bearing/Range Ring status bars**: `#polygon-bar` (Draw Area), `#bearing-bar`, and
+    `#rangering-bar` were all centered bottom pills (`left:50%;transform:translateX(-50%)`) since first
+    built, never matching the anchored-bottom-right pattern `#draw-bar` (Draw Route/Track) and
+    `#measure-result` (Measure) already used (`bottom:24px;right:64px`, no transform) — an inconsistency
+    that had gone unnoticed since each of these tools shipped in a different session and was never screenshot-
+    compared side by side against the others. Fixed by moving all 3 to the same `bottom:24px;right:64px`
+    rule. `#bearing-bar`/`#rangering-bar` had a second, deeper issue while at it: their position/background/
+    border styling lived in an inline `style=""` HTML attribute rather than a stylesheet rule — inline style
+    specificity beats any external `<style>` block regardless of media query, which meant the existing mobile
+    override group (`#draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar{bottom:138px;...}`) was
+    never actually able to reposition `#bearing-bar` on mobile despite listing it there — a pre-existing,
+    silently-broken mobile fix. Moving both bars' styling into a real `#bearing-bar, #rangering-bar{...}`
+    stylesheet rule fixes the desktop anchor AND lets that mobile override finally apply for the first time;
+    `#rangering-bar` was also newly added to that mobile group (it had been missing entirely, not just
+    shadowed like `#bearing-bar`). Buffer needed no fix — it reuses Draw Route's own `#draw-bar` directly
+    (see the "Range Ring and Buffer" entry's own "Buffer specifics" bullet), confirmed via a fresh grep that
+    no separate `#buffer-bar` element exists anywhere, and confirmed live that it already renders correctly
+    anchored.
+  - **`#publicland-legend`**: had the exact same bug `#slope-legend` was fixed for in Session 39 (see that
+    entry) — a body-level sibling of `<main id="map">`, so its `left:50%` centered across the whole browser
+    window rather than the map viewport, overlapping the sidebar on desktop. Session 39's own writeup
+    explicitly flagged this as "almost certainly" present but out of that session's scope; this session
+    confirmed it live (screenshot showing the legend's chip row starting under/behind the Layers panel) and
+    applied the identical `--sidebar-width`-aware `calc()`/`transform:translateX(-50%)` fix.
+  - Verified live via the already-connected Chrome browser extension against a local `python -m http.server`
+    (after the standard service-worker-unregister + Cache-Storage-clear step): opened Draw Area, Add bearing,
+    and Range Ring from the +Add sheet in turn and confirmed each status bar renders at the exact same
+    bottom-right position as Draw Route's and Measure's (screenshot comparison); opened Buffer and confirmed
+    it was already correctly anchored (no regression, no fix needed); toggled Public/private land on and
+    measured `#publicland-legend`'s real `getBoundingClientRect()` against `#sidebar`'s — `centeringErrorPx:
+    0`, matching Session 39's own verification rigor for `#slope-legend`, with zero sidebar overlap. Zero
+    console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+    APP_VERSION bumped 2.42.0 → 2.43.0 (bundled into the same release as the Session 42 work below — see that
+    entry for the version-bump rationale), SHELL_CACHE bumped v150 → v151.
+- Disturbance History: Wildfires, Timber Harvest, Timber Thinning (Session 42) — a new Environmental-section
+  grouping (visually set off by a plain, non-collapsible `.layer-subsection-title` divider — distinct from
+  the top-level collapsible `.layer-section-title` sections like ENVIRONMENTAL itself) containing 3
+  independently-toggleable overlays, each with its own opacity slider.
+  - **Data sources and why they're live viewport-bbox queries, not bulk fetches**: Wildfires
+    (`WILDFIRE_HISTORY_URL`, NIFC's InterAgencyFirePerimeterHistory_All_Years_View FeatureServer — a
+    DIFFERENT, much larger service from the pre-existing `FIRE_PERIMETERS_URL`/"Active fire perimeters",
+    which is CURRENT/active fires only) has ~98,168 features nationwide, confirmed via a live
+    `returnCountOnly` query before writing any code — far too large to bulk-fetch once like GMU/USFS/current-
+    fires, so it's queried live per-viewport, same pattern as Hydrography/gauge stations
+    (`loadWildfireHistoryForViewport`, debounced re-query on pan/zoom via `scheduleWildfireHistoryRefresh`,
+    gated behind `DISTURBANCE_MIN_ZOOM` (9) to avoid the ArcGIS server's 2000-feature-per-query cap at low
+    zoom, same reasoning as `HYDRO_MIN_ZOOM`/`GAUGE_MIN_ZOOM`). Timber Harvest (`TIMBER_HARVEST_URL`) and
+    Timber Thinning (`TIMBER_THINNING_URL`) are both USDA Forest Service EDW/FACTS services on
+    `apps.fs.usda.gov` (same NAD83/`inSR=4269` convention already established for USFS Forest boundaries) —
+    confirmed via each service's own `/MapServer?f=json` layer list that BOTH split their data across fixed
+    decade sub-layers ("2021 - Current", "2011 - 2020", "2001 - 2010", ...) rather than one flat
+    year-queryable layer; `TIMBER_HARVEST_LAYER_IDS`/`TIMBER_THINNING_LAYER_IDS` (`[11,0]`/`[9,0]`) name the
+    two decade ids that can ever overlap a 15-year rolling window for the foreseeable future, and
+    `loadTimberLayerForViewport` queries both per-viewport and merges the results (`Promise.all`).
+  - **Rolling 15-year lookback**: `TIMBER_LOOKBACK_YEARS = 15` (matching onX's own convention, per spec) +
+    `timberLookbackCutoffYear()` (`new Date().getFullYear() - 15`, computed fresh on every query, not
+    hardcoded) feeds a live `fy_completed>='<cutoffYear>'` WHERE clause applied to BOTH decade-sublayer
+    queries — this is what actually keeps the window rolling correctly year over year, not the fixed choice
+    of which 2 decade ids to query (which will eventually need a 3rd id added, years from now, once the
+    window's older edge reaches into "2001 - 2010" — flagged in code comments, not silently left to bit-rot
+    unnoticed). `fy_completed` is a STRING field on both services (confirmed via live query, e.g. `"2025"`,
+    not an integer) — string comparison against 4-digit-year strings is safe here specifically because it's
+    scoped to just 2 known decade sub-layers, not compared across the full unbounded dataset.
+  - **Wildfires' recency-gradient bands**: `WILDFIRE_AGE_BANDS` (light yellow-orange `#FCE29A` "Past year"
+    through deep red/maroon `#6E2020` "7+ years", 4 bands) with `wildfireAgeBandIndex(age)` bucket boundaries
+    read literally off the 4 stated band names with zero overlap/gaps: age 0 → "Past year", age 1-3 →
+    "1-3 years", age 4-7 → "4-7 years", age 8+ → "7+ years". Age can't be computed inside a MapLibre paint
+    expression (no "current year" primitive), so `ageBand` (0-3) is precomputed once per feature right after
+    fetch in `loadWildfireHistoryForViewport` — the same schema-normalize-at-merge-time approach Migration
+    corridors already established for an analogous per-feature-property derivation — then a plain
+    `['match', ['get','ageBand'], ...]` paint expression on both `wildfirehistory-fill`'s `fill-color` and
+    `wildfirehistory-line`'s `line-color` reads it back.
+  - **Timber Harvest/Thinning's diagonal hatch fill**: fixed colors (sienna `#8B4225`/muted gold `#B8963E`),
+    not a gradient — completion year is surfaced via tap-to-identify instead, per spec. MapLibre has no
+    native hatch-pattern paint type, so this reuses the exact same canvas-pattern-image technique
+    `buildOfflinePlaceholderPattern` already established in this file (Session 15-era offline-boundary
+    placeholder tiles) — `buildDisturbanceHatchPattern(colorHex)` draws the identical 3-line diagonal-stripe
+    canvas, just with a transparent background (only the stroked lines have alpha) rather than an opaque
+    fill, so the layer's own `fill-opacity` still controls overall strength the same way it does for every
+    flat-color fill layer in this app. Registered once per style load via the same idempotent
+    `!map.hasImage()` guard every other custom image/source uses, referenced by id (`'timber-harvest-
+    pattern'`/`'timber-thinning-pattern'`) from each layer's `fill-pattern` paint property.
+  - **Popups**: all 3 new layers use a plain `maplibregl.Popup` (not `#view-drawer`) — matching Fire
+    Perimeters/Hydrography/gauge stations' own precedent (read-only external-data overlays that predate or
+    sit outside both drawer-unification batches), not GMU/USFS/wildlife/migration's `#view-drawer` routing.
+    `wildfireHistoryPopupHtml` shows incident name + fire year + acres; `timberActivityPopupHtml` (shared by
+    both Timber layers) shows activity name + "Completed FY<year>" + acres.
+  - **KNOWN GAP, flagged rather than silently glossed over — offline download vs. live online view**: all 3
+    layers ARE real `DOWNLOAD_LAYERS` entries (`wildfire`/`timberharvest`/`timberthinning`, each with a
+    `bboxUrlBuilder` computing a per-`{z}/{x}/{y}`-tile ArcGIS query via the new `tileLatLngBbox()` helper) —
+    this satisfies the actual ask driving their existence: "download this area" performs a real network
+    fetch and contributes a real, non-zero byte count to the size estimate (confirmed live: 237 tiles/4MB →
+    309 tiles/14MB after checking all 3), unlike a client-only derivative such as Slope Angle. But UNLIKE
+    every tile-based layer above them in `DOWNLOAD_LAYERS` (DEM/snowdepth/NLCD/publicland/vectorbase — whose
+    live-browse tile URL is byte-identical to its offline-download tile URL, same `{z}/{x}/{y}` scheme both
+    ways), these 3 fetch an ARBITRARY live-viewport bbox online but a FIXED tile-grid bbox when downloaded —
+    two different URL shapes that essentially never match, so an offline-downloaded area's cached bytes are
+    NOT actually read back by the live online view while genuinely offline (Cache Storage keys by exact URL).
+    This is why these 3 toggles are ALSO deliberately absent from `OVERLAY_OFFLINE_TOGGLE_SOURCE` (which
+    would otherwise show a misleading "should work offline" hint that wouldn't actually hold) and why the
+    offline-download modal's own hint text was extended to say so explicitly, not just documented in code
+    comments. Timber Harvest/Thinning's offline copy is additionally narrower than the online view in a
+    second way: it only covers the "2021 - Current" decade sub-layer (the 1-URL-per-tile-per-source download
+    model can't cleanly merge 2 separate sub-layer endpoints into one downloadable entry without either
+    doubling tile requests for every other layer too or adding 2 more confusing checklist rows the spec
+    didn't ask for).
+  - **Verification**: real network access to these ArcGIS services (unlike Mapbox's v4 API, blocked in every
+    prior session touching DEM/vectorbase) is genuinely reachable from this sandbox, confirmed via direct
+    `curl` before writing any code (98,168-feature live count query, live sample queries against a real
+    National Forest confirming exact field names/types — `FIRE_YEAR_INT` a real integer, `fy_completed` a
+    STRING). Verified live via the already-connected Chrome browser extension against a local `python -m
+    http.server`, navigated to the Deschutes National Forest (real known fire-history terrain): Wildfires
+    confirmed rendering REAL fire perimeter data with the correct deep-maroon "7+ years" color and a correct
+    tap-to-identify popup ("Two Bulls / 2014 · 6,906 acres" — 12 years old, correctly bucketed); the
+    Environmental section badge correctly counted 0/9 → 1/9 → 2/9 → 3/9 as each layer toggled on. Timber
+    Harvest/Thinning's own live queries hit a genuine external 503 mid-session (confirmed via direct `curl`
+    against the same USDA endpoint independently of the app, ruling out an app-side bug — most likely
+    transient rate-limiting from this same session's earlier research `curl` traffic against the identical
+    endpoints) — the correctly-constructed request URL was still confirmed via live network-request capture
+    (`fy_completed>='2011'`, the right 2 decade layer ids, the right bbox, the right inSR/outSR) before the
+    outage, and the app degraded gracefully with zero console errors despite the 503s (the existing
+    `.catch(() => null)` pattern). Since the rendering pipeline itself is independent of which service
+    supplied the GeoJSON, hatch-pattern rendering and tap-to-identify were verified with equal rigor by
+    injecting synthetic GeoJSON directly into the live `timberharvest-source`/`timberthinning-source` (same
+    technique this codebase already uses for Mapbox-blocked DEM-derived layers) — confirmed both hatch
+    patterns render legibly and stay visually distinct from each other and from the wildfire wash beneath
+    them (screenshot), and confirmed tap-to-identify on the synthetic thinning polygon shows "Synthetic Test
+    Thinning / Completed FY2023 · 123 acres", the exact expected format. The 15-year-lookback exclusion
+    itself could not be re-confirmed against real data after the outage began, though the WHERE clause was
+    confirmed correctly constructed via the live network capture taken just before it — flagged as the one
+    piece of this session's verification checklist not fully closed out, rather than claimed as proven.
+    Opacity sliders confirmed genuinely driving each layer's live `fill-opacity` (captured the real `Map`
+    instance via the established `Map.prototype.getSource` monkey-patch technique, read `getPaintProperty()`
+    directly). Zero console errors throughout the entire session. `node --check` confirmed clean syntax on
+    all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.42.0 → 2.43.0 (minor — new layers; this
+    single bump also covers the Session 41 fixes above, shipped in the same release rather than two separate
+    patch bumps), SHELL_CACHE bumped v150 → v151.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -2714,3 +2866,63 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Zero console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
   `terrain-overlay-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.41.1 → 2.42.0 (minor — new
   layer), SHELL_CACHE bumped v149 → v150.
+- Session 41: Two small, unrelated fixes bundled together — see Architecture notes' "Draw-mode status bar
+  anchoring, `#publicland-legend` fix" entry for full detail. Draw Area/Bearing/Range Ring's in-progress
+  status bars (`#polygon-bar`/`#bearing-bar`/`#rangering-bar`) had always been centered bottom pills, never
+  matching the anchored-bottom-right pattern Draw Route/Track and Measure already used — fixed to the same
+  `bottom:24px;right:64px` position. Fixing `#bearing-bar`/`#rangering-bar` surfaced a second, deeper
+  pre-existing bug along the way: both had their positioning in an inline `style=""` attribute rather than a
+  stylesheet rule, which silently defeated the ALREADY-EXISTING mobile override group that was supposed to
+  reposition them there too (inline style specificity beats any external rule) — moving both into a real
+  stylesheet rule fixes the desktop anchor and finally lets that mobile fix actually apply. Buffer needed no
+  fix at all — confirmed via both a grep (no separate `#buffer-bar` exists) and live testing that it already
+  renders correctly, since it reuses Draw Route's own `#draw-bar` directly. Separately, fixed
+  `#publicland-legend`'s centering — the identical body-level-sibling-plus-`left:50%` bug `#slope-legend` was
+  fixed for in Session 39, which that session's own writeup had flagged as "almost certainly" present but
+  out of scope; confirmed live this session and fixed with the same `--sidebar-width`-aware `calc()`.
+  Verified live via the already-connected Chrome browser extension: all 3 status bars confirmed anchored
+  bottom-right via direct screenshot comparison against Draw Route's/Measure's own position; Buffer confirmed
+  already correct; `#publicland-legend` confirmed centered with 0px error against the real map viewport via
+  `getBoundingClientRect()`, matching Session 39's own verification rigor. Zero console errors. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. Version bump deferred to and bundled
+  with Session 42 below (shipped together in one release) — see that entry for the actual APP_VERSION/
+  SHELL_CACHE bump.
+- Session 42: Built Disturbance History, a new Environmental-section grouping of 3 independently-toggleable
+  live overlays — Wildfires (NIFC fire perimeter history, ~98,168 features nationwide, recency-gradient
+  wash), Timber Harvest, and Timber Thinning (both USDA Forest Service EDW/FACTS, diagonal-hatch fill,
+  15-year rolling lookback) — see Architecture notes' "Disturbance History" entry for the complete design.
+  All 3 are live viewport-bbox queries (same architecture as Hydrography/gauge stations, confirmed necessary
+  via a live feature-count query before writing any code — this dataset is far too large to bulk-fetch like
+  GMU/USFS), but — a deliberate scope decision beyond what Slope Angle/Elevation Range/Aspect needed — also
+  real `DOWNLOAD_LAYERS` entries with their own `bboxUrlBuilder`s, so "download this area" performs a real
+  fetch and contributes accurately to the offline size estimate. Investigated and flagged, not silently
+  shipped, a real architectural gap this surfaced: because the live online query uses an arbitrary viewport
+  bbox while the offline download uses a fixed tile-grid bbox, the two URL shapes essentially never match,
+  so an offline-downloaded area's cached data isn't actually read back by the live view while genuinely
+  offline — these 3 toggles were deliberately kept OUT of `OVERLAY_OFFLINE_TOGGLE_SOURCE` for exactly this
+  reason (a coverage-based "should work offline" hint would have been actively misleading), and the
+  offline-download modal's own hint text was updated to say so in plain language, not just in code comments.
+  Timber Harvest/Thinning's diagonal hatch fill reuses this file's own existing canvas-pattern-image
+  technique (`buildOfflinePlaceholderPattern`, generalized into `buildDisturbanceHatchPattern`) rather than
+  inventing a new one, since MapLibre has no native hatch paint type. Verified live via the already-connected
+  Chrome browser extension against a local `python -m http.server`, navigated to the Deschutes National
+  Forest: confirmed real Wildfires data renders with correct age-band coloring (a 2014 fire — 12 years old —
+  correctly showed deep maroon "7+ years") and a correct tap-to-identify popup with real incident
+  name/year/acres; confirmed the Environmental badge counted 0/9 → 3/9 correctly across all 3 toggles;
+  confirmed the offline-download size estimate jumped from 237 tiles/4MB to 309 tiles/14MB after checking all
+  3, proving they contribute real, non-zero size unlike a client-only derivative such as Slope Angle. Timber
+  Harvest/Thinning's own live ArcGIS queries hit a genuine external 503 mid-session, confirmed via an
+  independent direct `curl` against the same USDA endpoint (ruling out an app bug — most likely transient
+  rate-limiting from this same session's earlier research traffic against the identical endpoints); the
+  correctly-constructed request URL (right WHERE clause, right decade layer ids, right bbox/SR params) was
+  already confirmed via live network-request capture taken just before the outage began, and the app degraded
+  gracefully with zero console errors throughout. Verified the rendering pipeline itself (independent of
+  which service supplies the GeoJSON) by injecting synthetic GeoJSON directly into the live map sources, the
+  same technique this codebase already uses for Mapbox-blocked DEM-derived layers — confirmed both hatch
+  patterns render legibly and stay visually distinct from each other and from the wildfire wash, and
+  confirmed tap-to-identify on a synthetic feature. Flagged rather than silently claimed: the 15-year-
+  lookback exclusion itself could not be re-confirmed against real query results after the outage began — the
+  WHERE clause was confirmed correctly built, but not the actual server-side filtering behavior live. `node
+  --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.42.0 →
+  2.43.0 (minor — new layers; this single release also bundles Session 41's fixes above rather than shipping
+  a separate patch), SHELL_CACHE bumped v150 → v151.

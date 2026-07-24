@@ -262,6 +262,14 @@
   .radio-opt{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0;}
   .radio-opt input{accent-color:var(--accent);}
   .layer-overlay-row{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  /* Lightweight in-section grouping label (Session 42) — distinct from .layer-section-title,
+     which is the collapsible top-level section header (LAND AND BOUNDARIES, ENVIRONMENTAL, etc.)
+     with its own chevron/count badge; this is just a plain, non-interactive divider for grouping
+     a few rows WITHIN one of those sections (Disturbance History's 3 rows within Environmental). */
+  .layer-subsection-title{
+    font-size:10px;font-weight:700;letter-spacing:0.4px;color:var(--text-muted);
+    text-transform:uppercase;margin-top:14px;padding-top:10px;border-top:1px solid var(--border);
+  }
   /* Same visual treatment as .btn:disabled — hints that this overlay has no downloaded data
      for the current view while offline, without actually disabling the toggle (it still
      works; there's just nothing to show). See updateOverlayOfflineAvailability(). */
@@ -730,13 +738,31 @@
   .sheet-label{font-size:11px;color:var(--text-muted);text-align:center;line-height:1.3;}
 
   /* Polygon bar — same structure as draw bar */
+  /* Session 41 fix — was a centered bottom pill (left:50%/transform), unlike Pins/Tracks' own
+     anchored-bottom-right drawer pattern (see #draw-bar/#measure-result). Now matches that pattern. */
   #polygon-bar{
-    position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
+    position:absolute;bottom:24px;right:64px;z-index:1200;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
     padding:8px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.4);
     font-family:var(--font-mono);font-size:13px;min-width:260px;
   }
   #polygon-bar.hidden{display:none;}
+  /* Bearing bar and Range Ring bar — same bottom-right anchor fix, same reasoning as #polygon-bar
+     above (Session 41). Previously positioned via an inline style="" attribute on the element
+     itself, not a stylesheet rule — inline style specificity beats any external <style> block
+     rule regardless of media query, which ALSO meant the mobile override group below
+     (#draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar{bottom:138px;...}) was never
+     actually able to reposition #bearing-bar on mobile despite listing it — moving both bars'
+     positioning into real CSS rules here fixes the desktop anchor AND lets that mobile override
+     apply correctly for the first time. #rangering-bar is newly added to that same mobile group
+     (it was missing entirely before, not just shadowed like #bearing-bar). */
+  #bearing-bar, #rangering-bar{
+    position:absolute;bottom:24px;right:64px;z-index:1200;
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+    padding:8px 14px;align-items:center;gap:12px;font-size:13px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.4);
+  }
+  #bearing-bar.hidden, #rangering-bar.hidden{display:none;}
   #polygon-bar-stats{white-space:nowrap;color:var(--text);margin-bottom:6px;}
   #polygon-bar-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;}
   #polygon-bar-actions .link-btn{white-space:nowrap;flex-shrink:0;}
@@ -916,12 +942,18 @@
   .map-search-result-row:hover{background:rgba(255,255,255,0.08);color:var(--accent);}
   .map-search-status{padding:10px 14px;font-size:12px;color:var(--text-muted);}
 
+  /* Session 41 fix — same bug #slope-legend was fixed for in Session 39 (see that entry's own
+     comment for the full mechanism): #publicland-legend is a body-level sibling of <main id="map">,
+     not a child of it, so a plain left:50% centers across the FULL BROWSER WINDOW rather than the
+     map viewport, overlapping the sidebar on desktop. Same --sidebar-width-aware calc() fix. */
   #publicland-legend{
-    position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+    position:absolute;bottom:14px;
+    left:calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
+    transform:translateX(-50%);
     z-index:1100;background:rgba(26,32,27,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     border:1px solid rgba(255,255,255,0.1);border-radius:10px;
     padding:7px 12px;display:flex;align-items:center;gap:6px;
-    max-width:calc(100vw - 28px);overflow-x:auto;flex-wrap:nowrap;
+    max-width:calc(100vw - var(--sidebar-width) - 28px);overflow-x:auto;flex-wrap:nowrap;
     box-shadow:0 2px 10px rgba(0,0,0,0.4);
   }
   #publicland-legend.hidden{display:none;}
@@ -1223,7 +1255,7 @@
        bottom:90px (was previously a narrow right-side column these centered bars never actually
        overlapped), so these now need to clear ITS full width too: 90px + 38px icon height + 10px
        margin = 138px. */
-    #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar{
+    #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar,#rangering-bar{
       bottom:138px;
       left:50%;right:auto;
       transform:translateX(-50%);
@@ -2149,6 +2181,44 @@
         <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about" target="_blank">Source: NIFC WFIGS</a>
       </div>
 
+      <div class="layer-subsection-title">Disturbance History</div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="wildfire-toggle"> Wildfires <button class="layer-hint-btn" data-layer-id="lh-wildfire" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="wildfire-opacity-row"><input type="range" id="wildfire-opacity" min="20" max="100" value="55"></div>
+      <div class="layer-info-panel" id="lh-wildfire">
+        <div class="layer-info-desc">Historical wildland fire perimeters, color-coded by how long ago each fire burned — freshest in light yellow-orange, oldest in deep red/maroon. Re-queried live as you pan and zoom.</div>
+        <div class="layer-info-legend">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#FCE29A;color:#000;">Past year</span>
+            <span class="legend-swatch" style="background:#F2A153;color:#000;">1-3 yrs</span>
+            <span class="legend-swatch" style="background:#C85A34;color:#fff;">4-7 yrs</span>
+            <span class="legend-swatch" style="background:#6E2020;color:#fff;">7+ yrs</span>
+          </div>
+        </div>
+        <a class="layer-info-src" href="https://data-nifc.opendata.arcgis.com/datasets/nifc::interagencyfireperimeterhistory-all-years-view/about" target="_blank">Source: NIFC Interagency Fire Perimeter History</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="timberharvest-toggle"> Timber harvest <button class="layer-hint-btn" data-layer-id="lh-timberharvest" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="timberharvest-opacity-row"><input type="range" id="timberharvest-opacity" min="20" max="100" value="70"></div>
+      <div class="layer-info-panel" id="lh-timberharvest">
+        <div class="layer-info-desc">Reported timber harvest activity from the last 15 years. Tap an area for its completion year.</div>
+        <a class="layer-info-src" href="https://data.fs.usda.gov/geodata/edw/edw_resources/meta/S_USA.Activity_TimberHarvest.xml" target="_blank">Source: USDA Forest Service EDW (FACTS)</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="timberthinning-toggle"> Timber thinning <button class="layer-hint-btn" data-layer-id="lh-timberthinning" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="timberthinning-opacity-row"><input type="range" id="timberthinning-opacity" min="20" max="100" value="70"></div>
+      <div class="layer-info-panel" id="lh-timberthinning">
+        <div class="layer-info-desc">Reported timber stand improvement / thinning activity from the last 15 years. Tap an area for its completion year.</div>
+        <a class="layer-info-src" href="https://data.fs.usda.gov/geodata/edw/edw_resources/meta/S_USA.Activity_SilvTSI.xml" target="_blank">Source: USDA Forest Service EDW (FACTS)</a>
+      </div>
+      <p class="gmu-disclaimer">Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn't historically required, so both layers are known to be incomplete.</p>
+
       <label class="layer-overlay-row">
         <input type="checkbox" id="slopeangle-toggle"> Slope angle <button class="layer-hint-btn" data-layer-id="lh-slopeangle" title="About">?</button>
       </label>
@@ -2584,22 +2654,14 @@
 </div>
 
 <!-- Bearing draw bar (shown during +Add bearing mode) -->
-<div id="bearing-bar" class="hidden" style="
-  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
-  background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
-  padding:8px 14px;align-items:center;gap:12px;font-size:13px;
-  box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+<div id="bearing-bar" class="hidden">
   <span id="bearing-bar-text">Tap origin point</span>
   <button class="btn btn-small btn-ghost" id="bearing-bar-cancel">Cancel</button>
 </div>
 
 <!-- Range Ring bar (shown during +Add range ring mode — single tap for the center point, same
      bar pattern as bearing-bar's origin/target tap) -->
-<div id="rangering-bar" class="hidden" style="
-  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:1200;
-  background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
-  padding:8px 14px;align-items:center;gap:12px;font-size:13px;
-  box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+<div id="rangering-bar" class="hidden">
   <span id="rangering-bar-text">Tap center point</span>
   <button class="btn btn-small btn-ghost" id="rangering-bar-cancel">Cancel</button>
 </div>
@@ -2765,7 +2827,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfires/Timber harvest/Timber thinning download real data and count toward your size estimate, but — like Hydrography — won't yet draw from that download while you're actually offline; they'll only show whatever you've recently browsed there too.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -2963,7 +3025,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.42.0';
+  var APP_VERSION = '2.43.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -3085,6 +3147,15 @@
       // this guarantees the two mutually-exclusive layers can never both already be true at
       // boot without needing extra defensive logic in reinitializeLayers().
       aspectOn: false, aspectOpacity: 0.6,
+      // Disturbance History (Session 42) — Wildfires/Timber Harvest/Timber Thinning, three
+      // independently-toggleable live viewport-bbox overlays (see the "Disturbance History"
+      // Architecture notes entry). Unlike Slope Angle/Elevation Range/Aspect these persist
+      // normally on/off, matching Fire Perimeters/Hydrography's own persistence — they're real
+      // DOWNLOAD_LAYERS-backed data layers, not client-only DEM derivatives with a reason to
+      // force-reset at boot.
+      wildfireHistoryOn: false, wildfireHistoryOpacity: 0.55,
+      timberHarvestOn: false, timberHarvestOpacity: 0.7,
+      timberThinningOn: false, timberThinningOpacity: 0.7,
       center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
       units: { distance: 'imperial', elevation: 'imperial' },
       defaultBaseLayer: 'topo',
@@ -3328,6 +3399,55 @@
   var FIRE_FILL_COLOR = '#e8432b', FIRE_STROKE_COLOR = '#8f1d0e';
   var fireperimetersCache = null; // last-fetched FeatureCollection — only used to reseed the source across a style switch; setFirePerimetersOn always re-fetches fresh on toggle-on since this is live data
   var openFirePerimeterPopup = null;
+
+  // ── Disturbance History (Session 42): Wildfires, Timber Harvest, Timber Thinning ──
+  // Wildfires is the full multi-agency fire perimeter HISTORY (all years, ~98,168 features
+  // nationwide, confirmed via a live returnCountOnly query before building this) — a completely
+  // different service from FIRE_PERIMETERS_URL above (which is CURRENT/active fires only, a much
+  // smaller live dataset already safe to bulk-fetch). Like Hydrography/gauge stations, this is
+  // too large to bulk-fetch once, so it's a live viewport-bbox query, re-issued on every pan/zoom
+  // while its toggle is on.
+  var WILDFIRE_HISTORY_URL = 'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/InterAgencyFirePerimeterHistory_All_Years_View/FeatureServer/0/query';
+  // Both timber services split their data across fixed decade sub-layers (confirmed via each
+  // service's own /MapServer?f=json layer list — "2021 - Current", "2011 - 2020", "2001 - 2010",
+  // ...) rather than one flat layer with a queryable year range. These two ids are the only ones
+  // that can ever overlap TIMBER_LOOKBACK_YEARS' rolling window for at least the next several
+  // years (a 15-year window spans at most 2 of these fixed decade buckets right now) — the
+  // window still stays correctly "rolling" year over year via the live `fy_completed >=` WHERE
+  // clause in loadTimberLayerForViewport, computed fresh from the current year on every query,
+  // not hardcoded; only the CHOICE of which decade ids to query at all would eventually need a
+  // 3rd id added here, many years from now, once the window starts reaching into "2001 - 2010".
+  var TIMBER_HARVEST_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TimberHarvest_01/MapServer';
+  var TIMBER_HARVEST_LAYER_IDS = [11, 0]; // "2021 - Current", "2011 - 2020"
+  var TIMBER_THINNING_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_SilvicultureTimberstandImprovement_01/MapServer';
+  var TIMBER_THINNING_LAYER_IDS = [9, 0]; // "2021 - Current", "2011 - 2020"
+  var TIMBER_LOOKBACK_YEARS = 15; // matches onX's own convention, per spec
+  var DISTURBANCE_MIN_ZOOM = 9; // below this a bbox query spans too much area and risks the 2000-feature server-side cap — same reasoning as HYDRO_MIN_ZOOM/GAUGE_MIN_ZOOM above
+  // Recency-gradient bands for Wildfires — light yellow-orange (freshest) through deep
+  // red/maroon (oldest). Bucket boundaries read literally off the 4 stated band names (not an
+  // arbitrary split): "past year" = age 0 only, "1-3 years" = age 1-3, "4-7 years" = age 4-7,
+  // "7+ years" = age 8+ — zero overlap, zero gaps. See wildfireAgeBandIndex().
+  var WILDFIRE_AGE_BANDS = [
+    { fill: '#FCE29A', stroke: '#C9932E', label: 'Past year' },
+    { fill: '#F2A153', stroke: '#B36A22', label: '1–3 years' },
+    { fill: '#C85A34', stroke: '#8A3A1C', label: '4–7 years' },
+    { fill: '#6E2020', stroke: '#3D0F0F', label: '7+ years' }
+  ];
+  function wildfireAgeBandIndex(age){
+    if (age <= 0) return 0;
+    if (age <= 3) return 1;
+    if (age <= 7) return 2;
+    return 3;
+  }
+  // Fixed colors (not a gradient) — completion year is shown on tap-to-identify instead, per
+  // spec. Diagonal hatch fill (buildDisturbanceHatchPattern), not a flat wash, so both remain
+  // visually distinct from every flat/gradient-wash overlay already in this app (Winter Range,
+  // Corridor, Habitat, Wildfires above) even where they overlap.
+  var TIMBER_HARVEST_COLOR = '#8B4225', TIMBER_THINNING_COLOR = '#B8963E';
+  var wildfireHistoryCache = null, timberHarvestCache = null, timberThinningCache = null; // reseed sources across a style switch only — always re-queried fresh on toggle-on/viewport-move, same as hydro/gauge
+  var openWildfireHistoryPopup = null, openTimberHarvestPopup = null, openTimberThinningPopup = null;
+  var wildfireHistoryZoomHintShown = false, timberHarvestZoomHintShown = false, timberThinningZoomHintShown = false;
+  var wildfireHistoryRefreshTimer = null, timberHarvestRefreshTimer = null, timberThinningRefreshTimer = null;
   // NHDPlus HR (USGS hydrography) — unlike GMU/USFS/fire, this is a genuinely nationwide,
   // very-high-feature-count dataset (flowline layer alone caps at maxRecordCount:2000 per
   // query), so it can't be bulk-fetched once like those — it's queried live for just the
@@ -5529,6 +5649,62 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'fireperimeters-fill', function(){ map.getCanvas().style.cursor = ''; });
 
+      // Disturbance History click-to-identify — same mode-aware pass-through pattern as fire
+      // perimeters above.
+      function handleWildfireHistoryClick(e){
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var f = e.features && e.features[0];
+        if (!f) return;
+        openWildfireHistoryPopupAt(f.properties, e.lngLat);
+      }
+      map.on('click', 'wildfirehistory-fill', handleWildfireHistoryClick);
+      map.on('mouseenter', 'wildfirehistory-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'wildfirehistory-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      function handleTimberClick(kind){
+        return function(e){
+          if (e.defaultPrevented) return;
+          e.preventDefault();
+          if (e.originalEvent) e.originalEvent.stopPropagation();
+          var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+            if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+            if (bearingMode){ handleBearingMapTap(latlng); return; }
+            if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+            if (compassActive){ handleCompassMapTap(latlng); return; }
+            if (measureMode){ handleMeasureClick(latlng); return; }
+            if (drawMode){ handleDrawClick(latlng); return; }
+            if (polygonMode){ handlePolygonClick(latlng); return; }
+            if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+            return;
+          }
+          var f = e.features && e.features[0];
+          if (!f) return;
+          if (kind === 'harvest') openTimberHarvestPopupAt(f.properties, e.lngLat);
+          else openTimberThinningPopupAt(f.properties, e.lngLat);
+        };
+      }
+      map.on('click', 'timberharvest-fill', handleTimberClick('harvest'));
+      map.on('mouseenter', 'timberharvest-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'timberharvest-fill', function(){ map.getCanvas().style.cursor = ''; });
+      map.on('click', 'timberthinning-fill', handleTimberClick('thinning'));
+      map.on('mouseenter', 'timberthinning-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'timberthinning-fill', function(){ map.getCanvas().style.cursor = ''; });
+
       // Hydrography click-to-identify — same mode-aware pass-through pattern.
       function handleHydroClick(kind){
         return function(e){
@@ -5704,6 +5880,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('moveend', scheduleHydroRefresh);
       map.on('zoomend', scheduleGaugeRefresh);
       map.on('moveend', scheduleGaugeRefresh);
+      map.on('zoomend', scheduleWildfireHistoryRefresh);
+      map.on('moveend', scheduleWildfireHistoryRefresh);
+      map.on('zoomend', scheduleTimberHarvestRefresh);
+      map.on('moveend', scheduleTimberHarvestRefresh);
+      map.on('zoomend', scheduleTimberThinningRefresh);
+      map.on('moveend', scheduleTimberThinningRefresh);
       map.on('zoomend', function(){
         var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
         if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
@@ -6858,6 +7040,185 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .setLngLat(lngLat).setHTML(hydroPopupHtml(props, kind)).addTo(map);
     popup.on('close', function(){ if (openHydroPopup === popup) openHydroPopup = null; });
     openHydroPopup = popup;
+  }
+
+  // ── Disturbance History: Wildfires, Timber Harvest, Timber Thinning (Session 42) — live
+  // viewport-bbox queries, same pattern as Hydrography just above ──
+  function wildfireHistoryBboxQueryString(){
+    var b = map.getBounds();
+    return 'where=1%3D1&geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
+      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
+  }
+
+  function loadWildfireHistoryForViewport(){
+    if (!state.settings.wildfireHistoryOn || !map) return;
+    if (map.getZoom() < DISTURBANCE_MIN_ZOOM){
+      if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData({ type: 'FeatureCollection', features: [] });
+      if (!wildfireHistoryZoomHintShown){ showToast('Zoom in to load wildfire history'); wildfireHistoryZoomHintShown = true; }
+      return;
+    }
+    var currentYear = new Date().getFullYear();
+    fetch(WILDFIRE_HISTORY_URL + '?' + wildfireHistoryBboxQueryString())
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){
+        if (!state.settings.wildfireHistoryOn) return; // toggled off while this was in flight
+        if (!data || !data.features) return;
+        // Precompute ageBand once here (not a runtime MapLibre expression — there's no "current
+        // year" primitive available to a paint expression), same schema-normalize-at-merge-time
+        // approach Migration corridors already established for a similar per-feature-property
+        // derivation.
+        data.features.forEach(function(f){
+          var year = f.properties && f.properties.FIRE_YEAR_INT;
+          f.properties.ageBand = (year != null) ? wildfireAgeBandIndex(currentYear - year) : 3;
+        });
+        wildfireHistoryCache = data;
+        if (map.getSource('wildfirehistory-source')) map.getSource('wildfirehistory-source').setData(data);
+      })
+      .catch(function(err){ console.error('[FieldMap] Wildfire history fetch failed:', err); });
+  }
+
+  function scheduleWildfireHistoryRefresh(){
+    if (wildfireHistoryRefreshTimer) clearTimeout(wildfireHistoryRefreshTimer);
+    wildfireHistoryRefreshTimer = setTimeout(loadWildfireHistoryForViewport, 500);
+  }
+
+  function setWildfireHistoryLayersVisible(on){
+    ['wildfirehistory-fill', 'wildfirehistory-line'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    document.getElementById('wildfire-opacity-row').classList.toggle('show', on);
+    if (!on && openWildfireHistoryPopup){ openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; }
+  }
+
+  function setWildfireHistoryOn(on){
+    state.settings.wildfireHistoryOn = on;
+    setWildfireHistoryLayersVisible(on);
+    if (on) loadWildfireHistoryForViewport();
+  }
+
+  function wildfireHistoryPopupHtml(props){
+    var year = props.FIRE_YEAR_INT != null ? props.FIRE_YEAR_INT : 'Unknown year';
+    var acres = props.GIS_ACRES != null ? Number(props.GIS_ACRES) : null;
+    var parts = [];
+    if (acres != null && !isNaN(acres)) parts.push(acres.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres');
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(props.INCIDENT || 'Unnamed fire') + '</div>' +
+      '<div class="pin-popup-coords">' + year + (parts.length ? ' · ' + parts.join(' · ') : '') + '</div>' +
+      '</div>';
+  }
+
+  function openWildfireHistoryPopupAt(props, lngLat){
+    if (openWildfireHistoryPopup){ openWildfireHistoryPopup.remove(); openWildfireHistoryPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(wildfireHistoryPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openWildfireHistoryPopup === popup) openWildfireHistoryPopup = null; });
+    openWildfireHistoryPopup = popup;
+  }
+
+  // Timber Harvest and Timber Thinning share this one implementation, parameterized by `kind`
+  // ('harvest' | 'thinning') — identical query/merge/cache shape, only the URL, layer ids, source
+  // id, state-settings keys, and popup vars differ.
+  var TIMBER_KIND_CONFIG = {
+    harvest: {
+      baseUrl: function(){ return TIMBER_HARVEST_URL; },
+      layerIds: function(){ return TIMBER_HARVEST_LAYER_IDS; },
+      sourceId: 'timberharvest-source',
+      onKey: 'timberHarvestOn',
+      layerIdsCss: ['timberharvest-fill', 'timberharvest-line'],
+      opacityRowId: 'timberharvest-opacity-row'
+    },
+    thinning: {
+      baseUrl: function(){ return TIMBER_THINNING_URL; },
+      layerIds: function(){ return TIMBER_THINNING_LAYER_IDS; },
+      sourceId: 'timberthinning-source',
+      onKey: 'timberThinningOn',
+      layerIdsCss: ['timberthinning-fill', 'timberthinning-line'],
+      opacityRowId: 'timberthinning-opacity-row'
+    }
+  };
+  function timberOutFieldsWhere(){
+    return 'where=' + encodeURIComponent("fy_completed>='" + timberLookbackCutoffYear() + "'") +
+      '&outFields=fy_completed,gis_acres,activity_name&inSR=4269&outSR=4326&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geojson';
+  }
+  function loadTimberLayerForViewport(kind){
+    var cfg = TIMBER_KIND_CONFIG[kind];
+    if (!state.settings[cfg.onKey] || !map) return;
+    if (map.getZoom() < DISTURBANCE_MIN_ZOOM){
+      if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData({ type: 'FeatureCollection', features: [] });
+      if (!(kind === 'harvest' ? timberHarvestZoomHintShown : timberThinningZoomHintShown)){
+        showToast('Zoom in to load timber ' + kind + ' history');
+        if (kind === 'harvest') timberHarvestZoomHintShown = true; else timberThinningZoomHintShown = true;
+      }
+      return;
+    }
+    var b = map.getBounds();
+    var geom = encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth());
+    var qs = timberOutFieldsWhere() + '&geometry=' + geom;
+    Promise.all(cfg.layerIds().map(function(layerId){
+      return fetch(cfg.baseUrl() + '/' + layerId + '/query?' + qs)
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .catch(function(){ return null; });
+    })).then(function(results){
+      if (!state.settings[cfg.onKey]) return; // toggled off while this was in flight
+      var merged = { type: 'FeatureCollection', features: [] };
+      results.forEach(function(fc){ if (fc && fc.features) merged.features = merged.features.concat(fc.features); });
+      if (kind === 'harvest') timberHarvestCache = merged; else timberThinningCache = merged;
+      if (map.getSource(cfg.sourceId)) map.getSource(cfg.sourceId).setData(merged);
+    });
+  }
+  function scheduleTimberHarvestRefresh(){
+    if (timberHarvestRefreshTimer) clearTimeout(timberHarvestRefreshTimer);
+    timberHarvestRefreshTimer = setTimeout(function(){ loadTimberLayerForViewport('harvest'); }, 500);
+  }
+  function scheduleTimberThinningRefresh(){
+    if (timberThinningRefreshTimer) clearTimeout(timberThinningRefreshTimer);
+    timberThinningRefreshTimer = setTimeout(function(){ loadTimberLayerForViewport('thinning'); }, 500);
+  }
+  function setTimberLayerVisible(kind, on){
+    var cfg = TIMBER_KIND_CONFIG[kind];
+    cfg.layerIdsCss.forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    document.getElementById(cfg.opacityRowId).classList.toggle('show', on);
+    if (!on){
+      if (kind === 'harvest' && openTimberHarvestPopup){ openTimberHarvestPopup.remove(); openTimberHarvestPopup = null; }
+      if (kind === 'thinning' && openTimberThinningPopup){ openTimberThinningPopup.remove(); openTimberThinningPopup = null; }
+    }
+  }
+  function setTimberHarvestOn(on){
+    state.settings.timberHarvestOn = on;
+    setTimberLayerVisible('harvest', on);
+    if (on) loadTimberLayerForViewport('harvest');
+  }
+  function setTimberThinningOn(on){
+    state.settings.timberThinningOn = on;
+    setTimberLayerVisible('thinning', on);
+    if (on) loadTimberLayerForViewport('thinning');
+  }
+  function timberActivityPopupHtml(props){
+    var year = props.fy_completed || 'Unknown year';
+    var acres = props.gis_acres != null ? Number(props.gis_acres) : null;
+    var parts = [];
+    if (acres != null && !isNaN(acres)) parts.push(acres.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres');
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(props.activity_name || 'Timber activity') + '</div>' +
+      '<div class="pin-popup-coords">Completed FY' + year + (parts.length ? ' · ' + parts.join(' · ') : '') + '</div>' +
+      '</div>';
+  }
+  function openTimberHarvestPopupAt(props, lngLat){
+    if (openTimberHarvestPopup){ openTimberHarvestPopup.remove(); openTimberHarvestPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(timberActivityPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openTimberHarvestPopup === popup) openTimberHarvestPopup = null; });
+    openTimberHarvestPopup = popup;
+  }
+  function openTimberThinningPopupAt(props, lngLat){
+    if (openTimberThinningPopup){ openTimberThinningPopup.remove(); openTimberThinningPopup = null; }
+    var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
+      .setLngLat(lngLat).setHTML(timberActivityPopupHtml(props)).addTo(map);
+    popup.on('close', function(){ if (openTimberThinningPopup === popup) openTimberThinningPopup = null; });
+    openTimberThinningPopup = popup;
   }
 
   // ── USGS stream gauge stations — modernized OGC API Features water data service (see the
@@ -8024,6 +8385,95 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         paint: { 'line-color': FIRE_STROKE_COLOR, 'line-width': 1.75, 'line-opacity': 0.95 }
       });
     }
+
+    // Disturbance History (Session 42) — Wildfires/Timber Harvest/Timber Thinning. All three
+    // start empty and get populated live by loadWildfireHistoryForViewport/
+    // loadTimberLayerForViewport once their own toggle is on — same "sources start empty, a
+    // live viewport-bbox query fills them in" pattern as Hydrography just below (see that
+    // entry's own comment for why this can't be a one-time bulk fetch — wildfire history alone
+    // is ~98K features nationwide, confirmed via a live count query before building this).
+    if (!map.hasImage('timber-harvest-pattern')){
+      map.addImage('timber-harvest-pattern', buildDisturbanceHatchPattern(TIMBER_HARVEST_COLOR));
+    }
+    if (!map.hasImage('timber-thinning-pattern')){
+      map.addImage('timber-thinning-pattern', buildDisturbanceHatchPattern(TIMBER_THINNING_COLOR));
+    }
+    if (!map.getSource('wildfirehistory-source')){
+      map.addSource('wildfirehistory-source', { type: 'geojson', data: wildfireHistoryCache || { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('wildfirehistory-fill')){
+      map.addLayer({
+        id: 'wildfirehistory-fill',
+        type: 'fill',
+        source: 'wildfirehistory-source',
+        layout: { visibility: state.settings.wildfireHistoryOn ? 'visible' : 'none' },
+        paint: {
+          'fill-color': ['match', ['get', 'ageBand'],
+            0, WILDFIRE_AGE_BANDS[0].fill, 1, WILDFIRE_AGE_BANDS[1].fill, 2, WILDFIRE_AGE_BANDS[2].fill,
+            WILDFIRE_AGE_BANDS[3].fill],
+          'fill-opacity': state.settings.wildfireHistoryOpacity != null ? state.settings.wildfireHistoryOpacity : 0.55
+        }
+      });
+    }
+    if (!map.getLayer('wildfirehistory-line')){
+      map.addLayer({
+        id: 'wildfirehistory-line',
+        type: 'line',
+        source: 'wildfirehistory-source',
+        layout: { visibility: state.settings.wildfireHistoryOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: {
+          'line-color': ['match', ['get', 'ageBand'],
+            0, WILDFIRE_AGE_BANDS[0].stroke, 1, WILDFIRE_AGE_BANDS[1].stroke, 2, WILDFIRE_AGE_BANDS[2].stroke,
+            WILDFIRE_AGE_BANDS[3].stroke],
+          'line-width': 1, 'line-opacity': 0.9
+        }
+      });
+    }
+    if (!map.getSource('timberharvest-source')){
+      map.addSource('timberharvest-source', { type: 'geojson', data: timberHarvestCache || { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('timberharvest-fill')){
+      map.addLayer({
+        id: 'timberharvest-fill',
+        type: 'fill',
+        source: 'timberharvest-source',
+        layout: { visibility: state.settings.timberHarvestOn ? 'visible' : 'none' },
+        paint: { 'fill-pattern': 'timber-harvest-pattern', 'fill-opacity': state.settings.timberHarvestOpacity != null ? state.settings.timberHarvestOpacity : 0.7 }
+      });
+    }
+    if (!map.getLayer('timberharvest-line')){
+      map.addLayer({
+        id: 'timberharvest-line',
+        type: 'line',
+        source: 'timberharvest-source',
+        layout: { visibility: state.settings.timberHarvestOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': TIMBER_HARVEST_COLOR, 'line-width': 1, 'line-opacity': 0.9 }
+      });
+    }
+    if (!map.getSource('timberthinning-source')){
+      map.addSource('timberthinning-source', { type: 'geojson', data: timberThinningCache || { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('timberthinning-fill')){
+      map.addLayer({
+        id: 'timberthinning-fill',
+        type: 'fill',
+        source: 'timberthinning-source',
+        layout: { visibility: state.settings.timberThinningOn ? 'visible' : 'none' },
+        paint: { 'fill-pattern': 'timber-thinning-pattern', 'fill-opacity': state.settings.timberThinningOpacity != null ? state.settings.timberThinningOpacity : 0.7 }
+      });
+    }
+    if (!map.getLayer('timberthinning-line')){
+      map.addLayer({
+        id: 'timberthinning-line',
+        type: 'line',
+        source: 'timberthinning-source',
+        layout: { visibility: state.settings.timberThinningOn ? 'visible' : 'none', 'line-join': 'round' },
+        paint: { 'line-color': TIMBER_THINNING_COLOR, 'line-width': 1, 'line-opacity': 0.9 }
+      });
+    }
+    if (state.settings.wildfireHistoryOn) loadWildfireHistoryForViewport();
+    if (state.settings.timberHarvestOn) loadTimberLayerForViewport('harvest');
+    if (state.settings.timberThinningOn) loadTimberLayerForViewport('thinning');
 
     // Hydrography (NHDPlus HR) — sources start empty and get populated live by
     // loadHydrographyForViewport() once the toggle is on (see that function's comment for
@@ -11979,6 +12429,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return ctx.getImageData(0, 0, size, size);
   }
 
+  // Diagonal-hatch fill pattern for Timber Harvest/Thinning (Session 42) — transparent
+  // background (only the stroked lines have alpha), so the polygon's own `fill-opacity` still
+  // controls overall strength the same way it does for every flat-color fill layer in this app.
+  // Same 3-line diagonal-stripe technique as buildOfflinePlaceholderPattern above, just without
+  // the opaque background fill.
+  function buildDisturbanceHatchPattern(colorHex){
+    var size = 16;
+    var canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.strokeStyle = colorHex;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, size); ctx.lineTo(size, 0);
+    ctx.moveTo(-size / 2, size / 2); ctx.lineTo(size / 2, -size / 2);
+    ctx.moveTo(size / 2, size * 1.5); ctx.lineTo(size * 1.5, size / 2);
+    ctx.stroke();
+    return ctx.getImageData(0, 0, size, size);
+  }
+
   // ── GPS Location Dot ──────────────────────────────────────────────────────
   // Ported to maplibregl.Marker with custom HTML element.
 
@@ -13573,7 +14043,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // bboxUrlBuilder instead of urlTemplate. Not remeasured in Session 35 — left as-is.
     snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
     nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
-    publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 }
+    publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 },
+    // Disturbance History (Session 42) — real network-fetched vector data (dense polygon
+    // geometry, not raster tiles or a compact .pbf), so per-tile bytes are notably larger than
+    // every other entry above; avgKB below is derived from live sample queries against a
+    // known-dense forested test area (not device-measured — no live device available in this
+    // sandbox, same limitation noted for other layers' avgKB history), and real per-tile size
+    // will vary a lot by feature density, same caveat as DEM's own terrain-dependent variance.
+    // KNOWN GAP, flagged rather than silently glossed over: unlike every entry above (whose
+    // live-browse tile URL is byte-identical to its offline-download tile URL — same {z}/{x}/{y}
+    // scheme both ways), these 3 fetch an ARBITRARY live-viewport bbox online (see
+    // loadWildfireHistoryForViewport/loadTimberLayerForViewport) but a FIXED tile-grid bbox when
+    // downloaded (tileLatLngBbox, via this bboxUrlBuilder) — two different URL shapes that
+    // essentially never match, so an offline-downloaded area's cached bytes are NOT actually
+    // read back by the live online view while genuinely offline (Cache Storage keys by exact
+    // URL). This still satisfies the actual ask driving this table's existence — "download this
+    // area" performs a real network fetch and contributes a real, non-zero byte count to the
+    // size estimate, unlike a client-only derivative such as Slope Angle — but does not yet
+    // deliver the deeper "browse this data while offline" promise DEM/snowdepth/NLCD/publicland
+    // genuinely have. This is why these 3 toggles are also deliberately absent from
+    // OVERLAY_OFFLINE_TOGGLE_SOURCE (see that table's own comment) rather than showing a
+    // "should work offline" hint that wouldn't actually hold.
+    // Timber Harvest/Thinning's offline copy is additionally narrower than the online view in a
+    // second way: it only covers the "2021 - Current" decade sub-layer (layer id 11/9 — see
+    // TIMBER_HARVEST_LAYER_IDS/TIMBER_THINNING_LAYER_IDS' own comment for why 2 ids are queried
+    // live) — the 1-URL-per-tile-per-source download model can't merge 2 separate sub-layer
+    // endpoints into one downloadable entry without either doubling tile requests for every
+    // other layer too or adding 2 more confusing checklist rows the spec didn't ask for.
+    wildfire:       { label:'Wildfire history', bboxUrlBuilder: wildfireHistoryTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:180 },
+    timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:120 },
+    timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:1, maxNativeZoom:13, avgKB:120 }
   };
 
   // Which underlying source(s) each of the 5 user-facing base layers actually needs.
@@ -13612,6 +14111,44 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
   function nlcdTileUrl(z, x, y){
     return NLCD_TILE_URL.replace('{bbox-epsg-3857}', webMercatorTileBbox(z, x, y));
+  }
+
+  // Plain lat/lng (EPSG:4326) tile bounds — standard XYZ tile math, the inverse of
+  // lonToTileX/latToTileY above. Needed for Disturbance History's ArcGIS envelope queries,
+  // which (unlike snowdepth/nlcd's Web Mercator WMS bbox) take a lat/lng envelope directly.
+  function tileLatLngBbox(z, x, y){
+    var n = Math.pow(2, z);
+    var west = x / n * 360 - 180;
+    var east = (x + 1) / n * 360 - 180;
+    function tile2lat(yt){
+      var rad = Math.atan(Math.sinh(Math.PI * (1 - 2 * yt / n)));
+      return rad * 180 / Math.PI;
+    }
+    var north = tile2lat(y), south = tile2lat(y + 1);
+    return [west, south, east, north];
+  }
+  function timberLookbackCutoffYear(){ return new Date().getFullYear() - TIMBER_LOOKBACK_YEARS; }
+  function wildfireHistoryTileUrl(z, x, y){
+    var b = tileLatLngBbox(z, x, y);
+    return WILDFIRE_HISTORY_URL + '?where=1%3D1&geometry=' + encodeURIComponent(b.join(',')) +
+      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=INCIDENT,FIRE_YEAR_INT,GIS_ACRES&f=geojson';
+  }
+  function timberHarvestTileUrl(z, x, y){
+    var b = tileLatLngBbox(z, x, y);
+    var where = "fy_completed>='" + timberLookbackCutoffYear() + "'";
+    return TIMBER_HARVEST_URL + '/11/query?where=' + encodeURIComponent(where) +
+      '&geometry=' + encodeURIComponent(b.join(',')) +
+      '&geometryType=esriGeometryEnvelope&inSR=4269&outSR=4326&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=fy_completed,gis_acres,activity_name&f=geojson';
+  }
+  function timberThinningTileUrl(z, x, y){
+    var b = tileLatLngBbox(z, x, y);
+    var where = "fy_completed>='" + timberLookbackCutoffYear() + "'";
+    return TIMBER_THINNING_URL + '/9/query?where=' + encodeURIComponent(where) +
+      '&geometry=' + encodeURIComponent(b.join(',')) +
+      '&geometryType=esriGeometryEnvelope&inSR=4269&outSR=4326&spatialRel=esriSpatialRelIntersects' +
+      '&outFields=fy_completed,gis_acres,activity_name&f=geojson';
   }
 
   function tileUrlForLayer(layerId, z, x, y){
@@ -13873,7 +14410,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function renderOfflineOverlayChecks(){
     var wrap = document.getElementById('offline-overlay-checks');
     wrap.innerHTML = '';
-    ['dem', 'snowdepth', 'nlcd', 'publicland'].forEach(function(id){
+    ['dem', 'snowdepth', 'nlcd', 'publicland', 'wildfire', 'timberharvest', 'timberthinning'].forEach(function(id){
       var def = DOWNLOAD_LAYERS[id];
       var label = document.createElement('label');
       label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
@@ -13989,6 +14526,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // real toggles, so they're mapped to the SAME 'dem' download-layer id — whether they'll
   // actually render offline depends on whether DEM tiles for this viewport were downloaded, not
   // on any download of their own (neither has, or needs, its own DOWNLOAD_LAYERS entry).
+  // Disturbance History's 3 toggles are deliberately NOT in this table (Session 42) — unlike
+  // every layer below, whose live-browse tile URL is byte-identical to its offline-download
+  // tile URL (same {z}/{x}/{y} scheme both ways, so "was this exact tile downloaded" is a
+  // meaningful, accurate question), Wildfires/Timber Harvest/Timber Thinning fetch an arbitrary
+  // live-viewport bbox online but a fixed tile-grid bbox when downloaded — two different URLs
+  // that basically never match. Adding them here would gray out (or fail to gray out) the
+  // toggle based on a coverage check that doesn't actually predict whether the live query will
+  // work while offline, which is worse than no hint at all. See DOWNLOAD_LAYERS' own comment on
+  // the 'wildfire'/'timberharvest'/'timberthinning' entries for the full gap.
   var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
   function areaBoundsContainViewport(area, viewportBounds){
     return area.boundsSW[0] <= viewportBounds.getSouth() && area.boundsNE[0] >= viewportBounds.getNorth() &&
@@ -16006,6 +16552,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             // it must never be trusted from a persisted value, always forced false at boot.
             if (state.settings.aspectOpacity === undefined) state.settings.aspectOpacity = 0.6;
             // aspectOn has NO fixup line either, same exception, same reason — see setAspectOn.
+            if (state.settings.wildfireHistoryOn === undefined) state.settings.wildfireHistoryOn = false;
+            if (state.settings.wildfireHistoryOpacity === undefined) state.settings.wildfireHistoryOpacity = 0.55;
+            if (state.settings.timberHarvestOn === undefined) state.settings.timberHarvestOn = false;
+            if (state.settings.timberHarvestOpacity === undefined) state.settings.timberHarvestOpacity = 0.7;
+            if (state.settings.timberThinningOn === undefined) state.settings.timberThinningOn = false;
+            if (state.settings.timberThinningOpacity === undefined) state.settings.timberThinningOpacity = 0.7;
             // GMU boundaries migrated from two independent per-state checkboxes to one
             // single-select state — only run once, when the new fields have never been set.
             // Old data could technically have both gmuAzOn/gmuOrOn true at once; Arizona wins
@@ -16130,7 +16682,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
-    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle'],
+    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['habitats-quick-toggle', 'migrations-quick-toggle']
   };
@@ -16513,6 +17065,33 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('fireperimeters-fill')) map.setPaintProperty('fireperimeters-fill', 'fill-opacity', state.settings.fireperimetersOpacity);
       scheduleSave();
     });
+    document.getElementById('wildfire-toggle').addEventListener('change', function(){
+      setWildfireHistoryOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('wildfire-opacity').addEventListener('input', function(){
+      state.settings.wildfireHistoryOpacity = this.value / 100;
+      if (map.getLayer('wildfirehistory-fill')) map.setPaintProperty('wildfirehistory-fill', 'fill-opacity', state.settings.wildfireHistoryOpacity);
+      scheduleSave();
+    });
+    document.getElementById('timberharvest-toggle').addEventListener('change', function(){
+      setTimberHarvestOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('timberharvest-opacity').addEventListener('input', function(){
+      state.settings.timberHarvestOpacity = this.value / 100;
+      if (map.getLayer('timberharvest-fill')) map.setPaintProperty('timberharvest-fill', 'fill-opacity', state.settings.timberHarvestOpacity);
+      scheduleSave();
+    });
+    document.getElementById('timberthinning-toggle').addEventListener('change', function(){
+      setTimberThinningOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('timberthinning-opacity').addEventListener('input', function(){
+      state.settings.timberThinningOpacity = this.value / 100;
+      if (map.getLayer('timberthinning-fill')) map.setPaintProperty('timberthinning-fill', 'fill-opacity', state.settings.timberThinningOpacity);
+      scheduleSave();
+    });
 
     // ── GMU boundaries — single on/off toggle + a state picker popout (gmu-state-panel),
     // same pattern as the Habitats/Migrations quick-toggle + wildlife-panel below.
@@ -16607,6 +17186,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
     document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
     document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
+    document.getElementById('wildfire-toggle').checked = !!state.settings.wildfireHistoryOn;
+    document.getElementById('wildfire-opacity').value = Math.round((state.settings.wildfireHistoryOpacity != null ? state.settings.wildfireHistoryOpacity : 0.55) * 100);
+    document.getElementById('wildfire-opacity-row').classList.toggle('show', !!state.settings.wildfireHistoryOn);
+    document.getElementById('timberharvest-toggle').checked = !!state.settings.timberHarvestOn;
+    document.getElementById('timberharvest-opacity').value = Math.round((state.settings.timberHarvestOpacity != null ? state.settings.timberHarvestOpacity : 0.7) * 100);
+    document.getElementById('timberharvest-opacity-row').classList.toggle('show', !!state.settings.timberHarvestOn);
+    document.getElementById('timberthinning-toggle').checked = !!state.settings.timberThinningOn;
+    document.getElementById('timberthinning-opacity').value = Math.round((state.settings.timberThinningOpacity != null ? state.settings.timberThinningOpacity : 0.7) * 100);
+    document.getElementById('timberthinning-opacity-row').classList.toggle('show', !!state.settings.timberThinningOn);
     updateGmuQuickToggleUI();
 
     // ── Wildlife Layers: Habitats + Migrations, two fully independent top-level categories
