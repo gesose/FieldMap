@@ -176,6 +176,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   opens that item's existing, completely unmodified detail view, with a "← Back to list" pill shown only when
   reached that way. A genuine single-feature tap is completely unaffected — see Architecture notes' "Tap-
   stack" entry for the full design.
+- Draw Route/Buffer's "Snap to trail" now has an offline fallback (Session 48) — when the real path-traced
+  ORS snap can't run or fails, each dropped waypoint independently snaps to the nearest trail/road line from
+  already-downloaded vector tile data (pure nearest-line geometry, not real routing between points) instead
+  of just failing. The mode-selector (car/walk/hike) overflow bug reported after an earlier fix attempt was
+  also properly fixed this time — it now lives on its own row, unaffected by how wide the stats text grows.
+  See Architecture notes' "Draw Route/Buffer mode-selector overflow" and "Offline point-snap for Draw Route/
+  Buffer" entries for full detail, including this session's real device-verification gap: real trail/road
+  snapping against actual Mapbox road data couldn't be exercised in this sandbox (Mapbox vector-tile access
+  is blocked here, same as every prior session touching road/terrain data) — the underlying mechanism was
+  proven correct against real, non-Mapbox line data instead, but confirming actual road/trail snap accuracy
+  still needs a real device.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2317,6 +2328,108 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     source but queries at their true screen location returned zero matches). Resolved by opening a fresh tab
     rather than trying to repair the corrupted one — confirmed the fresh tab's `window.innerWidth` matched its
     real window size before relying on any further pixel-coordinate math.
+- Draw Route/Buffer mode-selector overflow, real fix (Session 48) — the "Route via:" car/walk/hike profile
+  selector used to live inline in the SAME `white-space:nowrap` line as `#draw-bar-text` (point count/
+  distance/elevation gain-loss). That text is short at 0 points ("0 points") but grows long once a route has
+  several points and elevation data populates ("6 points · 2.34 mi · ▲1,240ft ▼890ft") — nowrap forced the
+  whole line, icons included, to keep growing rather than wrap, so on mobile's `max-width:340px` bar the
+  icons got pushed past the box's right edge and off-screen, unreachable. This is exactly why an earlier fix
+  attempt (not itself documented here — reported by Geoff as "only worked when the bar was near-empty")
+  passed a quick check at 0 points and then broke in real use once a route was actually being drawn. Fixed
+  by giving the mode selector its own dedicated row (`#draw-bar-mode-row`, a sibling block-level div below
+  `#draw-bar-stats`, not sharing a line with it) and letting the stats text wrap normally
+  (`white-space:normal;overflow-wrap:break-word`) instead of forcing nowrap — the mode selector's own row is
+  never affected by how long the stats line grows, since it's a completely separate box. Buffer needed no
+  separate fix — it reuses Draw Route's own `#draw-bar` directly (see the "Range Ring and Buffer" entry's own
+  "Buffer specifics" bullet), so this fix covers both automatically. Verified live at the actual reported bug
+  scenario, not just at 0 points: added 6 real points to a drawn route (both on a normal desktop viewport and
+  via a real 390px-wide `<iframe>` for genuine mobile `@media` matching, the established technique from
+  Sessions 28-30) and set the stats text to a realistic long populated string (`6 points · 2.34 mi ·
+  ▲1,240ft ▼890ft` — DEM elevation data isn't reachable in this sandbox, same Mapbox-terrain-rgb block as
+  every prior session touching DEM, so this was set directly rather than waited on). Confirmed via
+  `getBoundingClientRect()` on every profile button that all 3 stayed fully within the bar's own bounds at
+  both breakpoints — mobile: bar 340px wide (matches the existing mobile `max-width` rule), last button
+  ending at x=194.9 against a bar right-edge of x=365.2, comfortably inside; desktop: bar 282.9px wide (within
+  the new `max-width:320px`), last button similarly well clear of the right edge. Screenshots at both
+  breakpoints confirm the mode selector renders as its own visible row beneath the stats text, never clipped
+  or pushed off-screen.
+- Offline point-snap for Draw Route/Buffer (Session 48) — "Snap to trail" previously had exactly one code
+  path: a live ORS (openrouteservice) directions request that traces a real path between the drawn points
+  along roads/trails, failing outright (a plain error toast) if offline or if the request otherwise failed.
+  `snapDrawnRouteToTrail()` now has a fallback: if `!navigator.onLine` it skips the doomed network round-trip
+  entirely and calls the new `snapDrawnRouteOffline()` directly; if the ORS fetch is attempted and fails for
+  ANY reason (offline, ORS unreachable, no route found), the existing `.catch()` calls the same fallback
+  instead of just showing an error. This is deliberately much simpler than the online path, per explicit
+  instruction: each dropped waypoint is independently moved to the nearest point on the nearest trail/road
+  LINE feature MapLibre currently has rendered from already-downloaded vector tile data — pure nearest-line
+  geometry, NOT real path-tracing/routing between points (that's a separate, larger "offline routing" project,
+  explicitly out of scope here). A point with nothing within `OFFLINE_SNAP_RADIUS_FT` (150ft) is left exactly
+  where it was rather than failing the whole action, and the closing toast reports how many of the total
+  points actually found something to snap to ("Snapped 3 of 6 points (offline) — 3 had no nearby trail/road
+  data"), a full success toast if every point snapped, or a "no data nearby" toast if none did — this is what
+  surfaces which points did and didn't snap, per spec.
+  - **Mechanism**: `TRAIL_SNAP_LAYERS` is a fixed list of ~35 real line-carrying layer ids from the vector
+    basemap style (topo/topo-dark/aerial+topo all share the same ids, confirmed via direct JSON inspection of
+    all 3 style files before writing any code) — every plain road/path/bridge/tunnel centerline layer
+    (`road-primary`, `road-path-trail`, `bridge-street`, `tunnel-pedestrian`, etc.), deliberately excluding
+    the "-case"/"-bg"/"-low"/"-2-case" paint-only variants (identical underlying geometry to their plain
+    counterpart — including them would just double every candidate) and rail/aerialway/ferry (not a hiking/
+    driving trail or road in the sense this feature means). Filtered against `map.getLayer()` at call time, so
+    a raster-only base layer (plain Aerial, USGS Topo — confirmed via `MAPBOX_STYLES`/`LOCAL_STYLE_FILES` to
+    have zero of these layers) simply yields an empty filtered list and every point is correctly left
+    unsnapped, no special-casing needed.
+    For each point: `map.project()` to pixel space, compute a search-radius bounding box (150ft converted to
+    CSS pixels at the point's OWN latitude and the map's CURRENT zoom via the existing `metersPerPixelAtZoom`
+    helper — a fixed pixel radius would balloon into miles of real distance at a low zoom and shrink to
+    nothing at a high one, so the radius is always a real 150ft regardless of zoom), `map.queryRenderedFeatures`
+    that box against the filtered layer list, then for every candidate LineString/MultiLineString segment
+    compute the nearest point via `nearestPointOnSegmentPx` (a pixel-space sibling of the pre-existing
+    `distToSegmentSquared` used elsewhere for vertex-edit hit-testing — same t-clamp projection math, but
+    returns the winning point itself, not just its squared distance, since the caller needs to `map.unproject()`
+    it back to lng/lat). The globally nearest point across all candidate segments within the radius wins; no
+    candidates within radius returns null.
+  - **Marker sync, no parallel "snapped" array**: unlike the online ORS path (which stores a separate
+    `snappedPoints` array — the traced route geometry can have far more vertices than the original points, so
+    a parallel array makes sense there), the offline fallback has the SAME point count in and out (one
+    snapped point per input point, no path tracing), so `snapDrawnRouteOffline()` just reassigns `drawPoints`
+    in place and calls `drawMarkers[i].setLngLat(...)` to move each real marker to match — `snappedPoints`
+    stays null, and `draw-finish-btn`'s existing `(snappedPoints || drawPoints)` fallback picks up the
+    offline-snapped result for free, no changes needed there.
+  - **Verification**: standalone Node test (`test_offline_snap_math.js`, 10/10 assertions) confirmed
+    `nearestPointOnSegmentPx`'s pure math against known synthetic inputs before touching a browser —
+    perpendicular projection onto a segment midpoint, clamping to an endpoint when the nearest point falls
+    outside the segment, a diagonal segment, a degenerate zero-length segment (no NaN/Infinity), picking the
+    nearer of two candidate segments, and the real-feet-to-pixels radius conversion shrinking correctly at a
+    lower zoom for the same real-world distance. Live verification hit a real constraint: this sandbox's
+    Mapbox vector-tile access is blocked (confirmed in every prior session touching road/terrain data), so the
+    real `TRAIL_SNAP_LAYERS` road layers never have real rendered data to snap to here — worked around with a
+    small debug hook (`window.FieldMapDebug.nearestTrailPointOffline(lat, lng, layerIdsOverride)`, mirroring
+    the established `window.FieldMapDebug` pattern from Sessions 32-34) whose optional layer-list override
+    let this session point the EXACT SAME real mechanism at Hydrography flowline data instead — a different,
+    already-reachable USGS-sourced line layer, proving the query/project/nearest-segment/unproject pipeline
+    itself (which is completely layer-agnostic) against genuinely real MapLibre-rendered line geometry rather
+    than synthetic data. Confirmed live via the already-connected Chrome browser extension: a point offset 5px
+    from a real hydro flowline vertex (near the Verde River, AZ) snapped to a point measured at 0.483px
+    perpendicular distance from the real line geometry — essentially exact; a point offset further than the
+    150ft radius correctly returned null; a deliberately far-away point (no line within miles) also correctly
+    returned null. Then, using the REAL production `TRAIL_SNAP_LAYERS` (not the debug override) against a
+    real drawn 2-3 point route: confirmed clicking "Snap to trail" while `navigator.onLine` was forced false
+    never attempted the ORS fetch at all (monkey-patched `window.fetch` confirmed zero calls to
+    `openrouteservice`) and correctly showed "Couldn't snap — no downloaded trail/road data near these
+    points" with all points left unchanged (expected here, since no real Mapbox road data can load in this
+    sandbox to snap to); separately, with `navigator.onLine` forced true but the ORS fetch itself made to
+    reject, confirmed the `.catch()` fallback fired identically — proving both trigger paths (upfront offline
+    check, and catch-all on any live failure) correctly reach the same fallback. **One real sandbox gotcha
+    hit and worked around this session, not an app bug**: this environment's browser tab rendering pipeline
+    stalled hard on several attempts (WebGL canvas staying solid black, `queryRenderedFeatures` returning 0
+    despite a populated GeoJSON source, `isStyleLoaded()` never flipping true) in a way that even the
+    established "force-foreground via screenshot" fix (documented in Sessions 27-28 for `requestAnimationFrame`
+    throttling) didn't reliably clear — worse than earlier in this same session. Resolved by opening a
+    completely fresh, minimally-loaded tab rather than continuing to fight an already-degraded one; JS/data-
+    level app state (drawPoints, layer/source existence, click handling) was confirmed fully functional
+    throughout even while the visual paint was stuck, via `getStyle().layers.length` and real interaction
+    tests, distinguishing this from an actual functional regression. `node --check` confirmed clean syntax on
+    all 4 extracted inline `<script>` blocks and service-worker.js.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3365,3 +3478,45 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   info panel via the unchanged delegated handler (a real show→hide→show round-trip, not just a DOM presence
   check). `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
   2.44.0 → 2.45.0 (minor — new feature, tap-stack), SHELL_CACHE bumped v153 → v154.
+- Session 48: Two unrelated fixes — see Architecture notes' "Draw Route/Buffer mode-selector overflow" and
+  "Offline point-snap for Draw Route/Buffer" entries for full detail on each.
+  Fixed the mode-selector overflow bug properly this time: an earlier fix attempt had only been checked at 0
+  points (empty bar), and broke in real use once a route actually had several points and elevation stats
+  populated the stats text wide enough to push the car/walk/hike icons off-screen — root cause was the icons
+  sharing the SAME `white-space:nowrap` line as the (unboundedly-growing) stats text. Fixed by giving the
+  mode selector its own dedicated row, completely unaffected by how long the stats line grows, and letting
+  the stats text wrap normally instead of forcing nowrap. Verified this time at the actual reported bug
+  scenario, not just at 0 points — added 6 real points with a realistic long stats string on both a normal
+  desktop viewport and a real 390px-wide `<iframe>` (genuine mobile `@media` matching), confirming via
+  `getBoundingClientRect()` that all 3 profile buttons stayed fully within the bar's bounds at both
+  breakpoints, with screenshots confirming the mode selector renders as its own visible row, never clipped.
+  Built offline point-snap for Draw Route/Buffer's "Snap to trail": when the real path-traced ORS snap can't
+  run (offline) or fails for any other reason, each dropped waypoint is now independently moved to the
+  nearest point on the nearest trail/road line MapLibre currently has rendered from already-downloaded vector
+  tile data — pure nearest-line geometry, deliberately NOT real path-tracing/routing between points (a
+  separate, larger, already-scoped-elsewhere project). A point with nothing nearby is left unsnapped rather
+  than failing the whole action, and the closing toast reports how many of the total points found something
+  to snap to. Verified the pure geometric math via a standalone Node test (10/10 assertions) before touching
+  a browser, then verified the live query/project/nearest-segment/unproject mechanism end-to-end against real
+  rendered line data in this sandbox despite Mapbox's own vector-tile access being blocked here (same
+  standing limitation as every prior session touching road/terrain data) — added a small
+  `window.FieldMapDebug.nearestTrailPointOffline` hook (mirroring the established Session 32-34 debug-hook
+  pattern) whose optional layer-list override let this session point the exact same real mechanism at
+  Hydrography flowline data instead, a different but genuinely reachable real line layer: a point offset 5px
+  from a real flowline vertex snapped to within 0.483px of the true line geometry, a point beyond the 150ft
+  search radius correctly returned null, and a deliberately far-away point also correctly returned null.
+  Separately confirmed, using the real production `TRAIL_SNAP_LAYERS` against a real drawn route, that both
+  fallback triggers work — forcing `navigator.onLine` false skips the ORS fetch entirely and goes straight to
+  the offline fallback (confirmed zero ORS network calls via a monkey-patched `fetch`), and forcing the ORS
+  fetch itself to reject (while "online") falls back identically via the existing `.catch()` — both correctly
+  showing "Couldn't snap — no downloaded trail/road data near these points" in this sandbox, since no real
+  Mapbox road data can load here to snap to; a real device with working Mapbox access is what would exercise
+  the actual "points do snap" success path against real road/trail data end-to-end. Hit and worked around a
+  real sandbox rendering-pipeline stall along the way (WebGL canvas stuck solid black, `queryRenderedFeatures`
+  returning 0 despite populated source data) worse than the `requestAnimationFrame`-throttling gotcha
+  documented in Sessions 27-28 — resolved by moving to a fresh, minimally-loaded tab rather than continuing to
+  fight an already-degraded one; confirmed via `getStyle().layers.length` and real click-driven interaction
+  that the app's own JS/data layer stayed fully functional throughout, distinguishing this from an actual
+  functional regression. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+  service-worker.js. APP_VERSION bumped 2.45.0 → 2.46.0 (minor — new feature, offline point-snap), SHELL_CACHE
+  bumped v154 → v155.

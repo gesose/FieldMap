@@ -913,10 +913,23 @@
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
     padding:8px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.4);
     font-family:var(--font-mono);font-size:13px;
-    min-width:260px;
+    min-width:260px;max-width:320px;
   }
   #draw-bar.hidden{display:none;}
-  #draw-bar-stats{white-space:nowrap;color:var(--text);margin-bottom:6px;}
+  /* Stats text (point count/distance/elev gain-loss) grows unpredictably long once a route has
+     several points — it used to be white-space:nowrap sharing one line with the "Route via:"
+     mode selector, so once the text got wide enough it pushed the mode-selector icons off the
+     right edge of the bar entirely (invisible/unreachable on mobile, only ever caught testing at
+     0 points, when the text is short enough not to matter). Now it just wraps like normal text
+     — the mode selector lives in its own separate row below (#draw-bar-mode-row) so its
+     position is never affected by how long the stats line grows. */
+  #draw-bar-stats{white-space:normal;overflow-wrap:break-word;color:var(--text);margin-bottom:6px;}
+  #draw-bar-mode-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:nowrap;}
+  .draw-bar-mode-label{color:var(--text-muted);font-size:11px;flex-shrink:0;}
+  .route-profile-group{
+    display:inline-flex;flex-shrink:0;background:var(--bg);border:1px solid var(--border);
+    border-radius:6px;overflow:hidden;
+  }
   #draw-bar-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;}
   #draw-bar-actions .link-btn{white-space:nowrap;flex-shrink:0;}
   #draw-finish-btn:disabled{opacity:0.4;cursor:default;}
@@ -2505,8 +2518,10 @@
 <div id="draw-bar" class="hidden">
   <div id="draw-bar-stats">
     <span id="draw-bar-text">0 points</span>
-    <span style="color:var(--text-muted);font-size:11px;margin-left:8px;">Route via:</span>
-    <div style="display:inline-flex;margin-left:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;overflow:hidden;vertical-align:middle;">
+  </div>
+  <div id="draw-bar-mode-row">
+    <span class="draw-bar-mode-label">Route via:</span>
+    <div class="route-profile-group">
       <button class="route-profile-btn active" data-profile="driving-car" title="Drive (main roads)">🚗</button>
       <button class="route-profile-btn" data-profile="foot-walking" title="Walk (roads + trails)">🚶</button>
       <button class="route-profile-btn" data-profile="foot-hiking" title="Hike (trails only)">🏔️</button>
@@ -3084,7 +3099,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.45.0';
+  var APP_VERSION = '2.46.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -11596,6 +11611,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function snapDrawnRouteToTrail(){
     if (drawPoints.length < 2){ showToast('Add at least two points first'); return; }
+    // Genuinely offline — skip the doomed network round-trip and go straight to the offline
+    // per-point fallback below, rather than waiting out a request that can't succeed.
+    if (!navigator.onLine){ snapDrawnRouteOffline(); return; }
     showToast('Snapping to trail…');
     var coords = drawPoints.map(function(p){ return [p.lng, p.lat]; });
     fetch('https://api.openrouteservice.org/v2/directions/' + drawRouteProfile + '/geojson', {
@@ -11613,8 +11631,112 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       updateDrawBar();
       showToast('Snapped to trail');
     }).catch(function(){
-      showToast("Couldn't snap to trail — check your connection or that the points are near a mapped trail/road", 5000);
+      // Live path-traced snap failed for any reason (offline, ORS unreachable, no route found,
+      // etc.) — rather than just erroring out, fall back to the offline per-point nearest-line
+      // snap below. That fallback shows its own success/partial/failure toast, so nothing
+      // further is shown here.
+      snapDrawnRouteOffline();
     });
+  }
+
+  // ── Offline point-snap fallback for Draw Route/Buffer's "Snap to trail" ──
+  // Used whenever the real path-traced ORS snap above can't run (no network) or fails for any
+  // other reason. Deliberately much simpler than the online path: each dropped waypoint is
+  // independently moved to the nearest point on the nearest trail/road LINE feature MapLibre
+  // currently has rendered from already-downloaded vector tile data — pure nearest-line
+  // geometry, NOT real path-tracing/routing between points (that's a separate, larger "offline
+  // routing" project, explicitly out of scope here). A point with no trail/road data within
+  // OFFLINE_SNAP_RADIUS_FT of it is left exactly where it was, rather than failing the whole
+  // action — and the closing toast reports how many of the total actually found something to
+  // snap to, so it's clear which points did and didn't.
+  var OFFLINE_SNAP_RADIUS_FT = 150;
+
+  // Real line-carrying layers from the vector basemap (topo/topo-dark/aerial+topo) that
+  // represent an actual traversable trail/road centerline — deliberately excludes the
+  // "-case"/"-bg"/"-low"/"-2-case" paint-only variants (identical underlying geometry to their
+  // plain counterpart, would just double every candidate) and rail/aerialway/ferry (not a
+  // hiking/driving trail or road in the sense this feature means). Filtered against
+  // map.getLayer() at call time — a raster-only base layer (plain Aerial, USGS Topo) has none
+  // of these, so the filtered list is simply empty and every point is correctly left unsnapped.
+  var TRAIL_SNAP_LAYERS = [
+    'road-motorway-trunk', 'road-primary', 'road-secondary-tertiary', 'road-street', 'road-minor',
+    'road-major-link', 'road-minor-link',
+    'road-path-trail', 'road-path-cycleway-piste', 'road-path', 'road-steps', 'road-pedestrian',
+    'bridge-motorway-trunk', 'bridge-motorway-trunk-2', 'bridge-primary', 'bridge-secondary-tertiary',
+    'bridge-street', 'bridge-minor', 'bridge-major-link', 'bridge-major-link-2', 'bridge-minor-link',
+    'bridge-path-trail', 'bridge-path-cycleway-piste', 'bridge-path', 'bridge-steps', 'bridge-pedestrian',
+    'tunnel-motorway-trunk', 'tunnel-primary', 'tunnel-secondary-tertiary', 'tunnel-street', 'tunnel-minor',
+    'tunnel-major-link', 'tunnel-minor-link',
+    'tunnel-path-trail', 'tunnel-path-cycleway-piste', 'tunnel-path', 'tunnel-steps', 'tunnel-pedestrian'
+  ];
+
+  // Nearest point ON a pixel-space segment [a,b] to point p — a sibling of distToSegmentSquared
+  // above (shares its t-clamp projection math) that also returns the winning point itself, not
+  // just its squared distance, since the caller needs to unproject it back to lng/lat.
+  function nearestPointOnSegmentPx(p, a, b){
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / ((dx*dx + dy*dy) || 1);
+    t = Math.max(0, Math.min(1, t));
+    var x = a.x + t*dx, y = a.y + t*dy;
+    return { x: x, y: y, distSq: (p.x-x)*(p.x-x) + (p.y-y)*(p.y-y) };
+  }
+
+  // Real-world search radius converted to CSS pixels at the point's own latitude/current zoom
+  // (rather than a fixed pixel radius) so "150 feet" means the same real distance whether
+  // zoomed way in or way out — a fixed pixel radius would silently balloon into miles at a low
+  // zoom and shrink to nothing at a high one.
+  function nearestTrailPointOffline(latlng, layerIdsOverride){
+    if (!map) return null;
+    var availableLayers = (layerIdsOverride || TRAIL_SNAP_LAYERS).filter(function(id){ return !!map.getLayer(id); });
+    if (!availableLayers.length) return null;
+    var center = map.project([latlng.lng, latlng.lat]);
+    var radiusPx = (OFFLINE_SNAP_RADIUS_FT * 0.3048) / metersPerPixelAtZoom(map.getZoom(), latlng.lat);
+    var bbox = [[center.x - radiusPx, center.y - radiusPx], [center.x + radiusPx, center.y + radiusPx]];
+    var features = map.queryRenderedFeatures(bbox, { layers: availableLayers });
+    if (!features.length) return null;
+    var best = null, bestDistSq = radiusPx * radiusPx;
+    features.forEach(function(f){
+      var geom = f.geometry;
+      if (!geom) return;
+      var lines = geom.type === 'LineString' ? [geom.coordinates]
+        : geom.type === 'MultiLineString' ? geom.coordinates : [];
+      lines.forEach(function(coords){
+        var pxPts = coords.map(function(c){ return map.project(c); });
+        for (var i = 1; i < pxPts.length; i++){
+          var res = nearestPointOnSegmentPx(center, pxPts[i-1], pxPts[i]);
+          if (res.distSq <= bestDistSq){ bestDistSq = res.distSq; best = res; }
+        }
+      });
+    });
+    if (!best) return null;
+    var ll = map.unproject([best.x, best.y]);
+    return { lat: ll.lat, lng: ll.lng };
+  }
+
+  // Runs the offline fallback over every current drawPoint independently and moves both the
+  // point data AND its marker in place — unlike the online path, there's no separate
+  // snappedPoints "traced route" geometry here (point count/identity never changes, so there's
+  // nothing for a parallel array to usefully represent); the drawn line and its editable
+  // vertex markers ARE the now-snapped result. draw-finish-btn's own `snappedPoints ||
+  // drawPoints` fallback picks this up for free.
+  function snapDrawnRouteOffline(){
+    var total = drawPoints.length, snappedCount = 0;
+    drawPoints = drawPoints.map(function(pt){
+      var nearest = nearestTrailPointOffline(pt);
+      if (nearest){ snappedCount++; return nearest; }
+      return pt;
+    });
+    drawMarkers.forEach(function(m, i){ m.setLngLat([drawPoints[i].lng, drawPoints[i].lat]); });
+    snappedPoints = null;
+    redrawDrawLine();
+    updateDrawBar();
+    if (snappedCount === 0){
+      showToast("Couldn't snap — no downloaded trail/road data near these points", 5000);
+    } else if (snappedCount === total){
+      showToast('Snapped all ' + total + ' point' + (total===1?'':'s') + ' to nearby trail/road data (offline)', 4000);
+    } else {
+      showToast('Snapped ' + snappedCount + ' of ' + total + ' points (offline) — ' + (total - snappedCount) + " had no nearby trail/road data", 5000);
+    }
   }
   // Repopulates measure-preview-source from measurePoints — called after every measure tap
   // and once at the end of reinitializeLayers() (a style switch wipes the GeoJSON source/
@@ -14815,6 +14937,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var tileList = computeTileList(bounds, minZ, maxZ, layerIds || ['vectorbase']);
     return downloadTileList(tileList, function(){}, function(){ return false; });
   };
+  // Direct access to the offline point-snap fallback (Draw Route/Buffer's "Snap to trail" while
+  // offline) — nearestTrailPointOffline(lat, lng, layerIdsOverride) runs the exact real
+  // project→queryRenderedFeatures→nearest-segment→unproject logic. The optional layerIdsOverride
+  // lets a test point at a DIFFERENT already-rendered line layer as a stand-in for the real
+  // TRAIL_SNAP_LAYERS road/path layers — genuinely useful here since this sandbox's Mapbox
+  // vector-tile access is blocked (confirmed in every prior session touching road/terrain data),
+  // so the real road layers never have real data to snap to; the query/project/unproject
+  // mechanism itself is layer-agnostic, so proving it against any real rendered line layer
+  // proves it against the real ones too, once real tile data is actually loading on a real
+  // device. Also useful for a real-device tester sanity-checking snap distance/behavior directly.
+  window.FieldMapDebug.nearestTrailPointOffline = function(lat, lng, layerIdsOverride){
+    return nearestTrailPointOffline({ lat: lat, lng: lng }, layerIdsOverride);
+  };
+  window.FieldMapDebug.TRAIL_SNAP_LAYERS = TRAIL_SNAP_LAYERS;
   // captureRealDownloadTotal(startFn) — startFn is whatever actually triggers the download
   // (triggerTestDownload above for a repeatable test, or any other function returning a
   // promise/thenable that resolves once the download work is done). Clears the performance
