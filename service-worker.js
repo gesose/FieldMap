@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v155';
+var SHELL_CACHE = 'fieldmap-shell-v156';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it
@@ -144,6 +144,24 @@ function hostMatches(url, list){
   return false;
 }
 
+// Header index.html's fetchAndCacheTile() stamps onto every tile it caches as part of an
+// explicit "Download this area" — must be the exact same string as OFFLINE_DOWNLOAD_HEADER in
+// index.html (no shared-constant mechanism across a classic script and a service worker file).
+// Real-world incident this fixes: a downloaded offline area progressively went blank over a
+// multi-day trip. Root cause (see loadStyle's patchStyleForOfflineTileParity in index.html for
+// the other half of the fix): the plain stale-while-revalidate strategy below always attempts a
+// background re-fetch for EVERY tile request, cached or not, and unconditionally overwrites the
+// cache entry on any 200 response — with no distinction between "casually browsed, safe to
+// refresh" and "deliberately downloaded for offline use, must not be silently replaced." For
+// Mapbox's TileJSON-mediated sources specifically, a live re-fetch can legitimately return
+// DIFFERENT bytes for the conceptually-same tile request (a session-varying "sku" tracking
+// param baked into the resolved tile URL template), and even for non-Mapbox hosts, a flaky-
+// connectivity re-fetch has no guarantee of being as good as what's already cached. A tile
+// carrying this header is a deliberate, one-time download the user explicitly asked to have
+// available offline — it's never revalidated again, by design, regardless of how much later it's
+// viewed live or how many app sessions occur in between.
+var OFFLINE_DOWNLOAD_HEADER = 'X-FieldMap-Offline-Download';
+
 self.addEventListener('fetch', function(event){
   var req = event.request;
   if (req.method !== 'GET') return;
@@ -157,6 +175,15 @@ self.addEventListener('fetch', function(event){
     event.respondWith(
       caches.open(TILE_CACHE).then(function(cache){
         return cache.match(req).then(function(cached){
+          // Explicitly-downloaded tiles are never revalidated — see OFFLINE_DOWNLOAD_HEADER's
+          // own comment above for the full incident this prevents. No network request is even
+          // attempted here; the whole point is that a downloaded area must keep rendering
+          // exactly as downloaded, indefinitely, with zero risk of a background fetch silently
+          // replacing it (whether the replacement would even be worse is beside the point —
+          // the user already has the data they explicitly asked to keep offline).
+          if (cached && cached.headers.get(OFFLINE_DOWNLOAD_HEADER)){
+            return cached;
+          }
           var fetchPromise = fetch(req).then(function(networkResp){
             if (networkResp && networkResp.status === 200){
               cache.put(req, networkResp.clone());

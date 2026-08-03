@@ -187,6 +187,46 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   is blocked here, same as every prior session touching road/terrain data) — the underlying mechanism was
   proven correct against real, non-Mapbox line data instead, but confirming actual road/trail snap accuracy
   still needs a real device.
+- Fixed a real-world progressive offline-data-loss bug (Session 49) reported from a multi-day field trip: a
+  178MB offline download (Z9-Z15, USGS Topo/Topo/DEM/Public Lands) worked immediately after download in
+  airplane mode, then progressively went blank over the following days, worse with each app session. Root
+  cause, investigated (Session 49a, investigation-only) then fixed (Session 49b): the composite vector source
+  (backing Topo/Topo Dark/Aerial+Topo — streets+terrain tiles) and the `mapbox.satellite` raster source
+  (backing Aerial/Aerial+Topo) were both still left as `url:'mapbox://...'` → TileJSON descriptors by
+  `loadStyle()`'s own regex — the EXACT bug already found and fixed for the DEM/raster-dem source (see that
+  fix's own comment in `reinitializeLayers`, which explicitly documents Mapbox's real v4 TileJSON response
+  injecting a session-varying "sku" tracking param into the resolved tile URL template), just never applied
+  to these two. Every app boot (a fresh `maplibregl.Map` is constructed on every launch, nothing style-related
+  persists across reloads) re-resolves the composite/satellite TileJSON fresh; since that TileJSON URL is
+  itself served via the service worker's stale-while-revalidate strategy for `TILE_HOSTS`, ANY momentary
+  connectivity at boot silently overwrites the cached TileJSON with a NEW sku-tagged tile template — orphaning
+  every previously-cached tile (both offline-downloaded AND casually-browsed) under the old sku, with zero
+  visible warning. This uniquely explains "worked right after download" (no TileJSON re-fetch had happened
+  yet) and "worse each session" (each launch with any signal re-rolls the sku). Fixed with the same pattern
+  already proven for DEM: `patchStyleForOfflineTileParity()` (in `loadStyle()`, index.html) rewrites both
+  sources to a static `tiles:[...]` array using the exact same sku-less URL pattern
+  `DOWNLOAD_LAYERS.vectorbase`/`.satellite` already cache tiles under — verified byte-identical via a
+  standalone Node simulation of the full transform pipeline against the real style JSON files, not just
+  assumed. A second, independent layer of protection was added on top: tiles fetched by the offline
+  downloader (`fetchAndCacheTile`) are now stamped with a marker header (`X-FieldMap-Offline-Download`,
+  `OFFLINE_DOWNLOAD_HEADER` in both files — no shared-constant mechanism across a classic script and a
+  service worker) that the SW's stale-while-revalidate handler checks before ever attempting a background
+  re-fetch; a protected tile is served straight from cache with NO network request at all, permanently,
+  regardless of how many sessions or connectivity blips occur — this covers the general design gap (no
+  distinction between "casually browsed, safe to refresh" and "deliberately downloaded, must not be silently
+  replaced") independent of the specific sku mechanism, so it also protects against a flaky-connectivity
+  re-fetch simply returning a worse response for ANY tile host, not just Mapbox's. Also added `[BOOT]`
+  `console.time`/`console.timeEnd` instrumentation across every major boot stage (`loadState()`, the
+  synchronous portion of the boot chain up to the loading-overlay hide, `loadStyle()`'s fetch+parse, Map()
+  construction, first `style.load`, first `render`, first `idle`) to diagnose a separately-reported ~8s white
+  screen on every launch (online or offline) — instrumentation only, not yet run on a real device; see
+  Architecture notes' "Offline tile cache-key parity + protected downloads + boot timing" entry for full
+  detail on both fixes, what was verified from this sandbox (byte-identical URL construction for all 3 local
+  styles' composite source, `aerial-streets-style.json`'s satellite source, and the full protect/skip-fetch
+  logic against real `Headers`/`Response` Web API objects with a mocked Cache Storage container) and what
+  still needs a real device (the remote `aerial` Studio style's satellite source structure, the actual
+  incident scenario end-to-end, and the boot-timing numbers themselves — this sandbox's Mapbox v4 access is
+  blocked, same limitation as every prior session touching DEM/vectorbase).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2430,6 +2470,98 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     throughout even while the visual paint was stuck, via `getStyle().layers.length` and real interaction
     tests, distinguishing this from an actual functional regression. `node --check` confirmed clean syntax on
     all 4 extracted inline `<script>` blocks and service-worker.js.
+- Offline tile cache-key parity + protected downloads + boot timing (Session 49) — see the "Current state"
+  entry above for the incident this fixes and the root cause; this entry is the mechanism detail.
+  - **`patchStyleForOfflineTileParity(styleObj)`** (index.html, right above `loadStyle()`): runs at the end of
+    `loadStyle()`'s `.then(function(text){...})`, right after `JSON.parse(text)` and right before the result
+    is cached in `styleCache`/returned — so it applies uniformly to all 3 local pre-transformed style files
+    (topo/topo-dark/aerial-streets, whose `mapbox://` refs are already rewritten to `.json` TileJSON URLs by
+    `refresh-style.js` before this even runs) AND the one remote style (`aerial`, Mapbox Studio's
+    `satellite-v9`, whose raw `mapbox://` refs get the same rewrite live via `loadStyle()`'s own regex a few
+    lines earlier). It walks `styleObj.sources`, and for any source whose `url` (by this point always a real
+    `https://api.mapbox.com/v4/....json?...` string, never a raw `mapbox://` one) contains
+    `mapbox.mapbox-streets-v8` (the composite/vectorbase tileset id) or `mapbox.satellite`, replaces that
+    source's `{type, url}` TileJSON descriptor with `{type, tiles:[...], maxzoom, attribution}` — a static
+    tile-URL-template array using `DOWNLOAD_LAYERS.vectorbase.urlTemplate`/`.satellite.urlTemplate` directly
+    (not a re-typed copy of the same string), so if those constants are ever retuned again (as `avgKB` was in
+    Session 35), the live renderer and the offline downloader can never drift back out of sync with each
+    other. Matched by tileset-id substring in the resolved URL rather than by source object key name or which
+    style file it came from, specifically so it works identically for `aerial-streets-style.json`'s oddly-
+    named `"mapbox://mapbox.satellite"` source key and for whatever key name Mapbox's own `satellite-v9`
+    Studio style happens to use — confirmed via reading the actual style JSON that the key name genuinely does
+    vary between files, so matching on it would have been fragile. `maxzoom` is set from
+    `DOWNLOAD_LAYERS.vectorbase.maxNativeZoom`/`.satellite.maxNativeZoom` (16/19) so MapLibre over-zooms
+    (client-side upscale) past native resolution rather than requesting tiles beyond what the downloader's own
+    zoom range ever caches — the same pattern already used for USGS Topo/Public Land/DEM.
+  - **Accepted tradeoff, deliberately not left silent**: switching from a TileJSON descriptor to a static
+    `tiles` array means MapLibre never fetches Mapbox's TileJSON response for these two sources at all — which
+    is the whole point (no TileJSON fetch means no sku rotation), but it also means the `attribution` string
+    that response would have carried is gone. Explicit `attribution` strings (standard Mapbox-required
+    copyright text — `© Mapbox © OpenStreetMap` for the vector composite, `© Mapbox © Maxar` for satellite)
+    were added to each replacement source so the map's `attributionControl` doesn't silently lose Mapbox's
+    required attribution line. This exactly mirrors the DEM fix, which didn't need this same tradeoff handled
+    since a terrain/elevation-only source was never independently shown in the visible attribution corner to
+    begin with.
+  - **`OFFLINE_DOWNLOAD_HEADER`** (`'X-FieldMap-Offline-Download'`, declared identically — no shared-constant
+    mechanism exists across a classic script and a separate service worker file — in both `index.html`, right
+    above `fetchAndCacheTile`, and `service-worker.js`, right above the `fetch` listener): a second, independent
+    layer of protection on top of the cache-key-parity fix above, covering the general design gap it doesn't:
+    the plain stale-while-revalidate strategy for `TILE_HOSTS` has never distinguished "casually browsed, safe
+    to silently refresh in the background" from "deliberately downloaded for offline use, must never be
+    silently replaced" — ANY successful (`200`) background re-fetch for ANY tile host unconditionally
+    overwrote whatever was cached, sku rotation or not. `fetchAndCacheTile` (index.html) now reads the real
+    network response's bytes into a `Blob` (the response hasn't been consumed yet at that point) and
+    reconstructs an equivalent `Response` around them with one added header before calling `cache.put` — a
+    fetch() `Response`'s headers can't be mutated in place, so this rebuild is the only way to stamp it.
+    The service worker's `TILE_HOSTS` handler checks `cached.headers.get(OFFLINE_DOWNLOAD_HEADER)` BEFORE ever
+    constructing a `fetch(req)` call at all: if present, it returns `cached` immediately with **zero** network
+    request attempted — not a "validate before overwrite" check (rejected as the harder, less certain option;
+    there's no reliable generic way to define "degraded" across tile formats/hosts), but a permanent skip,
+    for the lifetime of that cache entry, regardless of how many further app sessions or connectivity blips
+    occur. Casually-browsed (unprotected) tiles are completely unaffected — same stale-while-revalidate
+    behavior as before, verified via a standalone simulation (below) showing a protected URL triggers zero
+    fetch calls while an unprotected URL still revalidates on every request, including repeated ones.
+  - **`[BOOT]` timing instrumentation** (index.html): `console.time`/`console.timeEnd` pairs, all prefixed
+    `[BOOT]` for easy console filtering, covering every stage identified during the Session 49a investigation
+    as a plausible contributor to the separately-reported ~8s white-screen-on-every-launch symptom:
+    `loadState()` (localStorage/window.storage read+parse — logs pin/track counts alongside the timing, so a
+    slow result can be correlated with how much data the account has accumulated), the synchronous portion of
+    the boot `.then()` chain from `createMap()`'s call up through the loading-overlay hide (bindUI, marker/
+    track/polygon/bearing rebuild, `renderPinList` — explicitly logged as NOT meaning the map is ready, since
+    `createMap()` itself returns before its own async style resolution completes), `loadStyle()`'s own
+    fetch+regex-transform+`JSON.parse` cost (labeled per style name), the gap from `loadStyle()` resolving to
+    the real `maplibregl.Map` object existing, `Map()` construction to the first `style.load` event, and
+    (guarded on the same `overlayDataRestoredOnInit` flag the existing overlay-restore code already uses, so a
+    later manual base-layer switch — which also fires `style.load` — doesn't try to end an already-consumed
+    timer label) first `style.load` to both the first `render` event (a cheap, standard "first paint" proxy —
+    explicitly logged as NOT proof real tiles are visible, since MapLibre fires `render` on essentially every
+    GL frame including background-only ones) and first `idle` (the more meaningful "everything the style/
+    sources currently need has finished loading" signal). Deliberately instrumentation-only per explicit
+    instruction — no fix attempted for the white-screen symptom itself this session, since the leading
+    candidates (a possible `EPQS_TIMEOUT_MS` red herring investigated and not confirmed on the critical boot
+    path, or something device/data-scale-dependent) couldn't be distinguished from static code review alone.
+  - **Verification, and what's still sandbox-blocked**: a standalone Node script simulated the FULL
+    `loadStyle()` transform pipeline (the same sprite/glyphs/url/line-join regexes, token substitution,
+    `JSON.parse`, then `patchStyleForOfflineTileParity`) against the real `topo-style.json`, `topo-dark-
+    style.json`, and `aerial-streets-style.json` files on disk, and confirmed the resulting composite source's
+    `tiles[0]` template, interpolated for a sample z/x/y, is byte-identical to `tileUrlForLayer('vectorbase',
+    z,x,y)`'s output for all 3 files, and confirmed the same for `aerial-streets-style.json`'s satellite source
+    against `tileUrlForLayer('satellite',...)` — not assumed correct from reading the code alone. The
+    protect/skip-fetch mechanism was verified with real `Headers`/`Response` Web API objects (Node 24 has both
+    as globals) against a minimal `Map`-backed mock of the Cache Storage container (the one piece genuinely
+    unavailable outside a browser/SW context): confirmed a downloaded-and-marked tile is served with zero
+    network fetch calls, while a separate unprotected URL still triggers a real fetch on every single request
+    including repeated ones — no regression to existing casual-browsing behavior. `node --check` confirmed
+    clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. **What could not be
+    verified from this sandbox, flagged rather than silently assumed**: the remote `aerial` style
+    (`satellite-v9`)'s actual live JSON structure — the fix's tileset-id-substring matching should apply to it
+    identically regardless of source-key naming (unlike the local files, this couldn't be confirmed against
+    the real fetched document, since this sandbox's Mapbox v4/Studio API access is blocked, the same standing
+    limitation documented in every prior session touching DEM/vectorbase); the actual field-trip incident
+    scenario end-to-end (download an area, get brief real connectivity, go back offline, confirm tiles still
+    render — the real-world reproduction this fix is meant to solve); and the `[BOOT]` timing numbers
+    themselves, which need a real device to mean anything. All three are flagged as the required follow-up
+    real-device test, not silently treated as already covered by the sandbox verification above.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3520,3 +3652,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   functional regression. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
   service-worker.js. APP_VERSION bumped 2.45.0 → 2.46.0 (minor — new feature, offline point-snap), SHELL_CACHE
   bumped v154 → v155.
+- Session 49: a real-world bug report from a multi-day field trip — a 178MB offline download progressively
+  went blank over several days, worse with each app session, while pins/tracks stayed intact — investigated
+  first (49a, investigation-only, no code changed) then fixed (49b) in the same overall session.
+  49a root-caused the exact mechanism via static code review, no live device or working Mapbox access
+  available in this sandbox (same standing limitation as every prior session touching DEM/vectorbase): the
+  service worker's `activate` cache whitelist, cache-name consistency across the whole git history, and the
+  offline downloader's own URL construction were all confirmed correct/stable — ruling out an LRU/off-by-one
+  eviction bug, a cache-name mismatch, or the service worker's own update lifecycle firing too often. The real
+  cause turned out to already be documented and half-fixed in this very file: a comment in
+  `reinitializeLayers`'s terrain block describes finding and fixing this identical mechanism for the DEM/
+  raster-dem source — Mapbox's real v4 TileJSON response injects a session-varying "sku" tracking param into
+  the tile URL template it hands back, meaning a TileJSON-mediated source's live tile requests can silently
+  stop matching whatever was cached under the offline downloader's own sku-less, hand-built URL pattern. That
+  fix was never applied to the composite (vectorbase) or `mapbox.satellite` sources — the actual visible
+  basemap tiles for Topo/Topo Dark/Aerial+Topo/Aerial, exactly what the field-trip download used. See
+  CLAUDE.md's own "Investigation Findings" writeup (delivered as the 49a report, not committed to this file
+  verbatim) for the full reasoning chain, including why USGS Topo/Public Land/DEM were independently ruled out
+  as vulnerable (all three use a static `tiles:[...]` array matching the downloader exactly, confirmed via
+  direct comparison) and why the white-screen symptom was flagged as a separate, less-certain issue rather
+  than folded into the same root cause.
+  49b applied the fix: `patchStyleForOfflineTileParity()` rewrites the composite/satellite sources to a
+  static `tiles:[...]` array (the same pattern already proven for DEM), a new `OFFLINE_DOWNLOAD_HEADER` marks
+  offline-downloaded tiles so the service worker's stale-while-revalidate handler skips background
+  revalidation for them entirely (a second, independent layer of protection covering the general "no
+  distinction between casually-browsed and deliberately-downloaded" design gap, not just the sku mechanism
+  specifically), and `[BOOT]` `console.time`/`console.timeEnd` instrumentation was added across every major
+  boot stage to diagnose the separately-reported ~8s white screen — instrumentation only, per explicit
+  instruction, no fix attempted for that symptom yet. See Architecture notes' "Offline tile cache-key parity +
+  protected downloads + boot timing" entry for full mechanism detail and verification. Verified via a
+  standalone Node simulation of the complete `loadStyle()` transform pipeline against the real style JSON
+  files (byte-identical resulting tile URLs to what the downloader caches, for all 3 local styles' composite
+  source and the satellite source), and a second simulation of the protect/skip-fetch logic against real
+  `Headers`/`Response` Web API objects with a mocked Cache Storage container (zero network fetch calls for a
+  protected tile, normal revalidation preserved for an unprotected one). Explicitly flagged as still needing a
+  real device: the remote `aerial` style's actual JSON structure (this sandbox can't fetch it), the real
+  field-trip incident scenario end-to-end, and the `[BOOT]` timing numbers themselves. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
+  2.46.0 → 2.47.0 (minor — significant reliability fix for a confirmed real-world data-loss bug), SHELL_CACHE
+  bumped v155 → v156.

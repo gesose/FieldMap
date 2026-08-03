@@ -3099,7 +3099,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.46.0';
+  var APP_VERSION = '2.47.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
@@ -5386,6 +5386,54 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   var styleCache = {};
 
+  // Fixes the exact same "sku" cache-key mismatch already found and fixed for the DEM/
+  // raster-dem source (see the terrain block in reinitializeLayers for the full mechanism and
+  // the real-device incident this class of bug caused — a multi-day field trip's offline-
+  // downloaded basemap progressively went blank as each session with any connectivity rotated
+  // Mapbox's TileJSON-embedded sku token, orphaning every previously-cached tile). A style's
+  // "composite" (streets+terrain, backing Topo/Topo Dark/Aerial+Topo) and "mapbox.satellite"
+  // (backing Aerial/Aerial+Topo) sources are both left by loadStyle()'s own mapbox:// → TileJSON
+  // regex as `{type, url:'.../....json?...'}` descriptors — MapLibre resolves the REAL tile URL
+  // template from that TileJSON response at runtime, which is NOT guaranteed to match (and per
+  // the DEM investigation, is confirmed NOT to match) DOWNLOAD_LAYERS' own sku-less, hand-built
+  // pattern the offline downloader caches tiles under. Rewriting these two sources to a static
+  // `tiles:[...]` array — the exact same DOWNLOAD_LAYERS.vectorbase/satellite urlTemplate the
+  // downloader uses — makes the live renderer request byte-identical URLs to what's cached,
+  // matching the DEM fix exactly, and applies regardless of which style file (local, pre-
+  // transformed by refresh-style.js, or the remote Aerial Studio style) the source came from,
+  // since this matches on the resolved tileset id in the URL rather than on source-key name or
+  // origin. Runs AFTER the mapbox:// regex + token substitution above, so `src.url` is already
+  // a real https://api.mapbox.com/... string to match against by the time this runs.
+  // Tradeoff, accepted deliberately: switching from a TileJSON descriptor to a static tiles
+  // array means MapLibre no longer fetches Mapbox's TileJSON for these sources at all, so the
+  // `attribution` string that response would have carried is gone — explicit `attribution`
+  // strings are set below (standard Mapbox-required text) so the map's attribution control
+  // doesn't silently lose Mapbox's copyright line.
+  function patchStyleForOfflineTileParity(styleObj){
+    var sources = (styleObj && styleObj.sources) || {};
+    Object.keys(sources).forEach(function(key){
+      var src = sources[key];
+      if (!src || !src.url || typeof src.url !== 'string') return;
+      if (src.type === 'vector' && src.url.indexOf('mapbox.mapbox-streets-v8') !== -1){
+        sources[key] = {
+          type: 'vector',
+          tiles: [DOWNLOAD_LAYERS.vectorbase.urlTemplate],
+          maxzoom: DOWNLOAD_LAYERS.vectorbase.maxNativeZoom,
+          attribution: '&copy; <a href="https://www.mapbox.com/about/maps/" target="_blank">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+        };
+      } else if (src.type === 'raster' && src.url.indexOf('mapbox.satellite') !== -1){
+        sources[key] = {
+          type: 'raster',
+          tiles: [DOWNLOAD_LAYERS.satellite.urlTemplate],
+          tileSize: src.tileSize || 256,
+          maxzoom: DOWNLOAD_LAYERS.satellite.maxNativeZoom,
+          attribution: '&copy; <a href="https://www.mapbox.com/about/maps/" target="_blank">Mapbox</a> &copy; <a href="https://www.maxar.com/" target="_blank">Maxar</a>'
+        };
+      }
+    });
+    return styleObj;
+  }
+
   function loadStyle(styleName){
     if (styleCache[styleName]) return Promise.resolve(styleCache[styleName]);
     if (STATIC_RASTER_STYLES[styleName]){
@@ -5402,6 +5450,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       fetchPromise = fetch(url);
     }
 
+    // [BOOT] instrumentation (Session 49) — see the boot sequence at the bottom of this script
+    // for the full set of markers this pairs with; this one specifically isolates the style
+    // fetch+regex-transform+JSON.parse cost, since that was one of the leading suspects for the
+    // reported ~8s white screen and had no direct timing of its own before now.
+    console.time('[BOOT] style fetch+parse: ' + styleName);
     return fetchPromise
       .then(function(r){
         if (!r.ok) throw new Error('HTTP ' + r.status + ' for style "' + styleName + '"');
@@ -5423,7 +5476,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         text = text.replace(/\{\{MAPBOX_TOKEN\}\}/g, MAPBOX_TOKEN);
         var styleObj = JSON.parse(text);
         delete styleObj.name;
+        patchStyleForOfflineTileParity(styleObj);
         styleCache[styleName] = styleObj;
+        console.timeEnd('[BOOT] style fetch+parse: ' + styleName);
         return styleObj;
       });
   }
@@ -5433,6 +5488,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     registerTerrainOverlayProtocols(); // once, global — see that function's own comment
     var styleName = state.settings.maplibreStyle || 'topo';
 
+    // [BOOT] instrumentation (Session 49) — diagnosing a reported ~8s white screen on every
+    // launch, online or offline. This specific marker covers the async gap between createMap()
+    // starting the style resolution (loadStyle() has its own internal timer for the fetch+parse
+    // portion of this) and the real maplibregl.Map object actually existing — the point up to
+    // which nothing on screen can possibly have changed regardless of what the rest of boot
+    // does. Not gated to boot-only since createMap() itself is only ever called once per app
+    // load (style SWITCHES later in the session go through map.setStyle(), not a second
+    // createMap() call), so there's no risk of a stale/duplicate timer label.
+    console.time('[BOOT] style resolve -> Map() constructed');
     loadStyle(styleName)
       .catch(function(err){
         console.error('[FieldMap] Style "' + styleName + '" failed, trying aerial:', err);
@@ -5448,6 +5512,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         attributionControl: true,
         doubleClickZoom: false
       });
+      console.timeEnd('[BOOT] style resolve -> Map() constructed');
+      console.log('[BOOT] maplibregl.Map() constructed @ ' + performance.now().toFixed(0) + 'ms since navigation start');
+      console.time('[BOOT] Map() constructed -> first style.load event');
 
       // Zoom +/- and north/reset used to live here as MapLibre's built-in NavigationControl
       // (top-left, showCompass+visualizePitch) — replaced (Session 27) with custom buttons in
@@ -5483,6 +5550,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
       var overlayDataRestoredOnInit = false;
       map.on('style.load', function(){
+        // [BOOT] instrumentation (Session 49), guarded on the same first-invocation flag the
+        // existing overlay-restore code below already uses, so a later manual base-layer switch
+        // (which also fires style.load) doesn't call console.timeEnd on an already-consumed
+        // label — that would just be a benign console warning, not a functional bug, but it'd
+        // make the real boot numbers harder to find in a long session's console output.
+        if (!overlayDataRestoredOnInit){
+          console.timeEnd('[BOOT] Map() constructed -> first style.load event');
+          console.log('[BOOT] first style.load fired @ ' + performance.now().toFixed(0) + 'ms since navigation start');
+          console.time('[BOOT] first style.load -> first render frame');
+          console.time('[BOOT] first style.load -> idle (initial tiles settled)');
+          // NOTE: 'render' fires on essentially every GL frame, including early frames that are
+          // only background/placeholder — this is a cheap, standard proxy for "first paint," not
+          // proof that real tiles are visible yet. 'idle' (below) is the more meaningful signal:
+          // it only fires once everything the style/sources currently need has finished loading.
+          map.once('render', function(){
+            console.timeEnd('[BOOT] first style.load -> first render frame');
+          });
+          map.once('idle', function(){
+            console.timeEnd('[BOOT] first style.load -> idle (initial tiles settled)');
+            console.log('[BOOT] ==== map idle / initial tiles settled @ ' + performance.now().toFixed(0) + 'ms since navigation start ====');
+          });
+        }
         updateCenterReadout();
         updateScaleBar();
         reinitializeLayers();
@@ -15017,6 +15106,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   };
 
+  // Header used to mark a cached tile as an explicit offline download, so the service worker's
+  // stale-while-revalidate handler for TILE_HOSTS (see OFFLINE_DOWNLOAD_HEADER's twin constant
+  // and full comment in service-worker.js) can skip its background revalidation fetch for it
+  // entirely, rather than silently overwriting it with whatever a live re-fetch happens to
+  // return. This is the actual fix for a real-world incident: a downloaded offline area
+  // progressively going blank over a multi-day trip, root-caused to Mapbox's TileJSON-mediated
+  // vector/satellite sources returning a session-varying "sku" query param on every live
+  // re-fetch — every app boot with any connectivity silently rotated the tile URLs the live
+  // renderer would request next, orphaning the entire previously-cached area (see
+  // patchStyleForOfflineTileParity above for the other half of this fix). Must be the exact
+  // same string in both files — there's no shared-constant mechanism across a classic script
+  // and a service worker file.
+  var OFFLINE_DOWNLOAD_HEADER = 'X-FieldMap-Offline-Download';
+
   function fetchAndCacheTile(cache, url){
     return cache.match(url).then(function(existing){
       if (existing) return 'skipped';
@@ -15034,7 +15137,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // instead of silently caching a useless entry.
       return fetch(url).then(function(resp){
         if (!resp.ok) return 'failed';
-        return cache.put(url, resp).then(function(){ return 'downloaded'; });
+        // Reconstruct the response with the protection header added — a fetch() Response's
+        // headers can't be mutated in place, so this reads the real tile bytes into a blob
+        // (the response hasn't been consumed yet at this point) and rebuilds an equivalent
+        // Response around them, preserving status/statusText/content-type via the copied
+        // Headers object plus the one new marker header.
+        return resp.blob().then(function(blob){
+          var headers = new Headers(resp.headers);
+          headers.set(OFFLINE_DOWNLOAD_HEADER, '1');
+          var markedResp = new Response(blob, { status: resp.status, statusText: resp.statusText, headers: headers });
+          return cache.put(url, markedResp).then(function(){ return 'downloaded'; });
+        });
       }).catch(function(){ return 'failed'; });
     });
   }
@@ -18894,7 +19007,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   });
 
+  // [BOOT] instrumentation (Session 49) — added to diagnose a reported ~8s white screen on
+  // every launch, reproducing identically online AND fully offline. This top-level chain covers
+  // the two stages most directly suspected from code review alone: loadState() (a
+  // localStorage/window.storage read+parse, expected near-instant, but unconfirmed on a real
+  // device with a large accumulated pins/tracks history) and the SYNCHRONOUS portion of this
+  // .then callback up to where the loading-overlay is actually hidden — createMap() itself
+  // returns before its own async style resolution completes (see createMap()'s own [BOOT]
+  // timer for that), so this specifically isolates whether bindUI()/marker-rebuild/renderPinList
+  // are doing anything slow enough to matter, independent of network/style timing entirely.
+  // Together with loadStyle()'s and createMap()'s own markers and the style.load-handler's
+  // render/idle markers, this gives a complete, non-overlapping timeline from navigation start
+  // through the map being visually settled — intended to be read together on a real device,
+  // not fixed from this sandbox (see CLAUDE.md for why: no real Mapbox network access here).
+  console.time('[BOOT] loadState()');
   loadState().then(function(){
+    console.timeEnd('[BOOT] loadState()');
+    console.log('[BOOT] loadState resolved @ ' + performance.now().toFixed(0) + 'ms since navigation start — ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
+    console.time('[BOOT] sync boot work (createMap call -> overlay hidden)');
     createMap();
     bindUI();
     // Pin/track/polygon/bearing rendering deferred — Leaflet map APIs unavailable until Session 2+
@@ -18903,6 +19033,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     try { (state.polygons||[]).forEach(addPolygonToMap); } catch(e){}
     try { (state.bearings||[]).forEach(addBearingToMap); } catch(e){}
     renderPinList();
+    console.timeEnd('[BOOT] sync boot work (createMap call -> overlay hidden)');
+    console.log('[BOOT] loading-overlay hidden @ ' + performance.now().toFixed(0) + 'ms since navigation start — this is NOT the map being ready, just createMap() having been CALLED (it returns before its own style/tile loading finishes); see the other [BOOT] markers for when the map is actually visually settled');
     document.getElementById('loading-overlay').classList.add('hidden');
     appIsReady = true;
     appReadyCallbacks.forEach(function(cb){ cb(); });
