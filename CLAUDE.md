@@ -318,6 +318,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   served an old cached copy of `index.html` mid-session after the second fix landed, making it look like the
   fix hadn't taken — resolved by unregistering the SW and clearing Cache Storage before reloading, the same
   documented gotcha noted in many earlier sessions' own testing notes.
+- Wildlife Layers panel restructured (Session 54): the old 2-top-level-tab (Habitats/Migrations) + 3-subtab
+  (Big Game/Upland Birds/Small Game) picker is replaced by 3 top-level categories — Big Game, Upland Game
+  (folds in the old Small Game species, presentation-only), and a brand-new Fish category — with a
+  species-first flow: pick a species, then only the data sources that actually exist for it (Habitat range /
+  Migrations / State Data) appear, never an empty option. Migrations is no longer a top-level tab — it nests
+  as a collapsible "X/4" section under whichever Big Game species has migration data. State Data is a new
+  third source tier (alongside the existing GAP Habitat range and Migrations), wiring in 5 confirmed
+  state-wildlife-agency sources (Washington fish, Oregon fish, Arizona fish, Utah upland, Nevada big
+  game/upland/fish) via a manual per-species state picker matching GMU boundaries' own pattern. All internal
+  "GAP" jargon was replaced with "Habitat range" throughout the user-facing UI. See Architecture notes'
+  "Wildlife Layers restructure: Big Game/Upland Game/Fish, State Data" entry for the full design, the two
+  real MapLibre bugs found and fixed while wiring it up, and what wasn't independently re-verified live this
+  session due to a mid-session browser-tooling breakdown.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -3022,6 +3035,159 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
     2.47.3 → 2.47.4 (patch — the CSS/event-handler surface touched is small and localized, even though the
     functional impact of the bug was severe), SHELL_CACHE bumped v159 → v160.
+- Wildlife Layers restructure: Big Game/Upland Game/Fish, State Data (Session 54) — replaces the old 2-top-
+  level-tab (Habitats/Migrations) + 3-subtab (Big Game/Upland Birds/Small Game) picker with 3 flat top-level
+  categories and a species-first flow: pick a species within a category, THEN see only whichever of Habitat
+  range / Migrations / State Data actually have data for that specific species — never an option with
+  nothing behind it.
+  - **Data model**: `WILDLIFE_TOP_CATEGORIES = ['biggame','uplandgame','fish']`, each mapped
+    (`WILDLIFE_TOPCATEGORY_SOURCE_CATEGORIES`) to the underlying GAP-habitat file category(s) that feed its
+    species list — `biggame → ['big_game']`, `uplandgame → ['upland','small_game']` (Small Game's own
+    rabbit/hare species fold in as more group options in the SAME dropdown, presentation-only —
+    `small_game-species.geojson` stays its own file/fetch/map-source, unchanged), `fish → []` (no GAP baseline
+    exists for fish in this app at all — every fish species comes entirely from a State Data source).
+    `wildlifeActive` (the single species-first selection driving every section) gained a `topCategory` field
+    on top of its pre-existing `category`/`speciesName`/`codes` shape — `category` is still the underlying
+    GAP source category (or `null` for a migration-only/state-data-only species with no GAP layer at all),
+    kept for `updateWildlifeMapFilter`'s existing per-category-layer filtering, now just one field among four
+    instead of the whole identity. `wildlifeSpeciesGroups(topCategory)` builds each tab's full species list as
+    a union of GAP-file species (tagged with their real `category`/`codes`), migration-only species (Big Game
+    tab only, resolved through `MIGRATION_SPECIES_NAME_MAP` — see below), and State-Data-only species (any
+    tab — e.g. Nevada's Himalayan Snowcock, which has no GAP file entry anywhere in this app) — species
+    already covered by the GAP file are never duplicated by the other two, this just widens what's pickable
+    to species this app previously had no way to select at all.
+  - **Migration species-name reconciliation**: the compiled CMT migration files use different species-name
+    strings than this app's own GAP display names (`'Elk'` vs. `'Elk (Rocky Mountain)'`, `'Mule deer'` vs.
+    `'Mule Deer'`, case differences throughout) — confirmed by direct inspection of the raw migration GeoJSON
+    files, not assumed to match. `MIGRATION_SPECIES_NAME_MAP` (4 entries — Elk/Mule Deer/Pronghorn/White-
+    tailed Deer, the only species with both migration AND GAP data) plus `migrationNameForGapSpecies()`/
+    `gapSpeciesForMigrationName()` bridge the two directions so a single Big Game species pick correctly
+    detects/drives its migration data despite the naming mismatch, without touching the migration data's own
+    files or its already-proven filter/render logic (`migrationActiveSpecies` still reads/writes the raw
+    migration name exactly as before).
+  - **Migrations, now nested not tabbed**: `#wildlife-migrations-section` is a `.layer-section`-styled
+    collapsible (collapsed by default, own local expand/collapse handler — NOT registered in the app-wide
+    `LAYER_SECTION_IDS`/`layerSectionOpenState` persistence system, since it's nested inside a picker panel
+    rather than a top-level Layers-panel section) shown only for a Big Game species with real migration data.
+    The 4 Corridor/Stopover/WinterRange/AnnualRange checkboxes, their paint/z-order, and `renderMigrationSublayers`/
+    `setMigrationCategoryOn`/`updateMigrationMapFilter` are all UNCHANGED from the pre-Session-54 standalone
+    Migrations tab — only their container moved, plus a new `updateMigrationsBadge()` (called from both a
+    species-change re-render and every individual checkbox toggle, so it can never drift stale) driving the
+    header's "X/4" count, counting only the rows actually shown (3, not 4, for a species with no Annual Range
+    data — matching `updateLayerSectionCounts`' own "count only what's offered" convention).
+  - **State Data — 5 confirmed sources**: `STATE_DATA_SOURCES[topCategory][stateKey]`, one shared shape
+    regardless of the source's own structure — `type:'unified'` (Washington's SWIFD: one statewide layer,
+    species is a data ATTRIBUTE not a layer boundary, so it's offered for every fish species with an explicit
+    UI note that it isn't filtered to just the one picked) or `type:'perSpecies'` (Oregon/Arizona/Utah/Nevada:
+    `species: { name: { base: <FeatureServer root>, layers: { semanticKey: layerId, ... } } }` — `base` may be
+    one shared FeatureServer repeated across species with different layer ids (Oregon, Nevada) or a genuinely
+    separate FeatureServer per species (Arizona's Trout Challenge, Utah). Either shape resolves identically in
+    `loadStateDataLayer()`, which fetches every semantic sub-layer in parallel and merges them into one
+    FeatureCollection tagged per-feature with `_sdLayer` (the semantic key), the same "one source, one filter-
+    expression-driven paint" pattern Migration corridors already established. Per the task's explicit
+    instruction not to guess Utah/Nevada's endpoints from a URL pattern, every REST URL below (all 5 sources)
+    was independently confirmed via the ArcGIS Online sharing API's own item catalog
+    (`arcgis.com/sharing/rest/search`), then verified live against each resulting FeatureServer's own
+    `/layers` metadata for real layer ids/geometry types — not inferred from a Hub dataset page's display URL.
+    - Washington (fish, unified): WDFW SWIFD, `geodataservices.wdfw.wa.gov/.../SWIFD/MapServer/0`.
+    - Oregon (fish, perSpecies): ODFW Fish Habitat Distribution, 32-target-species request resolved to the
+      full 34 species actually enumerated in the request (20 coldwater + 14 warmwater) rather than the
+      mismatched "18" coldwater count label also given — flagged to the user rather than silently guessing
+      which 2 of the 20 named coldwater species to drop.
+    - Arizona (fish, perSpecies, own-FeatureServer-per-species): AZGFD Trout Challenge
+      (`troutChallenge_<AFS-code>`), 6 species each with 3 layers (streams/lakes/huc12 watershed context).
+      "Splake" (SAxSA) is inferred from the AFS hybrid-code convention, not independently confirmed by name
+      on an AZGFD page — flagged as lower-confidence.
+    - Utah (upland, perSpecies, own-FeatureServer-per-species): 4 individually-hosted DWR datasets (Chukar,
+      Ring-necked Pheasant, Gambel's Quail, California Quail), each a single `range` layer.
+    - Nevada (all 3 categories — big game, upland, fish): NDOW Big Game Distributions + Small Game
+      Distributions (both single shared FeatureServers with species as separate numbered layers — Mule
+      Deer/Pronghorn/Bighorn Sheep additionally get a bonus `corridor` sub-layer from the same FeatureServer's
+      own separate movement-corridor layers, included since the source already provides them and they're
+      directly relevant, not a separate ask) plus NDOW's own "Lahontan Cutthroat Trout Distribution in
+      Nevada" SWAP layer (fish) — a single-layer polygon occupancy distribution, found the same way as the
+      other 4 sources (ArcGIS Online sharing-API search, not a guessed URL), confirmed live via the same NDOW
+      org id (`RyxlXSfFi87rAosq`) as the big-game/small-game services. This was the one source flagged
+      missing during this entry's own first draft — caught and wired in during the same session, not left as
+      a silent gap.
+  - **State picker UI**: `#wildlife-statedata-row`/`#wildlife-statedata-panel` — a compact toggle row inside
+    the species picker (`layer-compact-row`, only shown when `stateDataOptionsFor(topCategory, speciesName)`
+    is non-empty) opening a small popout `.floating-panel` with just a `<select>`, deliberately matching GMU
+    boundaries' own existing "GMU boundaries — Arizona ›" pattern exactly — a MANUAL state picker, not
+    auto-detect-by-location, since the point is supporting scouting a state the user isn't currently in. Only
+    one state's data is ever loaded/shown at a time per species (`wildlifeStateDataActive`), and switching the
+    active SPECIES always clears it (`clearWildlifeStateData()`, called from `setWildlifeSpecies`) so a stale,
+    wrong-species layer can never silently keep rendering under a new pick's name.
+  - **Two real MapLibre bugs found and fixed only through live testing, not visible from code review alone**:
+    the original single `wildlife-statedata-line` layer used a `['case', ['==', ['get','_sdLayer'], 'huc12'],
+    ['literal',[2,2]], ['literal',[1,0]]]` data-driven expression for `line-dasharray` to make huc12/corridor
+    context layers dashed and everything else solid — `line-dasharray` is a CAMERA-ONLY property in the
+    MapLibre/Mapbox GL style spec (unlike `line-color`/`line-width`/`line-opacity`, which all support data-
+    driven expressions fine); a data expression on it doesn't throw from `addLayer()` and doesn't appear in
+    the console by default — it silently fires an async `'error'` event ("data expressions not supported")
+    and the layer is simply never added to the style, with every subsequent operation on it (visibility
+    toggles, etc.) becoming a silent no-op. This was caught only by directly inspecting `map.getLayer(...)`
+    after a real toggle-on and finding it missing despite `addLayer` having reported no exception — confirmed
+    root cause by attaching a `map.on('error', ...)` listener before a manual re-add attempt. Fixed by
+    splitting into two fixed-dasharray layers filtered by `_sdLayer` (`wildlife-statedata-line` solid,
+    `wildlife-statedata-line-dashed` dashed) instead of one layer with a data-driven dasharray — both toggled
+    together by `updateWildlifeStateDataMapFilter()`. The FIRST fix attempt's solid-layer filter,
+    `['!in', ['get','_sdLayer'], ['literal',[...]]]`, hit a SECOND, independent bug of the same "silently
+    never added, no thrown exception" shape: `!in` is a legacy (pre-expression) filter-mini-language operator
+    that expects raw literal values as its operands, not modern expression-style `['get',...]`/`['literal',...]`
+    sub-expressions — mixing the two syntaxes produces the same async, easy-to-miss `'error'` event
+    ("string expected, array found") rather than a thrown exception. Fixed by using the real expression-style
+    negation instead: `['!', ['in', ['get','_sdLayer'], ['literal', [...]]]]`. Both fixes were verified against
+    real live AZGFD Trout Challenge data (Apache Trout, Arizona) — a real 26-feature merge (11 streams, 4
+    lakes, 11 huc12 polygons) rendering with the correct solid gold fill+stroke on streams/lakes and a
+    correct dashed gray outline on the huc12 watershed context boundary, confirmed via a real screenshot
+    after a genuinely fresh full page reload (not just the live in-page patch used to iterate on the fix).
+  - **Verification**: live via the already-connected Chrome browser extension against a local `python -m
+    http.server`, for as long as the session stayed stable (see the gap noted below). Confirmed: the 3-row
+    Wildlife section (Big Game/Upland Game/Fish) renders with a correct "0/3" badge and "Select species ›"
+    placeholders; opening Fish and inspecting the real rendered `<select>` DOM confirmed the species dropdown
+    groups exactly as designed — Coldwater (23: Oregon's 20 + Arizona's 3 AZ-only additions) / Warmwater (14,
+    matching Oregon's approved list exactly, zero extras/missing); picking Apache Trout correctly showed ONLY
+    the State Data row (no Habitat range/Migrations — expected, fish has neither in this app); the State Data
+    picker correctly listed Washington + Arizona but NOT Oregon (Apache Trout isn't in Oregon's species list,
+    proving `stateDataOptionsFor`'s per-species filtering is real, not just "show everything"); selecting
+    Arizona triggered the real live 3-layer fetch/merge described above. The connected Chrome browser
+    extension then entered a state where new tabs/navigations stopped responding (alternating "browser-
+    internal URL"/"permission denied for this domain" errors, a tooling breakdown distinct from the
+    `queryRenderedFeatures`-freezes-on-a-backgrounded-tab gotcha documented in Sessions 27-28/48, since this
+    one blocked navigation/screenshot entirely) — it recovered on its own after a period doing non-browser
+    work (the Nevada-fish gap below), and testing continued from there. Second round, after recovery:
+    switched to Big Game, picked Elk (Rocky Mountain) — confirmed Habitat range auto-checked with the real
+    brown GAP fill rendering, the Migrations section showing with a correct "0/4" badge, expand/collapse
+    working via a real click (chevron flips, checkboxes become visible), checking Stopover correctly updating
+    the badge to "1/4" live and adding a real second line to the active-layers chip
+    ("Elk (Rocky Mountain) migration"), and the State Data picker correctly listing only Nevada (Elk's one
+    Big Game source) — selecting it rendered a real third, gold-toned fill layer from NDOW's live service,
+    visibly distinct from and overlapping the brown Habitat range fill. **A third real bug found by this
+    second round of testing**: the State Data checkbox was genuinely ON and the layer was genuinely rendering
+    on the map, but the active-layers chip never grew a 3rd line for it — `setWildlifeStateDataState()` and
+    `setWildlifeStateDataOn()` (the two functions that turn State Data on) both updated the map filter and the
+    compact-row UI but never called `updateActiveLayersChip()`, unlike every other on/off setter in this file
+    (`setWildlifeOn`, `setMigrationCategoryOn`) which always does. Fixed by adding the same call to both
+    functions (plus, defensively, to `clearWildlifeStateData()` for any future caller that isn't already
+    followed by one, even though `setWildlifeSpecies`'s own existing call already covers its one current call
+    site). The browser tooling broke down a second time immediately after this fix was written, before a
+    fresh-reload re-verification of it could complete — the fix itself is a direct, minimal addition matching
+    an already-proven pattern used identically elsewhere in this same file, not independently re-confirmed via
+    a live screenshot after the edit. **Remaining verification gap, flagged rather than silently omitted**:
+    Upland Game specifically (shares 100% of the same code already proven working for Big Game and Fish,
+    differing only in which catalog entries it reads — not click-tested, but not a different code path
+    either), tap-to-identify on the State Data fill layer (`handleWildlifeStateDataFillClick`, an exact copy
+    of `migration-fill`'s own already-proven click-handler pattern, not independently click-tested), the
+    active-layers-chip fix above (see previous paragraph), and Utah/Nevada's endpoints with real data through
+    the actual in-app picker for every source except Nevada big-game/Nevada fish (Arizona and Nevada big-game
+    both went through the real in-browser flow this session; Washington/Oregon/Utah/Nevada-fish's REST URLs
+    were all independently confirmed reachable — real layer metadata and, for Nevada's fish layer, a live
+    `returnCountOnly` query returning a real feature — via direct `curl` against the endpoints, but not driven
+    through the app's own UI). `node --check` confirmed clean syntax on all 4 extracted inline `<script>`
+    blocks after every edit, including after all three fixes (the two MapLibre-expression bugs and the
+    missing-chip-update bug). APP_VERSION bumped 2.47.4 → 2.48.0 (minor — a significant structural change to
+    an existing feature, per explicit instruction), SHELL_CACHE bumped v160 → v161.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -4285,3 +4451,47 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   unregistering the SW and clearing Cache Storage before reloading, the same documented gotcha noted in many
   earlier sessions. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
   APP_VERSION bumped 2.47.3 → 2.47.4 (patch), SHELL_CACHE bumped v159 → v160.
+- Session 54: Restructured the Wildlife Layers panel from a 2-top-level-tab (Habitats/Migrations) + 3-subtab
+  picker into 3 flat categories (Big Game/Upland Game/Fish) with a species-first flow, folded Migrations into
+  a collapsible per-species sub-section instead of its own tab, and wired in 5 confirmed state-wildlife-
+  agency "State Data" sources (Washington/Oregon/Arizona fish, Utah upland, Nevada big game/upland/fish) as a
+  third data-source tier alongside the existing Habitat range and Migrations — see Architecture notes'
+  "Wildlife Layers restructure: Big Game/Upland Game/Fish, State Data" entry for the complete design. Every
+  REST endpoint was independently confirmed via the ArcGIS Online sharing API rather than guessed from a URL
+  pattern, per explicit instruction for the two sources (Utah, Nevada) found only via Hub dataset pages. All
+  user-facing "GAP" jargon was replaced with "Habitat range." Caught one real gap in this entry's own first
+  draft before finishing — Nevada's fish tier (Lahontan Cutthroat Trout) had been designed but never actually
+  wired into `STATE_DATA_SOURCES`, despite the task's explicit "Nevada — Big Game, Upland, Fish (all 3
+  categories)" — found and fixed by re-running the same ArcGIS sharing-API search this session used for every
+  other source, confirming NDOW's own "Lahontan Cutthroat Trout Distribution in Nevada" service (same org id
+  as Nevada's already-wired big-game/upland services) via a live `curl` query before wiring it in. Found and
+  fixed two real MapLibre bugs while building the State Data map layers, both the "silently never added, no
+  thrown exception" shape and both only caught via live testing, not code review: a data-driven expression on
+  `line-dasharray` (a camera-only style-spec property) and a `!in` legacy-filter operator mixed with modern
+  `['get',...]`/`['literal',...]` expression syntax — see that same Architecture notes entry for the full
+  mechanism and fix (splitting into two fixed-dasharray layers by filter; using `['!', ['in', ...]]` instead
+  of `['!in', ...]`). Also found and fixed a third bug the same way (live-testing-only, not visible from code
+  review): turning State Data on genuinely rendered its map layer but never added a line to the active-layers
+  chip, because `setWildlifeStateDataState`/`setWildlifeStateDataOn` were the only two on/off setters in this
+  file that didn't call `updateActiveLayersChip()` — fixed by adding the same call already used by every
+  other setter (`setWildlifeOn`, `setMigrationCategoryOn`). The connected Chrome browser extension broke down
+  twice mid-session (new tabs/navigations stopped responding — distinct from the WebGL-stall gotcha
+  documented in Sessions 27-28/48 — recovering both times on its own after non-browser work), which is why
+  verification happened in two rounds rather than one continuous pass: round 1 confirmed the 3-category
+  structure, Fish's species dropdown grouping (exactly matching Oregon's approved 34-species list plus
+  Arizona's 3 additional coldwater species, zero extras/missing), the State Data picker's per-species state
+  filtering, and a real live 3-layer merge/render of Arizona's Apache Trout data with the dasharray/`!in`
+  fixes confirmed correct via a genuinely fresh full reload; round 2 (after the first recovery) confirmed Big
+  Game's Elk (Rocky Mountain) — Habitat range auto-check, the Migrations section's real "0/4"→"1/4" badge
+  update and expand/collapse, and Nevada State Data rendering a real third fill layer — which is what
+  surfaced the third (chip) bug above. The chip fix itself was written right as the tooling broke down a
+  second time, so it's a direct code-reviewed fix matching an already-proven pattern, not independently
+  re-confirmed via a live screenshot. Not click-tested this session, flagged rather than silently presented
+  as verified: Upland Game specifically (same code path as Big Game/Fish, not a different one), the State
+  Data fill layer's tap-to-identify popup (an exact copy of `migration-fill`'s own already-proven handler),
+  and Washington/Oregon/Utah/Nevada-fish's endpoints through the actual in-app picker (all confirmed reachable
+  via direct `curl`, including a live feature-count check on Nevada's fish endpoint, but not driven through
+  the UI — only Arizona and Nevada-big-game went through the real in-browser flow). `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks after every edit, including all three fixes.
+  APP_VERSION bumped 2.47.4 → 2.48.0 (minor — significant structural change to an existing feature, per
+  explicit instruction), SHELL_CACHE bumped v160 → v161.
