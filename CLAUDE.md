@@ -244,6 +244,32 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   notes' "Offline tile cache-key parity + protected downloads + boot timing" entry, its own "Session 50"
   sub-bullet, for the full mechanism and what was verified (extraction-based tests running the real code
   against mocked browser APIs, not a reimplementation) versus what still needs the real phone.
+- Two boot-timing follow-ups (Session 51), triggered by a real captured data point contradicting Session 50's
+  own instrumentation: the app's own [BOOT] stage timers only ever summed to ~600-665ms, while the real
+  reported cold-launch delay was ~8s — meaning the actual bottleneck was happening BEFORE this app's own boot
+  code even starts running, structurally invisible to any marker placed inside it. (1) Now captures
+  `performance.getEntriesByType('navigation')[0]` — populated automatically by the browser, no app-code
+  involvement — surfacing network fetch timing (TTFB, download, whether the shell was served from cache or
+  network via transferSize), service worker startup (`workerStart`), and document-parse milestones
+  (domInteractive/domContentLoadedEvent*/domComplete/loadEventEnd), plus a headline number: the raw
+  `performance.now()` value at the moment this app's own first boot marker fires, which directly quantifies
+  how much of an observed delay happened before any existing [BOOT] timer could have seen it. (2) Fixed a real
+  accuracy bug in the Session 50 launch-gap classifier: a genuine field data point — a 2-minute gap flagged
+  "SUSPICIOUS — possible aggressive OS process reclaim" — turned out to be an entirely ordinary user-initiated
+  force-close, not an OS problem. Investigated (per explicit instruction, before writing any code) whether
+  force-close and OS reclaim are actually distinguishable from web code at all: they are NOT — both look
+  identical to page JS (the same `visibilitychange`-to-hidden fires either way, `pagehide`/`beforeunload` are
+  documented as unreliable on mobile Safari/WKWebView for exactly this kind of background termination and
+  don't differ between the two cases regardless, and no lifecycle API exposes OS-level termination cause to
+  a page, deliberately, for the same reason apps can't see what else is running). The classifier no longer
+  guesses a cause — it reports gap duration as plain data with an explicit "cause not determinable" disclaimer
+  baked into the label itself, restoring (and slightly improving, with real seconds-level precision for
+  sub-minute gaps, lost when the old SUSPICIOUS-specific branch was removed) Session 50's gap-duration
+  reporting without the false-authority verdict. See Architecture notes' "Offline tile cache-key parity +
+  protected downloads + boot timing" entry, its own "Session 51" sub-bullet, for full mechanism detail and
+  verification (extraction-based tests against a realistic mocked PerformanceNavigationTiming entry, not a
+  reimplementation) — the real boot-timing numbers and the honest "not determinable" framing both still need
+  the real phone to matter, same limitation as every session in this thread so far.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2673,6 +2699,95 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       (touch, not a mouse click event) fires the same `'click'` event this trigger listens for (expected to,
       since `'click'` is the standard synthesized event for a tap on essentially every mobile browser, but not
       independently confirmed here).
+  - **Session 51** — two follow-ups, both triggered by real captured data contradicting Session 50's own
+    output rather than by further code review alone.
+    - **Navigation Timing capture, closing the exact gap the data exposed**: a real device capture showed
+      this app's own [BOOT] stage timers summing to only ~600-665ms while the actually-observed cold-launch
+      delay was ~8s — meaning roughly 7+ seconds were elapsing somewhere no marker added so far could see,
+      by construction: every Session 49/50 timer starts measuring only once `__bootLoadStateStart` (the
+      first line of this app's own boot chain) is reached, so anything before that point — network fetch of
+      `index.html` itself, service worker startup/interception, parsing and executing every synchronous
+      `<script>` tag (`maplibre-gl.js` plus this file's own huge inline classic script) — was structurally
+      invisible no matter how many more in-app timers were added. `captureNavigationTiming()` reads
+      `performance.getEntriesByType('navigation')[0]` — a `PerformanceNavigationTiming` entry the browser
+      populates automatically, with zero app-code involvement, covering exactly that blind spot — and copies
+      out `type`/`redirectCount`/`transferSize`/`encodedBodySize`/`decodedBodySize`, the full network-timing
+      chain (`fetchStart` through `responseEnd`), `workerStart` (when the service worker thread itself
+      started handling the request — a direct signal for SW-startup-specific latency), and the document-
+      parse lifecycle (`domInteractive`/`domContentLoadedEventStart`/`End`/`domComplete`/`loadEventStart`/
+      `End`). Captured once, from `finalizeBootTiming()` at map-idle time (not earlier), specifically so
+      late-lifecycle fields like `domComplete`/`loadEventEnd` have real values rather than the `0` they'd
+      read as before their events fire — a genuinely-still-0 field at capture time is labeled explicitly
+      ("event may not have fired yet at capture time") rather than silently printed as a misleadingly-precise
+      "0ms". `finalizeBootTiming()` also now stamps `bootTiming.meta.loadStateStartedAtMs` (the raw
+      `performance.now()` value at the moment `__bootLoadStateStart` itself was set, captured once, early, at
+      the actual boot-chain start — not recomputed later) and surfaces it as `preAppCodeGapMs`, both in the
+      readable summary (a `>>>`-prefixed headline line, deliberately visually distinct from the rest) and in
+      the persisted history — this single number directly answers "how much of an observed delay happened
+      before this app's own code even started," without needing to manually diff it against any nav-timing
+      field by hand. The summary text also computes readable deltas between adjacent nav-timing milestones
+      (TTFB, download time, HTML parse, sync-script-execution-to-DCL, DCL-to-domComplete, domComplete-to-load)
+      and a `shellSource` classification (`transferSize:0` + real `decodedBodySize` → served from cache,
+      either the browser's own HTTP cache or the service worker's Cache Storage; `transferSize>0` → a real
+      network fetch happened) — directly answering the "cache vs. network" half of the task with a standard,
+      already-browser-maintained signal rather than inventing a new one.
+    - **Force-close vs. OS-reclaim: investigated, found genuinely indistinguishable, and the misleading
+      output fixed rather than left as-is**. The trigger for this: a real captured data point where a
+      2-minute background gap was labeled "SUSPICIOUS — possible aggressive OS process reclaim" by Session
+      50's classifier, which turned out on inspection to be an entirely ordinary user-initiated force-close
+      via the app switcher — exactly the false-positive the task's own framing anticipated. Investigated,
+      per explicit instruction, whether a reliable distinguishing signal exists before writing any code that
+      might paper over the gap with something that looks authoritative but isn't: it does not, for a
+      structural reason rather than a missing API this app simply hasn't wired up. Both scenarios are
+      identical from a page's own JS: `visibilitychange` to `'hidden'` fires the same way on backgrounding
+      regardless of what happens next; a user swiping the app away in the task switcher and the OS silently
+      killing a backgrounded process under memory pressure are BOTH abrupt terminations from WebKit's own
+      perspective, and `pagehide`/`beforeunload` are explicitly documented as unreliable on mobile Safari/
+      WKWebView for exactly this class of background termination — neither is guaranteed to fire in either
+      scenario, and even when one does fire, nothing in its payload says why the process is going away.
+      There is no Page Visibility/Lifecycle API, past or proposed, that exposes OS-level termination cause to
+      page JS — a deliberate platform boundary (telling a page "the OS is reclaiming you for memory" vs. "the
+      user is closing you" would leak information about other running apps/system state), not an oversight
+      this instrumentation could route around with cleverer event listening. Gap DURATION alone doesn't
+      substitute for this either, which is exactly why the false positive happened: a deliberate force-close-
+      and-reopen can happen within seconds (the real 2-minute data point) just as easily as an OS reclaim can
+      happen after hours backgrounded — short gap does not imply reclaim, long gap does not imply deliberate
+      closure. `classifyLaunchGap()` no longer attaches any causal verdict to the gap it reports — every
+      bucket now states plainly that cause is not determinable from web code, names both possibilities without
+      picking one, and points at the code comment above the function for the full reasoning, so the
+      limitation is visible wherever the label is shown (on-screen, in the persisted summary, in history), not
+      buried only in a source comment nobody in the field could read anyway. One real regression caught and
+      fixed while rewriting this, not shipped: collapsing the old multi-branch classifier (which had a
+      seconds-precision path specifically for its now-removed sub-60s SUSPICIOUS case) down to one neutral
+      branch would have silently lost second-level precision for genuinely short gaps — restored via a
+      dedicated sub-minute branch in `formatGapDuration()` itself, so e.g. a real 15s gap still reads "15s",
+      not a rounded-away "0 min", right when short gaps are the more interesting case to see precisely.
+    - **Verification**: extraction-based tests (the real `captureNavigationTiming`/`finalizeBootTiming`/
+      `classifyLaunchGap`/`formatGapDuration`/`showBootTimingDebugView` source pulled verbatim from
+      `index.html`, run against a realistic mocked `PerformanceNavigationTiming`-shaped object and mocked
+      browser globals, not a reimplementation). Confirmed: sub-minute gap precision restored (15s reads
+      "15s", not "0 min"); no gap size of any duration (15s/2min/5min/5h/3d all tried) produces "SUSPICIOUS"
+      wording, and all name both force-close and reclaim as possibilities with an explicit "not determinable"
+      disclaimer; the no-prior-record case is unaffected; `preAppCodeGapMs` correctly equals the raw
+      `performance.now()` value captured at boot-chain start; the nav-timing section correctly classifies a
+      `transferSize:0`/`decodedBodySize>0` shape as cache-served and a `transferSize>0` shape as network-
+      served; a still-zero milestone field (simulating capture happening before `domComplete`/`loadEventEnd`
+      fire) is labeled "may not have fired yet" rather than printed as a bare misleading "0ms", and its
+      derived delta correctly reads "n/a" rather than a nonsense negative/zero number; `navTiming` and
+      `preAppCodeGapMs` both persist correctly to `localStorage` (current capture and rolling history); the
+      history cap still holds at exactly `BOOT_TIMING_HISTORY_MAX` after these changes; the on-screen debug
+      view's "Recent launches" section correctly includes the pre-app-code gap per history entry. Two of
+      these test runs initially reported false failures, both traced to test-harness mistakes (a DOM mock
+      that returned a fresh object on every `getElementById` call instead of caching one per id, and a test
+      not pre-populating `loadStateStartedAtMs` the way the real boot chain always does before
+      `finalizeBootTiming()` can run) — corrected and re-verified, not silently ignored; neither was a flaw
+      in the shipped code. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks
+      and `service-worker.js`. **Still needs the real phone, flagged rather than assumed covered**: the
+      actual Navigation Timing numbers this instrumentation captures on the affected device, and whether the
+      "not determinable" framing itself holds up as the complete picture on real iOS WKWebView lifecycle
+      behavior (this session's investigation is grounded in documented, general mobile-Safari/WKWebView
+      platform behavior, not something verifiable by reproducing an actual backgrounding-then-reclaim
+      sequence from this sandbox).
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3840,3 +3955,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   whether a real touch-tap on the version number fires the same event this trigger listens for. APP_VERSION
   bumped 2.47.0 → 2.47.1 (patch — on-device diagnostics for an already-shipped instrumentation feature, no
   behavior change to the app itself), SHELL_CACHE bumped v156 → v157.
+- Session 51: Two follow-ups to Session 50's boot-timing instrumentation, both triggered by a real captured
+  data point rather than further code review alone. (1) Added Navigation Timing capture
+  (`captureNavigationTiming()`) — a real device showed the app's own [BOOT] stage timers summing to only
+  ~600-665ms while the actual observed cold-launch delay was ~8s, meaning most of the delay was happening
+  before this app's own boot code even starts, structurally invisible to any in-app marker;
+  `performance.getEntriesByType('navigation')[0]` (populated by the browser automatically, zero app-code
+  involvement) now surfaces network fetch timing, whether the shell was served from cache or network,
+  service worker startup (`workerStart`), and document-parse milestones, plus a headline `preAppCodeGapMs`
+  number that directly quantifies the previously-invisible gap. (2) Fixed a real accuracy bug in the launch-
+  gap classifier: a genuine 2-minute background gap was flagged "SUSPICIOUS — possible aggressive OS process
+  reclaim" and turned out, on inspection, to be an entirely ordinary user-initiated force-close. Investigated
+  whether force-close and OS reclaim are actually distinguishable from web code at all before writing any
+  fix, per explicit instruction not to add a signal that looks authoritative but isn't — they are not, for a
+  structural platform reason (no API exposes OS-level termination cause to page JS, and neither
+  `pagehide`/`beforeunload` nor gap duration itself reliably differs between the two cases). The classifier
+  no longer attaches a causal verdict — it reports gap duration as plain data with an explicit "cause not
+  determinable" disclaimer baked into the label itself. See Architecture notes' "Offline tile cache-key
+  parity + protected downloads + boot timing" entry, its own "Session 51" sub-bullet, for full mechanism
+  detail and verification (extraction-based tests against a realistic mocked PerformanceNavigationTiming
+  entry and mocked browser globals, not a reimplementation). `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.47.1 → 2.47.2 (patch),
+  SHELL_CACHE bumped v157 → v158.

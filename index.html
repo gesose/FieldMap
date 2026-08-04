@@ -3114,7 +3114,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.47.1';
+  var APP_VERSION = '2.47.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -3150,15 +3150,42 @@
   // memory) — by definition, a true warm resume never re-executes any of this script at all; the
   // JS context, its timers, and its already-hidden loading-overlay all just persist untouched,
   // and the OS simply repaints the existing page. There is no [BOOT] work to measure in that
-  // case because none happens. What CAN be measured, and is the actually useful diagnostic for
-  // the reported symptom, is the reverse question: whenever this boot code DOES run (which is
-  // definitionally always either a genuine fresh launch or a forced full reload), how long was
-  // the app backgrounded beforehand? A short gap points at the OS aggressively reclaiming the
-  // PWA's process rather than a normal cold start after being genuinely closed for a while —
-  // worth flagging as a different, more serious problem than anything optimizable in loadState()/
-  // createMap()/style loading, since no amount of speeding up boot fixes an OS that discards the
-  // whole process every time it's backgrounded for even a few seconds.
+  // case because none happens. What CAN be measured is the reverse question: whenever this boot
+  // code DOES run (definitionally always either a genuine fresh launch or a forced full reload),
+  // how long was the app backgrounded beforehand?
+  //
+  // Session 51 CORRECTION, investigated deliberately rather than assumed: Session 50's original
+  // version of this classified a short gap as "SUSPICIOUS — possible aggressive OS process
+  // reclaim." A real captured data point proved that framing actively misleading — a 2-minute
+  // gap flagged SUSPICIOUS turned out to be an entirely ordinary user-initiated force-close via
+  // the app switcher, not an OS problem. Investigated whether user-initiated force-close and
+  // silent OS memory-pressure reclaim are actually distinguishable from web code before writing
+  // any further code, per explicit instruction not to add a signal that looks authoritative but
+  // isn't: they are NOT reliably distinguishable, for a structural reason, not a missing API this
+  // app just hasn't wired up yet. Both scenarios look IDENTICAL to a page's own JS: `visibility
+  // change` to 'hidden' fires the same way on backgrounding regardless of what happens next; a
+  // user swiping the app away in the task switcher and the OS silently killing a backgrounded
+  // process under memory pressure are BOTH abrupt terminations from WebKit's own perspective —
+  // neither is guaranteed to fire `pagehide`/`beforeunload` (both are explicitly documented as
+  // unreliable on mobile Safari/WKWebView, especially for background terminations, which is
+  // exactly the case that matters here), and even when either DOES fire, nothing in its payload
+  // says WHY the process is going away. There is no Page Visibility/Lifecycle API, past or
+  // proposed, that exposes OS-level termination cause to page JS — this is a deliberate platform
+  // boundary (an app being told "the OS is about to reclaim you for memory" vs "the user is
+  // closing you" would leak information about other running apps/system state), not an oversight.
+  // Gap DURATION alone can't stand in for this either: a deliberate force-close-and-reopen can
+  // happen within seconds (exactly the "2 minutes, ordinary force-close" data point above) just
+  // as easily as an OS reclaim can happen after being backgrounded for hours — short gap does not
+  // imply reclaim, long gap does not imply deliberate closure. The classification below now
+  // reports gap duration as plain data with no causal verdict attached, and states this
+  // limitation explicitly in the label itself so it's visible wherever the label is shown, not
+  // just in this comment.
   function formatGapDuration(ms){
+    // Sub-minute gaps get second-level precision — Session 50's original version had this only
+    // for its since-removed "<60s SUSPICIOUS" branch; folding all gap sizes through one neutral
+    // label in Session 51 would have silently lost it, rounding e.g. a real 15s gap down to a
+    // meaningless "0 min" right when short gaps are the more interesting case to see precisely.
+    if (ms < 60000) return Math.round(ms / 1000) + 's';
     var mins = Math.round(ms / 60000);
     if (mins < 60) return mins + ' min';
     var hrs = Math.floor(mins / 60), remMins = mins % 60;
@@ -3180,12 +3207,8 @@
     var label;
     if (isNaN(gapMs) || gapMs < 0){
       label = 'clock anomaly (negative/invalid gap) — ignore';
-    } else if (gapMs < 60000){
-      label = 'SUSPICIOUS — only ' + Math.round(gapMs / 1000) + 's since the app was last backgrounded, yet a full reload just happened. Possible aggressive OS process reclaim, not a normal cold start.';
-    } else if (gapMs < 30 * 60000){
-      label = formatGapDuration(gapMs) + ' since last backgrounded — a fairly short gap for a full reload to have been needed, worth noting.';
     } else {
-      label = formatGapDuration(gapMs) + ' since last backgrounded — consistent with a normal, expected cold start.';
+      label = formatGapDuration(gapMs) + ' since last backgrounded before this reload. Cause NOT determinable from web code — could equally be an ordinary user-initiated force-close (very common, no problem) or the OS reclaiming the process; neither gap length nor any available API can tell these apart (see the code comment above classifyLaunchGap for why). Reported as data only, not a verdict.';
     }
     return { gapMs: gapMs, gapLabel: label, navigationType: navType };
   }
@@ -3207,6 +3230,57 @@
     setInterval(function(){ if (document.visibilityState === 'visible') markActive(); }, 15000);
   })();
 
+  // Navigation Timing capture (Session 51). The browser populates
+  // performance.getEntriesByType('navigation')[0] automatically, with zero app-code involvement,
+  // and it covers exactly the window Session 49/50's own [BOOT] stage markers structurally
+  // cannot see: everything from the moment the browser decided to navigate here through the
+  // document being fully loaded — including the network fetch of index.html itself, service
+  // worker startup/interception overhead (workerStart), and parsing+executing every synchronous
+  // <script> tag (maplibre-gl.js, suncalc, and this file's own huge inline classic script) BEFORE
+  // the first line of this app's own boot chain ever runs. This is the direct fix for the
+  // observed gap between this instrumentation's own stage timers (~600-665ms total) and the real
+  // reported cold-launch delay (~8s): whatever accounts for the other ~7+ seconds necessarily
+  // happened before __bootLoadStateStart was ever reached, which no per-stage console.time-style
+  // marker could ever have seen, by construction — it needed a fundamentally different capture
+  // point (one the browser itself maintains, starting from true navigation start), not a smarter
+  // marker placed later in the same script.
+  function captureNavigationTiming(){
+    var entry = null;
+    try {
+      var entries = performance.getEntriesByType && performance.getEntriesByType('navigation');
+      if (entries && entries[0]) entry = entries[0];
+    } catch(e){}
+    if (!entry) return null;
+    // Explicit field-by-field copy rather than relying on JSON.stringify's own PerformanceEntry
+    // serialization (which does work, via its native toJSON()) — this makes exactly which fields
+    // this app actually looks at visible in one place, and lets finalizeBootTiming() label a
+    // field that's still 0 because its event genuinely hasn't fired yet, instead of silently
+    // printing a misleading "0ms".
+    return {
+      type: entry.type,
+      redirectCount: entry.redirectCount,
+      transferSize: entry.transferSize,
+      encodedBodySize: entry.encodedBodySize,
+      decodedBodySize: entry.decodedBodySize,
+      fetchStart: entry.fetchStart,
+      domainLookupStart: entry.domainLookupStart,
+      domainLookupEnd: entry.domainLookupEnd,
+      connectStart: entry.connectStart,
+      connectEnd: entry.connectEnd,
+      secureConnectionStart: entry.secureConnectionStart,
+      workerStart: entry.workerStart, // service worker thread start time — 0 if not SW-controlled
+      requestStart: entry.requestStart,
+      responseStart: entry.responseStart,
+      responseEnd: entry.responseEnd,
+      domInteractive: entry.domInteractive,
+      domContentLoadedEventStart: entry.domContentLoadedEventStart,
+      domContentLoadedEventEnd: entry.domContentLoadedEventEnd,
+      domComplete: entry.domComplete,
+      loadEventStart: entry.loadEventStart,
+      loadEventEnd: entry.loadEventEnd
+    };
+  }
+
   // Called once, from the first 'idle' event after the first 'style.load' (see createMap()) —
   // the point at which every stage this session cares about has a real number. Builds a plain-
   // text summary (readable directly, no JSON parsing needed) and persists both "most recent" and
@@ -3223,6 +3297,14 @@
     bootTiming.meta.navigationType = bootLaunchGapInfo.navigationType;
     bootTiming.meta.gapSinceLastBackgroundedMs = bootLaunchGapInfo.gapMs;
     bootTiming.meta.gapLabel = bootLaunchGapInfo.gapLabel;
+    bootTiming.meta.timeOrigin = performance.timeOrigin;
+    bootTiming.navTiming = captureNavigationTiming();
+    // The headline number this session was added to surface: how much time elapsed, from true
+    // navigation start, before this app's OWN first boot marker was even reached. Every
+    // Session 49/50 stage timer only measures what happens AFTER this point — if this value
+    // alone accounts for most of an observed multi-second delay, that confirms the bottleneck is
+    // in browser-level fetch/parse/service-worker-startup, not in this app's own boot logic.
+    bootTiming.meta.preAppCodeGapMs = (bootTiming.meta.loadStateStartedAtMs != null) ? Math.round(bootTiming.meta.loadStateStartedAtMs) : null;
 
     var totalMs = 0;
     var lines = [];
@@ -3232,6 +3314,40 @@
     lines.push('Launch gap: ' + bootTiming.meta.gapLabel);
     lines.push('Navigation type: ' + bootTiming.meta.navigationType);
     lines.push('Online: ' + bootTiming.meta.online + '   Pins: ' + bootTiming.meta.pinCount + '   Tracks: ' + bootTiming.meta.trackCount);
+    lines.push('');
+    // Formats a raw PerformanceNavigationTiming field: these are all DOMHighResTimeStamps already
+    // relative to the same origin performance.now() uses, so they're directly comparable to this
+    // app's own [BOOT] marks — but a field whose event hasn't fired yet reads as a real, easy-to-
+    // misread 0, so that case is labeled explicitly rather than silently printed as "0ms".
+    function fmtNt(ms){
+      if (ms === undefined || ms === null) return 'n/a';
+      if (ms === 0) return '0ms (event may not have fired yet at capture time)';
+      return Math.round(ms) + 'ms';
+    }
+    function deltaNt(a, b){
+      if (a == null || b == null || a === 0 || b === 0) return 'n/a';
+      return Math.round(b - a) + 'ms';
+    }
+    var nt = bootTiming.navTiming;
+    lines.push('Navigation Timing (browser-level — covers everything BEFORE this app\'s own code below, including network fetch of the page itself, service worker startup, and parsing/executing every script tag):');
+    if (!nt){
+      lines.push('  not available in this browser/context');
+    } else {
+      var shellSource = 'unknown';
+      if (nt.transferSize === 0 && nt.decodedBodySize > 0) shellSource = 'cache — no network transfer (browser HTTP cache or served by the service worker from Cache Storage)';
+      else if (nt.transferSize > 0) shellSource = 'network — ' + nt.transferSize + ' bytes transferred';
+      else shellSource = 'unclear (transferSize=' + nt.transferSize + ', decodedBodySize=' + nt.decodedBodySize + ')';
+      lines.push('  type: ' + nt.type + '   redirects: ' + nt.redirectCount + '   shell served from: ' + shellSource);
+      lines.push('  service worker thread start (workerStart): ' + fmtNt(nt.workerStart) + (nt.workerStart === 0 ? ' — 0 can mean "not SW-controlled yet" (e.g. very first install) as well as "not fired"' : ''));
+      lines.push('  fetchStart -> responseStart (time to first byte): ' + deltaNt(nt.fetchStart, nt.responseStart));
+      lines.push('  responseStart -> responseEnd (downloading the shell): ' + deltaNt(nt.responseStart, nt.responseEnd));
+      lines.push('  responseEnd -> domInteractive (HTML parse): ' + deltaNt(nt.responseEnd, nt.domInteractive));
+      lines.push('  domInteractive -> domContentLoadedEventEnd (sync <script> execution — maplibre-gl.js + this file\'s own inline script, up to DOMContentLoaded): ' + deltaNt(nt.domInteractive, nt.domContentLoadedEventEnd));
+      lines.push('  domContentLoadedEventEnd -> domComplete: ' + deltaNt(nt.domContentLoadedEventEnd, nt.domComplete));
+      lines.push('  domComplete -> loadEventEnd: ' + deltaNt(nt.domComplete, nt.loadEventEnd));
+      lines.push('  raw milestones (ms since navigation start): responseStart=' + fmtNt(nt.responseStart) + ' domInteractive=' + fmtNt(nt.domInteractive) + ' domContentLoadedEventStart=' + fmtNt(nt.domContentLoadedEventStart) + ' domContentLoadedEventEnd=' + fmtNt(nt.domContentLoadedEventEnd) + ' domComplete=' + fmtNt(nt.domComplete) + ' loadEventStart=' + fmtNt(nt.loadEventStart) + ' loadEventEnd=' + fmtNt(nt.loadEventEnd));
+    }
+    lines.push('  >>> this app\'s own first boot marker (loadState call) fired at: ' + (bootTiming.meta.preAppCodeGapMs != null ? bootTiming.meta.preAppCodeGapMs + 'ms since navigation start' : 'n/a') + ' — everything before this point is invisible to the Stage timings below, and is exactly the part Navigation Timing above exists to explain');
     lines.push('');
     lines.push('Stage timings:');
     var stageOrder = ['loadState', 'syncBootWork', 'styleFetchAndParse (topo)', 'styleFetchAndParse (topo-dark)', 'styleFetchAndParse (aerial-streets)', 'styleFetchAndParse (aerial)', 'styleResolveToMapConstructed', 'mapConstructedToFirstStyleLoad', 'firstStyleLoadToFirstRender', 'firstStyleLoadToIdle'];
@@ -3259,7 +3375,7 @@
       var history = [];
       try { history = JSON.parse(localStorage.getItem(BOOT_TIMING_HISTORY_KEY) || '[]'); } catch(e){ history = []; }
       if (!Array.isArray(history)) history = [];
-      history.push({ capturedAt: bootTiming.meta.capturedAt, appVersion: APP_VERSION, stages: bootTiming.stages, gapLabel: bootTiming.meta.gapLabel, navigationType: bootTiming.meta.navigationType, online: bootTiming.meta.online, totalMs: totalMs });
+      history.push({ capturedAt: bootTiming.meta.capturedAt, appVersion: APP_VERSION, stages: bootTiming.stages, gapLabel: bootTiming.meta.gapLabel, navigationType: bootTiming.meta.navigationType, online: bootTiming.meta.online, totalMs: totalMs, preAppCodeGapMs: bootTiming.meta.preAppCodeGapMs });
       while (history.length > BOOT_TIMING_HISTORY_MAX) history.shift();
       localStorage.setItem(BOOT_TIMING_HISTORY_KEY, JSON.stringify(history));
     } catch(e){
@@ -3298,7 +3414,8 @@
         text += '\n\n---\nRecent launches (oldest to newest, up to last ' + BOOT_TIMING_HISTORY_MAX + '):\n';
         history.forEach(function(h, i){
           var when = h.capturedAt ? new Date(h.capturedAt).toLocaleTimeString() : '?';
-          text += '  ' + (i + 1) + '. ' + when + ' — total ' + (h.totalMs != null ? h.totalMs : '?') + 'ms — ' + (h.gapLabel || '') + '\n';
+          var preApp = (h.preAppCodeGapMs != null) ? h.preAppCodeGapMs + 'ms pre-app' : 'pre-app n/a';
+          text += '  ' + (i + 1) + '. ' + when + ' — ' + preApp + ' + ' + (h.totalMs != null ? h.totalMs : '?') + 'ms app stages — ' + (h.gapLabel || '') + '\n';
         });
       }
     }
@@ -19282,6 +19399,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // for the on-screen/localStorage path, not just printed to a console this real testing
   // environment (iOS home-screen PWA, no Mac) has no way to read.
   var __bootLoadStateStart = performance.now();
+  // Session 51 — this raw value (ms since navigation start, no delta needed) is exactly the
+  // "invisible before this point" number Navigation Timing is meant to be cross-referenced
+  // against; see captureNavigationTiming()/finalizeBootTiming() for how it's surfaced.
+  bootTiming.meta.loadStateStartedAtMs = __bootLoadStateStart;
   loadState().then(function(){
     bootMark('loadState', __bootLoadStateStart);
     console.log('[BOOT] ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
