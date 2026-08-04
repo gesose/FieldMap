@@ -270,6 +270,29 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   verification (extraction-based tests against a realistic mocked PerformanceNavigationTiming entry, not a
   reimplementation) — the real boot-timing numbers and the honest "not determinable" framing both still need
   the real phone to matter, same limitation as every session in this thread so far.
+- Service worker internal timing + Cache Storage size reporting (Session 52), closing the exact gap Session
+  51's own Navigation Timing capture surfaced: ~8.4 of ~8.68 reported cold-launch seconds sat between
+  fetchStart and responseStart for the shell's own navigation request, with transferSize:0 (served by the
+  service worker's own cache-first handler, not the network) and TTFB reading n/a — precisely the scenario
+  MDN documents Navigation Timing as unreliable for once a service worker is intercepting the response.
+  service-worker.js now times itself directly (script start, install, activate start/complete, first fetch
+  event, and specifically the shell/navigation request's own received→respondWith duration) using
+  `Date.now()` throughout (not `performance.now()` — a SW is a separate JS context with its own unrelated
+  time origin, and epoch time needs no reconciliation to compare across contexts), persisted two ways for
+  reliability (a `postMessage` broadcast, which can race a genuine cold start where the page's own listener
+  isn't registered yet; and a small dedicated Cache Storage entry the page can pull at its own convenience,
+  any time later — the actually-reliable path). Also reports live Cache Storage stats at boot — entry count
+  for every named cache (App shell/Map tiles/GMU boundary data/this instrumentation's own tiny cache) plus an
+  approximate byte total summed from `Content-Length` headers (never a full body read), capped at 2000
+  entries per cache to avoid this diagnostic itself adding real boot-time cost for a large offline-downloaded
+  tile area — falling back to `navigator.storage.estimate()`'s origin-wide total beyond that cap. Both surface
+  in the same `#boot-timing-modal`/5-tap viewer, arriving asynchronously after the initial synchronous write
+  (by design — neither can be allowed to delay it) and rebuilding/re-persisting the summary in place once
+  ready. See Architecture notes' "Offline tile cache-key parity + protected downloads + boot timing" entry,
+  its own "Session 52" sub-bullet, for full mechanism detail and verification (extraction-based tests against
+  a mocked multi-cache Cache Storage implementation, not a reimplementation) — the real numbers, and whether
+  SW startup time actually scales with cache size as hypothesized, both still need the real phone, same
+  limitation as every session in this thread so far.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2788,6 +2811,117 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       behavior (this session's investigation is grounded in documented, general mobile-Safari/WKWebView
       platform behavior, not something verifiable by reproducing an actual backgrounding-then-reclaim
       sequence from this sandbox).
+  - **Session 52** — service worker internal timing + Cache Storage size reporting, directly triggered by
+    Session 51's own Navigation Timing capture: a real device showed ~8.4 of ~8.68 reported cold-launch
+    seconds sitting between `fetchStart` and `responseStart` for the shell's own navigation request, with
+    `transferSize:0` (served by this service worker's own cache-first handler, not the network) and TTFB
+    reading `n/a` — exactly the scenario MDN documents Navigation Timing as unreliable for once a service
+    worker is intercepting the response (the browser can't cleanly attribute "waiting on the SW" the way it
+    attributes real network wait time). The fix isn't a smarter page-side measurement — none can see inside
+    that window — it's measuring from the one place that actually can: the SW's own execution context.
+    - **`service-worker.js`'s own internal marks**: `swTiming` (module-scope, `Date.now()`-based throughout —
+      deliberately NOT `performance.now()`, since a service worker is a genuinely separate JS execution
+      context from the page with its OWN unrelated `performance.timeOrigin`; `Date.now()` is plain wall-clock
+      epoch time, identical and directly comparable across every context with zero reconciliation math, and
+      sub-millisecond precision doesn't matter at the multi-hundred/multi-thousand-ms scale actually being
+      investigated) records: `scriptStartAtMs` (the very first executable line of the file — as early as this
+      context can measure itself, and the number that matters most for a REACTIVATION, since install/activate
+      only ever run once per SW version and a terminated-then-respawned SW instance skips straight to
+      re-executing top-level script and dispatching the pending event), `installAtMs`, `activateStartAtMs`/
+      `activateCompleteAtMs`, `firstFetchEventAtMs` (the first `'fetch'` event this SW instance has actually
+      seen — a proxy for "genuinely up and dispatching," distinct from merely having started executing), and
+      `shellFetch` (`{receivedAtMs, respondedAtMs, durationMs, source}`) — specifically the shell's OWN
+      navigation request, identified via `req.mode === 'navigate'` (the standard, reliable signal for "this
+      is the top-level document request," not a URL-pattern guess), timed from the moment the fetch handler
+      receives it to the moment its branch of `event.respondWith()`'s promise resolves, whichever of the 3
+      existing branches (cache hit / network / network-failed-fallback-to-cached-index) actually serves it —
+      this is the literal number the task asked for: "time from receiving the shell's fetch event to calling
+      respondWith() with a resolved cached response."
+    - **Two independent persistence paths, not one, deliberately**: `persistSwTiming()` both `postMessage`s
+      the current `swTiming` snapshot to every known client (`clients.matchAll({includeUncontrolled:true})`,
+      since a freshly-installing SW's own triggering page isn't yet "controlled" until `clients.claim()`
+      resolves — this SW already calls that, but the message can still be sent before it resolves) AND
+      stashes an equivalent JSON snapshot in a small dedicated Cache Storage entry (`SW_TIMING_CACHE`,
+      `'fieldmap-sw-timing-v1'`, key `/~sw-timing-debug`). The `postMessage` path is fast but NOT reliable on
+      its own: on a genuine cold start, this SW mark can fire before the page's own JS has even begun
+      executing, let alone registered a message listener, and `postMessage` doesn't queue for a not-yet-
+      listening receiver — a missed message is simply gone. The Cache Storage stash is what makes the data
+      reliably available regardless of that race, since the page can pull it at its own convenience, any time
+      later (used by `finalizeBootTiming()`'s own async enrichment — see below). `SW_TIMING_CACHE` is
+      deliberately NOT added to `activate`'s cache-name whitelist (unlike `TILE_CACHE`/`GMU_DATA_CACHE`,
+      which hold real user data worth preserving across app updates) — it holds only this session's own
+      ephemeral diagnostic marks, and a fresh SW instance repopulates it on its own very next fetch regardless.
+    - **Page-side reconciliation (`index.html`)**: `pageNavigationStartEpochMs = Date.now() -
+      performance.now()`, computed once, as early in the script as possible — this identity (an absolute
+      epoch value for "when this page's own `performance.now()` was 0") is what lets any SW `Date.now()`-based
+      mark be converted to the exact same "ms since navigation start" scale every existing `[BOOT]` mark and
+      Navigation Timing field already uses, via `fmtSwMs()`. `navigator.serviceWorker.addEventListener(
+      'message', ...)` is registered as early as possible in the script (the fast path, matching the race
+      concern above) alongside a `enrichBootTimingWithSwTiming()` async pull from `SW_TIMING_CACHE` (the
+      reliable path), called once from `finalizeBootTiming()` — deliberately AFTER, never blocking, the
+      initial synchronous localStorage write, since this data can legitimately still be in flight at that
+      point. A pulled snapshot is only trusted if its own `scriptStartAtMs` is within the last 60s of real
+      time — the Cache Storage entry persists across sessions until next overwritten, so a stale multi-
+      session-old snapshot must never be silently presented as if it described THIS boot; an honest "no fresh
+      data" beats a confidently wrong number.
+    - **Cache Storage size reporting**: `measureCacheStorageStats()` enumerates every live cache via
+      `caches.keys()` (so it never needs to hardcode/track exact versioned cache names — `SHELL_CACHE` alone
+      changes on every session per this file's own bump convention), categorizes each by a stable name
+      PREFIX (`categorizeCacheName()`, matched against `fieldmap-shell-`/`fieldmap-tiles-`/
+      `fieldmap-gmu-data-`/`fieldmap-sw-timing-` — prefix matching, not exact-name matching, is what keeps
+      this from needing to be manually kept in sync with `service-worker.js`'s own version constants), and
+      reports each one's entry count (always cheap — one `cache.keys().length`, regardless of cache size)
+      plus an approximate byte total. That total is summed from each entry's `Content-Length` HEADER only —
+      never a `.blob()` read, which would materialize/decompress every cached response's actual body just to
+      measure it, real non-trivial work this diagnostic must not itself add to the very boot-time problem it
+      exists to investigate. Above `CACHE_BYTE_SCAN_MAX_ENTRIES` (2000) for any one cache, the per-entry
+      header scan is skipped entirely for that cache (still reporting its entry count, just not its byte
+      total) — a large offline-downloaded tile area could plausibly hold many thousands of individual tile
+      entries, and even cheap per-entry Cache Storage lookups add up in aggregate at that scale.
+      `navigator.storage.estimate()` (the standard Storage API) supplies one origin-wide usage/quota total as
+      a cross-check that's authoritative even when some per-cache header scans are skipped or a response
+      happens to lack a `Content-Length` header (tracked separately as "unknown," never silently counted as
+      0 bytes).
+    - **Shared async-enrichment pattern**: `buildBootTimingSummaryText()` was extracted out of
+      `finalizeBootTiming()` (previously one large inline block) specifically so it can be re-run once the SW
+      timing and Cache Storage stats land, without duplicating the whole summary-building block a second
+      time. `persistBootTimingRecord(isNewBoot)` replaces the old inline localStorage-write logic — `true`
+      (the normal `finalizeBootTiming()` call) pushes a fresh history entry as before; `false` (the two async
+      enrichments) updates the SAME history entry already pushed for this boot in place, rather than
+      appending a second, duplicate entry for one real launch. `showBootTimingDebugView()`'s "Recent
+      launches" history line was extended with the SW-shell-fetch duration and total cache-entry count per
+      past launch, directly supporting the size-correlation question across several real app opens, not just
+      the latest one.
+    - **Verification**: extraction-based tests (the real `service-worker.js` changes verified via
+      `node --check` alone, since a genuine `fetch`/`install`/`activate` event sequence isn't reproducible
+      outside a real Service Worker execution context; the real page-side functions — `measureCacheStorageStats`/
+      `categorizeCacheName`/`enrichBootTimingWithSwTiming`/`buildBootTimingSummaryText`/
+      `persistBootTimingRecord`/`finalizeBootTiming` — pulled verbatim from `index.html` and run against a
+      hand-built multi-cache mock of the real Cache Storage API, `navigator.storage.estimate`, and
+      `localStorage`, not a reimplementation). Confirmed end-to-end: a fake SW timing snapshot stashed in the
+      mocked `SW_TIMING_CACHE` is correctly pulled and merged, and the computed "SW script start → shell fetch
+      resolved" gap in the rendered summary matches the expected value exactly; a 4-cache mock (23/1500/2/1
+      entries respectively) is fully enumerated with correct per-cache entry counts and header-summed byte
+      totals (confirmed the 1500-entry tiles cache's byte total equals exactly `1500 × 12000` bytes, matching
+      the seeded per-entry `Content-Length` values); a separate 2500-entry mock cache (over the 2000 cap)
+      correctly skips its byte scan while still reporting its entry count, with an explicit note explaining
+      why; exactly ONE history entry exists after `finalizeBootTiming()` plus both async enrichments run (no
+      duplicate push), and that entry carries the enriched SW-shell-fetch and cache-entry-count fields.
+      Two rounds of apparent test failures were both traced to test-harness mistakes, not product bugs, and
+      both corrected before accepting the results: an async-timing assumption (a fixed 50ms `setTimeout`
+      wasn't enough for ~1500 chained mock Cache Storage promises to settle — replaced with a poll-until-ready
+      loop) and a mocked `window` object that didn't expose `caches` on itself (the real code checks
+      `'caches' in window`, which real browsers satisfy automatically since `window.caches` and the bare
+      `caches` global are the same object — the mock needed to replicate that explicitly). A third apparent
+      failure (`navigator.storage.estimate` never getting called) was root-caused to the exact same Node 24
+      built-in-`navigator`-global collision already documented in Session 50's own entry above — confirmed via
+      isolated reproduction, not assumed — a sandbox-only artifact, not reproducible in any real browser/
+      WKWebView target. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+      `service-worker.js`. **Still needs the real phone, flagged rather than assumed covered**: the actual SW
+      timing numbers and Cache Storage sizes on the affected device, and — the core question this session was
+      built to answer — whether SW startup/shell-fetch duration actually scales with cache size as
+      hypothesized, which requires comparing real measurements across offline downloads of genuinely
+      different sizes, not something reproducible from this sandbox.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3977,3 +4111,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   entry and mocked browser globals, not a reimplementation). `node --check` confirmed clean syntax on all 4
   extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.47.1 → 2.47.2 (patch),
   SHELL_CACHE bumped v157 → v158.
+- Session 52: Added service worker internal timing + Cache Storage size reporting, directly triggered by
+  Session 51's own Navigation Timing capture: a real device showed ~8.4 of ~8.68 reported cold-launch seconds
+  sitting between fetchStart and responseStart for the shell's own navigation request, with transferSize:0
+  (served by the service worker's own cache-first handler, not the network) and TTFB reading n/a — exactly
+  the scenario MDN documents Navigation Timing as unreliable for once a service worker intercepts the
+  response. `service-worker.js` now times itself directly (script start, install, activate start/complete,
+  first fetch event, and specifically the shell/navigation request's own received→respondWith duration,
+  identified via the standard `req.mode === 'navigate'` signal) using `Date.now()` throughout — a service
+  worker is a genuinely separate JS context from the page with its own unrelated `performance.timeOrigin`,
+  so epoch time is what makes these marks directly comparable to the page's own `[BOOT]` marks with zero
+  reconciliation math needed. Persisted two independent ways for reliability: a `postMessage` broadcast
+  (fast, but can race a genuine cold start where the page's own listener isn't registered yet) and a small
+  dedicated Cache Storage entry the page can pull from at its own convenience, any time later — the actually-
+  reliable path, and the one `finalizeBootTiming()`'s new async enrichment (`enrichBootTimingWithSwTiming()`)
+  uses, only trusting a pulled snapshot if it's less than 60s old (the cache entry persists across sessions
+  until next overwritten, so a stale multi-session-old snapshot must never be silently presented as this
+  boot's own). Also added `measureCacheStorageStats()` — enumerates every live cache via `caches.keys()`
+  (never hardcoding exact versioned names, which change every session for `SHELL_CACHE`), reports each one's
+  entry count (always cheap) plus an approximate byte total summed from `Content-Length` HEADERS only (never
+  a body read), skipping the per-entry scan above 2000 entries for any one cache — a large offline-downloaded
+  tile area could plausibly hold many thousands of entries, and this diagnostic must not itself add real cost
+  to the very boot-time problem it exists to investigate — falling back to `navigator.storage.estimate()`'s
+  origin-wide total beyond that cap. Both new data sources surface in the same `#boot-timing-modal`/5-tap
+  viewer, arriving asynchronously after the initial synchronous write (by design) and rebuilding/re-
+  persisting the summary in place once ready — `buildBootTimingSummaryText()` was extracted out of
+  `finalizeBootTiming()` and `persistBootTimingRecord(isNewBoot)` replaces the old inline localStorage-write
+  logic specifically to support this without duplicating the summary-building block or double-pushing history
+  entries. See Architecture notes' "Offline tile cache-key parity + protected downloads + boot timing" entry,
+  its own "Session 52" sub-bullet, for full mechanism detail and verification (extraction-based tests against
+  a hand-built multi-cache mock of the real Cache Storage API — confirmed correct entry counts and header-
+  summed byte totals, confirmed the >2000-entry skip-scan behavior, confirmed exactly one history entry after
+  finalize plus both async enrichments run, not a duplicate push — not a reimplementation; two rounds of
+  apparent test failures were traced to test-harness mistakes and fixed, and a third to the same Node-24-
+  built-in-`navigator` sandbox artifact already documented in Session 50's own entry, not a product bug).
+  `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
+  **Still needs the real phone**: the actual SW timing numbers and cache sizes on the affected device, and —
+  the core question this session was built to answer — whether SW startup/shell-fetch duration actually
+  scales with cache size, which requires comparing real measurements across offline downloads of genuinely
+  different sizes. APP_VERSION bumped 2.47.2 → 2.47.3 (patch), SHELL_CACHE bumped v158 → v159.

@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v158';
+var SHELL_CACHE = 'fieldmap-shell-v159';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it
@@ -18,6 +18,62 @@ var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing
 // Unchanged on purpose, same reasoning as TILE_CACHE — a state's cached boundaries should
 // survive app updates, only ever cleared by its own 60/180-day-driven refresh flow.
 var GMU_DATA_CACHE = 'fieldmap-gmu-data-v1';
+
+// ---------- Boot-timing instrumentation (Session 52) ----------
+// Session 51's page-side Navigation Timing capture found ~8.4 of ~8.68 reported cold-launch
+// seconds sitting between fetchStart and responseStart for the shell's own navigation request,
+// with transferSize:0 — i.e. served by THIS file's own cache-first handler below, not the
+// network — and TTFB reads n/a in that scenario, which MDN itself documents as a known
+// unreliable measurement once a service worker is intercepting the response (the browser can't
+// cleanly attribute "waiting on the SW" time the same way it attributes real network wait time).
+// These marks close that blind spot from inside the SW itself, where the actual time can be seen
+// directly. Date.now() (not performance.now()) is used throughout, deliberately: a service
+// worker is a separate JS execution context from the page, each with its OWN
+// performance.timeOrigin, so performance.now() readings here aren't directly comparable to the
+// page's own without reconciliation math — Date.now() is plain wall-clock epoch time, identical
+// across every context with zero reconciliation needed, and sub-millisecond precision doesn't
+// matter at the multi-hundred/multi-thousand-ms scale actually being investigated here.
+var SW_TIMING_CACHE = 'fieldmap-sw-timing-v1';
+var swTiming = {
+  scriptStartAtMs: Date.now(), // first executable line of this file — as early as this context can measure itself
+  installAtMs: null,
+  activateStartAtMs: null,
+  activateCompleteAtMs: null,
+  firstFetchEventAtMs: null, // first 'fetch' event this SW instance has actually seen — proxy for "genuinely up and dispatching," distinct from merely having started executing
+  shellFetch: null // filled in once — see recordShellFetchTiming() below
+};
+var swFirstFetchRecorded = false;
+// Persists the current swTiming snapshot two ways, both best-effort (never blocks/delays the
+// actual fetch handling this is instrumenting):
+//  1. postMessage to every currently-known client — fast, but not guaranteed delivered: on a
+//     genuine cold start this can fire before the page's own JS has even begun executing (let
+//     alone registered a message listener), and postMessage doesn't queue for a not-yet-
+//     listening receiver.
+//  2. A small dedicated Cache Storage entry the page can pull from at its own convenience,
+//     any time later — this is what makes the data reliably available regardless of the
+//     postMessage race above; Cache Storage is a real persistent store both contexts can reach,
+//     unlike a fire-and-forget message.
+function persistSwTiming(){
+  try {
+    self.clients.matchAll({ includeUncontrolled: true }).then(function(clients){
+      clients.forEach(function(c){ c.postMessage({ type: 'FIELDMAP_SW_TIMING', data: swTiming }); });
+    });
+  } catch(e){}
+  try {
+    caches.open(SW_TIMING_CACHE).then(function(cache){
+      cache.put('/~sw-timing-debug', new Response(JSON.stringify(swTiming), { headers: { 'Content-Type': 'application/json' } }));
+    });
+  } catch(e){}
+}
+// Records timing for specifically the shell's own navigation request (req.mode === 'navigate' —
+// the standard, reliable signal for "this is the top-level document request," not a URL-pattern
+// guess) — the literal request whose response becomes the page the user is staring at during the
+// reported white screen, and the one whose handling duration is the actual number being sought.
+function recordShellFetchTiming(startedAtMs, source){
+  var now = Date.now();
+  swTiming.shellFetch = { receivedAtMs: startedAtMs, respondedAtMs: now, durationMs: now - startedAtMs, source: source };
+  persistSwTiming();
+}
 
 var SHELL_FILES = [
   './',
@@ -62,6 +118,7 @@ var SHELL_FILES = [
 ];
 
 self.addEventListener('install', function(event){
+  swTiming.installAtMs = Date.now();
   event.waitUntil(
     caches.open(SHELL_CACHE).then(function(cache){
       return cache.addAll(SHELL_FILES);
@@ -72,14 +129,20 @@ self.addEventListener('install', function(event){
 });
 
 self.addEventListener('activate', function(event){
+  swTiming.activateStartAtMs = Date.now();
   event.waitUntil(
     caches.keys().then(function(keys){
       return Promise.all(keys.map(function(key){
+        // SW_TIMING_CACHE deliberately NOT whitelisted here, unlike TILE_CACHE/GMU_DATA_CACHE —
+        // it holds only this session's own ephemeral diagnostic marks, nothing worth preserving
+        // across an app update; a fresh SW instance repopulates it on its own very next fetch.
         if (key !== SHELL_CACHE && key !== TILE_CACHE && key !== GMU_DATA_CACHE){
           return caches.delete(key);
         }
       }));
     }).then(function(){
+      swTiming.activateCompleteAtMs = Date.now();
+      persistSwTiming(); // don't wait for a fetch event — a brand-new install has real signal here already
       return self.clients.claim();
     })
   );
@@ -166,6 +229,12 @@ self.addEventListener('fetch', function(event){
   var req = event.request;
   if (req.method !== 'GET') return;
 
+  if (!swFirstFetchRecorded){
+    swFirstFetchRecorded = true;
+    swTiming.firstFetchEventAtMs = Date.now();
+    persistSwTiming();
+  }
+
   var url = req.url;
 
   if (hostMatches(url, BYPASS_HOSTS)) return; // let the browser handle it natively
@@ -201,17 +270,26 @@ self.addEventListener('fetch', function(event){
 
   // App shell: cache-first, falling back to network, falling back to the
   // cached index.html for navigation requests if everything else fails.
+  // req.mode === 'navigate' is the standard signal for "this is the top-level document request"
+  // — the literal request this session's own boot-timing investigation cares about, timed below.
+  var isShellNavigationRequest = req.mode === 'navigate';
+  var shellFetchStartedAtMs = isShellNavigationRequest ? Date.now() : null;
   event.respondWith(
     caches.match(req).then(function(cached){
-      if (cached) return cached;
+      if (cached){
+        if (isShellNavigationRequest) recordShellFetchTiming(shellFetchStartedAtMs, 'cache');
+        return cached;
+      }
       return fetch(req).then(function(networkResp){
         if (networkResp && networkResp.status === 200 && req.url.indexOf(self.location.origin) === 0){
           var respClone = networkResp.clone();
           caches.open(SHELL_CACHE).then(function(cache){ cache.put(req, respClone); });
         }
+        if (isShellNavigationRequest) recordShellFetchTiming(shellFetchStartedAtMs, 'network');
         return networkResp;
       }).catch(function(){
         if (req.mode === 'navigate'){
+          if (isShellNavigationRequest) recordShellFetchTiming(shellFetchStartedAtMs, 'network-failed-fallback-to-cached-index');
           return caches.match('./index.html');
         }
       });

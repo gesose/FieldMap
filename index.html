@@ -3114,7 +3114,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.47.2';
+  var APP_VERSION = '2.47.3';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -3143,6 +3143,145 @@
     bootTiming.stages[name] = ms;
     console.log('[BOOT] ' + name + ': ' + ms + 'ms');
     return ms;
+  }
+
+  // ---------- Service worker + Cache Storage boot diagnostics (Session 52) ----------
+  // Session 51's Navigation Timing capture found ~8.4 of ~8.68 reported cold-launch seconds
+  // sitting between fetchStart and responseStart for the shell's own navigation request, with
+  // transferSize:0 (served by the service worker's own cache-first handler, not the network) —
+  // exactly the scenario where TTFB/responseStart are documented as unreliable once a SW is
+  // intercepting the response. The real bottleneck is very likely SW cold-start/reactivation
+  // itself, which page-side Navigation Timing structurally cannot see — service-worker.js now
+  // times itself directly (see its own top-of-file comment) and reports back here.
+  //
+  // pageNavigationStartEpochMs converts this page's OWN performance.now() timeline (relative,
+  // "ms since navigation start") into an absolute wall-clock epoch value, computed once, as early
+  // as possible: Date.now() - performance.now() at any moment equals the epoch time at which
+  // performance.now() was 0 (navigation start), for the entire duration of one page session. This
+  // is what makes the SW's own Date.now()-based marks (a genuinely separate JS context, with its
+  // own unrelated performance.timeOrigin) directly comparable to every existing [BOOT] mark and
+  // Navigation Timing field already surfaced on this page — subtract this value from any SW epoch
+  // timestamp to get the same "ms since navigation start" every other number here already uses.
+  var pageNavigationStartEpochMs = Date.now() - performance.now();
+  function fmtSwMs(epochMs){
+    if (epochMs == null) return 'n/a (not reported yet)';
+    return Math.round(epochMs - pageNavigationStartEpochMs) + 'ms since navigation start';
+  }
+
+  // Must be the exact same string as SW_TIMING_CACHE in service-worker.js (no shared-constant
+  // mechanism across a classic script and a separate service worker file).
+  var SW_TIMING_CACHE_NAME = 'fieldmap-sw-timing-v1';
+  // Fast-path listener: the SW may postMessage its timing snapshot at any point, including
+  // (on a genuine cold start) before this page's own JS has finished this very script block —
+  // registered as early as possible for exactly that reason. Not the only path this data can
+  // arrive by — see enrichBootTimingWithSwTiming()'s Cache Storage pull below, which exists
+  // specifically because a missed postMessage (receiver not listening yet) is unrecoverable on
+  // its own, unlike a Cache Storage entry the page can pull at its own convenience, any time.
+  if ('serviceWorker' in navigator){
+    navigator.serviceWorker.addEventListener('message', function(event){
+      if (event.data && event.data.type === 'FIELDMAP_SW_TIMING'){
+        bootTiming.swTiming = event.data.data;
+      }
+    });
+  }
+  // Reads the SW's own Cache-Storage-stashed timing snapshot — the reliable path, independent of
+  // postMessage timing races. Only trusted if its own scriptStartAtMs mark is recent (within the
+  // last 60s of real time): the cache entry persists across sessions until the SW next overwrites
+  // it, so a stale multi-session-old snapshot must never be silently presented as if it described
+  // THIS boot — an honest "no fresh data" beats a confidently wrong number.
+  function enrichBootTimingWithSwTiming(){
+    if (!('caches' in window)) return Promise.resolve();
+    return caches.open(SW_TIMING_CACHE_NAME).then(function(cache){
+      return cache.match('/~sw-timing-debug');
+    }).then(function(resp){
+      return resp ? resp.json() : null;
+    }).then(function(data){
+      if (data && data.scriptStartAtMs != null && (Date.now() - data.scriptStartAtMs) < 60000){
+        bootTiming.swTiming = data;
+      } else if (!bootTiming.swTiming){
+        // Nothing usable arrived via postMessage either — record that explicitly rather than
+        // leaving the field silently absent, which would be indistinguishable from "never tried."
+        bootTiming.swTiming = { unavailable: true, reason: data ? 'only stale data found (from an earlier session)' : 'no SW timing data found at all' };
+      }
+    }).catch(function(e){
+      console.warn('[BOOT] could not read SW timing cache:', e);
+    });
+  }
+
+  // Categorizes a live Cache Storage name by its known stable prefix (each named cache's own
+  // version suffix changes on its own schedule — e.g. SHELL_CACHE bumps every session — so
+  // matching by prefix rather than hardcoding an exact name is what keeps this from needing to be
+  // manually kept in sync with service-worker.js's own version constants).
+  var CACHE_NAME_CATEGORIES = [
+    { label: 'App shell', prefix: 'fieldmap-shell-' },
+    { label: 'Map tiles (offline downloads + casual browsing)', prefix: 'fieldmap-tiles-' },
+    { label: 'GMU boundary data', prefix: 'fieldmap-gmu-data-' },
+    { label: 'SW timing (this instrumentation)', prefix: 'fieldmap-sw-timing-' }
+  ];
+  function categorizeCacheName(name){
+    var match = CACHE_NAME_CATEGORIES.filter(function(c){ return name.indexOf(c.prefix) === 0; })[0];
+    return match ? match.label : 'other/unrecognized';
+  }
+  // Above this many entries, per-entry Content-Length summation is skipped for that cache (could
+  // mean thousands of individual Cache Storage lookups for a large offline-downloaded tile area —
+  // each one cheap on its own, but real, non-trivial work in aggregate that this diagnostic must
+  // not itself add to the very boot-time problem it exists to investigate) — the entry count is
+  // still always reported (a single cache.keys().length call, always cheap regardless of size),
+  // and navigator.storage.estimate()'s origin-wide total below still gives a real byte signal.
+  var CACHE_BYTE_SCAN_MAX_ENTRIES = 2000;
+  // Reads Content-Length headers only — never materializes/decompresses a response body via
+  // .blob() — so this is real Cache Storage metadata lookups, not a size-proportional amount of
+  // data actually being read. An entry with no Content-Length header (uncommon for this app's own
+  // CORS-mode tile fetches, but not guaranteed) is counted separately as "unknown," never silently
+  // treated as 0 bytes, which would understate the real total without any visible sign it happened.
+  function measureCacheStorageStats(){
+    if (!('caches' in window)) return Promise.resolve(null);
+    var stats = { caches: [], storageEstimate: null };
+    return caches.keys().then(function(names){
+      return Promise.all(names.map(function(name){
+        return caches.open(name).then(function(cache){
+          return cache.keys().then(function(requests){
+            if (requests.length > CACHE_BYTE_SCAN_MAX_ENTRIES){
+              stats.caches.push({
+                name: name, category: categorizeCacheName(name), entryCount: requests.length,
+                approxBytesFromHeaders: null, entriesWithoutContentLength: null,
+                note: 'byte scan skipped — over ' + CACHE_BYTE_SCAN_MAX_ENTRIES + ' entries; see storageEstimate below for an origin-wide total instead'
+              });
+              return;
+            }
+            return Promise.all(requests.map(function(req){
+              return cache.match(req).then(function(resp){
+                var len = resp && resp.headers.get('content-length');
+                return (len != null) ? Number(len) : null;
+              });
+            })).then(function(sizes){
+              var bytesKnown = 0, unknownCount = 0;
+              sizes.forEach(function(s){ if (s != null && !isNaN(s)) bytesKnown += s; else unknownCount++; });
+              stats.caches.push({
+                name: name, category: categorizeCacheName(name), entryCount: requests.length,
+                approxBytesFromHeaders: bytesKnown, entriesWithoutContentLength: unknownCount
+              });
+            });
+          });
+        });
+      }));
+    }).then(function(){
+      if (navigator.storage && navigator.storage.estimate){
+        return navigator.storage.estimate().then(function(est){
+          stats.storageEstimate = { usageBytes: est.usage, quotaBytes: est.quota };
+          return stats;
+        }).catch(function(){ return stats; });
+      }
+      return stats;
+    }).catch(function(e){
+      console.warn('[BOOT] could not measure Cache Storage stats:', e);
+      return stats;
+    });
+  }
+  function enrichBootTimingWithCacheStorageStats(){
+    return measureCacheStorageStats().then(function(stats){
+      if (stats) bootTiming.cacheStats = stats;
+    });
   }
 
   // Cold-launch vs backgrounded-reclaim diagnostic. IMPORTANT, and easy to get wrong: this code
@@ -3288,24 +3427,29 @@
   // "is this happening every time," which is exactly the question this instrumentation exists to
   // answer, so the history is what actually makes showBootTimingDebugView() useful after several
   // real app opens rather than only ever showing the latest one.
-  function finalizeBootTiming(){
-    bootTiming.meta.appVersion = APP_VERSION;
-    bootTiming.meta.capturedAt = new Date().toISOString();
-    bootTiming.meta.online = (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : null;
-    bootTiming.meta.pinCount = (state && state.pins) ? state.pins.length : null;
-    bootTiming.meta.trackCount = (state && state.tracks) ? state.tracks.length : null;
-    bootTiming.meta.navigationType = bootLaunchGapInfo.navigationType;
-    bootTiming.meta.gapSinceLastBackgroundedMs = bootLaunchGapInfo.gapMs;
-    bootTiming.meta.gapLabel = bootLaunchGapInfo.gapLabel;
-    bootTiming.meta.timeOrigin = performance.timeOrigin;
-    bootTiming.navTiming = captureNavigationTiming();
-    // The headline number this session was added to surface: how much time elapsed, from true
-    // navigation start, before this app's OWN first boot marker was even reached. Every
-    // Session 49/50 stage timer only measures what happens AFTER this point — if this value
-    // alone accounts for most of an observed multi-second delay, that confirms the bottleneck is
-    // in browser-level fetch/parse/service-worker-startup, not in this app's own boot logic.
-    bootTiming.meta.preAppCodeGapMs = (bootTiming.meta.loadStateStartedAtMs != null) ? Math.round(bootTiming.meta.loadStateStartedAtMs) : null;
+  // Formats a raw PerformanceNavigationTiming field: these are all DOMHighResTimeStamps already
+  // relative to the same origin performance.now() uses, so they're directly comparable to this
+  // app's own [BOOT] marks — but a field whose event hasn't fired yet reads as a real, easy-to-
+  // misread 0, so that case is labeled explicitly rather than silently printed as "0ms".
+  function fmtNt(ms){
+    if (ms === undefined || ms === null) return 'n/a';
+    if (ms === 0) return '0ms (event may not have fired yet at capture time)';
+    return Math.round(ms) + 'ms';
+  }
+  function deltaNt(a, b){
+    if (a == null || b == null || a === 0 || b === 0) return 'n/a';
+    return Math.round(b - a) + 'ms';
+  }
+  function fmtMB(bytes){
+    return (bytes / 1048576).toFixed(bytes < 1048576 * 10 ? 2 : 1) + 'MB';
+  }
 
+  // Builds bootTiming.summaryText from whatever's currently on the bootTiming object — split out
+  // from finalizeBootTiming() (Session 52) so it can be re-run by the async SW-timing/Cache-
+  // Storage enrichments below without duplicating this whole block: those arrive after the
+  // initial synchronous write (by design — neither must ever delay it), so the summary has to be
+  // rebuildable in place once their data lands. Also (re)computes bootTiming.meta.totalStagesMs.
+  function buildBootTimingSummaryText(){
     var totalMs = 0;
     var lines = [];
     lines.push('FieldMap boot timing — v' + APP_VERSION);
@@ -3315,19 +3459,6 @@
     lines.push('Navigation type: ' + bootTiming.meta.navigationType);
     lines.push('Online: ' + bootTiming.meta.online + '   Pins: ' + bootTiming.meta.pinCount + '   Tracks: ' + bootTiming.meta.trackCount);
     lines.push('');
-    // Formats a raw PerformanceNavigationTiming field: these are all DOMHighResTimeStamps already
-    // relative to the same origin performance.now() uses, so they're directly comparable to this
-    // app's own [BOOT] marks — but a field whose event hasn't fired yet reads as a real, easy-to-
-    // misread 0, so that case is labeled explicitly rather than silently printed as "0ms".
-    function fmtNt(ms){
-      if (ms === undefined || ms === null) return 'n/a';
-      if (ms === 0) return '0ms (event may not have fired yet at capture time)';
-      return Math.round(ms) + 'ms';
-    }
-    function deltaNt(a, b){
-      if (a == null || b == null || a === 0 || b === 0) return 'n/a';
-      return Math.round(b - a) + 'ms';
-    }
     var nt = bootTiming.navTiming;
     lines.push('Navigation Timing (browser-level — covers everything BEFORE this app\'s own code below, including network fetch of the page itself, service worker startup, and parsing/executing every script tag):');
     if (!nt){
@@ -3339,7 +3470,7 @@
       else shellSource = 'unclear (transferSize=' + nt.transferSize + ', decodedBodySize=' + nt.decodedBodySize + ')';
       lines.push('  type: ' + nt.type + '   redirects: ' + nt.redirectCount + '   shell served from: ' + shellSource);
       lines.push('  service worker thread start (workerStart): ' + fmtNt(nt.workerStart) + (nt.workerStart === 0 ? ' — 0 can mean "not SW-controlled yet" (e.g. very first install) as well as "not fired"' : ''));
-      lines.push('  fetchStart -> responseStart (time to first byte): ' + deltaNt(nt.fetchStart, nt.responseStart));
+      lines.push('  fetchStart -> responseStart (time to first byte): ' + deltaNt(nt.fetchStart, nt.responseStart) + ' — SEE Service Worker section below if this reads n/a/0: that\'s expected once a SW is intercepting the response (a documented browser-level limitation, not a bug here)');
       lines.push('  responseStart -> responseEnd (downloading the shell): ' + deltaNt(nt.responseStart, nt.responseEnd));
       lines.push('  responseEnd -> domInteractive (HTML parse): ' + deltaNt(nt.responseEnd, nt.domInteractive));
       lines.push('  domInteractive -> domContentLoadedEventEnd (sync <script> execution — maplibre-gl.js + this file\'s own inline script, up to DOMContentLoaded): ' + deltaNt(nt.domInteractive, nt.domContentLoadedEventEnd));
@@ -3347,7 +3478,30 @@
       lines.push('  domComplete -> loadEventEnd: ' + deltaNt(nt.domComplete, nt.loadEventEnd));
       lines.push('  raw milestones (ms since navigation start): responseStart=' + fmtNt(nt.responseStart) + ' domInteractive=' + fmtNt(nt.domInteractive) + ' domContentLoadedEventStart=' + fmtNt(nt.domContentLoadedEventStart) + ' domContentLoadedEventEnd=' + fmtNt(nt.domContentLoadedEventEnd) + ' domComplete=' + fmtNt(nt.domComplete) + ' loadEventStart=' + fmtNt(nt.loadEventStart) + ' loadEventEnd=' + fmtNt(nt.loadEventEnd));
     }
-    lines.push('  >>> this app\'s own first boot marker (loadState call) fired at: ' + (bootTiming.meta.preAppCodeGapMs != null ? bootTiming.meta.preAppCodeGapMs + 'ms since navigation start' : 'n/a') + ' — everything before this point is invisible to the Stage timings below, and is exactly the part Navigation Timing above exists to explain');
+    lines.push('');
+    var sw = bootTiming.swTiming;
+    lines.push('Service Worker internal timing (Session 52 — measured inside service-worker.js itself, converted to "ms since navigation start" so it lines up with everything else here):');
+    if (!sw){
+      lines.push('  not yet available this session (async pull still in flight, or hasn\'t run yet)');
+    } else if (sw.unavailable){
+      lines.push('  unavailable — ' + sw.reason);
+    } else {
+      lines.push('  script start: ' + fmtSwMs(sw.scriptStartAtMs));
+      lines.push('  install fired: ' + (sw.installAtMs != null ? fmtSwMs(sw.installAtMs) : 'n/a (already installed before this session — normal on any launch after the first)'));
+      if (sw.activateStartAtMs != null || sw.activateCompleteAtMs != null){
+        lines.push('  activate: start=' + fmtSwMs(sw.activateStartAtMs) + '  complete=' + fmtSwMs(sw.activateCompleteAtMs));
+      } else {
+        lines.push('  activate: n/a (no activate this session — normal unless a new SW version just took over)');
+      }
+      lines.push('  first fetch event seen by this SW instance: ' + fmtSwMs(sw.firstFetchEventAtMs));
+      if (sw.shellFetch){
+        lines.push('  shell (navigation) fetch: received=' + fmtSwMs(sw.shellFetch.receivedAtMs) + '  responded=' + fmtSwMs(sw.shellFetch.respondedAtMs) + '  (' + sw.shellFetch.durationMs + 'ms, served from: ' + sw.shellFetch.source + ')');
+        lines.push('  >>> gap from SW script start to shell fetch resolved: ' + Math.round(sw.shellFetch.respondedAtMs - sw.scriptStartAtMs) + 'ms — if this accounts for most of the pre-app-code gap below, SW cold-start/reactivation itself is the confirmed bottleneck');
+      } else {
+        lines.push('  shell (navigation) fetch: not recorded this session (this SW instance may not have handled the page\'s own navigation request)');
+      }
+    }
+    lines.push('  >>> this app\'s own first boot marker (loadState call) fired at: ' + (bootTiming.meta.preAppCodeGapMs != null ? bootTiming.meta.preAppCodeGapMs + 'ms since navigation start' : 'n/a') + ' — everything before this point is invisible to the Stage timings below, and is exactly the part Navigation Timing + Service Worker timing above exist to explain');
     lines.push('');
     lines.push('Stage timings:');
     var stageOrder = ['loadState', 'syncBootWork', 'styleFetchAndParse (topo)', 'styleFetchAndParse (topo-dark)', 'styleFetchAndParse (aerial-streets)', 'styleFetchAndParse (aerial)', 'styleResolveToMapConstructed', 'mapConstructedToFirstStyleLoad', 'firstStyleLoadToFirstRender', 'firstStyleLoadToIdle'];
@@ -3368,20 +3522,91 @@
     });
     lines.push('');
     lines.push('Sum of stages: ' + totalMs + 'ms (stages can overlap slightly with the sync-work window; this is a rough total, not a precise non-overlapping sum)');
+    lines.push('');
+    var cs = bootTiming.cacheStats;
+    lines.push('Cache Storage at boot (Session 52 — the key correlating data point: if SW startup time above scales with cache size below, that\'s the confirmed mechanism, with real implications for how large an offline download should be allowed to get):');
+    if (!cs){
+      lines.push('  not measured yet this session (async, still in flight, or hasn\'t run yet)');
+    } else {
+      cs.caches.forEach(function(c){
+        var sizeText;
+        if (c.approxBytesFromHeaders != null){
+          sizeText = '~' + fmtMB(c.approxBytesFromHeaders) + ' from headers' + (c.entriesWithoutContentLength ? ' (' + c.entriesWithoutContentLength + ' entries had no Content-Length, not counted)' : '');
+        } else {
+          sizeText = c.note || 'size not measured';
+        }
+        lines.push('  ' + c.name + ' [' + c.category + ']: ' + c.entryCount + ' entries, ' + sizeText);
+      });
+      if (!cs.caches.length) lines.push('  (no caches exist yet)');
+      if (cs.storageEstimate){
+        lines.push('  Origin storage estimate (ALL storage combined — Cache Storage + IndexedDB + localStorage): ' + fmtMB(cs.storageEstimate.usageBytes) + ' used of ' + fmtMB(cs.storageEstimate.quotaBytes) + ' quota');
+      }
+    }
+    bootTiming.meta.totalStagesMs = totalMs;
     bootTiming.summaryText = lines.join('\n');
+    return bootTiming.summaryText;
+  }
 
+  // Writes the current bootTiming object to localStorage — both the "most recent" key and the
+  // rolling history. isNewBoot=true (the normal finalizeBootTiming() call) pushes a fresh history
+  // entry; isNewBoot=false (the async SW-timing/Cache-Storage enrichments, which describe data
+  // about THIS SAME boot arriving slightly later) updates the history entry already pushed for
+  // this capture in place, rather than appending a second, duplicate entry for one real boot.
+  function persistBootTimingRecord(isNewBoot){
     try {
       localStorage.setItem(BOOT_TIMING_KEY, JSON.stringify(bootTiming));
       var history = [];
       try { history = JSON.parse(localStorage.getItem(BOOT_TIMING_HISTORY_KEY) || '[]'); } catch(e){ history = []; }
       if (!Array.isArray(history)) history = [];
-      history.push({ capturedAt: bootTiming.meta.capturedAt, appVersion: APP_VERSION, stages: bootTiming.stages, gapLabel: bootTiming.meta.gapLabel, navigationType: bootTiming.meta.navigationType, online: bootTiming.meta.online, totalMs: totalMs, preAppCodeGapMs: bootTiming.meta.preAppCodeGapMs });
-      while (history.length > BOOT_TIMING_HISTORY_MAX) history.shift();
+      var entry = { capturedAt: bootTiming.meta.capturedAt, appVersion: APP_VERSION, stages: bootTiming.stages, gapLabel: bootTiming.meta.gapLabel, navigationType: bootTiming.meta.navigationType, online: bootTiming.meta.online, totalMs: bootTiming.meta.totalStagesMs, preAppCodeGapMs: bootTiming.meta.preAppCodeGapMs, swShellFetchMs: (bootTiming.swTiming && bootTiming.swTiming.shellFetch) ? bootTiming.swTiming.shellFetch.durationMs : null, cacheEntryCount: (bootTiming.cacheStats && bootTiming.cacheStats.caches) ? bootTiming.cacheStats.caches.reduce(function(sum,c){ return sum + c.entryCount; }, 0) : null };
+      if (isNewBoot || !history.length || history[history.length - 1].capturedAt !== bootTiming.meta.capturedAt){
+        history.push(entry);
+        while (history.length > BOOT_TIMING_HISTORY_MAX) history.shift();
+      } else {
+        history[history.length - 1] = entry;
+      }
       localStorage.setItem(BOOT_TIMING_HISTORY_KEY, JSON.stringify(history));
     } catch(e){
       console.warn('[BOOT] could not persist boot timing to localStorage:', e);
     }
+  }
+
+  function finalizeBootTiming(){
+    bootTiming.meta.appVersion = APP_VERSION;
+    bootTiming.meta.capturedAt = new Date().toISOString();
+    bootTiming.meta.online = (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : null;
+    bootTiming.meta.pinCount = (state && state.pins) ? state.pins.length : null;
+    bootTiming.meta.trackCount = (state && state.tracks) ? state.tracks.length : null;
+    bootTiming.meta.navigationType = bootLaunchGapInfo.navigationType;
+    bootTiming.meta.gapSinceLastBackgroundedMs = bootLaunchGapInfo.gapMs;
+    bootTiming.meta.gapLabel = bootLaunchGapInfo.gapLabel;
+    bootTiming.meta.timeOrigin = performance.timeOrigin;
+    bootTiming.navTiming = captureNavigationTiming();
+    // The headline number this session was added to surface: how much time elapsed, from true
+    // navigation start, before this app's OWN first boot marker was even reached. Every
+    // Session 49/50 stage timer only measures what happens AFTER this point — if this value
+    // alone accounts for most of an observed multi-second delay, that confirms the bottleneck is
+    // in browser-level fetch/parse/service-worker-startup, not in this app's own boot logic.
+    bootTiming.meta.preAppCodeGapMs = (bootTiming.meta.loadStateStartedAtMs != null) ? Math.round(bootTiming.meta.loadStateStartedAtMs) : null;
+
+    buildBootTimingSummaryText();
+    persistBootTimingRecord(true);
     console.log(bootTiming.summaryText);
+
+    // Session 52: two async enrichments, deliberately run AFTER (never blocking/delaying) the
+    // synchronous write above — each independently rebuilds the summary text and re-persists once
+    // its own data is ready, whenever that happens to be. Neither can regress the initial write:
+    // worst case, one fails or finds nothing and the summary simply keeps saying so explicitly.
+    enrichBootTimingWithSwTiming().then(function(){
+      buildBootTimingSummaryText();
+      persistBootTimingRecord(false);
+      console.log('[BOOT] SW timing enrichment applied');
+    });
+    enrichBootTimingWithCacheStorageStats().then(function(){
+      buildBootTimingSummaryText();
+      persistBootTimingRecord(false);
+      console.log('[BOOT] Cache Storage stats enrichment applied');
+    });
   }
 
   // Hidden-trigger debug view (Session 50) — reached via 5 taps on #about-version (see the
@@ -3415,7 +3640,9 @@
         history.forEach(function(h, i){
           var when = h.capturedAt ? new Date(h.capturedAt).toLocaleTimeString() : '?';
           var preApp = (h.preAppCodeGapMs != null) ? h.preAppCodeGapMs + 'ms pre-app' : 'pre-app n/a';
-          text += '  ' + (i + 1) + '. ' + when + ' — ' + preApp + ' + ' + (h.totalMs != null ? h.totalMs : '?') + 'ms app stages — ' + (h.gapLabel || '') + '\n';
+          var swShell = (h.swShellFetchMs != null) ? h.swShellFetchMs + 'ms SW-shell' : 'SW-shell n/a';
+          var cacheEntries = (h.cacheEntryCount != null) ? h.cacheEntryCount + ' cache entries' : 'cache n/a';
+          text += '  ' + (i + 1) + '. ' + when + ' — ' + preApp + ' (' + swShell + ') + ' + (h.totalMs != null ? h.totalMs : '?') + 'ms app stages — ' + cacheEntries + ' — ' + (h.gapLabel || '') + '\n';
         });
       }
     }
