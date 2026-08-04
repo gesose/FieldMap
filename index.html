@@ -2064,6 +2064,21 @@
   </div>
 </div>
 
+<!-- Boot timing debug view (Session 50) — hidden trigger only, reached via 5 taps on
+     #about-version above; see showBootTimingDebugView() for why this exists (viewing [BOOT]
+     console diagnostics with no DevTools/computer access, e.g. an iOS home-screen PWA). -->
+<div class="modal-overlay hidden" id="boot-timing-modal">
+  <div class="modal" style="text-align:left;max-width:420px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:4px;">Boot timing</div>
+    <div class="hint" style="margin-bottom:10px;">Most recent launch, plus recent history below it. Share a screenshot or use Copy if reporting this.</div>
+    <pre id="boot-timing-text" style="white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:11px;line-height:1.5;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:50vh;overflow:auto;margin:0 0 12px;"></pre>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-ghost" id="boot-timing-copy-btn" style="flex:1;">Copy</button>
+      <button class="btn btn-ghost" id="boot-timing-close-btn" style="flex:1;">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Onboarding modal -->
 <div class="modal-overlay hidden" id="onboarding-modal">
   <div class="modal" style="text-align:center;padding-top:28px;">
@@ -3099,8 +3114,215 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.47.0';
+  var APP_VERSION = '2.47.1';
   var APP_RELEASE_DATE = 'July 2026';
+
+  // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
+  // Session 49 added [BOOT] console.time/console.timeEnd markers to investigate a reported ~8s
+  // white screen on every launch, but console output is unreachable on an iOS home-screen PWA
+  // with no Mac available for remote Safari inspection — the actual real-world testing
+  // environment this needs to work in. This block captures the same numbers into a plain object
+  // (bootTiming), persists a readable summary to localStorage once boot settles, and — see
+  // showBootTimingDebugView() near bindUI() — exposes a way to view it on the phone itself via a
+  // 5-tap pattern on the version number in Tools → About (chosen over an auto-shown toast or a
+  // ?debug=boot URL param specifically because a standalone iOS PWA has no visible/editable
+  // address bar to append a query param to, and a tap pattern needs no explanation beyond "tap
+  // the version number a few times" if walked through this over a phone call in the field).
+  var BOOT_TIMING_KEY = 'field-map-boot-timing-v1';
+  var BOOT_TIMING_HISTORY_KEY = 'field-map-boot-timing-history-v1';
+  var BOOT_TIMING_HISTORY_MAX = 10;
+  var BOOT_LAST_ACTIVE_KEY = 'field-map-last-active-v1';
+  var bootTiming = { stages: {}, meta: {} };
+  // Records BOTH a console.log line (for anyone who does have DevTools) AND the numeric ms into
+  // bootTiming.stages (for the on-screen/localStorage path) from one call site, so the two
+  // outputs can never drift apart the way separate console.time/console.timeEnd + manual
+  // performance.now() bookkeeping could.
+  var bootStyleFetchTimed = false; // see loadStyle()'s own [BOOT] comment
+  function bootMark(name, startedAtMs){
+    var ms = Math.round(performance.now() - startedAtMs);
+    bootTiming.stages[name] = ms;
+    console.log('[BOOT] ' + name + ': ' + ms + 'ms');
+    return ms;
+  }
+
+  // Cold-launch vs backgrounded-reclaim diagnostic. IMPORTANT, and easy to get wrong: this code
+  // can NEVER directly time a genuine "warm resume" (app briefly backgrounded, still alive in
+  // memory) — by definition, a true warm resume never re-executes any of this script at all; the
+  // JS context, its timers, and its already-hidden loading-overlay all just persist untouched,
+  // and the OS simply repaints the existing page. There is no [BOOT] work to measure in that
+  // case because none happens. What CAN be measured, and is the actually useful diagnostic for
+  // the reported symptom, is the reverse question: whenever this boot code DOES run (which is
+  // definitionally always either a genuine fresh launch or a forced full reload), how long was
+  // the app backgrounded beforehand? A short gap points at the OS aggressively reclaiming the
+  // PWA's process rather than a normal cold start after being genuinely closed for a while —
+  // worth flagging as a different, more serious problem than anything optimizable in loadState()/
+  // createMap()/style loading, since no amount of speeding up boot fixes an OS that discards the
+  // whole process every time it's backgrounded for even a few seconds.
+  function formatGapDuration(ms){
+    var mins = Math.round(ms / 60000);
+    if (mins < 60) return mins + ' min';
+    var hrs = Math.floor(mins / 60), remMins = mins % 60;
+    if (hrs < 24) return hrs + 'h ' + remMins + 'm';
+    var days = Math.floor(hrs / 24);
+    return days + 'd ' + (hrs % 24) + 'h';
+  }
+  function classifyLaunchGap(){
+    var raw, navType = 'unknown';
+    try { raw = localStorage.getItem(BOOT_LAST_ACTIVE_KEY); } catch(e){ raw = null; }
+    try {
+      var navEntries = performance.getEntriesByType && performance.getEntriesByType('navigation');
+      if (navEntries && navEntries[0]) navType = navEntries[0].type;
+    } catch(e){}
+    if (!raw){
+      return { gapMs: null, gapLabel: 'no prior session recorded (first launch this device, or storage was cleared)', navigationType: navType };
+    }
+    var gapMs = Date.now() - Number(raw);
+    var label;
+    if (isNaN(gapMs) || gapMs < 0){
+      label = 'clock anomaly (negative/invalid gap) — ignore';
+    } else if (gapMs < 60000){
+      label = 'SUSPICIOUS — only ' + Math.round(gapMs / 1000) + 's since the app was last backgrounded, yet a full reload just happened. Possible aggressive OS process reclaim, not a normal cold start.';
+    } else if (gapMs < 30 * 60000){
+      label = formatGapDuration(gapMs) + ' since last backgrounded — a fairly short gap for a full reload to have been needed, worth noting.';
+    } else {
+      label = formatGapDuration(gapMs) + ' since last backgrounded — consistent with a normal, expected cold start.';
+    }
+    return { gapMs: gapMs, gapLabel: label, navigationType: navType };
+  }
+  // Computed immediately (before anything else in this script runs) so it reads the PREVIOUS
+  // session's timestamp before this session's own tracking below has any chance to overwrite it.
+  var bootLaunchGapInfo = classifyLaunchGap();
+  (function registerLastActiveTracking(){
+    function markActive(){
+      try { localStorage.setItem(BOOT_LAST_ACTIVE_KEY, String(Date.now())); } catch(e){}
+    }
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState === 'hidden') markActive();
+    });
+    window.addEventListener('pagehide', markActive);
+    // Belt-and-suspenders: a hard OS-level kill may never fire visibilitychange/pagehide at all,
+    // which would leave a stale (possibly days-old) timestamp behind — periodically refreshing
+    // it while genuinely visible means even that worst case still leaves a reasonably recent
+    // mark, at the cost of at most ~15s of imprecision in the next launch's gap calculation.
+    setInterval(function(){ if (document.visibilityState === 'visible') markActive(); }, 15000);
+  })();
+
+  // Called once, from the first 'idle' event after the first 'style.load' (see createMap()) —
+  // the point at which every stage this session cares about has a real number. Builds a plain-
+  // text summary (readable directly, no JSON parsing needed) and persists both "most recent" and
+  // a capped rolling history (BOOT_TIMING_HISTORY_MAX entries) — a single snapshot can't answer
+  // "is this happening every time," which is exactly the question this instrumentation exists to
+  // answer, so the history is what actually makes showBootTimingDebugView() useful after several
+  // real app opens rather than only ever showing the latest one.
+  function finalizeBootTiming(){
+    bootTiming.meta.appVersion = APP_VERSION;
+    bootTiming.meta.capturedAt = new Date().toISOString();
+    bootTiming.meta.online = (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : null;
+    bootTiming.meta.pinCount = (state && state.pins) ? state.pins.length : null;
+    bootTiming.meta.trackCount = (state && state.tracks) ? state.tracks.length : null;
+    bootTiming.meta.navigationType = bootLaunchGapInfo.navigationType;
+    bootTiming.meta.gapSinceLastBackgroundedMs = bootLaunchGapInfo.gapMs;
+    bootTiming.meta.gapLabel = bootLaunchGapInfo.gapLabel;
+
+    var totalMs = 0;
+    var lines = [];
+    lines.push('FieldMap boot timing — v' + APP_VERSION);
+    lines.push(new Date(bootTiming.meta.capturedAt).toLocaleString());
+    lines.push('');
+    lines.push('Launch gap: ' + bootTiming.meta.gapLabel);
+    lines.push('Navigation type: ' + bootTiming.meta.navigationType);
+    lines.push('Online: ' + bootTiming.meta.online + '   Pins: ' + bootTiming.meta.pinCount + '   Tracks: ' + bootTiming.meta.trackCount);
+    lines.push('');
+    lines.push('Stage timings:');
+    var stageOrder = ['loadState', 'syncBootWork', 'styleFetchAndParse (topo)', 'styleFetchAndParse (topo-dark)', 'styleFetchAndParse (aerial-streets)', 'styleFetchAndParse (aerial)', 'styleResolveToMapConstructed', 'mapConstructedToFirstStyleLoad', 'firstStyleLoadToFirstRender', 'firstStyleLoadToIdle'];
+    // Print known stages first, in the order they actually occur, then any stage not in that
+    // fixed list (e.g. a style name not anticipated above) so nothing captured is ever silently
+    // dropped from the readable summary just because this list didn't happen to name it.
+    var printed = {};
+    stageOrder.forEach(function(name){
+      if (bootTiming.stages[name] === undefined) return;
+      printed[name] = true;
+      totalMs += bootTiming.stages[name];
+      lines.push('  ' + name + ': ' + bootTiming.stages[name] + 'ms');
+    });
+    Object.keys(bootTiming.stages).forEach(function(name){
+      if (printed[name]) return;
+      totalMs += bootTiming.stages[name];
+      lines.push('  ' + name + ': ' + bootTiming.stages[name] + 'ms');
+    });
+    lines.push('');
+    lines.push('Sum of stages: ' + totalMs + 'ms (stages can overlap slightly with the sync-work window; this is a rough total, not a precise non-overlapping sum)');
+    bootTiming.summaryText = lines.join('\n');
+
+    try {
+      localStorage.setItem(BOOT_TIMING_KEY, JSON.stringify(bootTiming));
+      var history = [];
+      try { history = JSON.parse(localStorage.getItem(BOOT_TIMING_HISTORY_KEY) || '[]'); } catch(e){ history = []; }
+      if (!Array.isArray(history)) history = [];
+      history.push({ capturedAt: bootTiming.meta.capturedAt, appVersion: APP_VERSION, stages: bootTiming.stages, gapLabel: bootTiming.meta.gapLabel, navigationType: bootTiming.meta.navigationType, online: bootTiming.meta.online, totalMs: totalMs });
+      while (history.length > BOOT_TIMING_HISTORY_MAX) history.shift();
+      localStorage.setItem(BOOT_TIMING_HISTORY_KEY, JSON.stringify(history));
+    } catch(e){
+      console.warn('[BOOT] could not persist boot timing to localStorage:', e);
+    }
+    console.log(bootTiming.summaryText);
+  }
+
+  // Hidden-trigger debug view (Session 50) — reached via 5 taps on #about-version (see the
+  // tap-counter wiring in bindUI()). Reads whatever finalizeBootTiming() most recently persisted
+  // to localStorage, plus a compact rolling history, and renders both as plain readable text —
+  // no DevTools, no computer, just the phone screen. Deliberately reads from localStorage rather
+  // than the live in-memory bootTiming object, so this also works if boot hasn't finished
+  // settling yet this session (shows the PREVIOUS session's numbers in that case, with that fact
+  // stated explicitly) or if finalizeBootTiming() never got a chance to run at all this session
+  // (e.g. the map never reached 'idle') — either of which is itself a real finding worth seeing,
+  // not just an empty view.
+  function showBootTimingDebugView(){
+    var text;
+    var raw = null, historyRaw = null;
+    try { raw = localStorage.getItem(BOOT_TIMING_KEY); } catch(e){}
+    try { historyRaw = localStorage.getItem(BOOT_TIMING_HISTORY_KEY); } catch(e){}
+    if (!raw){
+      text = 'No boot timing captured yet.\n\nThis means the map has never reached its first "idle" event (all initial tiles settled) on this device since this was last cleared — which, on its own, is a real finding: it means whatever is slow is preventing the app from ever fully finishing its initial load, not just delaying it.';
+    } else {
+      var parsed = null;
+      try { parsed = JSON.parse(raw); } catch(e){}
+      var isCurrentSession = parsed && bootTiming && parsed.meta && bootTiming.meta && parsed.meta.capturedAt === bootTiming.meta.capturedAt;
+      text = (parsed && parsed.summaryText) ? parsed.summaryText : raw;
+      if (!isCurrentSession){
+        text = '(showing the LAST launch that reached "idle" — this session hasn\'t gotten there yet, or hasn\'t started)\n\n' + text;
+      }
+      var history = [];
+      try { history = JSON.parse(historyRaw || '[]'); } catch(e){ history = []; }
+      if (Array.isArray(history) && history.length > 1){
+        text += '\n\n---\nRecent launches (oldest to newest, up to last ' + BOOT_TIMING_HISTORY_MAX + '):\n';
+        history.forEach(function(h, i){
+          var when = h.capturedAt ? new Date(h.capturedAt).toLocaleTimeString() : '?';
+          text += '  ' + (i + 1) + '. ' + when + ' — total ' + (h.totalMs != null ? h.totalMs : '?') + 'ms — ' + (h.gapLabel || '') + '\n';
+        });
+      }
+    }
+    document.getElementById('boot-timing-text').textContent = text;
+    document.getElementById('boot-timing-modal').classList.remove('hidden');
+  }
+
+  function copyBootTimingText(text){
+    function fallbackCopy(){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied to clipboard'); }
+      catch(e){ showToast('Could not copy — select the text manually', 4000); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ showToast('Copied to clipboard'); }).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  }
 
   var MAPBOX_TOKEN = 'pk.eyJ1IjoiZ3Nvc2ViZWUiLCJhIjoiY21yMjdsNGtqMDJydzJ4bzlpMXk0cGVtaiJ9.S94QGMtU7iSvgEIoadAKyg';
   // Deliberately NOT named "mapbox-dem" — our 3 custom Mapbox Studio styles already embed a
@@ -5450,11 +5672,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       fetchPromise = fetch(url);
     }
 
-    // [BOOT] instrumentation (Session 49) — see the boot sequence at the bottom of this script
-    // for the full set of markers this pairs with; this one specifically isolates the style
-    // fetch+regex-transform+JSON.parse cost, since that was one of the leading suspects for the
-    // reported ~8s white screen and had no direct timing of its own before now.
-    console.time('[BOOT] style fetch+parse: ' + styleName);
+    // [BOOT] instrumentation (Session 49/50) — see the boot sequence at the bottom of this
+    // script for the full set of markers this pairs with; this one specifically isolates the
+    // style fetch+regex-transform+JSON.parse cost, since that was one of the leading suspects
+    // for the reported ~8s white screen and had no direct timing of its own before now.
+    // bootStyleFetchTimed guards bootTiming.stages so only the very first call (boot) is folded
+    // into the persisted boot summary — a later manual base-layer switch also calls loadStyle()
+    // and still gets a console.log for live debugging, just not counted as "boot" time.
+    var __bootStyleFetchStart = performance.now();
+    var __bootStyleFetchIsBootCall = !bootStyleFetchTimed;
+    if (__bootStyleFetchIsBootCall) bootStyleFetchTimed = true;
     return fetchPromise
       .then(function(r){
         if (!r.ok) throw new Error('HTTP ' + r.status + ' for style "' + styleName + '"');
@@ -5478,7 +5705,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         delete styleObj.name;
         patchStyleForOfflineTileParity(styleObj);
         styleCache[styleName] = styleObj;
-        console.timeEnd('[BOOT] style fetch+parse: ' + styleName);
+        if (__bootStyleFetchIsBootCall){
+          bootMark('styleFetchAndParse (' + styleName + ')', __bootStyleFetchStart);
+        } else {
+          console.log('[BOOT] style fetch+parse (post-boot, ' + styleName + '): ' + Math.round(performance.now() - __bootStyleFetchStart) + 'ms');
+        }
         return styleObj;
       });
   }
@@ -5488,15 +5719,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     registerTerrainOverlayProtocols(); // once, global — see that function's own comment
     var styleName = state.settings.maplibreStyle || 'topo';
 
-    // [BOOT] instrumentation (Session 49) — diagnosing a reported ~8s white screen on every
+    // [BOOT] instrumentation (Session 49/50) — diagnosing a reported ~8s white screen on every
     // launch, online or offline. This specific marker covers the async gap between createMap()
     // starting the style resolution (loadStyle() has its own internal timer for the fetch+parse
     // portion of this) and the real maplibregl.Map object actually existing — the point up to
     // which nothing on screen can possibly have changed regardless of what the rest of boot
-    // does. Not gated to boot-only since createMap() itself is only ever called once per app
-    // load (style SWITCHES later in the session go through map.setStyle(), not a second
-    // createMap() call), so there's no risk of a stale/duplicate timer label.
-    console.time('[BOOT] style resolve -> Map() constructed');
+    // does. createMap() itself is only ever called once per app load (style SWITCHES later in
+    // the session go through map.setStyle(), not a second createMap() call), so this always
+    // measures a genuine boot, never needs a guard flag the way loadStyle()'s own timer does.
+    var __bootStyleResolveStart = performance.now();
+    var __bootMapConstructedStart; // set once Map() actually exists, read by the style.load handler below
     loadStyle(styleName)
       .catch(function(err){
         console.error('[FieldMap] Style "' + styleName + '" failed, trying aerial:', err);
@@ -5512,9 +5744,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         attributionControl: true,
         doubleClickZoom: false
       });
-      console.timeEnd('[BOOT] style resolve -> Map() constructed');
-      console.log('[BOOT] maplibregl.Map() constructed @ ' + performance.now().toFixed(0) + 'ms since navigation start');
-      console.time('[BOOT] Map() constructed -> first style.load event');
+      bootMark('styleResolveToMapConstructed', __bootStyleResolveStart);
+      __bootMapConstructedStart = performance.now();
 
       // Zoom +/- and north/reset used to live here as MapLibre's built-in NavigationControl
       // (top-left, showCompass+visualizePitch) — replaced (Session 27) with custom buttons in
@@ -5550,26 +5781,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // It's the right place to re-add GeoJSON sources/layers that setStyle() wipes.
       var overlayDataRestoredOnInit = false;
       map.on('style.load', function(){
-        // [BOOT] instrumentation (Session 49), guarded on the same first-invocation flag the
+        // [BOOT] instrumentation (Session 49/50), guarded on the same first-invocation flag the
         // existing overlay-restore code below already uses, so a later manual base-layer switch
-        // (which also fires style.load) doesn't call console.timeEnd on an already-consumed
-        // label — that would just be a benign console warning, not a functional bug, but it'd
-        // make the real boot numbers harder to find in a long session's console output.
+        // (which also fires style.load) doesn't try to record a second "boot" — that would just
+        // silently overwrite the real boot numbers with a mid-session style-switch's numbers.
         if (!overlayDataRestoredOnInit){
-          console.timeEnd('[BOOT] Map() constructed -> first style.load event');
-          console.log('[BOOT] first style.load fired @ ' + performance.now().toFixed(0) + 'ms since navigation start');
-          console.time('[BOOT] first style.load -> first render frame');
-          console.time('[BOOT] first style.load -> idle (initial tiles settled)');
+          bootMark('mapConstructedToFirstStyleLoad', __bootMapConstructedStart);
+          var __bootRenderStart = performance.now();
+          var __bootIdleStart = performance.now();
           // NOTE: 'render' fires on essentially every GL frame, including early frames that are
           // only background/placeholder — this is a cheap, standard proxy for "first paint," not
           // proof that real tiles are visible yet. 'idle' (below) is the more meaningful signal:
           // it only fires once everything the style/sources currently need has finished loading.
           map.once('render', function(){
-            console.timeEnd('[BOOT] first style.load -> first render frame');
+            bootMark('firstStyleLoadToFirstRender', __bootRenderStart);
           });
           map.once('idle', function(){
-            console.timeEnd('[BOOT] first style.load -> idle (initial tiles settled)');
-            console.log('[BOOT] ==== map idle / initial tiles settled @ ' + performance.now().toFixed(0) + 'ms since navigation start ====');
+            bootMark('firstStyleLoadToIdle', __bootIdleStart);
+            finalizeBootTiming();
           });
         }
         updateCenterReadout();
@@ -18149,6 +18378,34 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('about-modal').classList.add('hidden');
     });
 
+    // Hidden trigger for the on-screen boot-timing debug view (Session 50) — 5 taps on the
+    // version number within a 2.5s window between consecutive taps (a slower tap resets the
+    // count, so this can't be triggered by accident over the course of casually reading the
+    // About panel). Chosen over an auto-shown toast or a ?debug=boot URL param specifically
+    // because a standalone iOS home-screen PWA has no visible/editable address bar to append a
+    // query param to, and "tap the version number a few times" needs no screen-sharing to
+    // explain over a phone call in the field.
+    (function(){
+      var tapCount = 0, tapTimer = null;
+      document.getElementById('about-version').addEventListener('click', function(){
+        tapCount++;
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(function(){ tapCount = 0; }, 2500);
+        if (tapCount >= 5){
+          tapCount = 0;
+          clearTimeout(tapTimer);
+          document.getElementById('about-modal').classList.add('hidden');
+          showBootTimingDebugView();
+        }
+      });
+    })();
+    document.getElementById('boot-timing-close-btn').addEventListener('click', function(){
+      document.getElementById('boot-timing-modal').classList.add('hidden');
+    });
+    document.getElementById('boot-timing-copy-btn').addEventListener('click', function(){
+      copyBootTimingText(document.getElementById('boot-timing-text').textContent);
+    });
+
     // Set version badge next to logo
     document.getElementById('app-title-version').textContent = 'v' + APP_VERSION;
 
@@ -18977,6 +19234,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         document.getElementById('polygon-modal').classList.add('hidden');
         document.getElementById('onboarding-modal').classList.add('hidden');
         document.getElementById('about-modal').classList.add('hidden');
+        document.getElementById('boot-timing-modal').classList.add('hidden');
         document.getElementById('add-sheet').classList.add('hidden');
         document.getElementById('tools-sheet').classList.add('hidden');
         if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
@@ -19007,7 +19265,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   });
 
-  // [BOOT] instrumentation (Session 49) — added to diagnose a reported ~8s white screen on
+  // [BOOT] instrumentation (Session 49/50) — added to diagnose a reported ~8s white screen on
   // every launch, reproducing identically online AND fully offline. This top-level chain covers
   // the two stages most directly suspected from code review alone: loadState() (a
   // localStorage/window.storage read+parse, expected near-instant, but unconfirmed on a real
@@ -19017,14 +19275,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // timer for that), so this specifically isolates whether bindUI()/marker-rebuild/renderPinList
   // are doing anything slow enough to matter, independent of network/style timing entirely.
   // Together with loadStyle()'s and createMap()'s own markers and the style.load-handler's
-  // render/idle markers, this gives a complete, non-overlapping timeline from navigation start
-  // through the map being visually settled — intended to be read together on a real device,
-  // not fixed from this sandbox (see CLAUDE.md for why: no real Mapbox network access here).
-  console.time('[BOOT] loadState()');
+  // render/idle markers (which is also where the full summary actually gets persisted — see
+  // finalizeBootTiming()), this gives a complete, non-overlapping timeline from navigation start
+  // through the map being visually settled. Session 50 replaced the plain console.time/
+  // console.timeEnd calls here with bootMark() so the same numbers are captured into bootTiming
+  // for the on-screen/localStorage path, not just printed to a console this real testing
+  // environment (iOS home-screen PWA, no Mac) has no way to read.
+  var __bootLoadStateStart = performance.now();
   loadState().then(function(){
-    console.timeEnd('[BOOT] loadState()');
-    console.log('[BOOT] loadState resolved @ ' + performance.now().toFixed(0) + 'ms since navigation start — ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
-    console.time('[BOOT] sync boot work (createMap call -> overlay hidden)');
+    bootMark('loadState', __bootLoadStateStart);
+    console.log('[BOOT] ' + state.pins.length + ' pins, ' + state.tracks.length + ' tracks');
+    var __bootSyncWorkStart = performance.now();
     createMap();
     bindUI();
     // Pin/track/polygon/bearing rendering deferred — Leaflet map APIs unavailable until Session 2+
@@ -19033,8 +19294,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     try { (state.polygons||[]).forEach(addPolygonToMap); } catch(e){}
     try { (state.bearings||[]).forEach(addBearingToMap); } catch(e){}
     renderPinList();
-    console.timeEnd('[BOOT] sync boot work (createMap call -> overlay hidden)');
-    console.log('[BOOT] loading-overlay hidden @ ' + performance.now().toFixed(0) + 'ms since navigation start — this is NOT the map being ready, just createMap() having been CALLED (it returns before its own style/tile loading finishes); see the other [BOOT] markers for when the map is actually visually settled');
+    bootMark('syncBootWork', __bootSyncWorkStart);
+    console.log('[BOOT] loading-overlay hidden — this is NOT the map being ready, just createMap() having been CALLED (it returns before its own style/tile loading finishes); see the other [BOOT] markers, or the on-screen boot-timing view (5 taps on the version number in Tools > About), for when the map is actually visually settled');
     document.getElementById('loading-overlay').classList.add('hidden');
     appIsReady = true;
     appReadyCallbacks.forEach(function(cb){ cb(); });

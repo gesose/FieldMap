@@ -227,6 +227,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   still needs a real device (the remote `aerial` Studio style's satellite source structure, the actual
   incident scenario end-to-end, and the boot-timing numbers themselves — this sandbox's Mapbox v4 access is
   blocked, same limitation as every prior session touching DEM/vectorbase).
+- Session 49's `[BOOT]` timing markers are now viewable on-device with no computer (Session 50) — the real
+  testing environment for the white-screen investigation is an iOS home-screen PWA with no Mac available for
+  remote Safari inspection, so console-only output was never actually reachable there. `finalizeBootTiming()`
+  persists a full readable summary (every stage's ms, pin/track counts, online status, navigation type, and a
+  cold-launch-vs-recently-backgrounded classification — see below) to localStorage once the map reaches its
+  first `idle`, plus a capped rolling history of the last 10 launches so "is this slow every time" is
+  answerable from the device alone, not just the latest snapshot. Viewed via 5 taps on the version number in
+  Tools → About (a `?debug=boot` URL param was considered and rejected — a standalone iOS PWA has no visible/
+  editable address bar to append one to). Also added a launch-gap diagnostic: since a genuine "warm resume"
+  (briefly backgrounded, still alive in memory) never re-executes any of this boot code at all — there's
+  nothing to time in that case — the actually answerable question is instead "how long was the app
+  backgrounded before THIS full reload happened," which distinguishes a normal cold start after real idle
+  time from the OS aggressively reclaiming the PWA's process after only a few seconds backgrounded (the latter
+  would explain an 8s delay on every single open regardless of how briefly the app was away). See Architecture
+  notes' "Offline tile cache-key parity + protected downloads + boot timing" entry, its own "Session 50"
+  sub-bullet, for the full mechanism and what was verified (extraction-based tests running the real code
+  against mocked browser APIs, not a reimplementation) versus what still needs the real phone.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2562,6 +2579,100 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     render — the real-world reproduction this fix is meant to solve); and the `[BOOT]` timing numbers
     themselves, which need a real device to mean anything. All three are flagged as the required follow-up
     real-device test, not silently treated as already covered by the sandbox verification above.
+  - **Session 50** — the `[BOOT]` markers above only ever wrote to `console.time`/`console.timeEnd`, which
+    Session 49 itself flagged as needing a real device but didn't anticipate would be COMPLETELY unreachable:
+    the actual testing environment is an iOS home-screen PWA with no Mac available for remote Safari
+    inspection, so there is no console to read at all in practice, not just an inconvenient one. This session
+    made the same numbers viewable on the phone screen directly, with no computer.
+    - **`bootMark(name, startedAtMs)`** (replacing the plain `console.time`/`console.timeEnd` pairs) computes
+      `Math.round(performance.now() - startedAtMs)`, both logs it (`console.log`, for anyone who DOES have
+      DevTools) and records it into `bootTiming.stages[name]` — one call site for both outputs, so they can
+      never drift out of sync the way separately-maintained `console.time` calls plus manual `performance.now()`
+      bookkeeping could. Wired into every stage Session 49 already timed: `loadState`, `syncBootWork` (the
+      createMap() call through the loading-overlay hide), `styleFetchAndParse (<name>)` (inside `loadStyle()`,
+      guarded by a new `bootStyleFetchTimed` flag so only the FIRST call — boot — is folded into the persisted
+      summary; a later manual base-layer switch still logs live but doesn't overwrite the boot numbers),
+      `styleResolveToMapConstructed`, `mapConstructedToFirstStyleLoad`, `firstStyleLoadToFirstRender`, and
+      `firstStyleLoadToIdle` (both guarded by the same pre-existing `overlayDataRestoredOnInit` flag the
+      overlay-restore code already used, for the same "don't let a later style switch overwrite boot numbers"
+      reason).
+    - **`finalizeBootTiming()`**, called once from the `map.once('idle', ...)` handler right after
+      `firstStyleLoadToIdle` is recorded — the point at which every stage this session cares about has a real
+      number. Builds `bootTiming.meta` (app version, ISO timestamp, `navigator.onLine`, pin/track counts, the
+      launch-gap classification below) and a plain-text `bootTiming.summaryText` (stage names + ms, human-
+      readable directly — no JSON parsing needed to read it), then persists BOTH the full object
+      (`BOOT_TIMING_KEY` = `'field-map-boot-timing-v1'`, "most recent launch") and a capped rolling history
+      (`BOOT_TIMING_HISTORY_KEY`, last `BOOT_TIMING_HISTORY_MAX` = 10 launches, compact per-entry — stage
+      timings, gap label, total) to `localStorage`. The history exists specifically because a single snapshot
+      can't answer "is this happening every time" — exactly the question this instrumentation exists to
+      answer — only a trend across several real app opens can.
+    - **On-device viewer**: `showBootTimingDebugView()` reads both localStorage keys and renders them as plain
+      text into a new `#boot-timing-modal` (a `<pre>` block + Copy/Close buttons, styled like every other
+      `.modal-overlay` in this file). Reached via 5 taps on `#about-version` (Tools → About) within a 2.5s
+      window between consecutive taps — a slower tap resets the count, so casually reading the About panel
+      can't trigger it by accident. Two other options were considered and rejected: an auto-shown toast (more
+      moving parts — timing, dismissal, risk of interfering with normal use — for no real benefit over a
+      trigger the user only reaches when they actually want it) and a `?debug=boot` URL parameter (rejected
+      specifically because a standalone iOS home-screen PWA has no visible/editable address bar to append a
+      query string to — the tap pattern needs no more explanation than "tap the version number a few times,"
+      reachable identically whether the app is opened as an installed PWA or in Safari directly). If boot
+      hasn't reached `idle` yet this session (or never does), the viewer reads the PREVIOUS session's numbers
+      instead and says so explicitly, rather than showing an empty view — and if NO prior capture exists at
+      all, it says that plainly too (itself a real finding: it means the map has never once finished its
+      initial load on this device since storage was last cleared, not just delayed it).
+    - **Cold-launch vs backgrounded-reclaim (`classifyLaunchGap()`)**: reasoned through carefully before
+      writing any code, since the literal ask ("distinguish cold launch from warm resume") doesn't map cleanly
+      onto what this JS environment can actually observe — a genuine warm resume (app briefly backgrounded,
+      still alive in memory) by definition never re-executes ANY of this script; the JS context, its timers,
+      and the already-hidden loading-overlay all just persist untouched, so there is no `[BOOT]` work to
+      measure in that case at all, not a fast one. What CAN be measured, and is the actually useful diagnostic
+      for the reported symptom, is the reverse question: whenever this boot code DOES run (always either a
+      genuine fresh launch or a forced full reload), how long was the app backgrounded beforehand?
+      `BOOT_LAST_ACTIVE_KEY` (`'field-map-last-active-v1'`) is refreshed to `Date.now()` on `visibilitychange`
+      to `'hidden'`, on `pagehide`, and (belt-and-suspenders, in case a hard OS-level kill never fires either
+      of those) every 15s while genuinely visible. `classifyLaunchGap()` — computed exactly once, immediately,
+      as one of the very first statements this script executes (before its own periodic re-marking could ever
+      overwrite the value being read) — diffs `Date.now()` against that stored timestamp and buckets it: no
+      prior record at all (first launch, or storage cleared), `<60s` (labeled SUSPICIOUS — a full reload right
+      after only being backgrounded for under a minute points at aggressive OS process reclaim, not a normal
+      cold start, and is flagged as a DIFFERENT, more serious problem than anything optimizable in the boot
+      sequence's own code), `<30min` (a "fairly short, worth noting" gap), and anything longer (a normal,
+      expected cold start). Also captures the standard `PerformanceNavigationTiming.type` (`'navigate'` vs.
+      `'reload'` vs. `'back_forward'`) alongside the homegrown gap heuristic as a second, complementary signal
+      — neither is perfectly definitive alone (the standard API distinguishes how the navigation happened but
+      not why; the gap heuristic infers "was this suspiciously soon after backgrounding" but nothing else), so
+      both are surfaced together rather than collapsed into one verdict.
+    - **Verification**: extraction-based tests, not a reimplementation — the actual function source
+      (`formatGapDuration`/`classifyLaunchGap`/`bootMark`/`finalizeBootTiming`/`showBootTimingDebugView`/
+      `copyBootTimingText`) was extracted verbatim from `index.html` via a line-range slice and `eval`'d
+      against a minimal set of mocked browser globals (`localStorage`, `performance.now`/`getEntriesByType`,
+      `document.getElementById`, `navigator`, `setTimeout`/`setInterval`), specifically so any bug in the
+      shipped code would show up in the test rather than only in a hand-copied approximation of it. Confirmed:
+      all 4 gap-classification buckets (no record / <60s SUSPICIOUS / <30min / normal) produce the correct
+      label for representative gap values; `bootMark` correctly computes and records elapsed ms; a full
+      `finalizeBootTiming()` run produces a summary containing every stage and the gap label, and persists it;
+      pushing 15 sequential captures through `finalizeBootTiming()` confirmed the history array stays capped
+      at exactly `BOOT_TIMING_HISTORY_MAX` (10), never growing unbounded; `showBootTimingDebugView()` correctly
+      reads both keys back and includes a "Recent launches" section listing prior captures. The tap-pattern
+      trigger logic (inline in `bindUI()`, not a standalone extractable function) was verified separately with
+      a small deterministic fake-clock simulation of the identical logic: 5 rapid taps trigger exactly once; 3
+      taps followed by a 3-second gap (past the 2.5s reset window) then 2 more taps does NOT trigger (confirms
+      the reset actually works, not just the trigger); two full 5-tap sequences back to back trigger exactly
+      twice. One real sandbox-only artifact hit and confirmed harmless, not a product bug: this sandbox's
+      Node 24 has its OWN built-in global `navigator` object (added for web-API compatibility) that lacks an
+      `onLine` property and can't be shadowed by a test mock, which made the extraction-based test's captured
+      `Online:` field read `null` instead of the mocked `true` — confirmed via isolated reproduction that this
+      is purely a Node-vs-browser global-object collision specific to this test harness, not a flaw in the
+      shipped code (`navigator.onLine` is a completely standard, universally-supported property in every real
+      browser/WKWebView target this code actually runs in). `node --check` confirmed clean syntax on all 4
+      extracted inline `<script>` blocks and `service-worker.js`. **Still needs a real device, flagged rather
+      than assumed covered by the above**: the actual boot-timing numbers this instrumentation captures, the
+      cold/warm classification's real-world accuracy (does a genuine background-then-resume on a real iOS
+      PWA actually skip this code entirely, as reasoned, or does iOS's WKWebView lifecycle behave differently
+      in some edge case not obvious from spec reading alone), and whether 5 taps on the real device's screen
+      (touch, not a mouse click event) fires the same `'click'` event this trigger listens for (expected to,
+      since `'click'` is the standard synthesized event for a tap on essentially every mobile browser, but not
+      independently confirmed here).
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -3691,3 +3802,41 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
   2.46.0 → 2.47.0 (minor — significant reliability fix for a confirmed real-world data-loss bug), SHELL_CACHE
   bumped v155 → v156.
+- Session 50: made Session 49's `[BOOT]` console timing markers viewable on-device with no computer — the
+  real testing environment (an iOS home-screen PWA, no Mac available for remote Safari inspection) has no
+  reachable console at all, which Session 49 hadn't fully accounted for. Replaced the plain `console.time`/
+  `console.timeEnd` pairs with `bootMark()`, which both logs (for anyone who does have DevTools) and records
+  each stage's elapsed ms into a `bootTiming` object from one call site, then `finalizeBootTiming()` (called
+  once the map reaches its first `idle`) builds a plain-readable summary and persists it to localStorage,
+  along with a capped rolling history of the last 10 launches — a single snapshot can't answer "is this
+  happening every time," which is exactly the question this instrumentation exists to answer. Viewed via 5
+  taps on the version number in Tools → About (`showBootTimingDebugView()`, a new `#boot-timing-modal`) —
+  chosen over an auto-shown toast (more moving parts for no real benefit) or a `?debug=boot` URL param
+  (rejected specifically because a standalone iOS PWA has no visible/editable address bar to append one to).
+  Also added a launch-gap diagnostic (`classifyLaunchGap()`), reasoned through carefully since the literal ask
+  ("distinguish cold launch from warm resume") doesn't map cleanly onto what this JS environment can actually
+  observe: a genuine warm resume never re-executes any of this script at all (the JS context and its timers
+  just persist untouched), so there is no boot work to measure in that case — what CAN be measured, and is the
+  actually useful diagnostic, is how long the app was backgrounded before THIS reload happened, tracked via a
+  `visibilitychange`/`pagehide`/15s-periodic-while-visible timestamp and bucketed into "no prior record" /
+  "<60s, SUSPICIOUS (possible aggressive OS reclaim)" / "<30min, fairly short" / "normal cold start," alongside
+  the standard `PerformanceNavigationTiming.type` as a complementary signal. See Architecture notes' "Offline
+  tile cache-key parity + protected downloads + boot timing" entry, its own "Session 50" sub-bullet, for full
+  mechanism detail. Verified via extraction-based tests (the real function source pulled verbatim from
+  `index.html` and run against mocked browser globals, not a hand-copied reimplementation, so a bug in the
+  shipped code would actually show up): all 4 gap-classification buckets produce correct labels; `bootMark`
+  computes correct elapsed ms; `finalizeBootTiming()` produces a complete, correctly-formatted summary and
+  persists it; pushing 15 sequential captures confirmed the history stays capped at exactly 10 entries, never
+  growing unbounded; the on-device viewer correctly reads back both the current capture and history. The
+  5-tap trigger's timing logic (5 rapid taps → fires once; 3 taps + a 3s gap + 2 more taps → does NOT fire,
+  confirming the reset actually works; two full sequences back to back → fires twice) was verified with a
+  separate deterministic fake-clock simulation of the identical inline logic. One sandbox-only test artifact
+  was hit and confirmed harmless via isolated reproduction, not a product bug: this sandbox's Node 24 has its
+  own built-in `navigator` global lacking `onLine`, which can't be shadowed by a test mock — real browsers/
+  WKWebView (the actual target) have no such collision. `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks and `service-worker.js`. Explicitly flagged as still needing a real
+  device, not assumed covered by the sandbox tests: the actual boot-timing numbers themselves, whether the
+  cold/warm reasoning holds up against real iOS WKWebView lifecycle behavior (not just spec reading), and
+  whether a real touch-tap on the version number fires the same event this trigger listens for. APP_VERSION
+  bumped 2.47.0 → 2.47.1 (patch — on-device diagnostics for an already-shipped instrumentation feature, no
+  behavior change to the app itself), SHELL_CACHE bumped v156 → v157.
