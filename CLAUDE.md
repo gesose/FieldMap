@@ -293,6 +293,31 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   a mocked multi-cache Cache Storage implementation, not a reimplementation) — the real numbers, and whether
   SW startup time actually scales with cache size as hypothesized, both still need the real phone, same
   limitation as every session in this thread so far.
+- Fixed a real, long-standing silent Export failure (Session 53): clicking Export produced zero visible
+  response — no error, no console output, no file prompt. Two independent bugs, both introduced in the same
+  historical reorg that moved Export from a sidebar button into the Tools sheet (see that entry's own
+  "Session 53" sub-bullet under Architecture notes for the git-archaeology confirming exactly when, and how
+  long this has been broken). (1) `#export-menu` lost its `.dropdown-wrap` anchor when its trigger moved to
+  the Tools sheet, and gained an inline `position:fixed` override with no JS ever set to actually position it
+  — under `position:fixed`, the `.dropdown-menu` class's own `top:calc(100% + 6px)` resolves against the
+  *viewport*, not a nearby element, rendering the menu entirely below the visible screen on every open. (2)
+  `#sheet-export-btn`'s click handler never called `e.stopPropagation()`, so the same click that opened the
+  menu also bubbled to the document-level outside-click-dismiss listener (`export-menu` is a member of
+  `OUTSIDE_CLICK_DISMISS_IDS`), which immediately closed it again in the same event — a second, independent
+  reason it would have stayed invisible even with (1) alone fixed. Confirmed via code review that Export
+  itself has no account-specific logic anywhere in the chain (`exportGeoJSON`/`exportGPX` read directly from
+  the live, module-scope `state.pins`/`state.tracks` — whatever account is currently signed in — with zero
+  conditionals gating on account identity), so the account-switching scenario in the original report was never
+  actually implicated. Verified live end-to-end: Export now opens correctly positioned and stays open; GeoJSON
+  and GPX exports both produce correct files containing real test-pin data; the exported GeoJSON was fed back
+  through the real import pipeline (via a programmatic `DataTransfer`/file-input `change` event, since a
+  native OS file-picker dialog can't be scripted) and correctly parsed back into the same pin, including
+  correctly flagging it as a likely duplicate against the still-present original — confirming the full export
+  → import round trip (the actual cross-account use case from the bug report) works; zero console errors
+  throughout. One real testing-environment gotcha hit and resolved, not an app bug: a stale service worker
+  served an old cached copy of `index.html` mid-session after the second fix landed, making it look like the
+  fix hadn't taken — resolved by unregistering the SW and clearing Cache Storage before reloading, the same
+  documented gotcha noted in many earlier sessions' own testing notes.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -2922,6 +2947,81 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       built to answer — whether SW startup/shell-fetch duration actually scales with cache size as
       hypothesized, which requires comparing real measurements across offline downloads of genuinely
       different sizes, not something reproducible from this sandbox.
+- Silent Export failure, root cause + fix (Session 53) — bug report: clicking Export produced no visible
+  response whatsoever, no error, no console output. Investigated per explicit instruction before touching any
+  code: confirmed `#sheet-export-btn`'s click handler WAS firing (no early return, no guard clause, no auth/
+  account check anywhere in the chain) — the actual problem was two independent, silent CSS/event-handling
+  bugs, both introduced together in the same historical reorg that moved Export out of the sidebar and into
+  the Tools sheet.
+  - **Git-archaeology**: `git log -S"Export moved to Tools sheet" -- index.html` found the exact commit
+    (`32684da`, a generic "Add files via upload" commit with no descriptive message — this repo's entire
+    history is bulk uploads, not incrementally-messaged commits) that removed the old
+    `<div class="dropdown-wrap"><button id="export-btn">Export</button><div id="export-menu" ...>` structure
+    (a real, working `.dropdown-wrap` anchor) and replaced it with a bare `#export-menu` div carrying an
+    inline `style="position:fixed;bottom:auto;right:auto;"` override and no wrapping anchor at all.
+    `git log -S"sheet-export-btn"` found the companion commit (`6366e7b`, immediately prior in history) that
+    introduced the new Tools-sheet trigger button's click handler — already missing `e.stopPropagation()` from
+    the moment it was written, not a later regression on top of previously-correct code. Both commits show
+    `APP_VERSION = '1.1'` at the time — this repo's version has since climbed to 2.47.x across 50+ tracked
+    sessions, meaning Export has almost certainly been completely, silently broken since very early in the
+    project's history, undetected the entire time because no session's testing happened to specifically
+    exercise the Export button until this bug report.
+  - **Bug 1 — CSS positioning, the primary "invisible" cause**: `.dropdown-menu`'s base class rule is
+    `position:absolute;top:calc(100% + 6px);left:0;` — designed to be a child of a `.dropdown-wrap`
+    (`position:relative`) ancestor, so `top:100%` resolves against that small wrapper's own height, landing
+    the menu just below it (exactly how `#sort-menu`, still correctly wrapped, behaves today). The inline
+    `position:fixed` override on `#export-menu` changes what `top:100%` is calculated AGAINST — under
+    `position:fixed` with no ancestor establishing an alternate containing block (confirmed: no `transform`/
+    `filter`/`will-change` anywhere on `#sidebar`/`#sidebar-header`/`#sidebar-header-row2`), percentages
+    resolve against the VIEWPORT — so `top:calc(100% + 6px)` becomes "100% of the viewport's own height, plus
+    6px," placing the menu's top edge just past the bottom edge of the screen. The menu genuinely opens
+    (class toggles correctly, no error) — it just renders entirely below the visible viewport, every time,
+    indistinguishable from "nothing happened" to anyone watching the screen. Fixed by removing the stray
+    `position:fixed` override entirely and giving `#sidebar-header-row2` (the row `#export-menu` actually
+    lives in, now that its own dedicated button is gone) `position:relative` — the exact same anchor mechanism
+    `.dropdown-wrap` already provides one element over for `#sort-menu`, just scoped to the whole row instead
+    of a single button, since there's no dedicated Export button left in this row to wrap tightly around.
+  - **Bug 2 — missing `stopPropagation()`, independent of Bug 1**: `#sheet-export-btn`'s handler hid the Tools
+    sheet and toggled `#export-menu`'s `hidden` class with no `e.stopPropagation()` call. Since `export-menu`
+    is a member of `OUTSIDE_CLICK_DISMISS_IDS`, the SAME click event — after opening the menu — continued
+    bubbling to the document-level outside-click-dismiss listener, which sees `e.target` (the button, inside
+    `#tools-sheet`) as genuinely outside `#export-menu` and immediately re-hides it, all within the same
+    synchronous event dispatch. This is why a live test of Bug 1's fix ALONE still showed the menu closed
+    immediately after clicking — confirmed directly via `element.getBoundingClientRect()` checks before and
+    after a real click, and by comparison against `#sort-btn`'s own handler, which already calls
+    `e.stopPropagation()` for this exact reason. Fixed by adding the same call, matching the proven pattern.
+  - **Account-switching check**: per the original bug report's own context (exporting from a test account,
+    intending to import under a different real one), confirmed via direct code review — not assumed — that
+    `exportGeoJSON()`/`exportGPX()` contain zero account-specific logic anywhere: both read straight from the
+    live, module-scope `state.pins`/`state.tracks`, the same shared state object every other feature in the
+    app operates on, populated by whichever account is currently signed in (or guest). There is no stale-
+    account assumption, no auth guard, no early return of any kind in either function or in the shared
+    `downloadBlob()` helper they both call — the account-switching angle, while the real-world MOTIVATION for
+    the bug report, was never actually implicated in the failure itself.
+  - **Verification**: live in the already-connected Chrome browser extension against a local
+    `python -m http.server`, in guest mode with a real test pin created through the actual tap-anywhere flow
+    (not synthetic seeded data). Confirmed Tools → Export now opens the GeoJSON/GPX menu correctly positioned
+    directly below the Sort/Bulk-edit row and — critically — STAYS open (both bugs needed fixing together;
+    fixing only the CSS positioning still left the menu closing itself in the same click). Confirmed GeoJSON
+    export produces a real Blob download (captured via a `document.createElement('a')` monkey-patch, since a
+    real native save-file dialog can't be driven by browser automation) whose content is a correct
+    FeatureCollection containing the exact test pin's real name/coordinates/tags/notes/state. Confirmed GPX
+    export separately, same real pin, correct XML. Confirmed the full round trip — the actual cross-account
+    use case the bug report describes — by feeding the exported GeoJSON back through the real import pipeline
+    via a programmatic `DataTransfer`/`change` event on the hidden `#import-file` input (the closest
+    reproducible proxy for "a different account importing this file," since simulating two genuinely distinct
+    signed-in Google accounts isn't feasible in this sandbox): the file parsed correctly, found the same pin,
+    and correctly flagged it as a likely duplicate against the still-present original — exactly the expected
+    dedup behavior, not a bug. Zero console errors throughout the entire test sequence, confirmed via
+    `read_console_messages` with `onlyErrors:true`. One real sandbox/testing-only gotcha hit and resolved
+    along the way, not a product bug: after the second (`stopPropagation`) fix was written, a live retest
+    still showed the old broken behavior — traced to a stale service worker serving a cached pre-fix copy of
+    `index.html`, the same well-documented gotcha noted in many earlier sessions' own testing notes; resolved
+    by unregistering the SW and clearing Cache Storage before reloading, not by changing the app itself (a
+    real end user gets the newly-bumped `SHELL_CACHE` automatically on their next visit regardless). `node
+    --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+    2.47.3 → 2.47.4 (patch — the CSS/event-handler surface touched is small and localized, even though the
+    functional impact of the bug was severe), SHELL_CACHE bumped v159 → v160.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -4150,3 +4250,38 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   the core question this session was built to answer — whether SW startup/shell-fetch duration actually
   scales with cache size, which requires comparing real measurements across offline downloads of genuinely
   different sizes. APP_VERSION bumped 2.47.2 → 2.47.3 (patch), SHELL_CACHE bumped v158 → v159.
+- Session 53: Investigated and fixed a real, silent Export failure — clicking Export produced zero visible
+  response (no error, no console output, no file prompt). Investigated per explicit instruction before
+  writing any fix: confirmed the click handler WAS firing correctly with no early return or account/auth
+  guard anywhere in the chain — the real cause was two independent bugs, both introduced together in the same
+  historical reorg that moved Export from a sidebar button into the Tools sheet. (1) `#export-menu` lost its
+  `.dropdown-wrap` anchor when its dedicated trigger button was removed, and picked up a stray inline
+  `position:fixed` override with no JS ever positioning it — under `position:fixed`, the `.dropdown-menu`
+  class's own `top:calc(100% + 6px)` resolves against the viewport rather than a nearby element, rendering
+  the menu entirely below the visible screen on every open, genuinely invisible with zero errors. (2) the new
+  Tools-sheet trigger's click handler never called `e.stopPropagation()`, so the very click that opened the
+  menu also bubbled to the document-level outside-click-dismiss listener and immediately closed it again in
+  the same event — a second, independent reason it would have stayed invisible even with (1) alone fixed.
+  Git archaeology (`git log -S` against both the `#export-menu` HTML and the `sheet-export-btn` handler)
+  traced this to a commit pair at `APP_VERSION '1.1'` — meaning Export has almost certainly been silently,
+  completely broken since very early in the project's history, undetected across 50+ subsequent tracked
+  sessions because none happened to specifically test the Export button. Confirmed via direct code review
+  that the account-switching angle from the original bug report was never actually implicated:
+  `exportGeoJSON()`/`exportGPX()` read straight from the live, module-scope `state.pins`/`state.tracks` with
+  zero account-specific conditionals anywhere in either function or the shared `downloadBlob()` helper they
+  call. See Architecture notes' "Silent Export failure, root cause + fix" entry for full mechanism detail on
+  both bugs and the exact commits that introduced them. Verified live in guest mode with a real pin created
+  through the actual tap-anywhere flow: Export now opens correctly positioned AND stays open (confirmed both
+  fixes were needed together — the CSS fix alone still left the menu self-closing on the same click); GeoJSON
+  and GPX exports both produce correct files with the real pin's actual data (captured via a
+  `document.createElement('a')` monkey-patch, since a native save dialog can't be automation-driven); the
+  exported GeoJSON was fed back through the real import pipeline via a programmatic `DataTransfer`/`change`
+  event (the closest reproducible proxy for "a different account importing this file," since two genuinely
+  distinct signed-in Google accounts aren't simulable in this sandbox) and correctly parsed back into the
+  same pin, correctly flagged as a likely duplicate against the still-present original; zero console errors
+  throughout, confirmed via `read_console_messages` with `onlyErrors:true`. One real testing-only gotcha hit
+  and resolved, not a product bug: a stale service worker served a cached pre-fix copy of `index.html`
+  mid-session after the second fix landed, making it briefly look like the fix hadn't worked — resolved by
+  unregistering the SW and clearing Cache Storage before reloading, the same documented gotcha noted in many
+  earlier sessions. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+  APP_VERSION bumped 2.47.3 → 2.47.4 (patch), SHELL_CACHE bumped v159 → v160.

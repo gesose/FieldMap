@@ -211,7 +211,12 @@
   #sidebar-header-row1{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;}
   #app-title{font-weight:600;font-size:18px;letter-spacing:0.2px;white-space:nowrap;}
   #app-title span{color:var(--accent);}
-  #sidebar-header-row2{display:flex;gap:6px;}
+  /* position:relative so #export-menu's position:absolute (see its own HTML comment for the
+     regression this fixes) has a real containing block to anchor against — same mechanism
+     .dropdown-wrap already provides for #sort-menu, just scoped to this whole row instead of one
+     button, since export-menu's own trigger no longer lives in this row at all (it moved to the
+     Tools sheet — see #sheet-export-btn). */
+  #sidebar-header-row2{display:flex;gap:6px;position:relative;}
   #sidebar-header-row2 > *{flex:1;}
   #sidebar-header-row2 .btn{width:100%;}
   .dropdown-wrap{position:relative;}
@@ -1373,8 +1378,21 @@
         </div>
         <button class="btn btn-small" id="bulk-edit-btn">Bulk edit</button>
         <!-- Import moved to +Add sheet · Export moved to Tools sheet -->
-        <!-- export-menu kept here (hidden) — triggered from Tools sheet Export button -->
-        <div id="export-menu" class="dropdown-menu hidden" style="position:fixed;bottom:auto;right:auto;">
+        <!-- export-menu kept here (hidden) — triggered from Tools sheet Export button.
+             BUG FIXED (silent Export failure — see CLAUDE.md): this element used to sit inside a
+             .dropdown-wrap with its own #export-btn trigger, giving the .dropdown-menu class's
+             `position:absolute;top:calc(100% + 6px)` a real containing block to anchor against.
+             When Export moved out to the Tools sheet, the .dropdown-wrap (and #export-btn) were
+             removed but this div was left as a bare child of #sidebar-header-row2, with an
+             inline `position:fixed` override added in their place — with NO top/left ever set by
+             JS, `top:calc(100% + 6px)` under position:fixed resolves against the VIEWPORT
+             (100% of viewport height + 6px), rendering the menu entirely below the visible
+             screen on every click: no error, no console output, just silently invisible. Fixed
+             by dropping the stray position:fixed override and giving #sidebar-header-row2 itself
+             `position:relative` (see that rule's own comment) — the .dropdown-menu class's
+             ordinary position:absolute now anchors correctly to this row, exactly like
+             #sort-menu's own .dropdown-wrap already does one element over. -->
+        <div id="export-menu" class="dropdown-menu hidden">
           <div class="dropdown-item" id="export-geojson-item">GeoJSON</div>
           <div class="dropdown-item" id="export-gpx-item">GPX</div>
         </div>
@@ -3114,7 +3132,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.47.3';
+  var APP_VERSION = '2.47.4';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -18827,7 +18845,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         });
       });
     });
-    document.getElementById('sheet-export-btn').addEventListener('click', function(){
+    document.getElementById('sheet-export-btn').addEventListener('click', function(e){
+      // e.stopPropagation() is required here — without it, this same click bubbles to the
+      // document-level outside-click-dismiss listener (OUTSIDE_CLICK_DISMISS_IDS includes
+      // 'export-menu'), which sees the click target (this button, inside #tools-sheet) as
+      // "outside" #export-menu and immediately re-hides it in the same tick as the toggle below
+      // that just opened it — a second, independent cause of the same silent Export failure this
+      // fixes, alongside the CSS positioning bug documented on #export-menu's own HTML comment.
+      // #sort-btn's own handler already does this correctly for the exact same reason; this one
+      // was missing it since the Tools-sheet Export button was first added.
+      e.stopPropagation();
       document.getElementById('tools-sheet').classList.add('hidden');
       // Show the export sub-menu (reuse existing export-menu dropdown)
       var menu = document.getElementById('export-menu');
