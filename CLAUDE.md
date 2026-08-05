@@ -456,6 +456,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   'change' events on each — all three panels correctly retained their own independent State Data selection
   throughout. See Architecture notes' "Upland Game z-order fix, State Data same-species no-op guard" entry
   for full mechanism detail.
+- The REAL, single root cause of "State Data checkbox unchecks itself on reopen, chip never appears" (Session
+  59) — this was never the same-species no-op guard from Session 58 (a different function entirely, confirmed
+  by direct code-path tracing, not by re-running the old test) and turned out not to be a race/timing bug
+  either, despite the real ~30-40 SECOND live latency this session measured against Nevada's and Utah's real
+  ArcGIS endpoints (confirmed via direct browser `fetch()` timing, not assumed) initially looking like the
+  likely cause. The actual bug: `renderStateDataSection()` always shows a state pre-selected in the `<select>`
+  — either the genuinely active one, or just its first option as a display default when nothing is active yet
+  — and the two are visually indistinguishable to a user. Checking the State Data checkbox WITHOUT first
+  interacting with a `<select>` that already *looks* like it has the right state chosen never fired the
+  select's own `'change'` handler (`setWildlifeStateDataState`, the ONLY thing that ever wrote
+  `wildlifeStateDataActiveByCategory[tc]` and started the real fetch) — the checkbox's own handler
+  (`setWildlifeStateDataOn`) used to just flip the `on` flag with no active state behind it: nothing loaded,
+  no chip line, and on reopen `renderStateDataSection`'s `isActiveSelection` check read false (active was
+  still `null`), rendering the checkbox unchecked despite the underlying `on` flag still genuinely being
+  `true` — a real, reproducible DOM/state desync, not a flaky race. This explains every single data point in
+  the bug report with one mechanism, confirmed by testing each: Big Game has exactly one state (Nevada) per
+  species, so the select never NEEDS touching — universally broken, matching the report exactly. Upland Game
+  species with only one state option (Dusky Grouse: Nevada only) hit the identical single-option case.
+  "Utah Ring-necked Pheasant" (explicitly flagged in the bug report as NOT a legitimate data gap) turned out
+  to ALSO be a single-option species — confirmed via the catalog that it exists in Utah's source only, not
+  Nevada's, contrary to this session's own initial mis-read of the catalog — so it hit the same case; a real,
+  live, non-empty fetch against Utah's real endpoint (`Utah_Ringnecked_Pheasant_Habitat/FeatureServer`,
+  confirmed via a real captured network request AND a direct `fetch()` returning real feature data) proves
+  this was never a genuine no-data state, exactly as the user insisted. Nevada Chukar/California Quail (the
+  two reported as "working") both have TWO state options (Utah listed first in `STATE_DATA_SOURCES`, so it's
+  the `<select>`'s default) — reaching Nevada, the non-default option, required a real dropdown interaction,
+  which correctly fired the select's own change handler and worked all along; this is why they looked
+  unrelated to the "broken" species until traced to the same underlying mechanism. Fixed by making
+  `setWildlifeStateDataOn(on)` treat "check the box with nothing active yet" as equivalent to "pick whatever
+  the select is currently showing" — routes through the exact same `setWildlifeStateDataState()` path a real
+  dropdown interaction already takes (including its existing fetch-failure toast), rather than a bare flag
+  flip with nothing behind it. Also added an honest empty-result toast (`loadStateDataLayer`, alongside the
+  existing fetch-failure toast) for the separate case of a real, successful fetch that returns zero features
+  — previously indistinguishable on screen from a silent failure. See Architecture notes' "State Data checkbox
+  silently unchecking — the real single-cause fix" entry for full mechanism detail and live verification
+  across all 3 categories.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -3779,6 +3815,93 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     Trout–Washington data).
   - `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks after every edit.
     APP_VERSION bumped 2.51.0 → 2.52.0, SHELL_CACHE bumped v164 → v165.
+- State Data checkbox silently unchecking — the real single-cause fix (Session 59). This session opened with
+  the user directly contradicting the PRIOR session's own "confirmed working" claim for Nevada + Elk (Rocky
+  Mountain) State Data, plus a wider matrix of new real-device data points (Big Game universally broken; Upland
+  Game broken for Dusky Grouse/NV and Ring-necked Pheasant/UT but working for Chukar/NV and California
+  Quail/NV) — explicitly asking whether this was a regression from Session 58's same-species no-op guard, and
+  explicitly forbidding writing off Ring-necked Pheasant/Utah as "no data" without checking a real network
+  request/response first.
+  - **Ruled out the no-op guard as the cause, by code-path tracing rather than by re-running the old test**:
+    `setWildlifeSpecies()` (the no-op guard's home) and `setWildlifeStateDataOn()` (the checkbox's own change
+    handler) are two entirely separate functions with no call relationship — the guard only short-circuits a
+    same-species re-selection from the species `<select>`, and has nothing to do with the State Data
+    checkbox's own click path at all. Not a regression from Session 58; a pre-existing bug that had simply
+    never been isolated with this specific an interaction sequence before.
+  - **First real, false lead — endpoint latency**: measured the real Nevada Small Game FeatureServer's actual
+    response time via a direct in-page `fetch()` (not curl, which bypasses the same CORS/browser-stack
+    behavior the app itself experiences) — ~39.4 real seconds for a 2-feature query. This looked like a very
+    plausible explanation for "checked → dismissed → reopened, unchecked" if the real device's repro cycle
+    happens faster than the fetch resolves. Tested directly: selected a fresh (never-before-fetched) species
+    via the real `<select>`, immediately dismissed the panel via a real map click (well before the ~40s fetch
+    could resolve), reopened, and checked state — the checkbox and chip were BOTH correctly checked/populated
+    throughout, no race observed. Ruled out as the cause, but the real ~40s number itself is a genuine, useful
+    finding on its own (real ArcGIS state-wildlife-agency endpoints are simply slow) and was folded into the
+    honest-failure-toast reasoning below regardless.
+  - **The real mechanism, found by re-reading `renderStateDataSection()` line by line**: it always shows a
+    state pre-selected in the `<select>` — `select.value = isActiveSelection ? active.stateKey :
+    (options[0] ? options[0].stateKey : '')` — so a species that's never had a state explicitly picked yet
+    STILL shows a state name in the dropdown, indistinguishable at a glance from a genuinely active
+    selection. The checkbox's own `'change'` handler (`setWildlifeStateDataOn`) only ever flipped
+    `wildlifeStateDataOnByCategory[tc]`; it never touched `wildlifeStateDataActiveByCategory[tc]` — the ONLY
+    thing the select's own `'change'` handler (`setWildlifeStateDataState`) sets, and the ONLY thing that
+    triggers the real fetch, updates the chip, or makes `renderStateDataSection`'s `isActiveSelection =
+    active && active.speciesName === speciesName` check ever read true. So: click the checkbox alone, with a
+    state already SHOWING in the (never-touched) dropdown → `wildlifeStateDataOnByCategory[tc]` becomes
+    `true`, but `wildlifeStateDataActiveByCategory[tc]` stays `null` forever → nothing fetches, the chip never
+    gains a line (both `updateActiveLayersChip()` and `updateWildlifeStateDataMapFilter()` require a non-null
+    active entry) → on reopen, `isActiveSelection` reads `false` (active is still `null`) →
+    `checkbox.checked = false`, even though the underlying `on` flag genuinely never changed. A real,
+    100%-reproducible DOM/state desync, not a race — confirmed live, step by step, exactly matching the user's
+    own repro cycle: `document.getElementById('wildlife-statedata-toggle').click()` alone (species pre-picked
+    via the real `<select>`, state `<select>` left completely untouched) left `wildlifeStateDataActiveByCategory`
+    null and produced no chip line; a real map click to dismiss the panel, then reopening it, showed the
+    checkbox reading `false` in the DOM while `wildlifeStateDataOnByCategory[tc]` (read directly via
+    `window.FieldMapDebug.wildlifeSnapshot()`) still read `true` underneath.
+  - **One mechanism explains every single data point in the bug report, confirmed per-combo, not assumed**:
+    Big Game's `STATE_DATA_SOURCES.biggame.nv` lists every species under a SINGLE state (Nevada) — the
+    `<select>` never needs touching regardless of which species — universally broken, exactly matching "Big
+    Game: universally broken." Upland Game's Dusky Grouse exists only in Nevada's catalog entry (single
+    option) — same mechanism, broken. "Utah Ring-necked Pheasant" was re-checked against the actual catalog
+    this session (an earlier misread in this same session's own investigation briefly assumed it existed in
+    both Utah's and Nevada's entries — it does not; `STATE_DATA_SOURCES.uplandgame.nv.species` has no
+    Ring-necked Pheasant key at all, confirmed via direct grep) — it's ALSO a single-option species (Utah
+    only), hitting the identical mechanism; a real, live, non-empty fetch against Utah's actual endpoint
+    (`Utah_Ringnecked_Pheasant_Habitat/FeatureServer/0/query`, confirmed via both a captured real network
+    request showing HTTP 200 and a direct `fetch()` returning 5 real features with real `SPECIES`/`SEASON`/
+    `VALUE` properties) proves this was never a legitimate no-data case, exactly as the user's explicit
+    constraint demanded be checked rather than assumed. Nevada Chukar and Nevada California Quail both exist
+    in BOTH Utah's AND Nevada's catalog entries (`uplandgame.ut.species`/`uplandgame.nv.species`) — Utah is
+    listed first in the source and is therefore the `<select>`'s default, so reaching Nevada (what the user
+    actually wanted) REQUIRED a real, active dropdown interaction, which correctly fires
+    `setWildlifeStateDataState` and works — explaining why these two, and only these two among the species
+    tested, "worked" without the fix, despite superficially looking like the same feature as the broken ones.
+  - **The fix**: `setWildlifeStateDataOn(on)` now checks, when turning ON with no active state yet
+    (`!wildlifeStateDataActiveByCategory[tc]`), whether the `<select>` currently has a value — if so, it
+    routes through the real `setWildlifeStateDataState(stateSelect.value)` path instead of the old bare flag
+    flip, exactly as if the user had picked that state from the dropdown themselves (same fetch, same chip
+    update, same eventual checkbox/active-state consistency). Turning the checkbox OFF, or turning it ON when
+    a state is already genuinely active, is completely unchanged — only the "nothing active yet" ON case
+    changes behavior, and only by doing what the UI already visually implied had happened.
+  - **Also addressed the "honest either way" half of the ask**: `loadStateDataLayer()` already showed a toast
+    for a genuine fetch FAILURE (from a prior session) — added a second, distinct toast for the separate case
+    of a real, successful fetch that legitimately returns zero features, which previously looked identical on
+    screen to a silent bug (checkbox stays checked, chip line appears, but nothing visible renders — now says
+    so explicitly: "No mapped data found for this species/state combination.").
+  - **Verified live, end to end**, via the already-connected Chrome browser extension against a local
+    `python -m http.server` (after a full service-worker-unregister + Cache-Storage-clear, then a fresh
+    reload, to rule out a stale pre-fix cached copy): re-ran the EXACT broken repro (checkbox-only click, no
+    select interaction) for Big Game/Elk (Rocky Mountain)/Nevada — `wildlifeStateDataActiveByCategory.biggame`
+    now populates immediately on the checkbox click alone; dismissing via a real map click and reopening
+    showed the checkbox still checked AND the active-layers chip correctly showing "Elk (Rocky Mountain) —
+    Nevada data." Re-ran the same checkbox-only click for Upland Game/Ring-necked Pheasant/Utah — checkbox
+    stayed checked through dismiss/reopen, and a real captured network request confirmed the fetch fired
+    against the real Utah endpoint (HTTP 200). Re-confirmed Nevada Chukar (the one case that worked even
+    before the fix, via genuine dropdown interaction) still works identically after the fix — no regression.
+    Confirmed the fix generalizes to Fish (Brook Trout, default state "wa" never touched, checkbox-only click)
+    — active state populated immediately, survived a real dismiss/reopen cycle. Zero console errors throughout
+    (`read_console_messages` with `onlyErrors:true`). `node --check` confirmed clean syntax on all extracted
+    inline `<script>` blocks. APP_VERSION bumped 2.52.0 → 2.53.0, SHELL_CACHE bumped v165 → v166.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -5230,3 +5353,40 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   same-species no-op guard" entry for full mechanism detail on both. `node --check` confirmed clean syntax on
   all 4 extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.51.0 → 2.52.0, SHELL_CACHE
   bumped v164 → v165.
+- Session 59: Opened with the user directly contradicting the prior session's own "confirmed working" claim
+  for Nevada + Elk (Rocky Mountain) State Data, plus a wider real-device matrix (Big Game universally broken;
+  Upland Game broken for Dusky Grouse/NV and Ring-necked Pheasant/UT, working for Chukar/NV and California
+  Quail/NV) and an explicit instruction not to write off Ring-necked Pheasant/Utah as a legitimate no-data
+  case without checking a real network request/response first. Ruled out the Session 58 same-species no-op
+  guard as the cause via direct code-path tracing (the guard lives in `setWildlifeSpecies()`, the checkbox's
+  own handler is a completely separate function with no call relationship to it) rather than by re-running
+  the old test. Found and ruled out a real, useful, but ultimately non-causal finding along the way — Nevada's
+  real ArcGIS state-wildlife-agency endpoint takes ~39.4 real seconds to respond (measured via a direct in-page
+  `fetch()`), which looked like a very plausible race explanation but didn't reproduce under direct testing of
+  the exact check → dismiss → reopen cycle with a guaranteed-in-flight fetch. Found the real, single,
+  100%-reproducible root cause by re-reading `renderStateDataSection()`: it always shows a state pre-selected
+  in the `<select>`, whether or not one has actually been committed — visually indistinguishable to the user —
+  and the checkbox's own change handler (`setWildlifeStateDataOn`) only ever flipped the `on` flag, never the
+  `active` selection that only the select's own `'change'` handler sets and that both the real fetch and the
+  active-layers chip require. Clicking the checkbox alone, without ever touching a `<select>` that already
+  LOOKS correctly set, left the app with `on:true` but `active:null` forever — nothing fetches, no chip line,
+  and the checkbox itself renders unchecked on reopen despite the underlying flag never having changed. This
+  single mechanism explained every data point in the report once tested per-combo: Big Game has exactly one
+  state per species (never needs the select touched — universally broken); Upland Game's Dusky Grouse and (a
+  real catalog re-check this session corrected an earlier mis-read of) Ring-necked Pheasant both turn out to
+  be single-option species too (Nevada-only and Utah-only respectively) — hitting the same mechanism, and a
+  real live fetch against Utah's actual endpoint (captured network request, HTTP 200, 5 real features)
+  confirmed Ring-necked Pheasant was never a legitimate data gap, exactly as instructed to verify rather than
+  assume; Chukar and California Quail both exist in TWO states' catalogs with Utah (not the desired Nevada)
+  as the `<select>`'s default, so reaching Nevada required a real dropdown interaction that correctly
+  triggered the fetch all along — explaining why exactly these two, and only these two, "worked." Fixed by
+  making the checkbox, when turning on with nothing active yet, route through the exact same
+  `setWildlifeStateDataState()` path a real dropdown pick already takes. Also added an honest toast for a
+  genuinely successful-but-empty fetch result, distinct from the existing fetch-failure toast, so a real
+  no-data combination is never again visually indistinguishable from this bug. Verified live end to end for
+  all 3 categories via the already-connected Chrome browser extension (checkbox-only clicks reproducing
+  correctly-fixed behavior for Big Game/Elk/Nevada, Upland Game/Ring-necked Pheasant/Utah with a real captured
+  network request, and Fish/Brook Trout/Washington; Nevada Chukar re-confirmed unaffected/still working) with
+  zero console errors throughout. See Architecture notes' "State Data checkbox silently unchecking — the real
+  single-cause fix" entry for full mechanism detail. `node --check` confirmed clean syntax on all extracted
+  inline `<script>` blocks. APP_VERSION bumped 2.52.0 → 2.53.0, SHELL_CACHE bumped v165 → v166.

@@ -3185,7 +3185,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.52.0';
+  var APP_VERSION = '2.53.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4872,6 +4872,13 @@
       var merged = { type: 'FeatureCollection', features: [].concat.apply([], featureArrays) };
       if (anyFailed){
         showToast('Couldn’t load this state’s data — the source server may be unavailable from this app right now.');
+      } else if (!merged.features.length){
+        // A genuinely successful, empty result (the query worked, this species/state combo just
+        // has zero mapped features) looks identical to a silent failure from the map alone — say
+        // so explicitly rather than leaving the checkbox checked with nothing visibly different
+        // on screen and no explanation either way (Session 59, part of the same honesty fix as
+        // setWildlifeStateDataOn above).
+        showToast('No mapped data found for this species/state combination.');
       }
       stateDataCache[cacheKey] = merged;
       var cbs = stateDataLoadCallbacks[cacheKey]; delete stateDataLoadCallbacks[cacheKey];
@@ -18315,8 +18322,43 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // Checkbox handler — flips visibility only (mirrors setWildlifeOn), never touches which state
   // is selected, and only ever affects the currently-displayed category.
+  //
+  // Session 59 fix — real root cause of "State Data checkbox silently unchecks itself on
+  // reopen, chip never appears" reported across Big Game (universally) and Upland Game (some
+  // species): renderStateDataSection() always shows a state pre-selected in the <select> (either
+  // the genuinely active one, or just options[0] as a display default when nothing's active
+  // yet) — visually indistinguishable from a real selection. A user who only clicks the
+  // checkbox, without ever touching a <select> that already LOOKS like it has the right state
+  // chosen, never fires the select's own 'change' handler (setWildlifeStateDataState), which is
+  // the ONLY thing that ever wrote wildlifeStateDataActiveByCategory[tc] and started the real
+  // fetch. The checkbox alone used to just flip the "on" flag with no active state behind it —
+  // nothing loaded, no chip line (updateActiveLayersChip/updateWildlifeStateDataMapFilter both
+  // require a real active entry), and renderStateDataSection's own isActiveSelection check
+  // (active && active.speciesName === speciesName) read false on reopen since active was still
+  // null, so the checkbox rendered unchecked despite wildlifeStateDataOnByCategory[tc] still
+  // genuinely being true underneath — a real state/DOM desync, not a flaky race. This explains
+  // every reported case with one mechanism: Big Game has exactly one state (Nevada) per species,
+  // so the select never NEEDS interacting with — universally broken; Upland Game species with
+  // only Nevada (Dusky Grouse) hit the same single-option case; Utah Ring-necked Pheasant has 2
+  // options (ut listed first in STATE_DATA_SOURCES, so it's the <select>'s default) and Utah is
+  // what the user wanted — again never needed to touch the select; Nevada Chukar/California
+  // Quail also have 2 options but Nevada is NOT the default (Utah is), so reaching it required a
+  // real dropdown interaction, which correctly fired the select's own change handler and worked.
+  // Fixed by making "check the box with nothing active yet" behave exactly like "pick whatever
+  // the select is currently showing" — the same real setWildlifeStateDataState path a genuine
+  // dropdown interaction already takes, including its actual fetch and its own honest failure
+  // toast (see loadStateDataLayer) if that fetch can't complete — rather than a bare flag flip
+  // with nothing behind it.
   function setWildlifeStateDataOn(on){
-    wildlifeStateDataOnByCategory[wildlifeActiveTopCategory] = on;
+    var tc = wildlifeActiveTopCategory;
+    if (on && !wildlifeStateDataActiveByCategory[tc]){
+      var stateSelect = document.getElementById('wildlife-statedata-select');
+      if (stateSelect && stateSelect.value){
+        setWildlifeStateDataState(stateSelect.value);
+        return;
+      }
+    }
+    wildlifeStateDataOnByCategory[tc] = on;
     persistWildlifeStateData();
     updateWildlifeStateDataMapFilter();
     updateActiveLayersChip();
