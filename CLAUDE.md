@@ -331,6 +331,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   "Wildlife Layers restructure: Big Game/Upland Game/Fish, State Data" entry for the full design, the two
   real MapLibre bugs found and fixed while wiring it up, and what wasn't independently re-verified live this
   session due to a mid-session browser-tooling breakdown.
+- Wildlife panel flow fix + unified per-species view + Fish recolor (Session 55): fixed the category-row
+  checkbox in the main Layers panel — it was toggling Habitat range's own on/off flag directly, which only
+  ever did something when a species with a Habitat range layer was ALREADY the active selection (this is why
+  Upland's checkbox looked like it worked — Chukar was already selected from prior testing — while Big Game's
+  and Fish's looked broken with nothing selected yet). It's now a genuine master visibility switch
+  (`wildlifeMasterOn`) over everything currently configured for the active species — Habitat range,
+  Migrations, State Data — together, without clearing any of those individual selections, same philosophy as
+  the Aspect master toggle. Also embedded the State Data state picker directly into the species panel instead
+  of a separate popout screen, so Habitat range / Migrations / State Data all appear and stay configurable
+  together in one connected view once a species is picked — no more backing out to find the state picker and
+  back out again to return. Fish's State Data layers recolored from a brown/tan "Habitat range" look to a
+  blue family (matching AZGFD's own Trout Challenge site treatment), and a real bug fixed where Streams
+  (polylines) were incorrectly rendering with a fill — root-caused to shape being guessed from each source's
+  semantic layer name rather than its real GeoJSON geometry type, which also would have kept mis-rendering
+  Washington's own fish layer (a polyline, despite being named "range" like every polygon source). See
+  Architecture notes' "Wildlife panel flow fix, unified per-species view, Fish color/geometry correction"
+  entry for the full design — this session could not reach a live browser at all (a persistent tooling
+  breakdown, not the same as prior sessions' recoverable stalls) so none of it was re-verified live; this is
+  flagged explicitly, not silently presented as tested.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -3188,6 +3207,94 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     blocks after every edit, including after all three fixes (the two MapLibre-expression bugs and the
     missing-chip-update bug). APP_VERSION bumped 2.47.4 → 2.48.0 (minor — a significant structural change to
     an existing feature, per explicit instruction), SHELL_CACHE bumped v160 → v161.
+- Wildlife panel flow fix, unified per-species view, Fish color/geometry correction (Session 55) — three
+  related fixes to last session's restructure, all reported from real use.
+  - **Root cause of the "category checkbox only works for Upland" bug**: the Layers panel's Big Game/Upland
+    Game/Fish row checkboxes called `setWildlifeOn(checked)` directly — the exact same function the species
+    panel's own "Habitat range" checkbox calls. That function only ever flips `wildlifeOn` (Habitat range's
+    own visibility flag) and only renders anything when `wildlifeActive` already points at a species in that
+    category with real Habitat range codes. With nothing selected yet (Big Game/Fish, fresh from a cold
+    start) toggling the checkbox set `wildlifeOn = true` but had nothing to show, and
+    `updateWildlifeQuickToggleUI()`'s own `isThisCategory && wildlifeOn` computation then immediately snapped
+    the checkbox back to unchecked since `isThisCategory` was false — reading as "the checkbox doesn't work."
+    Upland only looked functional because Chukar was already the active selection from prior testing, so
+    `isThisCategory` was true and the whole thing round-tripped correctly. Not 3 different bugs — one
+    function whose behavior depends on state normally only reached by using the panel in a specific order
+    first.
+  - **The fix — a real master toggle (`wildlifeMasterOn`)**: the category row's checkbox is now a genuine
+    master visibility switch, same philosophy as the Aspect master toggle from an earlier session — it
+    shows/hides whatever's currently CONFIGURED for the active species (Habitat range's own `wildlifeOn`,
+    Migrations' 4 category checkboxes, State Data's `wildlifeStateDataOn`) all together, without touching any
+    of those individual configured values. `updateWildlifeMapFilter()`/`updateMigrationMapFilter()`/
+    `updateWildlifeStateDataMapFilter()` all now additionally require `wildlifeMasterOn` on top of their own
+    existing per-source on-flag before actually setting a layer visible — a two-level AND-gate (configured
+    AND master-visible), the same "configuration persists independent of visibility" shape an opacity slider
+    surviving a layer being turned off already has elsewhere in this app. `setWildlifeSpecies` resets
+    `wildlifeMasterOn = true` on every species change (including clearing back to no species) — without this,
+    a master-off left over from a previous species would silently hide whatever the newly-picked species
+    auto-enables, which would have looked exactly like "picking a species does nothing," a regression of the
+    very bug this fix targets. Persisted via `state.settings.wildlifeMasterOn`, defaulting to `true` both for
+    a fresh install and for anyone upgrading from before this session (an already-configured species must not
+    silently vanish behind a switch that didn't exist when it was set up).
+  - **Unified per-species panel**: the State Data section (checkbox + state `<select>` + note/attribution)
+    is now embedded directly in `#wildlife-panel` itself — `#wildlife-statedata-section` — instead of a
+    separate `#wildlife-statedata-panel` floating panel reached by tapping a compact "State Data — Select
+    state ›" row. The old flow required leaving species selection entirely to pick a state, then leaving
+    THAT screen again to get back to the rest of the species' sources (Habitat range, Migrations) — exactly
+    the "disconnected flow" reported. `renderStateDataSection(speciesName)` (replacing
+    `openWildlifeStateDataPicker`, which only ever ran on a button tap) now runs every time
+    `renderSpeciesToggles()` shows the section, so the inline `<select>`/note/attribution/checkbox are always
+    correct for whatever species is currently displayed, with no separate "open" step to hook the population
+    logic into. Picking a state from the inline `<select>` still auto-activates it (`wildlifeStateDataOn =
+    true`, checkbox auto-checks) — matching the existing "picking = activating" pattern rather than adding a
+    second explicit step. Tapping a category row (Big Game/Upland Game/Fish) already opened species
+    selection directly before this session — confirmed via code read, not a bug, no change needed there.
+  - **Fish recolor — gold/tan to blue**: `WILDLIFE_STATEDATA_FILL`/`WILDLIFE_STATEDATA_STROKE` changed from
+    `#e8b93a`/`#8a6b1a` (a terrestrial "Habitat range" amber, reported as visually wrong for fish/aquatic
+    data) to `#2d6ea8`/`#153e63` (a mid-blue wash + navy outline), matching the look of AZGFD's own Trout
+    Challenge site per the task's explicit reference. A new `WILDLIFE_STATEDATA_STREAM_COLOR` (`#4aa8e8`,
+    brighter/lighter than the wash) gives streams their own distinct line color within the same blue family,
+    rather than sharing the polygon outline's navy. Both colors were deliberately picked further from
+    Elevation Range's own existing cyan (`#00D9E8` fill / `#0A7A85` edge — Session 38) than a naive "any blue"
+    choice might land, specifically so the two never read as the same overlay if both happen to be active at
+    once — a real collision risk the task explicitly called out to check for.
+  - **The actual Streams-fill bug and its real fix**: root-caused to `_sdLayer`-name-based filtering — the
+    fill layer's filter was `!= 'huc12'`, meaning every OTHER semantic key (including `'streams'`) got the
+    fill treatment regardless of its real geometry. Fixed by tagging every fetched feature with a NEW
+    `_sdShape` property (`'line'` or `'polygon'`) read directly from its own real GeoJSON `geometry.type` in
+    `loadStateDataLayer()`, and filtering the fill/line MapLibre layers on `_sdShape` instead of guessing from
+    the semantic key name. This is a more general fix than "exclude stream/streams by name" would have been —
+    Washington's SWIFD "range" layer (its one unified fish layer, tagged `_sdLayer:'range'` like every
+    polygon `range` source elsewhere in the catalog) is ITSELF a polyline per its own catalog `geometryType:
+    'polyline'` metadata, so a name-based exclusion list would have kept mis-rendering Washington's real data
+    as a fill even after "fixing" Arizona's streams specifically. Four MapLibre layers now share the one
+    source: `wildlife-statedata-fill` (`_sdShape=='polygon'` — range/lake/lakes/huc12, huc12 at a lower
+    0.18 opacity as coarse context vs. 0.35 for real distribution data — per the task's explicit "HUC12 =
+    fill wash like other area-based overlays," replacing the old outline-only special case),
+    `wildlife-statedata-line` (same polygon filter, a thin 1px outline stroke), `wildlife-statedata-line-
+    streams` (NEW — `_sdShape=='line'` excluding `corridor`, the brighter dedicated stream color, 2px), and
+    `wildlife-statedata-line-dashed` (unchanged shape, now `_sdLayer=='corridor'` only — Nevada's movement-
+    corridor lines, since huc12 moved to the fill+outline treatment and no longer needs its own dashed case).
+    Tap-to-identify (`handleWildlifeStateDataFillClick`) is now also registered on the new streams layer,
+    since streams no longer appear on the fill layer at all and would otherwise be untappable.
+  - **Verification gap, flagged rather than silently omitted**: this session could not reach a live browser
+    at all — every attempt to load the app (multiple fresh tabs, fully closing and recreating the tab group,
+    waiting between retries) left the connected Chrome extension reporting either "browser-internal or
+    unparseable URL" or a `Runtime.evaluate` timeout, never actually rendering the page. This is a harder,
+    non-recoverable version of the tooling breakdown Session 54 hit partway through (which did eventually
+    recover on its own) — this one never did, across the whole session. As a result, NONE of this session's
+    changes were verified live — no confirmation that the category checkboxes now function as master toggles
+    on Big Game/Fish (not just Upland), no confirmation the unified panel flow actually reads as connected on
+    a real screen, no confirmation Fish genuinely renders blue/cyan with visually distinct stream-vs-wash
+    treatment, and no confirmation streams actually show as pure lines with zero fill against real Arizona/
+    Washington/Oregon data. Every change was instead verified as rigorously as possible without a browser:
+    full manual trace of every code path touched (documented above), `node --check` clean on all 4 extracted
+    inline `<script>` blocks after every edit, and a full `git diff` re-read end to end before finalizing.
+    This is real, un-downgraded risk — a live pass (ideally the real mobile device the task asked for) is the
+    first thing that should happen before trusting this session's changes are correct in practice, not an
+    optional follow-up.
+  - `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+    2.48.0 → 2.49.0 (minor — real UX restructuring, per explicit instruction), SHELL_CACHE bumped v161 → v162.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -4495,3 +4602,35 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   clean syntax on all 4 extracted inline `<script>` blocks after every edit, including all three fixes.
   APP_VERSION bumped 2.47.4 → 2.48.0 (minor — significant structural change to an existing feature, per
   explicit instruction), SHELL_CACHE bumped v160 → v161.
+- Session 55: Three related fixes to Session 54's Wildlife Layers restructure, all reported from real use —
+  see Architecture notes' "Wildlife panel flow fix, unified per-species view, Fish color/geometry correction"
+  entry for full mechanism detail on each. (1) Root-caused the "category checkbox only works for Upland"
+  report to a single shared bug, not 3 separate ones: the Layers panel's Big Game/Upland Game/Fish checkboxes
+  called the same function the species panel's own "Habitat range" checkbox uses, which only ever renders
+  anything when a species is ALREADY the active selection — Upland's checkbox looked functional purely
+  because Chukar happened to already be selected from prior testing, while Big Game/Fish (nothing selected
+  yet) looked broken for the identical underlying reason. Fixed by making it a real master toggle
+  (`wildlifeMasterOn`) that shows/hides everything currently configured for the active species — Habitat
+  range, Migrations, State Data — together, without clearing any of those individual selections, same
+  philosophy as the Aspect master toggle from an earlier session. (2) Embedded the State Data state picker
+  directly into the species panel instead of a separate popout screen reached by tapping a compact row — the
+  old flow required leaving species selection to pick a state, then leaving that screen again to get back to
+  the rest of the species' sources; now Habitat range, Migrations, and State Data all stay visible and
+  configurable together in one connected view once a species is picked. (3) Recolored Fish's State Data
+  layers from a brown/tan "Habitat range" look to a blue family matching AZGFD's own Trout Challenge site
+  (picked deliberately further from Elevation Range's existing cyan than a naive blue choice would land, so
+  the two can never read as the same overlay), and fixed a real bug where Streams (polylines) were rendering
+  with a fill — root-caused to shape being guessed from each source's semantic layer name rather than its
+  real GeoJSON geometry type, which would ALSO have kept mis-rendering Washington's own fish layer (itself a
+  polyline despite being named "range" like every polygon source in the catalog) even after a name-based fix
+  for Arizona's streams specifically; fixed with a geometry-driven `_sdShape` tag instead. **This session
+  could not reach a live browser at all** — every attempt (multiple fresh tabs, fully closing/recreating the
+  tab group, retrying after waits) left the connected Chrome extension unable to actually render the page, a
+  harder and non-recoverable version of the tooling breakdown Session 54 hit partway through (which did
+  eventually clear on its own; this one never did). None of this session's changes were verified live as a
+  result — flagged explicitly and repeatedly rather than silently presented as tested; every change was
+  instead verified via a full manual code-path trace and a complete `git diff` re-read before finalizing, but
+  a real live pass (the real mobile device the task asked for, ideally) is the necessary next step before
+  trusting this in practice, not an optional follow-up. `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.48.0 → 2.49.0 (minor — real UX
+  restructuring, per explicit instruction), SHELL_CACHE bumped v161 → v162.
