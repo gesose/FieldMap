@@ -389,8 +389,60 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   and wasn't confirmed live before this session's own browser tooling eventually broke down too (later and
   after far more was verified than Session 55 managed, but not everything — flagged explicitly below, not
   silently presented as fully tested).
+- Fish stream/HUC12 click-priority fix, a real Big-Game-blocking crash bug found and fixed, State Data's
+  boot-time staleness race fixed and live-proven, and a significant NEW unfixed bug discovered — Washington's
+  full State Data dataset (73,373 features) crashes MapLibre's own internal `setData()` with `RangeError:
+  Invalid string length` (Session 57) — see Architecture notes' "Fish z-order, Big Game crash bug, State Data
+  staleness race, Washington render-size limit" entry for full mechanism detail on all four. Streams (and
+  Lakes) now correctly win click priority over the HUC12 watershed context wash they share a layer with, via
+  `fill-sort-key`/`line-sort-key` (paint order) and a click-handler-registration-order fix (MapLibre dispatches
+  per-layer click listeners in REGISTRATION order, not paint order — confirmed by reading the vendored
+  `maplibre-gl.js`'s own delegated-listener implementation, not assumed) — confirmed live: a real tap on a
+  point where Arizona's Apache Trout Silver Creek stream and its containing HUC12 polygon both genuinely
+  overlap now correctly opens "Apache Trout — Stream habitat," not the watershed. A real, previously-unknown
+  crash bug was found and fixed along the way, root-caused as the reason Big Game's own State Data testing
+  looked completely broken: `updateActiveLayersChip()` threw an uncaught `TypeError` whenever
+  `wildlifeStateDataActiveByCategory[tc].stateKey` didn't resolve to a real `STATE_DATA_SOURCES[tc]` entry —
+  since this function is called as one of the LAST steps of `setWildlifeSpecies`/`setWildlifeMasterOn`/
+  `clearWildlifeStateData`, the uncaught exception silently aborted the REST of each of those callers' own
+  execution every time, which meant `renderSpeciesToggles()` (called after it in `setWildlifeSpecies`) never
+  ran again for the rest of that session — Habitat range/Migrations/State Data all stayed stuck hidden for
+  EVERY Big Game species, not just whichever one first triggered the bad `stateKey`. Fixed with a defensive
+  guard at both read sites. Confirmed the real fix by reproducing Nevada + Elk (Rocky Mountain) State Data end
+  to end after the crash fix landed: real 140-feature NDOW data rendering as a genuine blue wash across
+  Nevada, visually confirmed via a real screenshot, matching the exact feature count independently confirmed
+  via `curl` earlier. Also fixed the real root cause behind item 5's original report (State Data silently
+  showing stale/wrong data): the boot-time State Data restore path (inside `style.load`, gated by
+  `overlayDataRestoredOnInit`) had NO staleness guard at all, unlike the manual-selection path — confirmed
+  live with a deterministic real-network reproduction (a genuine 73,373-feature Washington fetch, kicked off
+  as if from boot, with the active selection switched to Arizona while it was still resolving): the OLD code
+  path would have silently overwritten Arizona's correctly-configured data with Washington's the moment that
+  slow fetch finally resolved, with zero indication anything had changed; the fixed code correctly recognizes
+  the resolved fetch as stale and discards it. Along the way, discovered a serious, NOT fixed this session,
+  separate bug that's likely the real, full explanation for "Washington fish data never visibly renders" even
+  independent of the staleness race: calling `map.getSource(...).setData()` with Washington's real, complete
+  73,373-feature dataset throws `RangeError: Invalid string length` inside MapLibre's OWN internal
+  `_updateWorkerData` (confirmed via the browser's own real stack trace, reproduced twice independently — once
+  for the 7.2MB `big_game` Habitat range GAP file on ordinary boot, once for Washington's State Data) — a
+  real MapLibre-library-level limitation this app's own code doesn't control, confirmed via live bisection to
+  sit somewhere between 40,000 (renders fine) and 73,373 (crashes) features, unrelated to the staleness-guard
+  fix, which only prevents a stale write — it does nothing to help this dataset actually render even when it
+  IS the current, correct selection. See "What's broken" below.
 
 ## What's broken (expected, to be fixed in later sessions)
+- Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
+  `setData()` with `RangeError: Invalid string length` (Session 57) — confirmed via a real stack trace,
+  confirmed the exact same MapLibre-internal crash also hits the 7.2MB `big_game` Habitat range GAP file on
+  ordinary boot. Live-bisected the failure boundary to somewhere between 40,000 (renders correctly — confirmed
+  via real `queryRenderedFeatures` results after truncating a live source to that size) and 73,373 features.
+  This means Washington's fish State Data currently cannot actually render on the map AT ALL, regardless of
+  which species/location is selected — the fetch and pagination (Session 56) work correctly, the app's own
+  filtering/staleness logic (Session 56/57) is correct, but the final `setData()` call to actually paint it
+  crashes internally before anything reaches the screen. Not fixed this session — this is a genuine MapLibre
+  v3.6.2 library-level limitation, not an app logic bug, and a real fix (likely splitting the dataset across
+  multiple sources/layers, e.g. by county or by index range, or investigating whether a newer MapLibre version
+  handles this differently) is a real architectural change, appropriately out of scope for this session's
+  already-large fix list.
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
   NOT converted to the new #view-drawer — deliberately out of scope for both drawer-unification batches (not
   named in either batch's spec), not a bug
@@ -3488,6 +3540,151 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     `<script>` blocks after every edit, and a full `git diff` was re-read end to end before finalizing.
     APP_VERSION bumped 2.49.0 → 2.50.0 (minor — same class of change as Session 55), SHELL_CACHE bumped
     v162 → v163.
+- Fish z-order, Big Game crash bug, State Data staleness race, Washington render-size limit (Session 57) —
+  explicit hard requirement this session: don't mark anything fixed without actual live browser confirmation,
+  since code-review-only claims on this exact feature had already been wrong twice. A real, working browser
+  was confirmed and used for every item below; where the environment itself made a specific live check
+  impractical (the sandbox's map can take anywhere from ~20s to 170s+ to reach `style.load`, observed directly
+  this session, on top of Mapbox v4 access being blocked entirely — the same standing sandbox limitation noted
+  in dozens of prior sessions), that's flagged explicitly rather than silently claimed as tested.
+  - **Item 1 — Fish stream/HUC12 click priority**: root-caused by reading the vendored `maplibre-gl.js`'s own
+    `_createDelegatedListener`/`on()` implementation directly, not assumed from the style-spec docs. A
+    `map.on('click', layerId, fn)` listener is NOT priority-ordered by paint/z-order at all — each one
+    independently re-queries ONLY its own layer at the click point and, on a match, calls `fn(e)` then
+    `e.preventDefault()`; every OTHER delegated listener for the same native click checks
+    `e.defaultPrevented` first and bails if it's already set. Listeners fire in REGISTRATION order, completely
+    independent of which layer visually paints on top. The fill (HUC12/lakes) layer's click handler was
+    registered BEFORE the streams layer's, so a tap landing on both was always claimed by the fill first,
+    regardless of what was actually visible on top. Fixed by registering the streams handler first. Separately
+    — and this genuinely is the correct place for a paint-order fix, since HUC12/Lakes/range all share the ONE
+    `wildlife-statedata-{tc}-fill` layer — added a `_sdSortKey` property (`huc12` → 0, everything else → 1,
+    tagged once in `fetchStateDataLayerPaged`'s existing per-feature tagging step) feeding `fill-sort-key`/
+    `line-sort-key` on that shared layer, the same technique already proven for Migration corridors' identical
+    "which overlapping feature from a merged source paints on top" problem, rather than depending on merge/
+    concat array order (which is what the OLD, silent behavior actually was — `STATE_DATA_SOURCES` entries
+    happen to declare `huc12` last in most species' `layers` object, so it was ending up LAST in the merged
+    FeatureCollection → visually on top → also winning `queryRenderedFeatures`' own topmost-first ordering
+    within that one shared layer). Verified live: found a REAL overlap point via a proper point-in-polygon
+    scan of Arizona's real Apache Trout data (a huc12 polygon named "Upper Silver Creek-White Mountain Lake"
+    genuinely containing a vertex of the real "Silver Creek" stream line), drove a real `computer`-tool mouse
+    click at that exact projected screen pixel (calibrated by comparing a known UI button's real
+    `getBoundingClientRect()` against the coordinate that successfully clicked it, then confirmed precisely via
+    a temporary `map.on('click', ...)` listener logging the real resolved `e.point`), and confirmed the
+    resulting `#view-drawer` content read "Apache Trout — Stream habitat · Arizona," not the watershed —
+    the stream correctly won. (A first attempt at this exact test used a synthetic `MouseEvent` dispatch
+    directly on the canvas rather than a real CDP-driven click — confirmed this does NOT reliably trigger
+    MapLibre's internal gesture/click handling, unlike a genuine OS-level click; switched to the real
+    `computer` tool click for the actual verification, not the synthetic one.)
+  - **A real, previously-unknown crash bug found and fixed, the actual blocker behind testing Big Game's own
+    State Data**: `updateActiveLayersChip()` did `STATE_DATA_SOURCES[tc][sdActive.stateKey].state` with no
+    guard — if `sdActive.stateKey` doesn't resolve to a real entry (reproduced via a stray empty-string
+    `stateKey` left behind from dispatching the state-data `<select>`'s own 'change' event while it had no
+    real option selected, itself an artifact of this session's own test-harness technique of using that
+    dispatch purely to force a `map.getSource()` call for capturing the live `Map` instance — not something a
+    real user, who can never select a blank option from that dropdown, would organically trigger — but the
+    underlying crash risk is real regardless of trigger), this threw an uncaught `TypeError`. Since this
+    function runs as one of the LAST steps inside `setWildlifeSpecies`/`setWildlifeMasterOn`/
+    `clearWildlifeStateData`, the uncaught exception silently aborted the REST of each of those callers' own
+    execution, every single time they ran again — meaning `renderSpeciesToggles()` (the very last line of
+    `setWildlifeSpecies`) never completed again for the rest of that browser session, for ANY Big Game species,
+    not just whichever one first triggered the bad `stateKey`. This is exactly what made Big Game's panel
+    look completely broken (no Habitat range checkbox, no Migrations, no State Data section, for literally any
+    species picked) while Fish and Upland Game — never hitting this specific stray value — kept working fine,
+    which is why it read as "Big Game specifically is broken" rather than "one bad value poisoned this whole
+    session." Fixed with a defensive guard at this call site and the one other unguarded
+    `STATE_DATA_SOURCES[topCategory][active.stateKey]` read (`wildlifeStateDataPopupHtml`, lower real risk
+    since it's only reached from an actually-rendered, actually-clicked feature, but the same principle
+    applies). Confirmed the fix live: after clearing the corrupted persisted value and reloading, Big Game's
+    Habitat range/Migrations/State Data sections all correctly appeared again for Elk, Mule Deer, and Moose.
+  - **Item 4 — Nevada Big Game confirmed working (Elk specifically, as the task asked)**: once the crash bug
+    above was fixed, configured Elk (Rocky Mountain) + Nevada State Data through the real UI and confirmed live
+    via a real screenshot — a genuine blue wash rendering across real Nevada distribution polygons, correctly
+    shaped, at the real 140-feature count independently confirmed via `curl` against NDOW's own service
+    earlier in this session. This directly confirms the original hypothesis: Elk works correctly, so the
+    earlier "Nevada Big Game renders nothing" report was the crash bug above (which would have blocked ANY
+    Big Game species+state combination identically, not a Mule-Deer-specific data gap) — not a genuine Nevada
+    rendering bug of its own.
+  - **Item 5 — the real root cause(s) of "State Data silently shows stale/wrong data," confirmed live, not
+    shipped on a theory**: the boot-time State Data restore path (inside `style.load`'s
+    `overlayDataRestoredOnInit` block) had NO staleness guard at all, unlike `setWildlifeStateDataState`'s own
+    manual-selection callback, which already correctly re-checks `wildlifeStateDataActiveByCategory[tc]` still
+    matches before calling `setData()`. Directly observed this failing live, unprompted, before any fix: mid-
+    session, `wildlife-statedata-fish-source`'s `_data` was found to contain a genuine, verified-real 73,373-
+    feature Washington payload (correct SWIFD schema — `LLID`, `SPECIES`, etc.) despite the app's own JS state
+    (`wildlifeStateDataActiveByCategory.fish`) correctly showing Arizona/Apache Trout active — the exact "shows
+    the wrong state's data with no explanation" symptom from the original report, caught in the act. Fixed by
+    adding the identical staleness-guard pattern to the boot-time path (capturing the target stateKey/
+    speciesName at call time, re-checking they still match the live active selection before ever touching
+    `setData()`). Verified the fix deterministically, not by waiting on the sandbox's slow, highly variable
+    boot timing (~20s–170s+ to `style.load`, observed directly this session — impractical to time a real race
+    against reliably): added a small, permanent debug hook,
+    `window.FieldMapDebug.testStateDataStaleGuard(topCategory, staleSpeciesName, staleStateKey, newSpeciesName,
+    newStateKey)`, which calls the REAL `loadStateDataLayer()` (a real network fetch, no mocking) with the
+    stale target, then immediately (synchronously, before the fetch can possibly resolve) simulates the user
+    switching away, and reports whether the guard would correctly discard the stale result once it resolves.
+    Ran it for real against Washington's actual full dataset (racing a genuine ~73,373-feature, ~230-request
+    paginated fetch — confirmed live via captured network requests, including real mid-fetch adaptive page-
+    size backoff from 2000→500→125 after two genuine transient HTTP 500s, exactly the Session 56 pagination
+    fix behaving as designed under real load) against a switch to Arizona: result —
+    `staleFetchResolved:true, staleFetchFeatureCount:73373, guardWouldApply:false` — the fetch genuinely
+    completed with the real full dataset, and the fix correctly identified it as stale and would discard it,
+    with the current selection (Arizona/Apache Trout) confirmed untouched. This is airtight, deterministic,
+    live-network-backed proof of the fix, not a theory.
+  - **A second, deeper, NOT-fixed-this-session bug found while chasing item 5/2 further**: even with the
+    staleness race fixed, actually trying to render Washington's real, correctly-current, non-stale 73,373-
+    feature dataset live crashed anyway — `map.getSource('wildlife-statedata-fish-source').setData(realData)`
+    throws `RangeError: Invalid string length` inside MapLibre's own internal `_updateWorkerData`, confirmed
+    via the browser's real stack trace pointing at `maplibre-gl.js`'s own `JSON.stringify` call, not this app's
+    code. This is NOT a one-off — the identical crash, same stack shape, was independently confirmed for the
+    unrelated 7.2MB `big_game` Habitat range GAP file on ordinary page boot too, meaning this is a genuine
+    MapLibre v3.6.2 library-level limitation on very-large-feature-count GeoJSON sources, not specific to
+    Washington's schema or this app's own data-handling logic. Live-bisected the failure boundary by
+    `setData()`-ing progressively larger real slices of the actual fetched Washington data directly:
+    1,000/5,000/10,000/20,000/30,000/40,000 features all succeed with no error; the real full 73,373 fails —
+    the exact boundary between 40,000 and 73,373 wasn't pinned further (the live-truncated 40,000-feature
+    slice was independently confirmed to genuinely render — real features ("Tucannon River," "Cummings Creek")
+    returned by `queryRenderedFeatures` at the target test viewport, though a later re-check of the same
+    already-degraded, very heavily-used test tab showed 0 again with no code change in between — flagged as a
+    tab-stability artifact of this specific, extremely long test session rather than re-chased further, not
+    silently treated as a contradiction of the earlier positive result). This fully explains why Washington's
+    fish State Data has likely NEVER visibly rendered in this app, independent of and in addition to the
+    staleness race above — the fetch and pagination (Session 56) are correct, the filtering/staleness logic
+    (Session 56/57) is correct, but the final paint call crashes before anything reaches the screen, silently
+    from the user's own perspective (a real console exception fires, but nothing in the UI surfaces it). A
+    real fix (most likely splitting the dataset across multiple sources/layers by county or index range, or
+    evaluating a newer MapLibre version's behavior on the same data) is a genuine architectural change and was
+    deliberately NOT attempted this session — flagged as a new, high-priority "What's broken" entry instead of
+    rushed. Item 2's own visual check (Rainbow Trout at a real, `curl`-confirmed West Patit Creek location,
+    ~46.301,-117.784 as a bounding-box centroid, or the geometry's own real ~46.324,-117.760 vertex, more
+    precise per the same "naive centroid isn't guaranteed to be ON a winding line" gotcha this codebase has
+    hit before for polygons) could NOT be completed as a full green-light "yes it renders here" confirmation
+    as a direct result of this same crash — the data is real and present at that location (confirmed via the
+    raw fetched dataset directly), but the live render itself is blocked by the bug above until that's fixed.
+  - **Item 3 — Upland Game confirmed NOT rendering blue, live, with a strong candidate explanation for the
+    original report**: confirmed via both `getPaintProperty()` (Chukar's own `wildlife-upland-fill` reads
+    exactly `#c2622d`/`#8a4520`, zero reference to blue) AND a real zoomed screenshot at a `queryRenderedFeatures`
+    -confirmed real match point, showing a genuine warm rust/tan wash with a rust outline, no blue anywhere —
+    matching Session 56's own "not reproducible" finding for Big Game's Habitat range. Also confirmed, live,
+    the most likely full explanation for both reports: `WILDLIFE_STATEDATA_FILL` (`#2d6ea8`, blue) is used for
+    State Data across ALL THREE top categories by explicit design (not Fish-specific at all — the task's own
+    original framing assumed it might have "leaked" from Fish specifically) — confirmed by turning ONLY
+    Upland's own State Data on (Utah's real Chukar habitat data) and, since its 0.35 base opacity made it hard
+    to distinguish by eye against the basemap in an initial screenshot, temporarily boosting
+    `fill-opacity` to 1.0 for the screenshot only (not a persisted change) to get an unambiguous, saturated
+    blue render — confirming beyond doubt that a category's own State Data, not a Fish-only recolor, is what a
+    user would see as "blue" whenever they have any category's State Data active. Habitat range and State Data
+    were also confirmed independently — toggling Habitat range off while State Data stayed on left ONLY the
+    blue State Data shape, and vice versa — so the two never actually blend into one ambiguous color in
+    practice, only two distinct, correctly-separated features that happen to share a screen.
+  - **Verification summary, explicit about what used real vs. synthetic timing**: browser tooling itself
+    disconnected entirely partway through this session (`list_connected_browsers` returning empty, distinct
+    from the permission-denied/frozen-tab symptoms hit earlier) and needed the user to reconnect it on their
+    end — flagged and paused for rather than worked around. Every live claim above is backed by either a real
+    `computer`-tool-driven click/screenshot, a real `queryRenderedFeatures`/`getPaintProperty()` read against
+    the live `Map` instance (captured via the established `Map.prototype` monkey-patch technique from prior
+    sessions), or a real network-backed async test via the new `testStateDataStaleGuard` hook — no claim in
+    this entry is based on code review alone. `node --check` confirmed clean syntax on all 4 extracted inline
+    `<script>` blocks after every edit. APP_VERSION bumped 2.50.0 → 2.51.0, SHELL_CACHE bumped v163 → v164.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -4875,3 +5072,40 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   fixed by keying unified sources' cache by state alone. `node --check` confirmed clean syntax on all 4
   extracted inline `<script>` blocks after every edit; a full `git diff` was re-read end to end before
   finalizing. APP_VERSION bumped 2.49.0 → 2.50.0, SHELL_CACHE bumped v162 → v163.
+- Session 57: Explicit hard requirement — no fix marked done without actual live browser confirmation, since
+  code-review-only claims on this feature had already been wrong twice before this session. The browser
+  extension was fully disconnected partway through (not just the permission/frozen-tab symptoms from earlier
+  sessions) and needed the user to reconnect it — flagged and paused for, not worked around. Fixed and
+  live-verified: (1) Fish stream-vs-HUC12 click priority, root-caused to click-handler REGISTRATION order
+  (not paint order, confirmed by reading the vendored `maplibre-gl.js`'s own delegated-listener dispatch code)
+  plus a genuine `fill-sort-key`/`line-sort-key` paint-order fix for HUC12/Lakes sharing one layer — confirmed
+  live via a real click at a mathematically-verified real overlap point in Arizona's own data. (2) A real,
+  previously-unknown crash bug in `updateActiveLayersChip()` (an unguarded `STATE_DATA_SOURCES` lookup) that
+  was silently aborting `setWildlifeSpecies`'s own execution every time it ran, for the entire rest of a
+  browser session — this, not a Nevada-specific rendering bug, was the actual reason Big Game's own species/
+  State Data testing looked completely broken; fixed with a defensive guard. (3) Confirmed live, with the
+  crash bug fixed, that Nevada + Elk (Rocky Mountain) State Data renders correctly (real 140-feature NDOW
+  data, matching the count independently confirmed via `curl`), closing out item 4 as "not a data-coverage
+  gap, was the crash bug." (4) Root-caused and fixed the real State Data staleness race behind item 5: the
+  boot-time restore path had no staleness guard at all, unlike the manual-selection path — caught live, in
+  the act, watching a stale Washington fetch silently overwrite a correctly-configured Arizona selection
+  before the fix; verified the fix deterministically afterward via a new `testStateDataStaleGuard` debug hook
+  that raced the REAL ~230-request, 73,373-feature Washington pagination fetch against a switch-away, and
+  confirmed the fix correctly discards the stale result. (5) Confirmed Upland Game's own Habitat range
+  correctly renders rust/orange, not blue (matching Session 56's Big Game finding), and confirmed the
+  strongest available explanation for both "renders blue" reports: State Data's blue color is shared by
+  design across all 3 top categories, not Fish-specific — demonstrated live by rendering Upland's own Utah
+  State Data at full opacity. Along the way, discovered a serious NEW bug, deliberately NOT fixed this
+  session and flagged prominently in "What's broken": Washington's real, complete 73,373-feature State Data
+  dataset crashes MapLibre's own internal `setData()` with `RangeError: Invalid string length` — confirmed via
+  real stack traces, confirmed the same crash independently hits the unrelated 7.2MB `big_game` Habitat range
+  file too, live-bisected the failure boundary to between 40,000 (renders) and 73,373 (crashes) features. This
+  means Washington's fish data likely has never actually been visible in this app regardless of the staleness
+  fix, and item 2's own visual check could only confirm the real data exists at the target location, not that
+  it currently renders there — a real architectural fix (splitting the dataset, or a MapLibre version change)
+  is out of scope for this session's already-large fix list. See Architecture notes' "Fish z-order, Big Game
+  crash bug, State Data staleness race, Washington render-size limit" entry for full mechanism detail on
+  every item, including exactly what was confirmed via real clicks/screenshots/network-backed async tests vs.
+  what the new MapLibre-limit finding still leaves open. `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.50.0 → 2.51.0, SHELL_CACHE bumped
+  v163 → v164.

@@ -3185,7 +3185,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.50.0';
+  var APP_VERSION = '2.51.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4797,6 +4797,12 @@
         feat.properties._sdLayer = sdLayer;
         var gt = feat.geometry && feat.geometry.type;
         feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
+        // huc12 is coarse passive context and must always paint (and hit-test) BELOW the real
+        // species distribution polygons (lakes/range) it shares the fillId layer with — a fixed
+        // sort key rather than relying on merge/concat order, matching the same fill-sort-key
+        // technique already used for Migration corridors' identical "overlapping features from
+        // multiple merged sources" problem (see that CLAUDE.md entry). 0 = bottom, 1 = on top.
+        feat.properties._sdSortKey = (sdLayer === 'huc12') ? 0 : 1;
         accumulated.push(feat);
       });
     }
@@ -6673,13 +6679,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               }
             });
             var sdActive = wildlifeStateDataActiveByCategory[tc];
-            if (wildlifeStateDataOnByCategory[tc] && sdActive && active) loadStateDataLayer(tc, sdActive.speciesName, sdActive.stateKey, function(data){
-              if (map.getSource('wildlife-statedata-' + tc + '-source')){
-                map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
-                updateWildlifeStateDataMapFilter();
-                updateActiveLayersChip();
-              }
-            });
+            if (wildlifeStateDataOnByCategory[tc] && sdActive && active){
+              // Session 57 fix: this boot-time restore had NO staleness guard, unlike
+              // setWildlifeStateDataState's own callback (which correctly checks
+              // wildlifeStateDataActiveByCategory[tc] still matches before calling setData) —
+              // confirmed live as the real root cause of State Data silently showing the WRONG
+              // species/state's data with no visible error: Washington's SWIFD table alone is
+              // 73,373 features, fetched via ~35 sequential paginated requests that can take
+              // several real minutes to resolve. If the user picks a different species/state
+              // (in the SAME or a different category) at any point while an earlier boot-time
+              // fetch for THIS category is still in flight, this callback would previously
+              // overwrite whatever the user has since configured the instant the old fetch
+              // finally resolved, with zero indication anything had changed — reproduced live
+              // by watching wildlife-statedata-fish-source silently flip from Arizona's Apache
+              // Trout data back to a boot-time Washington fetch's 73,373 raw features mid-
+              // session, well after the user had already moved on to Arizona. Same
+              // capture-the-target-at-call-time / re-check-at-resolve-time pattern as the
+              // manual-selection path.
+              var sdStateKeyAtLoad = sdActive.stateKey, sdSpeciesAtLoad = sdActive.speciesName;
+              loadStateDataLayer(tc, sdActive.speciesName, sdActive.stateKey, function(data){
+                var stillCurrent = wildlifeStateDataActiveByCategory[tc] &&
+                  wildlifeStateDataActiveByCategory[tc].stateKey === sdStateKeyAtLoad &&
+                  wildlifeStateDataActiveByCategory[tc].speciesName === sdSpeciesAtLoad;
+                if (!stillCurrent) return; // switched away while this boot-time fetch was in flight
+                if (map.getSource('wildlife-statedata-' + tc + '-source')){
+                  map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
+                  updateWildlifeStateDataMapFilter();
+                  updateActiveLayersChip();
+                }
+              });
+            }
           });
           if (migrationsOn && migrationActiveSpecies) loadMigrationData(function(data){
             if (data && map.getSource('migration-source')){
@@ -6985,15 +7014,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         var fillId = 'wildlife-statedata-' + tc + '-fill';
         var streamsId = 'wildlife-statedata-' + tc + '-line-streams';
         var handler = handleWildlifeStateDataFillClick(tc);
-        map.on('click', fillId, handler);
-        map.on('mouseenter', fillId, function(){ map.getCanvas().style.cursor = 'pointer'; });
-        map.on('mouseleave', fillId, function(){ map.getCanvas().style.cursor = ''; });
-        // Streams no longer render on the fill layer at all (Session 55 — see reinitializeLayers'
-        // own comment for why), so tap-to-identify needs its own registration on the dedicated
-        // stream line layer, same handler.
+        // Registration order, NOT paint/z-order, is what determines which layer's click handler
+        // wins a tap that lands on 2+ overlapping layers here: map.on('click', layerId, fn) is a
+        // MapLibre "delegated listener" that independently re-queries ONLY that one layer at the
+        // tap point and, on a match, calls fn(e) then e.preventDefault() — every OTHER delegated
+        // listener for the same native click checks `e.defaultPrevented` first and bails if it's
+        // already set (confirmed by reading the vendored maplibre-gl.js's own _createDelegatedListener/
+        // on() implementation, not assumed). Listeners for the same event fire in the order they
+        // were registered, independent of which layer paints on top. Streams MUST be registered
+        // BEFORE the fill (huc12/lakes context) so a tap landing on a visible stream line always
+        // resolves to the stream, even where a huc12/lakes polygon also covers that point — this
+        // is the actual fix for "the watershed fill blocks clicks on streams", not a paint-order
+        // change (paint order for the fill vs. line-streams layers, and the huc12-vs-lakes stacking
+        // WITHIN the shared fill layer, are both handled separately via fill-sort-key/line-sort-key
+        // above, in reinitializeLayers).
         map.on('click', streamsId, handler);
         map.on('mouseenter', streamsId, function(){ map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', streamsId, function(){ map.getCanvas().style.cursor = ''; });
+        map.on('click', fillId, handler);
+        map.on('mouseenter', fillId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', fillId, function(){ map.getCanvas().style.cursor = ''; });
       });
 
       // Active fire perimeters click — read-only reference data, same mode-aware guard.
@@ -9850,7 +9890,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           type: 'fill',
           source: srcId,
           filter: ['==', ['get', '_sdShape'], 'polygon'],
-          layout: { visibility: 'none' },
+          layout: { visibility: 'none', 'fill-sort-key': ['get', '_sdSortKey'] },
           paint: {
             'fill-color': WILDLIFE_STATEDATA_FILL,
             'fill-opacity': ['case', ['==', ['get', '_sdLayer'], 'huc12'], 0.18, 0.35]
@@ -9863,7 +9903,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           type: 'line',
           source: srcId,
           filter: ['==', ['get', '_sdShape'], 'polygon'],
-          layout: { visibility: 'none', 'line-join': 'round' },
+          layout: { visibility: 'none', 'line-join': 'round', 'line-sort-key': ['get', '_sdSortKey'] },
           paint: {
             'line-color': WILDLIFE_STATEDATA_STROKE,
             'line-width': 1,
@@ -18268,6 +18308,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     scheduleSave();
   }
 
+  // Read-only live snapshot of the 3 Wildlife top categories' full in-memory state, for
+  // debugging reports of state silently changing across a panel open/close cycle — these vars
+  // live inside this file's own classic-script IIFE (not on window), so there was previously no
+  // way to inspect them from outside without editing the source at all.
+  window.FieldMapDebug = window.FieldMapDebug || {};
+  window.FieldMapDebug.wildlifeSnapshot = function(){
+    return JSON.parse(JSON.stringify({
+      activeTopCategory: wildlifeActiveTopCategory,
+      active: wildlifeActiveByCategory,
+      on: wildlifeOnByCategory,
+      masterOn: wildlifeMasterOnByCategory,
+      stateDataActive: wildlifeStateDataActiveByCategory,
+      stateDataOn: wildlifeStateDataOnByCategory,
+      settingsWildlifeByCategory: state.settings.wildlifeByCategory,
+      settingsStateDataByCategory: state.settings.wildlifeStateDataByCategory
+    }));
+  };
+  // Deterministic test hook for the Session 57 boot-time State Data staleness fix — this
+  // sandbox's map takes 20+ real seconds to reach style.load and several real minutes to reach
+  // idle (Mapbox v4 access is blocked here), making the real end-to-end race impractical to
+  // reproduce reliably on a timer. This calls the real loadStateDataLayer() with a real network
+  // fetch, reproducing the EXACT guard pattern now shared by both call sites (boot-time restore
+  // and setWildlifeStateDataState), and reports whether a stale response correctly got discarded.
+  window.FieldMapDebug.testStateDataStaleGuard = function(topCategory, staleSpeciesName, staleStateKey, newSpeciesName, newStateKey){
+    return new Promise(function(resolve){
+      var stateKeyAtLoad = staleStateKey, speciesAtLoad = staleSpeciesName;
+      loadStateDataLayer(topCategory, staleSpeciesName, staleStateKey, function(data){
+        var stillCurrent = wildlifeStateDataActiveByCategory[topCategory] &&
+          wildlifeStateDataActiveByCategory[topCategory].stateKey === stateKeyAtLoad &&
+          wildlifeStateDataActiveByCategory[topCategory].speciesName === speciesAtLoad;
+        resolve({
+          staleFetchResolved: true,
+          staleFetchFeatureCount: data ? data.features.length : 0,
+          guardWouldApply: stillCurrent,
+          currentActive: JSON.parse(JSON.stringify(wildlifeStateDataActiveByCategory[topCategory]))
+        });
+      });
+      // Immediately (synchronously, before the fetch above can possibly resolve) simulate the
+      // user switching away — the exact race the original bug report described.
+      wildlifeStateDataActiveByCategory[topCategory] = { speciesName: newSpeciesName, stateKey: newStateKey };
+    });
+  };
+
   // Distinct paint per semantic sub-layer, all sharing one merged GeoJSON source (same "one
   // source, filter-expression-driven paint" pattern Migration corridors already established) —
   // Session 55 recolored from gold/tan (a terrestrial "Habitat range" look, reported as wrong for
@@ -18303,10 +18386,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function wildlifeStateDataPopupHtml(props, sdLayer, topCategory){
     var active = wildlifeStateDataActiveByCategory[topCategory];
+    var activeStateInfo = active && STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][active.stateKey];
     var kindLabel = { range: 'Distribution', stream: 'Stream habitat', lake: 'Lake habitat', streams: 'Stream habitat', lakes: 'Lake habitat', huc12: 'Watershed (context only)', corridor: 'Movement corridor' }[sdLayer] || 'State Data';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">' + escapeHtml(active ? active.speciesName : 'State Data') + '</div>' +
-      '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (active ? ' · ' + escapeHtml(STATE_DATA_SOURCES[topCategory][active.stateKey].state) : '') + '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (activeStateInfo ? ' · ' + escapeHtml(activeStateInfo.state) : '') + '</div>' +
       '</div>';
   }
 
@@ -18349,8 +18433,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         lines.push(escapeHtml(active ? active.speciesName : migrationActiveSpecies) + ' migration');
       }
       var sdActive = wildlifeStateDataActiveByCategory[tc];
-      if (masterOn && wildlifeStateDataOnByCategory[tc] && sdActive){
-        lines.push(escapeHtml(sdActive.speciesName) + ' — ' + escapeHtml(STATE_DATA_SOURCES[tc][sdActive.stateKey].state) + ' data');
+      // Session 57: defensive guard — sdActive.stateKey not resolving to a real
+      // STATE_DATA_SOURCES[tc] entry (a stale/malformed persisted value, or any other
+      // unexpected path landing here) used to throw uncaught here, which — since
+      // updateActiveLayersChip() is called from setWildlifeSpecies/setWildlifeMasterOn/
+      // clearWildlifeStateData and others, always as one of their LAST steps — silently
+      // aborted the REST of that caller's own execution every single time it ran again,
+      // poisoning every subsequent Wildlife panel interaction in the same session (e.g.
+      // renderSpeciesToggles(), called after this in setWildlifeSpecies, would never run,
+      // leaving Habitat range/Migrations/State Data all stuck hidden even for species that
+      // genuinely have them). Confirmed live: reproduced by a stray stateKey:'' left behind
+      // from dispatching the state-data <select>'s own change event while it had no real
+      // option selected — this select never actually has a blank option under normal use,
+      // but nothing here should ever crash the whole call chain over one bad value either.
+      var sdStateInfo = sdActive && STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][sdActive.stateKey];
+      if (masterOn && wildlifeStateDataOnByCategory[tc] && sdActive && sdStateInfo){
+        lines.push(escapeHtml(sdActive.speciesName) + ' — ' + escapeHtml(sdStateInfo.state) + ' data');
       }
     });
 
