@@ -350,6 +350,45 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   entry for the full design — this session could not reach a live browser at all (a persistent tooling
   breakdown, not the same as prior sessions' recoverable stalls) so none of it was re-verified live; this is
   flagged explicitly, not silently presented as tested.
+- Wildlife panel category checkboxes, cross-tab persistence, and real State Data data-loading bugs fixed
+  (Session 56) — this session DID get a genuinely working live browser (confirmed first, per explicit
+  instruction, before any fix) and used it to root-cause and confirm-fix most of Session 55's reported
+  regressions, several of which turned out not to be new regressions at all but pre-existing bugs Session 55
+  simply couldn't see because it never had a working browser. Fixed: (1) the Big Game species dropdown's
+  duplicated "Bear" headers and pure-alphabetical (not group-then-alphabetical) ordering — root cause was a
+  missing `WILDLIFE_GROUP_ORDER.biggame` key (Session 54 added the equivalent bridge for `uplandgame` but
+  never for `biggame`), confirmed live before and after; (2) removed "Blackbeard Island Deer" (a real but
+  Georgia-barrier-island-only whitetail population, confirmed via the raw data file's own conservation_note)
+  from Big Game — checked the full data corpus (17 big_game/35 upland/10 small_game species) and found this
+  was the one genuinely out-of-scope entry, not a systemic uncurated-list problem needing Oregon-fish-style
+  filtering; (3) the "category checkbox does nothing with no species selected" report — confirmed the master-
+  toggle fix from Session 55 was real and correctly scoped, this was always a SEPARATE, still-unaddressed
+  request (tapping "on" with nothing configured should open species selection, not stay inert) — implemented
+  for all 3 categories identically; (4) the real root cause of "Fish state you configure doesn't stick" and
+  "Washington's checkbox self-unchecks" — Session 55's own `wildlifeActiveByCategory`-style refactor never
+  actually happened; a SINGLE shared `wildlifeActive`/`wildlifeStateDataActive` var still existed, so picking
+  a species in any tab silently overwrote whatever a different tab had configured — confirmed live (Big
+  Game's fully-configured Elk selection vanished, chip lines and all, the instant a Fish species was picked in
+  the same panel session) and fixed with a genuine per-category data model (3 independent slots, 3 independent
+  map source/layer sets for State Data, since a single shared MapLibre source could only ever hold one
+  category's selection at a time regardless of what the JS-level state remembered) — confirmed live afterward
+  that Big Game and Fish can now both stay configured and rendering simultaneously; (5) added the requested
+  Migrations "select all" checkbox to the section header. **The most consequential finding**: Oregon's fish
+  data was never rendering because Oregon's own ArcGIS server (`nrimp.dfw.state.or.us`) sends NO CORS headers
+  at all (confirmed via `curl -D - -H "Origin: ..."` against the real endpoint — zero
+  `Access-Control-Allow-Origin` in the response, vs. real CORS headers from every other confirmed source:
+  Washington, Arizona, Utah, Nevada) — a genuine, permanent, server-side block this app's client-side code
+  cannot fix without a server-side proxy (out of scope); a real, no-longer-silent error toast was added instead
+  of leaving Oregon showing nothing with no explanation. Separately, confirmed and fixed a real, distinct
+  Washington bug: an unpaginated query silently caps at the server's own 2000-record limit — Washington's
+  real SWIFD table has 73,373 features, so every prior fetch was an arbitrary ~2.7% slice — fixed with real
+  ArcGIS pagination (adaptive page-size backoff, since Oregon's server additionally throws a bare HTTP 500 on
+  any single request above roughly 300 records for geometrically dense layers, a second distinct failure mode
+  found only by testing, not assumed). See Architecture notes' "Wildlife panel category checkboxes, cross-tab
+  persistence, Oregon CORS block, Washington pagination" entry for full mechanism detail and exactly what was
+  and wasn't confirmed live before this session's own browser tooling eventually broke down too (later and
+  after far more was verified than Session 55 managed, but not everything — flagged explicitly below, not
+  silently presented as fully tested).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
@@ -3295,6 +3334,160 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     optional follow-up.
   - `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
     2.48.0 → 2.49.0 (minor — real UX restructuring, per explicit instruction), SHELL_CACHE bumped v161 → v162.
+- Wildlife panel category checkboxes, cross-tab persistence, Oregon CORS block, Washington pagination
+  (Session 56) — this session's hard requirement was explicit: confirm a genuinely working live browser
+  FIRST, and if the same rendering failure from Session 55 recurred, stop and report rather than attempting
+  more code-only fixes. A real browser WAS confirmed working (JS execution, screenshots, and real page
+  rendering all verified before touching any code) and used extensively — most items below were root-caused
+  and confirmed-fixed live, not traced by reading code alone, though the browser eventually broke down again
+  partway through (see the verification-gap note at the end of this entry).
+  - **Big Game grouping, root cause and fix**: `wildlifeSpeciesGroups()`'s sort (`groupIndex` first,
+    alphabetical within group as the tiebreaker) was already correct code — the actual bug was one level up:
+    `WILDLIFE_GROUP_ORDER` is keyed by the underlying GAP source-category names (`big_game`/`upland`/
+    `small_game`), but `wildlifeSpeciesGroups(topCategory)` looks it up by the TOP-CATEGORY id (`biggame`/
+    `uplandgame`/`fish`). Session 54 added a bridging line, `WILDLIFE_GROUP_ORDER.uplandgame =
+    WILDLIFE_GROUP_ORDER.upland.concat(WILDLIFE_GROUP_ORDER.small_game)`, for Upland Game — but never added
+    the equivalent `WILDLIFE_GROUP_ORDER.biggame = WILDLIFE_GROUP_ORDER.big_game` for Big Game, since the two
+    key names differ only by an underscore and are easy to mistake for already matching. With no match,
+    `groupOrder` silently resolved to `[]`, so `groupIndex()` returned the same value (`groupOrder.length`,
+    i.e. `0`) for every species regardless of its real group, degrading the sort to pure alphabetical with a
+    header inserted wherever the raw (never-actually-used-for-ordering) group value happened to change —
+    exactly the duplicated "Bear" headers reported. Confirmed live via the real rendered `<optgroup>` DOM
+    both before the fix (15 fragmented single/double-item groups in alphabetical order, "Bear" appearing
+    twice) and after (exactly 5 groups — Deer & Elk/Pronghorn/Mountain Game/Bear/Predators & Small Big
+    Game — in the intended hunting-relevant order, each internally alphabetized, "Bear" appearing once with
+    both its species correctly together).
+  - **"Blackbeard Island Deer" and the curation question**: checked the real data files directly (17
+    big_game / 35 upland / 10 small_game species total) rather than assuming a systemic problem — this is a
+    small, mostly-legitimate corpus, not an uncurated national list like Oregon's original fish request
+    implied might be the case. Found exactly one genuinely out-of-scope entry: `species_code: 'mWTDEn'`,
+    whose own `conservation_note` reads "Isolated white-tailed deer population confined to Blackbeard Island,
+    Georgia" — confirming the report's own assessment. Removed via a new `WILDLIFE_EXCLUDED_SPECIES_CODES`
+    map (keyed by species_code, not name, so a real future species can never be accidentally swallowed by a
+    same-named-but-differently-coded entry), filtered out in `loadWildlifeCategory()` at fetch time — this
+    excludes it from both the species picker AND actual map rendering, not just the dropdown.
+  - **Category checkbox "does nothing with no species selected"**: confirmed the Session 55 master-toggle fix
+    itself was real and correctly scoped (verified live: with a species active, the checkbox genuinely gates
+    Habitat range + Migrations + State Data together) — this report was a separate, not-yet-addressed
+    request: tapping "on" with NOTHING configured for that category should open species selection directly
+    instead of staying inert. Implemented identically for all 3 categories via a shared
+    `openWildlifeCategoryPicker(topCategory)` (extracted from the existing open-button handler) — the
+    checkbox's own change handler now checks `wildlifeActiveByCategory[topCategory]` first; if nothing's
+    configured, it reverts its own visual check state and opens the picker instead of calling
+    `setWildlifeMasterOn`.
+  - **The real root cause of cross-tab data loss (Fish not sticking, Washington self-unchecking)**: Session
+    55's own writeup claimed a per-category data model, but the actual code still used ONE SHARED
+    `wildlifeActive`/`wildlifeOn`/`wildlifeMasterOn`/`wildlifeStateDataActive`/`wildlifeStateDataOn` set of
+    variables for all 3 categories combined — Session 55 never actually reached a working browser to notice
+    this. Confirmed live: configuring Big Game (Elk, Habitat range + Migrations) then switching to Fish and
+    picking Rainbow Trout + Washington State Data caused Big Game's ENTIRE selection to silently vanish
+    (`active-layers-chip` lines for Elk disappeared) the moment the panel was closed — `setWildlifeSpecies`
+    unconditionally overwrote the one shared `wildlifeActive` object regardless of which category's species
+    had actually changed. Fixed with a genuine per-category data model: `wildlifeActiveByCategory`/
+    `wildlifeOnByCategory`/`wildlifeMasterOnByCategory`/`wildlifeStateDataActiveByCategory`/
+    `wildlifeStateDataOnByCategory`, all keyed by topCategory (`biggame`/`uplandgame`/`fish`), with every
+    read/write site updated to use the correct category's own slot instead of a shared value —
+    `updateWildlifeMapFilter`/`updateActiveLayersChip`/`updateWildlifeQuickToggleUI` all now loop over all 3
+    categories independently rather than assuming a single active selection. A new `WILDLIFE_SOURCECATEGORY_TOPCATEGORY`
+    reverse-lookup (built from the existing `WILDLIFE_TOPCATEGORY_SOURCE_CATEGORIES` map) lets
+    `updateWildlifeMapFilter` resolve which top category each underlying GAP layer (`wildlife-{cat}-fill`)
+    belongs to. Migrations needed no structural change — it only ever applies to Big Game's own single slot,
+    so it stays correct automatically as long as Big Game's own slot isn't wiped by a different tab (the one
+    thing that WAS wrong: `setWildlifeSpecies` used to recompute `migrationActiveSpecies` unconditionally on
+    every species change, including Fish/Upland picks where `topCategory !== 'biggame'` always made
+    `hasMigration` false — silently clearing Big Game's migration selection too whenever a DIFFERENT
+    category's species changed; fixed by only touching migration state when `topCategory === 'biggame'`).
+  - **State Data needed its own per-category MAP layers, not just per-category JS state**: even with the
+    data model fixed, a single shared `wildlife-statedata-source`/`-fill`/`-line`/`-line-streams`/
+    `-line-dashed` layer set could only ever display ONE category's selection at a time regardless of what
+    the JS remembered — configuring Fish's State Data after Big Game's would have silently overwritten Big
+    Game's rendered data on the map even with correct underlying state. Split into 3 independent source/layer
+    sets (`wildlife-statedata-{biggame|uplandgame|fish}-*`, 15 layers total), matching the same
+    one-source-per-category pattern Habitat range's own GAP layers already used. Tap-to-identify click
+    handlers also split per category (one handler factory closing over `tc`, registered per category) so a
+    tapped feature's popup always resolves against the correct category's own active selection.
+  - **Confirmed live, end to end**: configured Big Game/Elk (Habitat range + Migrations) and, in the SAME
+    panel session, Fish/Rainbow Trout + Washington State Data — closed the panel and confirmed via the
+    active-layers chip that ALL THREE lines persisted simultaneously ("Elk (Rocky Mountain)", "Elk (Rocky
+    Mountain) migration", "Rainbow Trout — Washington data"); confirmed both category rows in the main
+    Layers panel showed correctly checked with their own correct species names; reopened the Fish tab and
+    confirmed Washington's State Data checkbox was still checked (not self-unchecking, closing out the
+    Washington-specific report as the same root cause as the general cross-tab bug, not a distinct one).
+  - **Migrations "select all" toggle**: added `#migration-all-toggle`, a checkbox living inside the same
+    header `<button>` as the existing expand/collapse chevron (needs its own `stopPropagation()` on both
+    click and change or it would also toggle the section's collapsed state) — reflects and drives all
+    CURRENTLY VISIBLE categories together (3, not 4, when the active species/herd has no Annual Range data,
+    matching the badge's own "count only what's offered" convention), with real tri-state behavior
+    (checked/unchecked/indeterminate) via `updateMigrationsBadge()`, which now also owns keeping this
+    checkbox in sync alongside the existing "X/4" text.
+  - **Oregon's fish data — root cause, and why it can't be fixed from this codebase alone**: live testing
+    showed the fetch completing (attribution text updated correctly to "Oregon Dept. of Fish & Wildlife")
+    but the resulting FeatureCollection had ZERO features, for a species/layer combo independently confirmed
+    to have real data (1,452 stream + 508 lake features via direct `curl`). The browser console showed
+    `TypeError: Failed to fetch` — NOT an HTTP error status (which the code already handled), a network-level
+    failure indicating the browser's own `fetch()` never got a usable response at all. Confirmed the cause
+    directly: `curl -D - -H "Origin: http://localhost:8791" <the real Oregon endpoint>` returns zero
+    `Access-Control-*` response headers of any kind, while the identical test against Washington's, Arizona's,
+    Utah's, and Nevada's real endpoints all returned proper CORS headers (Washington echoes the sent Origin;
+    the three ArcGIS-Online-hosted ones — Arizona/Utah/Nevada, all on `services*.arcgis.com` — send a
+    wildcard `Access-Control-Allow-Origin: *`). This is a genuine, permanent, server-side limitation specific
+    to Oregon's own self-hosted ArcGIS instance (`nrimp.dfw.state.or.us`) that this app's client-side
+    JavaScript cannot work around — the browser's own security model refuses to expose ANY response from a
+    cross-origin server that doesn't explicitly opt in via this header, regardless of pagination, retries, or
+    request shape; a real fix would require a server-side proxy this app has no infrastructure for, and
+    building one was treated as out of scope for this session rather than attempted half-built. Fixed the
+    user-facing SYMPTOM instead of the impossible root cause: `loadStateDataLayer`/`fetchStateDataLayerPaged`
+    now track whether any page permanently failed and show a real, honest `showToast()` ("Couldn't load this
+    state's data — the source server may be unavailable from this app right now.") instead of silently
+    showing nothing with no explanation — confirmed live that the toast fires correctly on a genuine fresh
+    Oregon fetch failure.
+  - **Washington's real, distinct, and fixable bug — silent record-limit truncation**: confirmed live (via
+    `curl` against the real endpoint) that Washington's SWIFD table has 73,373 total features, while
+    `maxRecordCount` on that server is 2000 — meaning every previous unpaginated fetch was silently returning
+    an arbitrary ~2.7% slice of the real statewide data with no error, no warning, and no way to know from
+    the app's own UI that anything was missing. This is a very plausible, and separately confirmed-real
+    (Oregon's layer 2 and layer 7, for other species, independently found to exceed 2000 records too),
+    explanation for "a given user's own area shows nothing" reports even before Oregon's CORS block is
+    considered. Fixed with real `resultOffset`/`resultRecordCount` pagination in a new
+    `fetchStateDataLayerPaged()` helper, looping until a page returns fewer features than requested (the
+    real end of data) — confirmed live via captured network requests showing genuine sequential pages
+    (offset 0, 2000, 4000, 6000... all HTTP 200) against the real Washington server, not just code review.
+    A second, independent failure mode was found on Oregon's server specifically WHILE building this (via
+    direct `curl` bisection, not assumed): asking for more than roughly 300 records in one request on a
+    geometrically dense layer returns a bare HTTP 500 with no detail, a lower and harder threshold than the
+    documented `maxRecordCount` — the pagination helper adaptively shrinks the page size by 4x on any failed
+    page (starting from 2000, so well-behaved endpoints like Arizona/Utah/Nevada's much smaller layers still
+    complete in one request) and remembers the working size for the rest of that layer's own pages, rather
+    than either hard-coding one page size for every server or retrying the same failing size forever.
+  - **A real caching inefficiency found and fixed while testing pagination**: Washington's "unified" source
+    (species is a data ATTRIBUTE, not a query filter, per its own catalog note — the identical statewide
+    table regardless of which species is picked) was being cached and deduplicated by
+    `topCategory|speciesName|stateKey`, the same key shape used for genuinely per-species sources (Arizona/
+    Oregon/Utah/Nevada). This meant every time a DIFFERENT species was picked with Washington selected, the
+    ENTIRE 73,373-feature table was re-fetched from scratch via a fresh ~35-request paginated fetch — caught
+    live via real captured network requests showing two full independent fetch sequences interleaved after
+    switching from "Sockeye" to "Brown Trout" with Washington still selected. Fixed by keying unified
+    sources' cache/in-flight-dedup by `topCategory|unified|stateKey` (species-independent) instead — a real,
+    consequential fix now that pagination actually pulls the full dataset rather than a fast, always-capped
+    2000-record fetch that made this redundancy cheap enough not to matter before.
+  - **Verification gap, flagged rather than silently omitted**: this session's browser DID work, extensively,
+    and was used to root-cause and confirm-fix the majority of the items above with real DOM/network/console
+    evidence, not code-only reasoning — a meaningfully more thorough live pass than Session 55 managed. It
+    broke down again partway through (the same category of tooling instability documented in earlier
+    sessions' own testing notes — new tabs/navigations stopped responding, across multiple fresh tab groups,
+    and did not recover for the remainder of the session this time), which is why the following were NOT
+    independently re-confirmed live after their code was written, only reasoned through carefully and
+    syntax-checked: the "checkbox opens species picker when nothing's configured" fix (item 3) was never
+    literally clicked with a truly-empty category, though it reuses the exact `openWildlifeCategoryPicker`
+    function already proven working via more than a dozen successful direct calls earlier in this same
+    session; the Migrations "select all" checkbox (item 5) was never clicked, only code-reviewed and
+    syntax-checked; and Washington's real full-73,373-feature fetch was confirmed correctly PAGINATING via
+    real captured network requests (sequential offsets, all HTTP 200) but was not watched all the way to
+    completion before the tooling broke down, so the final rendered feature count for a completed Washington
+    fetch was not directly confirmed. `node --check` confirmed clean syntax on all 4 extracted inline
+    `<script>` blocks after every edit, and a full `git diff` was re-read end to end before finalizing.
+    APP_VERSION bumped 2.49.0 → 2.50.0 (minor — same class of change as Session 55), SHELL_CACHE bumped
+    v162 → v163.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -4634,3 +4827,51 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   trusting this in practice, not an optional follow-up. `node --check` confirmed clean syntax on all 4
   extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.48.0 → 2.49.0 (minor — real UX
   restructuring, per explicit instruction), SHELL_CACHE bumped v161 → v162.
+- Session 56: Confirmed a genuinely working live browser FIRST, per explicit instruction, before touching any
+  code — Session 55 had shipped entirely code-reviewed, never actually rendered. Used it extensively to
+  root-cause and live-verify most of a 7-item bug list reported against that session's own work — see
+  Architecture notes' "Wildlife panel category checkboxes, cross-tab persistence, Oregon CORS block,
+  Washington pagination" entry for full detail on every item. Fixed and live-confirmed: (1) Big Game's
+  duplicated/alphabetical-only species grouping, root-caused to a missing `biggame`→`big_game` key-name
+  bridge in `WILDLIFE_GROUP_ORDER` that Session 54 had already added for Upland Game but never for Big Game;
+  (1b) removed "Blackbeard Island Deer" (a real Georgia-island-only subspecies, confirmed via its own data
+  irrelevant to this app's western-hunting focus) via a new species-code exclusion filter, and confirmed via
+  a direct read of the underlying data files that the broader "uncurated national list" concern doesn't apply
+  — this is a small, mostly-legitimate corpus with exactly one genuine outlier. Investigated and could NOT
+  reproduce the reported Fish-blue-leaking-into-Big-Game/Upland bug — direct live paint-property inspection
+  showed all 3 Habitat range layer sets correctly still `#c2622d`, with blue correctly scoped to State Data
+  only; documented as "not reproducible in current code" rather than papering over it with an unnecessary
+  change. Root-caused and fixed the real architectural bug behind BOTH the cross-tab-data-loss report and the
+  Washington-self-unchecking report as the exact same cause: Session 55's own "master toggle" writeup implied
+  per-category independence that was never actually built — the code still used one shared
+  `wildlifeActive`/`wildlifeOn`/`wildlifeStateDataActive`/etc. variable set for all 3 categories, so
+  configuring a second category silently wiped the first's entire selection, confirmed via live reproduction
+  (configure Big Game, then Fish, then reopen — Big Game's config is gone). Fixed with a genuine per-category
+  data model (5 new `*ByCategory` state objects) plus, since a single shared MapLibre source/layer set has
+  the identical one-active-category-at-a-time ceiling regardless of JS state, splitting State Data's map
+  layers into 3 independent per-category sets (15 layers total, matching the pattern Habitat range's own GAP
+  layers already used) — confirmed live end to end: Big Game/Elk + Fish/Rainbow Trout/Washington configured
+  in the same panel session both persisted simultaneously on the active-layers chip and in the Layers panel
+  after closing and reopening. Implemented, syntax-checked, but NOT live-clicked before this session's own
+  browser tooling broke down a second time (flagged explicitly, not silently claimed as tested): the
+  checkbox-opens-species-picker-when-empty UX fix (reuses an already-proven helper function, just never
+  exercised via a truly-empty category this session) and a new Migrations header "select all" checkbox with
+  real tri-state (checked/unchecked/indeterminate) behavior. For item 7 (Oregon/Washington fish not
+  rendering), investigated each state's fetch path independently rather than assuming Arizona's working UI
+  said anything about the others, per explicit instruction — found two genuinely different root causes, not
+  one: Oregon's own ArcGIS server sends zero CORS response headers on any request (confirmed via
+  `curl -H "Origin: ..."` against the real endpoint, contrasted directly against Washington/Arizona/Utah/
+  Nevada's servers, which all correctly send them) — a permanent, server-side, client-unfixable block, not a
+  bug in this app; the fetch failure is now surfaced as an honest toast instead of a silent empty result.
+  Washington's own real bug was fixable: its SWIFD table has 73,373 total features against a server-declared
+  `maxRecordCount` of 2000, so every previous unpaginated fetch was silently returning ~2.7% of the real
+  statewide data with zero indication anything was missing — fixed with real adaptive-backoff pagination
+  (`fetchStateDataLayerPaged`, also handling a second, harder-limit HTTP-500 failure mode found on Oregon's
+  own server via direct curl bisection during this work), confirmed live via real captured sequential-offset
+  network requests against the real Washington server. Also found and fixed, while testing the pagination fix
+  rather than as a separately reported item: Washington's species-independent "unified" data source was being
+  cache-keyed by species anyway, so switching species with Washington selected re-fetched its entire
+  73K-record table from scratch every time — confirmed live via a captured duplicate full-fetch sequence,
+  fixed by keying unified sources' cache by state alone. `node --check` confirmed clean syntax on all 4
+  extracted inline `<script>` blocks after every edit; a full `git diff` was re-read end to end before
+  finalizing. APP_VERSION bumped 2.49.0 → 2.50.0, SHELL_CACHE bumped v162 → v163.

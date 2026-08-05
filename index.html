@@ -2402,12 +2402,12 @@
     <div class="layer-section-body collapsed" id="layer-section-body-wildlife">
       <!-- Session 54: 3 rows (Big Game / Upland Game / Fish) replace the old Habitats/
            Migrations pair — Migrations is no longer a top-level item at all (it nests under
-           whichever Big Game species has it). All 3 rows share the SAME underlying wildlifeOn/
-           wildlifeActive selection (only one species can be active across all 3 categories at
-           once, same as the old Habitats/Migrations pair effectively shared one "the current
-           pick" concept) — each row's own checkbox/value only reflect it when THIS row's
-           category is the one currently active; opening a row always jumps the picker to that
-           category's tab regardless. -->
+           whichever Big Game species has it). Session 56: each row is backed by its OWN
+           independent slot in wildlifeActiveByCategory/wildlifeOnByCategory/
+           wildlifeMasterOnByCategory — all 3 categories can have their own active species
+           configured and visible at the same time; picking a species in one tab never touches
+           another tab's own selection. Opening a row always jumps the picker to that category's
+           own tab. -->
       <div class="layer-compact-row">
         <input type="checkbox" id="wildlife-biggame-quick-toggle">
         <button type="button" class="layer-compact-open-btn" id="wildlife-biggame-open-btn" data-topcategory="biggame">
@@ -2499,6 +2499,12 @@
       <button type="button" class="layer-section-toggle" id="wildlife-migrations-toggle-btn">
         <span class="layer-section-chevron">▸</span>
         <span class="layer-section-title">MIGRATIONS</span>
+        <!-- All-on/off toggle (Session 56) — sits inside the same header button as the
+             expand/collapse chevron, so its own click handler must stop propagation or it'd also
+             toggle the collapse state on every check/uncheck. Reflects "all 4 currently
+             checked" — indeterminate when some but not all are on, matching the standard
+             tri-state checkbox convention for a "select all" control. -->
+        <input type="checkbox" id="migration-all-toggle" title="Toggle all migrations" style="margin:0;accent-color:var(--accent);">
         <span class="layer-section-count" id="wildlife-migrations-count"></span>
       </button>
       <div class="layer-section-body collapsed" id="wildlife-migrations-body">
@@ -3179,7 +3185,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.49.0';
+  var APP_VERSION = '2.50.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -3828,7 +3834,16 @@
       gaugeStationsOn: false,
       publicLandOn: false, publicLandOpacity: 0.55,
       gmuOn: false, gmuState: 'az',
-      wildlifeOn: false, wildlifeMasterOn: true, wildlifeTopCategory: null, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
+      // Session 56: wildlifeTopCategory stays a single UI-only value (which tab was last
+      // displayed) — everything ACTUALLY configured is keyed per top category now, so switching
+      // tabs can never lose or silently overwrite another category's own selection.
+      wildlifeTopCategory: null,
+      wildlifeByCategory: null, // {biggame:{on,masterOn,category,speciesName,codes}|null, uplandgame:..., fish:...}
+      wildlifeStateDataByCategory: null, // {biggame:{on,stateKey}|null, uplandgame:..., fish:...}
+      // Legacy single-species fields — no longer written by any code path, kept only so
+      // loadState's one-time migration can fold a pre-Session-56 user's existing selection into
+      // wildlifeByCategory/wildlifeStateDataByCategory rather than losing it on upgrade.
+      wildlifeOn: false, wildlifeMasterOn: true, wildlifeCategory: null, wildlifeSpeciesName: null, wildlifeCodes: null,
       wildlifeStateDataOn: false, wildlifeStateDataStateKey: null,
       migrationsOn: false, migrationSpecies: null, migrationCorridorOn: false, migrationStopoverOn: false, migrationWinterRangeOn: false, migrationAnnualRangeOn: false,
       showOfflineBoundaries: true,
@@ -4380,6 +4395,15 @@
     big_game: ['Deer & Elk', 'Pronghorn', 'Mountain Game', 'Bear', 'Predators & Small Big Game'],
     small_game: ['Cottontails', 'Jackrabbits & Hares']
   };
+  // wildlifeSpeciesGroups() looks up WILDLIFE_GROUP_ORDER BY TOP-CATEGORY id ('biggame',
+  // 'uplandgame'), not by the underlying GAP source-category key ('big_game', 'upland') the
+  // object above is actually keyed by — 'uplandgame' already gets its own bridge two lines below
+  // (concat of upland+small_game, since that tab merges two source files); 'biggame' needs the
+  // identical bridge to its own single source key, or the lookup silently misses (falls back to
+  // `[]`) and every species gets the same group index, degrading the "group first, alphabetize
+  // within group" sort to pure alphabetical with a header wherever the raw group value happens to
+  // change — exactly the duplicated "Bear" headers reported live (Session 56).
+  WILDLIFE_GROUP_ORDER.biggame = WILDLIFE_GROUP_ORDER.big_game;
   // Fill/stroke pair per simultaneous sub-layer. Color 0 reuses var(--accent) (#c2622d) —
   // the same orange used for active states / quick-favorites elsewhere in the UI — since a
   // light green blended into the topo style's forested areas. Color 1 is the app's other
@@ -4390,18 +4414,30 @@
   var WILDLIFE_STROKE_COLORS = ['#8a4520', '#1f5f8f'];
   var wildlifeCache = {}; // category -> parsed FeatureCollection, cached for the session
   var wildlifeLoadCallbacks = {}; // category -> array of pending callbacks while a fetch is in flight
-  var wildlifeActive = null; // { topCategory, category, speciesName, codes: [...] } — the currently *selected* species, or null
-  var wildlifeOn = false; // whether the quick-toggle has the selected species' layer actually visible right now
+  // Session 56: each of the 3 top categories (Big Game/Upland Game/Fish) gets its OWN independent
+  // slot — replacing the single shared `wildlifeActive`/`wildlifeOn`/`wildlifeMasterOn` vars from
+  // Sessions 54-55, which silently overwrote one category's entire configuration (species,
+  // Habitat range on/off, master on/off) the moment a DIFFERENT category's species was picked,
+  // even just by switching tabs within the same open panel — confirmed live: picking a Fish
+  // species while Big Game had a fully-configured active species (Habitat range + Migrations)
+  // wiped Big Game's own selection outright, with no error, the moment the panel was closed (its
+  // active-layers chip lines for Big Game simply vanished). Keyed by topCategory ('biggame'/
+  // 'uplandgame'/'fish'); each active-species value is `{speciesName, category, codes: [...]}`
+  // (category = the underlying GAP source category, or null for a migration-/state-data-only
+  // species) or `null` if nothing's configured for that category yet.
+  var wildlifeActiveByCategory = { biggame: null, uplandgame: null, fish: null };
+  var wildlifeOnByCategory = { biggame: false, uplandgame: false, fish: false }; // Habitat range's own on/off, per category
   // Session 55: the category row's own checkbox in the main Layers panel (Big Game/Upland Game/
-  // Fish) is a MASTER visibility switch over everything currently configured for the active
-  // species — Habitat range (wildlifeOn), Migrations (the 4 category checkboxes), and State Data
-  // (wildlifeStateDataOn) — same philosophy as the Aspect master toggle: turning it off hides
-  // whatever's configured without clearing any of those individual selections, turning it back on
-  // restores exactly what was showing before. Defaults true so a freshly-picked species shows
-  // immediately (matches Habitat range's own existing auto-enable-on-pick behavior) — see
-  // setWildlifeSpecies, which resets this to true on every species change so switching species
-  // never leaves the new pick invisible behind a stale "master off" from the previous one.
-  var wildlifeMasterOn = true;
+  // Fish) is a MASTER visibility switch over everything currently configured for that ONE
+  // category's active species — Habitat range, Migrations (Big Game only), and State Data — same
+  // philosophy as the Aspect master toggle: turning it off hides whatever's configured without
+  // clearing any of those individual selections, turning it back on restores exactly what was
+  // showing before. Defaults true so a freshly-picked species shows immediately (matches Habitat
+  // range's own existing auto-enable-on-pick behavior) — see setWildlifeSpecies, which resets a
+  // category's own master flag to true whenever ITS species changes, never touching the other two
+  // categories' independent master flags (Session 56 — previously this was one shared flag, which
+  // is part of the same cross-tab data-loss bug this whole per-category split fixes).
+  var wildlifeMasterOnByCategory = { biggame: true, uplandgame: true, fish: true };
 
   // ── Migration corridors (compiled 10-state USGS Corridor Mapping Team data, Session 26) ──
   // lives in the same Wildlife Layers panel/tab-bar shell as a 4th tab, but is otherwise a
@@ -4470,6 +4506,14 @@
   // Which of the existing WILDLIFE_CATEGORIES (the underlying GAP-habitat file keys) feed into
   // each top-level tab's species list. 'fish' maps to none — it has no GAP baseline at all.
   var WILDLIFE_TOPCATEGORY_SOURCE_CATEGORIES = { biggame: ['big_game'], uplandgame: ['upland', 'small_game'], fish: [] };
+  // Reverse of the above (Session 56) — which top category a given GAP source category's own map
+  // layer (wildlife-{cat}-fill/-line) belongs to, so updateWildlifeMapFilter can drive each of the
+  // 3 underlying layers from ITS OWN top category's independent active-species/on/master state,
+  // rather than one shared value that could only ever describe a single category at a time.
+  var WILDLIFE_SOURCECATEGORY_TOPCATEGORY = {};
+  Object.keys(WILDLIFE_TOPCATEGORY_SOURCE_CATEGORIES).forEach(function(tc){
+    WILDLIFE_TOPCATEGORY_SOURCE_CATEGORIES[tc].forEach(function(sc){ WILDLIFE_SOURCECATEGORY_TOPCATEGORY[sc] = tc; });
+  });
   // Species-group additions for the merged Upland Game tab (Small Game's own two groups, plus
   // Himalayan Snowcock — a species that exists ONLY via Nevada's State Data, with no GAP habitat
   // file entry anywhere in this app, grouped with its fellow game-bird relatives rather than left
@@ -4706,13 +4750,100 @@
   // naming-based guesses (e.g. "anything not literally called stream/streams is fillable") would
   // have missed it; this is what the fill/line MapLibre layers actually filter on (Session 55 fix
   // for streams incorrectly rendering with a fill).
+  // Fetches ONE layer's FULL feature set via ArcGIS resultOffset/resultRecordCount pagination,
+  // tagging each feature the same way a single unpaginated fetch used to (Session 56 — this
+  // whole paginated helper replaces what used to be one bare `fetch(f.url)`). Two real, distinct
+  // bugs this fixes, confirmed live against the real endpoints, not assumed:
+  //  1. A single unpaginated query silently returns at most the SERVER's own maxRecordCount
+  //     (2000 on both Washington's and Oregon's ArcGIS instances) with no error and no visible
+  //     signal — confirmed Washington's real SWIFD layer has 73,373 features total, so a plain
+  //     fetch was silently returning ~2.7% of it, an effectively arbitrary (not geographically
+  //     representative) slice, which is a very plausible reason a given user's own area of
+  //     Washington could show nothing at all.
+  //  2. Oregon's server, unlike Washington's, doesn't just cap silently — asking it for more than
+  //     roughly 200-300 records in ONE request on a geometrically dense layer (confirmed via
+  //     direct testing: resultRecordCount=300 succeeds, 500 fails) returns a bare HTTP 500 with no
+  //     usable error detail, which is why Oregon appeared to fail outright rather than just be
+  //     incomplete — the old code's .catch() swallowed that 500 into an empty feature array for
+  //     the WHOLE layer, not just the pages that would have exceeded the threshold.
+  // Strategy: start at the server's real maxRecordCount-sized pages (fast, few requests, works
+  // fine for Washington and Arizona/Utah/Nevada's much smaller layers) and adaptively shrink the
+  // page size by 4x on any failed page, remembering the working size for subsequent pages of that
+  // SAME layer rather than re-attempting the large size every time. Stops when a page returns
+  // fewer features than requested (the real end of data) or the page size would drop below a
+  // 50-record floor (gives up on the REMAINDER of that one layer only, logging why, rather than
+  // retrying forever or failing the whole merged fetch).
+  // cb(features, failed) — failed is true only when a page was permanently given up on (hit the
+  // size floor still failing), a real signal distinct from "this layer legitimately has zero
+  // features here" (a normal, silent, non-error outcome). Session 56: confirmed live that Oregon's
+  // own ArcGIS server (nrimp.dfw.state.or.us) sends NO Access-Control-Allow-Origin header at all
+  // (checked directly via `curl -D - -H "Origin: ..."` against the real endpoint — zero CORS
+  // headers in the response, vs. Washington's/Arizona's/Utah's/Nevada's endpoints, which all send
+  // one), which is a permanent, server-side, unfixable-from-this-app's-client-side-JS block — the
+  // browser's own fetch() refuses to expose ANY response from that host to page JS regardless of
+  // pagination, retries, or page size, surfacing here as a plain "TypeError: Failed to fetch" with
+  // no further detail. This is why Oregon fish data was reported as not rendering "at all" (not
+  // just incomplete like Washington's silent maxRecordCount truncation, a different, fixable bug
+  // also found and fixed this session) — there is no client-only fix for a missing CORS header on
+  // a server this app doesn't control; a real fix would need a server-side proxy, out of scope
+  // here. The `failed` flag is what lets the UI say so honestly instead of silently showing
+  // nothing with no explanation.
+  function fetchStateDataLayerPaged(url, sdLayer, cb){
+    var PAGE_SIZE_START = 2000, PAGE_SIZE_FLOOR = 50;
+    var accumulated = [];
+    function tagAndCollect(features){
+      features.forEach(function(feat){
+        feat.properties = feat.properties || {};
+        feat.properties._sdLayer = sdLayer;
+        var gt = feat.geometry && feat.geometry.type;
+        feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
+        accumulated.push(feat);
+      });
+    }
+    function fetchPage(offset, pageSize){
+      var pagedUrl = url + '&resultOffset=' + offset + '&resultRecordCount=' + pageSize;
+      fetch(pagedUrl).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(data){
+          if (data.error) throw new Error(data.error.message || 'ArcGIS query error');
+          var features = data.features || [];
+          tagAndCollect(features);
+          if (features.length === pageSize && features.length > 0){
+            fetchPage(offset + features.length, pageSize); // may be more — same page size worked, keep using it
+          } else {
+            cb(accumulated, false); // fewer than requested (or zero) — real end of data
+          }
+        })
+        .catch(function(err){
+          var smaller = Math.floor(pageSize / 4);
+          if (smaller >= PAGE_SIZE_FLOOR){
+            console.warn('[FieldMap] State Data page failed at size ' + pageSize + ', retrying at ' + smaller + ':', pagedUrl, err);
+            fetchPage(offset, smaller);
+          } else {
+            console.error('[FieldMap] State Data page permanently failed (giving up on remainder of this layer):', pagedUrl, err);
+            cb(accumulated, true);
+          }
+        });
+    }
+    fetchPage(0, PAGE_SIZE_START);
+  }
+
   function loadStateDataLayer(topCategory, speciesName, stateKey, cb){
-    var cacheKey = topCategory + '|' + speciesName + '|' + stateKey;
+    var src = STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][stateKey];
+    if (!src){ cb(null); return; }
+    // A 'unified' source (e.g. Washington's SWIFD) is the SAME statewide table regardless of
+    // which species is currently picked — species is a data attribute, not a query filter, per
+    // its own catalog note. Cache (and dedupe in-flight requests) by state alone for these, NOT
+    // by species — otherwise every species change re-triggers a full re-fetch of the whole table
+    // from scratch. This matters far more now that pagination (below) actually pulls the REAL
+    // full dataset rather than silently stopping at the server's 2000-record cap — confirmed live
+    // that Washington's real table is 73,373 features, so an unnecessary species-driven re-fetch
+    // means a real ~35-request, real-world-noticeable delay for no reason, not just a wasted
+    // network call. 'perSpecies' sources (Arizona/Oregon/Utah/Nevada) still cache per species,
+    // since those genuinely are separate, smaller per-species queries.
+    var cacheKey = (src.type === 'unified') ? (topCategory + '|unified|' + stateKey) : (topCategory + '|' + speciesName + '|' + stateKey);
     if (stateDataCache[cacheKey]){ cb(stateDataCache[cacheKey]); return; }
     if (stateDataLoadCallbacks[cacheKey]){ stateDataLoadCallbacks[cacheKey].push(cb); return; }
     stateDataLoadCallbacks[cacheKey] = [cb];
-    var src = STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][stateKey];
-    if (!src){ cb(null); return; }
     var fetches = [];
     if (src.type === 'unified'){
       fetches.push({ url: src.url + '/query?where=1%3D1&outFields=*&f=geojson', sdLayer: 'range' });
@@ -4723,20 +4854,19 @@
         fetches.push({ url: spec.base + '/' + spec.layers[sdLayer] + '/query?where=1%3D1&outFields=*&f=geojson', sdLayer: sdLayer });
       });
     }
+    var anyFailed = false;
     Promise.all(fetches.map(function(f){
-      return fetch(f.url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function(data){
-          (data.features || []).forEach(function(feat){
-            feat.properties = feat.properties || {};
-            feat.properties._sdLayer = f.sdLayer;
-            var gt = feat.geometry && feat.geometry.type;
-            feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
-          });
-          return data.features || [];
-        })
-        .catch(function(err){ console.error('[FieldMap] State Data fetch failed:', f.url, err); return []; });
+      return new Promise(function(resolve){
+        fetchStateDataLayerPaged(f.url, f.sdLayer, function(features, failed){
+          if (failed) anyFailed = true;
+          resolve(features);
+        });
+      });
     })).then(function(featureArrays){
       var merged = { type: 'FeatureCollection', features: [].concat.apply([], featureArrays) };
+      if (anyFailed){
+        showToast('Couldn’t load this state’s data — the source server may be unavailable from this app right now.');
+      }
       stateDataCache[cacheKey] = merged;
       var cbs = stateDataLoadCallbacks[cacheKey]; delete stateDataLoadCallbacks[cacheKey];
       cbs.forEach(function(f){ f(merged); });
@@ -6530,24 +6660,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
             if (map.getSource('usfs-boundaries-label-source')) map.getSource('usfs-boundaries-label-source').setData(buildLabelPointFeatureCollection(data));
           });
-          if (wildlifeOn && wildlifeActive && wildlifeActive.category) loadWildlifeCategory(wildlifeActive.category, function(data){
-            if (data && map.getSource('wildlife-' + wildlifeActive.category + '-source')){
-              map.getSource('wildlife-' + wildlifeActive.category + '-source').setData(data);
-              updateWildlifeMapFilter();
-              updateActiveLayersChip();
-            }
+          // Session 56: restore all 3 categories' own Habitat range + State Data independently —
+          // each was previously gated on the single shared wildlifeActive/wildlifeStateDataActive,
+          // so only whichever ONE category happened to be active last could ever be restored.
+          WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+            var active = wildlifeActiveByCategory[tc];
+            if (wildlifeOnByCategory[tc] && active && active.category) loadWildlifeCategory(active.category, function(data){
+              if (data && map.getSource('wildlife-' + active.category + '-source')){
+                map.getSource('wildlife-' + active.category + '-source').setData(data);
+                updateWildlifeMapFilter();
+                updateActiveLayersChip();
+              }
+            });
+            var sdActive = wildlifeStateDataActiveByCategory[tc];
+            if (wildlifeStateDataOnByCategory[tc] && sdActive && active) loadStateDataLayer(tc, sdActive.speciesName, sdActive.stateKey, function(data){
+              if (map.getSource('wildlife-statedata-' + tc + '-source')){
+                map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
+                updateWildlifeStateDataMapFilter();
+                updateActiveLayersChip();
+              }
+            });
           });
           if (migrationsOn && migrationActiveSpecies) loadMigrationData(function(data){
             if (data && map.getSource('migration-source')){
               map.getSource('migration-source').setData(migrationFilteredData());
               updateMigrationMapFilter();
-              updateActiveLayersChip();
-            }
-          });
-          if (wildlifeStateDataOn && wildlifeStateDataActive && wildlifeActive) loadStateDataLayer(wildlifeStateDataActive.topCategory, wildlifeStateDataActive.speciesName, wildlifeStateDataActive.stateKey, function(data){
-            if (map.getSource('wildlife-statedata-source')){
-              map.getSource('wildlife-statedata-source').setData(data || { type: 'FeatureCollection', features: [] });
-              updateWildlifeStateDataMapFilter();
               updateActiveLayersChip();
             }
           });
@@ -6829,25 +6966,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'migration-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'migration-fill', function(){ map.getCanvas().style.cursor = ''; });
 
-      // Wildlife State Data click — read-only reference data, same mode-aware guard pattern.
-      function handleWildlifeStateDataFillClick(e){
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        if (e.originalEvent) e.originalEvent.stopPropagation();
-        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode) return;
-        var f = e.features && e.features[0];
-        if (!f) return;
-        openWildlifeStateDataPopupAt(f.properties);
+      // Wildlife State Data click — read-only reference data, same mode-aware guard pattern. One
+      // handler factory per top category (Session 56 — the source/layers themselves split
+      // per-category too, see reinitializeLayers), closing over `tc` so the popup knows which
+      // category's data it's showing regardless of which layer/category was actually tapped.
+      function handleWildlifeStateDataFillClick(tc){
+        return function(e){
+          if (e.defaultPrevented) return;
+          e.preventDefault();
+          if (e.originalEvent) e.originalEvent.stopPropagation();
+          if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode) return;
+          var f = e.features && e.features[0];
+          if (!f) return;
+          openWildlifeStateDataPopupAt(f.properties, tc);
+        };
       }
-      map.on('click', 'wildlife-statedata-fill', handleWildlifeStateDataFillClick);
-      map.on('mouseenter', 'wildlife-statedata-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'wildlife-statedata-fill', function(){ map.getCanvas().style.cursor = ''; });
-      // Streams no longer render on the fill layer at all (Session 55 — see reinitializeLayers'
-      // own comment for why), so tap-to-identify needs its own registration on the dedicated
-      // stream line layer, same handler.
-      map.on('click', 'wildlife-statedata-line-streams', handleWildlifeStateDataFillClick);
-      map.on('mouseenter', 'wildlife-statedata-line-streams', function(){ map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'wildlife-statedata-line-streams', function(){ map.getCanvas().style.cursor = ''; });
+      WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+        var fillId = 'wildlife-statedata-' + tc + '-fill';
+        var streamsId = 'wildlife-statedata-' + tc + '-line-streams';
+        var handler = handleWildlifeStateDataFillClick(tc);
+        map.on('click', fillId, handler);
+        map.on('mouseenter', fillId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', fillId, function(){ map.getCanvas().style.cursor = ''; });
+        // Streams no longer render on the fill layer at all (Session 55 — see reinitializeLayers'
+        // own comment for why), so tap-to-identify needs its own registration on the dedicated
+        // stream line layer, same handler.
+        map.on('click', streamsId, handler);
+        map.on('mouseenter', streamsId, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', streamsId, function(){ map.getCanvas().style.cursor = ''; });
+      });
 
       // Active fire perimeters click — read-only reference data, same mode-aware guard.
       function handleFirePerimetersFillClick(e){
@@ -9665,93 +9812,104 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // Wildlife State Data (Session 54, recolored + reshaped Session 55) — one shared source for
-    // whichever single (species, state) selection is currently active
-    // (loadStateDataLayer/setWildlifeStateDataState), same "one source, filter-driven paint"
-    // pattern as Migration corridors above. Shape (fill vs. line) is driven by each feature's own
-    // real `_sdShape` (set in loadStateDataLayer from its actual GeoJSON geometry.type), NOT by
-    // guessing from the semantic `_sdLayer` name — Washington's SWIFD "range" layer is itself a
-    // polyline, not a polygon, so a name-based filter (e.g. "anything not literally called
-    // stream/streams gets a fill") would have kept mis-rendering it as a fill; this is the actual
-    // fix for streams incorrectly rendering with a fill (Session 55). Four layers: a polygon fill
-    // wash (range/lake/lakes/huc12 — huc12 at a lower opacity, since it's coarse context rather
-    // than the real species distribution, but otherwise the SAME fill-wash treatment as every
-    // other area-based overlay in this app, not the old outline-only special case), a thin
-    // polygon-outline stroke for the same set, a brighter dedicated stream/river line (visibly
-    // distinct from the polygon outline within the same blue family, so a stream reads as actual
-    // flowing-water data, not just a lake's border), and a dashed corridor line (Nevada's
-    // movement-corridor data only — a connectivity path, not a boundary, so it keeps its own
-    // dashed treatment). Visibility (not filter) is what gates this on/off — see
-    // updateWildlifeStateDataMapFilter — since there's only ever one selection loaded into the
-    // source at a time, unlike Wildlife/Migration's filter-over-many-cached-species approach.
-    if (!map.getSource('wildlife-statedata-source')){
-      map.addSource('wildlife-statedata-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    }
-    if (!map.getLayer('wildlife-statedata-fill')){
-      map.addLayer({
-        id: 'wildlife-statedata-fill',
-        type: 'fill',
-        source: 'wildlife-statedata-source',
-        filter: ['==', ['get', '_sdShape'], 'polygon'],
-        layout: { visibility: 'none' },
-        paint: {
-          'fill-color': WILDLIFE_STATEDATA_FILL,
-          'fill-opacity': ['case', ['==', ['get', '_sdLayer'], 'huc12'], 0.18, 0.35]
-        }
-      });
-    }
-    if (!map.getLayer('wildlife-statedata-line')){
-      map.addLayer({
-        id: 'wildlife-statedata-line',
-        type: 'line',
-        source: 'wildlife-statedata-source',
-        filter: ['==', ['get', '_sdShape'], 'polygon'],
-        layout: { visibility: 'none', 'line-join': 'round' },
-        paint: {
-          'line-color': WILDLIFE_STATEDATA_STROKE,
-          'line-width': 1,
-          'line-opacity': 0.85
-        }
-      });
-    }
-    // The stream/river line is its own layer, distinct in color from the polygon outline above
-    // (item 3's "Streams/Lakes get their own distinct treatment within that same blue family"),
-    // and deliberately excludes 'corridor' (Nevada's dashed movement-corridor lines, its own
-    // layer below) even though both are `_sdShape:'line'`.
-    if (!map.getLayer('wildlife-statedata-line-streams')){
-      map.addLayer({
-        id: 'wildlife-statedata-line-streams',
-        type: 'line',
-        source: 'wildlife-statedata-source',
-        filter: ['all', ['==', ['get', '_sdShape'], 'line'], ['!=', ['get', '_sdLayer'], 'corridor']],
-        layout: { visibility: 'none', 'line-join': 'round' },
-        paint: {
-          'line-color': WILDLIFE_STATEDATA_STREAM_COLOR,
-          'line-width': 2,
-          'line-opacity': 0.95
-        }
-      });
-    }
-    // line-dasharray is camera-only in the MapLibre style spec — a data-driven (['get', ...])
-    // expression on it is silently rejected (map fires an 'error' event, addLayer neither
-    // throws nor adds the layer), unlike line-color/line-width/line-opacity which all support
-    // data expressions fine. A fixed dasharray on its own dedicated layer (corridor only, now
-    // that huc12 moved to the fill+outline treatment above) rather than a data-driven dasharray.
-    if (!map.getLayer('wildlife-statedata-line-dashed')){
-      map.addLayer({
-        id: 'wildlife-statedata-line-dashed',
-        type: 'line',
-        source: 'wildlife-statedata-source',
-        filter: ['==', ['get', '_sdLayer'], 'corridor'],
-        layout: { visibility: 'none', 'line-join': 'round' },
-        paint: {
-          'line-color': WILDLIFE_STATEDATA_STROKE,
-          'line-width': 2,
-          'line-dasharray': ['literal', [2, 2]],
-          'line-opacity': 0.95
-        }
-      });
-    }
+    // Wildlife State Data (Session 54, recolored + reshaped Session 55, split per-category
+    // Session 56) — ONE source+layer set PER TOP CATEGORY (`wildlife-statedata-{topCategory}-*`),
+    // not one shared set for all three — a single shared source could only ever hold one
+    // category's selection at a time, so configuring Fish's State Data after Big Game's silently
+    // overwrote Big Game's rendered data even once the "which state" CHOICE was correctly
+    // remembered per category elsewhere; this is what actually lets Big Game/Upland Game/Fish
+    // each show their own independent State Data selection simultaneously, same as Habitat range
+    // already could via its own separate per-GAP-category source/layer sets above. Same "one
+    // source, filter-driven paint" pattern as Migration corridors, just now three of them. Shape
+    // (fill vs. line) is driven by each feature's own real `_sdShape` (set in loadStateDataLayer
+    // from its actual GeoJSON geometry.type), NOT by guessing from the semantic `_sdLayer` name —
+    // Washington's SWIFD "range" layer is itself a polyline, not a polygon, so a name-based filter
+    // (e.g. "anything not literally called stream/streams gets a fill") would have kept
+    // mis-rendering it as a fill; this is the actual fix for streams incorrectly rendering with a
+    // fill (Session 55). Four layers per category: a polygon fill wash (range/lake/lakes/huc12 —
+    // huc12 at a lower opacity, since it's coarse context rather than the real species
+    // distribution, but otherwise the SAME fill-wash treatment as every other area-based overlay
+    // in this app, not the old outline-only special case), a thin polygon-outline stroke for the
+    // same set, a brighter dedicated stream/river line (visibly distinct from the polygon outline
+    // within the same blue family, so a stream reads as actual flowing-water data, not just a
+    // lake's border), and a dashed corridor line (Nevada's movement-corridor data only — a
+    // connectivity path, not a boundary, so it keeps its own dashed treatment). Visibility (not
+    // filter) is what gates each category's set on/off — see updateWildlifeStateDataMapFilter.
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var srcId = 'wildlife-statedata-' + tc + '-source';
+      var fillId = 'wildlife-statedata-' + tc + '-fill';
+      var lineId = 'wildlife-statedata-' + tc + '-line';
+      var streamsId = 'wildlife-statedata-' + tc + '-line-streams';
+      var dashedId = 'wildlife-statedata-' + tc + '-line-dashed';
+      if (!map.getSource(srcId)){
+        map.addSource(srcId, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      }
+      if (!map.getLayer(fillId)){
+        map.addLayer({
+          id: fillId,
+          type: 'fill',
+          source: srcId,
+          filter: ['==', ['get', '_sdShape'], 'polygon'],
+          layout: { visibility: 'none' },
+          paint: {
+            'fill-color': WILDLIFE_STATEDATA_FILL,
+            'fill-opacity': ['case', ['==', ['get', '_sdLayer'], 'huc12'], 0.18, 0.35]
+          }
+        });
+      }
+      if (!map.getLayer(lineId)){
+        map.addLayer({
+          id: lineId,
+          type: 'line',
+          source: srcId,
+          filter: ['==', ['get', '_sdShape'], 'polygon'],
+          layout: { visibility: 'none', 'line-join': 'round' },
+          paint: {
+            'line-color': WILDLIFE_STATEDATA_STROKE,
+            'line-width': 1,
+            'line-opacity': 0.85
+          }
+        });
+      }
+      // The stream/river line is its own layer, distinct in color from the polygon outline above
+      // (item 3's "Streams/Lakes get their own distinct treatment within that same blue family"),
+      // and deliberately excludes 'corridor' (Nevada's dashed movement-corridor lines, its own
+      // layer below) even though both are `_sdShape:'line'`.
+      if (!map.getLayer(streamsId)){
+        map.addLayer({
+          id: streamsId,
+          type: 'line',
+          source: srcId,
+          filter: ['all', ['==', ['get', '_sdShape'], 'line'], ['!=', ['get', '_sdLayer'], 'corridor']],
+          layout: { visibility: 'none', 'line-join': 'round' },
+          paint: {
+            'line-color': WILDLIFE_STATEDATA_STREAM_COLOR,
+            'line-width': 2,
+            'line-opacity': 0.95
+          }
+        });
+      }
+      // line-dasharray is camera-only in the MapLibre style spec — a data-driven (['get', ...])
+      // expression on it is silently rejected (map fires an 'error' event, addLayer neither
+      // throws nor adds the layer), unlike line-color/line-width/line-opacity which all support
+      // data expressions fine. A fixed dasharray on its own dedicated layer (corridor only, now
+      // that huc12 moved to the fill+outline treatment above) rather than a data-driven dasharray.
+      if (!map.getLayer(dashedId)){
+        map.addLayer({
+          id: dashedId,
+          type: 'line',
+          source: srcId,
+          filter: ['==', ['get', '_sdLayer'], 'corridor'],
+          layout: { visibility: 'none', 'line-join': 'round' },
+          paint: {
+            'line-color': WILDLIFE_STATEDATA_STROKE,
+            'line-width': 2,
+            'line-dasharray': ['literal', [2, 2]],
+            'line-opacity': 0.95
+          }
+        });
+      }
+    });
 
     // Active fire perimeters — fetched live each time the toggle is turned on (see
     // ensureFirePerimetersLoaded), not cached across the session like the other boundary
@@ -17596,6 +17754,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return WILDLIFE_NAME_OVERRIDES[name] || name;
   }
 
+  // A small number of raw GAP-habitat entries are real, but out of scope for this app's western-
+  // hunting focus (Session 56 report + investigation) — checked live against the actual data
+  // files (17 big_game / 35 upland / 10 small_game species total, not a large uncurated national
+  // list; this is the one genuinely mistaken entry found across all three, not a systemic
+  // curation gap needing Oregon-fish-style filtering). Keyed by species_code (unique per entry)
+  // rather than name, so this can't accidentally swallow a real, differently-coded species that
+  // happens to share a display name.
+  var WILDLIFE_EXCLUDED_SPECIES_CODES = {
+    'mWTDEn': 'Blackbeard Island Deer — an isolated white-tailed deer population confined to a single Georgia barrier island, irrelevant to this app\'s western-hunting focus (Session 56)'
+  };
   function loadWildlifeCategory(category, cb){
     if (wildlifeCache[category]){ cb(wildlifeCache[category]); return; }
     if (wildlifeLoadCallbacks[category]){ wildlifeLoadCallbacks[category].push(cb); return; }
@@ -17603,6 +17771,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     fetch(WILDLIFE_CATEGORY_FILES[category])
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(data){
+        data.features = data.features.filter(function(f){ return !WILDLIFE_EXCLUDED_SPECIES_CODES[f.properties.species_code]; });
         wildlifeCache[category] = data;
         var cbs = wildlifeLoadCallbacks[category]; delete wildlifeLoadCallbacks[category];
         cbs.forEach(function(f){ f(data); });
@@ -17742,7 +17911,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     if (openGroupLabel !== null) html += '</optgroup>';
     select.innerHTML = html;
-    select.value = (wildlifeActive && wildlifeActive.topCategory === wildlifeActiveTopCategory) ? wildlifeActive.speciesName : '';
+    var active = wildlifeActiveByCategory[wildlifeActiveTopCategory];
+    select.value = active ? active.speciesName : '';
     renderSpeciesToggles();
   }
 
@@ -17770,52 +17940,74 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     ensureTopCategoryLoaded(topCategory);
   }
 
+  // Opens #wildlife-panel directly to the given category's species picker — shared by the
+  // category row's own "Select species ›" open button AND (Session 56) the quick-toggle checkbox
+  // itself when tapped with nothing configured yet for that category, so both entry points land
+  // in exactly the same place.
+  function openWildlifeCategoryPicker(topCategory){
+    var panel = document.getElementById('wildlife-panel');
+    closeAllPanels();
+    panel.classList.remove('hidden');
+    setWildlifeTopCategory(topCategory);
+  }
+
   // The single species-first selection for whichever top-level tab is open (Session 54) —
   // replaces the old fully-independent wildlifeActive (Habitats) + migrationActiveSpecies
   // (Migrations) pair: picking a species now drives every applicable section (Habitat range /
   // Migrations / State Data) for THAT one species, per the "species-first, not source-first"
   // spec — you no longer pick a different species for Habitat than for Migrations.
+  // Session 56: only ever touches the ONE category's own slot (topCategory) — never wipes or
+  // affects the other two categories' independently-configured species/on-state/State Data, which
+  // is exactly the bug this rewrite fixes (previously a single shared wildlifeActive var meant
+  // picking a species in any tab silently overwrote whatever a DIFFERENT tab had configured, with
+  // no error — confirmed live: Big Game's fully-configured Elk selection vanished, including its
+  // active-layers chip lines, the moment a Fish species was picked in the same panel session).
   function setWildlifeSpecies(topCategory, speciesName){
     if (!speciesName){
-      wildlifeActive = null;
+      wildlifeActiveByCategory[topCategory] = null;
     } else {
       var group = wildlifeSpeciesGroups(topCategory).find(function(g){ return g.name === speciesName; });
-      wildlifeActive = group ? { topCategory: topCategory, speciesName: speciesName, category: group.category, codes: group.codes.slice() } : null;
+      wildlifeActiveByCategory[topCategory] = group ? { speciesName: speciesName, category: group.category, codes: group.codes.slice() } : null;
     }
+    var active = wildlifeActiveByCategory[topCategory];
     // Habitat range auto-enables when the picked species has one (carrying forward the old
     // Habitats "sync both directions" behavior) — species with no GAP codes at all (state-data-
     // or migration-only, e.g. Nevada's Himalayan Snowcock) simply have no Habitat range to turn
     // on, so this is correctly always false for them, not a separate guard needed elsewhere.
-    wildlifeOn = !!(wildlifeActive && wildlifeActive.codes.length);
-    // Reset the master toggle to "on" for every species change (including clearing back to no
-    // species) — otherwise a master-off left over from a PREVIOUS species would silently hide
-    // whatever the newly-picked species auto-enables, making it look like picking a species did
-    // nothing (Session 55 fix — see wildlifeMasterOn's own declaration for the full mechanism).
-    wildlifeMasterOn = true;
-    // Migrations is no longer independently species-selectable — keep it locked to Big Game's
-    // own pick, auto-clearing if the newly-picked species has no migration data at all (or the
-    // user switched to a different top-level tab entirely).
-    var migrationName = migrationNameForGapSpecies(speciesName); // may be null — most species have no migration data
-    var hasMigration = topCategory === 'biggame' && wildlifeActive && migrationName && migrationSpeciesList().indexOf(migrationName) !== -1;
-    migrationActiveSpecies = hasMigration ? migrationName : null;
-    // migrationsOn used to be an independently user-toggled quick-toggle (its own row in the main
-    // Layers panel) — Session 54 removed that row (Migrations is no longer a top-level item, it
-    // nests under whichever Big Game species has it), so this now just tracks "does the current
-    // species have migration data at all," auto-following the species pick rather than being set
-    // by its own UI control. The actual on-screen visibility is still controlled per-category by
-    // the 4 Corridor/Stopover/WinterRange/AnnualRange checkboxes (migrationActiveCategoryList()),
-    // same as before.
-    migrationsOn = hasMigration;
-    state.settings.migrationSpecies = migrationActiveSpecies;
-    if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
-    // A State Data selection belongs to whichever species was active when it was loaded —
-    // always clear it on a species change so switching species can never leave a stale,
-    // wrong-species layer silently still rendering under the new pick.
-    clearWildlifeStateData();
+    wildlifeOnByCategory[topCategory] = !!(active && active.codes.length);
+    // Reset THIS category's own master toggle to "on" for every species change within it
+    // (including clearing back to no species) — otherwise a master-off left over from a PREVIOUS
+    // species in the SAME category would silently hide whatever the newly-picked species
+    // auto-enables. Never touches the other two categories' own independent master flags.
+    wildlifeMasterOnByCategory[topCategory] = true;
+    // Migrations only ever apply to Big Game, and Big Game only ever has this ONE slot — so
+    // migration state stays implicitly correct as long as it's only recomputed when topCategory
+    // IS 'biggame'. Recomputing it unconditionally (the pre-Session-56 bug) meant picking a Fish
+    // or Upland Game species — topCategory !== 'biggame', so hasMigration was always false —
+    // cleared migrationActiveSpecies even though Big Game's own selection never changed.
+    if (topCategory === 'biggame'){
+      var migrationName = migrationNameForGapSpecies(speciesName); // may be null — most species have no migration data
+      var hasMigration = active && migrationName && migrationSpeciesList().indexOf(migrationName) !== -1;
+      migrationActiveSpecies = hasMigration ? migrationName : null;
+      // migrationsOn used to be an independently user-toggled quick-toggle (its own row in the main
+      // Layers panel) — Session 54 removed that row (Migrations is no longer a top-level item, it
+      // nests under whichever Big Game species has it), so this now just tracks "does the current
+      // species have migration data at all," auto-following the species pick rather than being set
+      // by its own UI control. The actual on-screen visibility is still controlled per-category by
+      // the 4 Corridor/Stopover/WinterRange/AnnualRange checkboxes (migrationActiveCategoryList()),
+      // same as before.
+      migrationsOn = hasMigration;
+      state.settings.migrationSpecies = migrationActiveSpecies;
+      if (map && map.getSource('migration-source')) map.getSource('migration-source').setData(migrationFilteredData());
+      updateMigrationMapFilter();
+      persistMigrationSettings();
+    }
+    // A State Data selection belongs to whichever species was active in THIS category when it was
+    // loaded — always clear THIS category's own slot on a species change within it, never the
+    // other two categories' independent State Data selections.
+    clearWildlifeStateData(topCategory);
     persistWildlifeSettings();
-    persistMigrationSettings();
     updateWildlifeMapFilter();
-    updateMigrationMapFilter();
     updateActiveLayersChip();
     updateWildlifeQuickToggleUI();
     renderSpeciesToggles();
@@ -17827,10 +18019,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // Quick-toggle checkbox handler (both the main Layers panel's row AND the in-picker "Habitat
-  // range" checkbox share this) — flips visibility only, never touches the selection itself, so
-  // unchecking hides the layer without losing what species was chosen.
+  // range" checkbox share this, always for the CURRENTLY DISPLAYED category — the in-picker
+  // checkbox can only ever affect the tab it lives on) — flips visibility only, never touches the
+  // selection itself, so unchecking hides the layer without losing what species was chosen.
   function setWildlifeOn(on){
-    wildlifeOn = on;
+    var tc = wildlifeActiveTopCategory;
+    wildlifeOnByCategory[tc] = on;
     persistWildlifeSettings();
     updateWildlifeMapFilter();
     updateActiveLayersChip();
@@ -17839,15 +18033,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (habitatToggle) habitatToggle.checked = on;
   }
 
-  // Master toggle (Session 55) — the category row's own checkbox in the main Layers panel
-  // (Big Game/Upland Game/Fish). Shows/hides everything currently configured for the active
-  // species (Habitat range, Migrations, State Data) together, WITHOUT touching any of their own
-  // individual on/off states — turning it back on restores exactly what was showing before,
-  // same "configuration persists independent of visibility" idea as an opacity slider surviving
-  // a layer being turned off. See wildlifeMasterOn's own declaration for why it's a separate flag
-  // from wildlifeOn (Habitat range's own sub-toggle) rather than reusing it.
-  function setWildlifeMasterOn(on){
-    wildlifeMasterOn = on;
+  // Master toggle (Session 55, per-category Session 56) — the category row's own checkbox in the
+  // main Layers panel (Big Game/Upland Game/Fish). Shows/hides everything currently configured
+  // for THAT category's own active species (Habitat range, Migrations if it's Big Game, State
+  // Data) together, WITHOUT touching any of their own individual on/off states — turning it back
+  // on restores exactly what was showing before, same "configuration persists independent of
+  // visibility" idea as an opacity slider surviving a layer being turned off. Explicitly takes
+  // topCategory rather than assuming "whichever tab is displayed" — the Layers panel's own row
+  // checkboxes are the master switch for their OWN category regardless of which tab happens to be
+  // open in the picker at that moment.
+  function setWildlifeMasterOn(topCategory, on){
+    wildlifeMasterOnByCategory[topCategory] = on;
     persistWildlifeSettings();
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
@@ -17856,13 +18052,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateWildlifeQuickToggleUI();
   }
 
+  // Persists ALL 3 categories' slots every time (not just the one that changed) — cheap (a small
+  // plain object per category) and avoids ever needing to reason about partial-write ordering.
   function persistWildlifeSettings(){
-    state.settings.wildlifeOn = wildlifeOn;
-    state.settings.wildlifeMasterOn = wildlifeMasterOn;
     state.settings.wildlifeTopCategory = wildlifeActiveTopCategory;
-    state.settings.wildlifeCategory = wildlifeActive ? wildlifeActive.category : null;
-    state.settings.wildlifeSpeciesName = wildlifeActive ? wildlifeActive.speciesName : null;
-    state.settings.wildlifeCodes = wildlifeActive ? wildlifeActive.codes.slice() : null;
+    var byCategory = {};
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var active = wildlifeActiveByCategory[tc];
+      byCategory[tc] = active ? {
+        on: wildlifeOnByCategory[tc],
+        masterOn: wildlifeMasterOnByCategory[tc],
+        category: active.category,
+        speciesName: active.speciesName,
+        codes: active.codes.slice()
+      } : null;
+    });
+    state.settings.wildlifeByCategory = byCategory;
     scheduleSave();
   }
 
@@ -17887,13 +18092,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!speciesName){ infoEl.style.display = 'none'; return; }
     var group = wildlifeSpeciesGroups(wildlifeActiveTopCategory).find(function(g){ return g.name === speciesName; });
     if (!group) return;
-    var isActiveSpecies = wildlifeActive && wildlifeActive.topCategory === wildlifeActiveTopCategory && wildlifeActive.speciesName === speciesName;
-    var activeCodes = isActiveSpecies ? wildlifeActive.codes : [];
+    var categoryActive = wildlifeActiveByCategory[wildlifeActiveTopCategory];
+    var isActiveSpecies = categoryActive && categoryActive.speciesName === speciesName;
+    var activeCodes = isActiveSpecies ? categoryActive.codes : [];
 
     // Habitat range (only if this species has at least one GAP layer code)
     if (group.codes.length){
       habitatRow.style.display = '';
-      document.getElementById('wildlife-habitat-toggle').checked = isActiveSpecies && wildlifeOn;
+      document.getElementById('wildlife-habitat-toggle').checked = isActiveSpecies && wildlifeOnByCategory[wildlifeActiveTopCategory];
       if (group.codes.length > 1){
         sublayersWrap.style.display = 'block';
         sublayersWrap.innerHTML = group.codes.map(function(code){
@@ -17935,28 +18141,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var checkbox = document.getElementById('wildlife-' + topCategory + '-quick-toggle');
       var label = document.getElementById('wildlife-' + topCategory + '-quick-label');
       if (!checkbox) return;
-      var isThisCategory = wildlifeActive && wildlifeActive.topCategory === topCategory;
-      checkbox.checked = isThisCategory && wildlifeMasterOn;
-      label.textContent = isThisCategory ? wildlifeDisplayName(wildlifeActive.speciesName) : 'Select species';
+      var active = wildlifeActiveByCategory[topCategory];
+      checkbox.checked = !!active && wildlifeMasterOnByCategory[topCategory];
+      label.textContent = active ? wildlifeDisplayName(active.speciesName) : 'Select species';
     });
   }
 
-  // Reapplies the active species' filter/color to whichever category layer it belongs to,
-  // and clears the other two — this is what guarantees switching species never stacks with
-  // the previous one, including across category tabs. Also called after every style switch.
+  // Independently reapplies each of the 3 top categories' own active species' filter/color to
+  // whichever GAP layer(s) it belongs to (Session 56 — previously one shared wildlifeActive value
+  // meant only ONE category could ever be rendering at a time, and picking a species in a
+  // different tab silently cleared whatever the last one had shown). Also called after every
+  // style switch.
   function updateWildlifeMapFilter(){
     if (!map) return;
     WILDLIFE_CATEGORIES.forEach(function(cat){
       var fillLayerId = 'wildlife-' + cat + '-fill';
       var lineLayerId = 'wildlife-' + cat + '-line';
       if (!map.getLayer(fillLayerId)) return;
-      if (wildlifeOn && wildlifeMasterOn && wildlifeActive && wildlifeActive.category === cat && wildlifeActive.codes.length){
-        var codeFilter = ['in', ['get', 'species_code'], ['literal', wildlifeActive.codes]];
+      var tc = WILDLIFE_SOURCECATEGORY_TOPCATEGORY[cat];
+      var active = wildlifeActiveByCategory[tc];
+      if (wildlifeOnByCategory[tc] && wildlifeMasterOnByCategory[tc] && active && active.category === cat && active.codes.length){
+        var codeFilter = ['in', ['get', 'species_code'], ['literal', active.codes]];
         map.setFilter(fillLayerId, codeFilter);
         map.setFilter(lineLayerId, codeFilter);
         var fillExpr = ['match', ['get', 'species_code']];
         var lineExpr = ['match', ['get', 'species_code']];
-        wildlifeActive.codes.forEach(function(code, i){
+        active.codes.forEach(function(code, i){
           fillExpr.push(code, WILDLIFE_FILL_COLORS[i % WILDLIFE_FILL_COLORS.length]);
           lineExpr.push(code, WILDLIFE_STROKE_COLORS[i % WILDLIFE_STROKE_COLORS.length]);
         });
@@ -17972,11 +18182,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
-  // ── State Data UI (Session 54, brought inline into the species panel Session 55) — checkbox +
-  // inline state <select>, no longer a separate popout screen (see the panel's own HTML comment
-  // for the full "disconnected flow" reasoning this replaces).
-  var wildlifeStateDataActive = null; // { topCategory, speciesName, stateKey } or null
-  var wildlifeStateDataOn = false;
+  // ── State Data UI (Session 54, brought inline into the species panel Session 55, split per
+  // top category Session 56) — checkbox + inline state <select>, no longer a separate popout
+  // screen (see the panel's own HTML comment for the full "disconnected flow" reasoning this
+  // replaces), and no longer a single shared slot — each of the 3 top categories gets its own
+  // independent State Data selection, backed by its own map source (see reinitializeLayers), so
+  // configuring Fish's State Data can never overwrite or hide Big Game's own selection.
+  var wildlifeStateDataActiveByCategory = { biggame: null, uplandgame: null, fish: null }; // topCategory -> {speciesName, stateKey} | null
+  var wildlifeStateDataOnByCategory = { biggame: false, uplandgame: false, fish: false };
 
   // Populates the inline <select> + note/attribution for the given species — called from
   // renderSpeciesToggles every time the State Data section is shown, so it's always in sync with
@@ -17986,60 +18199,72 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var options = stateDataOptionsFor(wildlifeActiveTopCategory, speciesName);
     var select = document.getElementById('wildlife-statedata-select');
     select.innerHTML = options.map(function(o){ return '<option value="' + escapeHtml(o.stateKey) + '">' + escapeHtml(o.stateName) + '</option>'; }).join('');
-    var isActiveSelection = wildlifeStateDataActive && wildlifeStateDataActive.topCategory === wildlifeActiveTopCategory && wildlifeStateDataActive.speciesName === speciesName;
-    select.value = isActiveSelection ? wildlifeStateDataActive.stateKey : (options[0] ? options[0].stateKey : '');
+    var active = wildlifeStateDataActiveByCategory[wildlifeActiveTopCategory];
+    var isActiveSelection = active && active.speciesName === speciesName;
+    select.value = isActiveSelection ? active.stateKey : (options[0] ? options[0].stateKey : '');
     var src = STATE_DATA_SOURCES[wildlifeActiveTopCategory] && STATE_DATA_SOURCES[wildlifeActiveTopCategory][select.value];
     document.getElementById('wildlife-statedata-note').textContent = (src && src.note) ? src.note : '';
     document.getElementById('wildlife-statedata-attribution').textContent = (src && src.attribution) ? 'Source: ' + src.attribution : '';
-    document.getElementById('wildlife-statedata-toggle').checked = !!(isActiveSelection && wildlifeStateDataOn);
+    document.getElementById('wildlife-statedata-toggle').checked = !!(isActiveSelection && wildlifeStateDataOnByCategory[wildlifeActiveTopCategory]);
   }
 
-  // Picks (and loads) one state's data for the current species — only one state's State Data is
-  // shown at a time per species, matching GMU boundaries' own "only one state at a time" rule.
-  // Picking a state also activates it (checkbox auto-checks) — a second explicit "now turn it
-  // on" step would be exactly the kind of extra back-and-forth this session's redesign removes.
+  // Picks (and loads) one state's data for the current species, in the currently-displayed
+  // category — only one state's State Data is shown at a time per category, matching GMU
+  // boundaries' own "only one state at a time" rule. Picking a state also activates it (checkbox
+  // auto-checks) — a second explicit "now turn it on" step would be exactly the kind of extra
+  // back-and-forth this session's redesign removes.
   function setWildlifeStateDataState(stateKey){
-    if (!wildlifeActive) return;
-    var src = STATE_DATA_SOURCES[wildlifeActiveTopCategory] && STATE_DATA_SOURCES[wildlifeActiveTopCategory][stateKey];
+    var tc = wildlifeActiveTopCategory;
+    var active = wildlifeActiveByCategory[tc];
+    if (!active) return;
+    var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][stateKey];
     var note = document.getElementById('wildlife-statedata-note');
     var attrib = document.getElementById('wildlife-statedata-attribution');
     if (note) note.textContent = (src && src.note) ? src.note : '';
     if (attrib) attrib.textContent = (src && src.attribution) ? 'Source: ' + src.attribution : '';
-    wildlifeStateDataActive = { topCategory: wildlifeActiveTopCategory, speciesName: wildlifeActive.speciesName, stateKey: stateKey };
-    wildlifeStateDataOn = true;
+    wildlifeStateDataActiveByCategory[tc] = { speciesName: active.speciesName, stateKey: stateKey };
+    wildlifeStateDataOnByCategory[tc] = true;
     var checkbox = document.getElementById('wildlife-statedata-toggle');
     if (checkbox) checkbox.checked = true;
     persistWildlifeStateData();
     updateActiveLayersChip();
-    loadStateDataLayer(wildlifeActiveTopCategory, wildlifeActive.speciesName, stateKey, function(data){
-      if (!wildlifeStateDataActive || wildlifeStateDataActive.stateKey !== stateKey || wildlifeStateDataActive.speciesName !== wildlifeActive.speciesName) return; // switched away while this was in flight
-      if (map && map.getSource('wildlife-statedata-source')) map.getSource('wildlife-statedata-source').setData(data || { type: 'FeatureCollection', features: [] });
+    loadStateDataLayer(tc, active.speciesName, stateKey, function(data){
+      var stillCurrent = wildlifeStateDataActiveByCategory[tc] && wildlifeStateDataActiveByCategory[tc].stateKey === stateKey && wildlifeStateDataActiveByCategory[tc].speciesName === active.speciesName;
+      if (!stillCurrent) return; // switched away while this was in flight
+      if (map && map.getSource('wildlife-statedata-' + tc + '-source')) map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
       updateWildlifeStateDataMapFilter();
     });
   }
 
   // Checkbox handler — flips visibility only (mirrors setWildlifeOn), never touches which state
-  // is selected.
+  // is selected, and only ever affects the currently-displayed category.
   function setWildlifeStateDataOn(on){
-    wildlifeStateDataOn = on;
+    wildlifeStateDataOnByCategory[wildlifeActiveTopCategory] = on;
     persistWildlifeStateData();
     updateWildlifeStateDataMapFilter();
     updateActiveLayersChip();
   }
 
-  // Called on every species change (setWildlifeSpecies) — a State Data selection belongs to
-  // whichever species was active when it was loaded, so switching species always clears it
-  // rather than risk silently showing a stale, wrong-species layer under the new pick's name.
-  function clearWildlifeStateData(){
-    wildlifeStateDataActive = null;
-    wildlifeStateDataOn = false;
+  // Called on every species change within ONE category (setWildlifeSpecies) — a State Data
+  // selection belongs to whichever species was active when it was loaded, so switching species
+  // WITHIN that same category always clears its own slot, rather than risk silently showing a
+  // stale, wrong-species layer under the new pick's name. Never touches the other two categories'
+  // own State Data slots (Session 56 — previously this cleared the one shared slot regardless of
+  // which category's species had actually changed).
+  function clearWildlifeStateData(topCategory){
+    wildlifeStateDataActiveByCategory[topCategory] = null;
+    wildlifeStateDataOnByCategory[topCategory] = false;
     updateWildlifeStateDataMapFilter();
     updateActiveLayersChip();
   }
 
   function persistWildlifeStateData(){
-    state.settings.wildlifeStateDataOn = wildlifeStateDataOn;
-    state.settings.wildlifeStateDataStateKey = wildlifeStateDataActive ? wildlifeStateDataActive.stateKey : null;
+    var byCategory = {};
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var active = wildlifeStateDataActiveByCategory[tc];
+      byCategory[tc] = active ? { on: wildlifeStateDataOnByCategory[tc], stateKey: active.stateKey } : null;
+    });
+    state.settings.wildlifeStateDataByCategory = byCategory;
     scheduleSave();
   }
 
@@ -18060,28 +18285,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // dashed line, distinct from streams' solid line.
   var WILDLIFE_STATEDATA_FILL = '#2d6ea8', WILDLIFE_STATEDATA_STROKE = '#153e63';
   var WILDLIFE_STATEDATA_STREAM_COLOR = '#4aa8e8';
+  // Independently updates each of the 3 categories' own State Data layer set — Big Game/Upland
+  // Game/Fish can each show their own selection (or none) at the same time (Session 56).
   function updateWildlifeStateDataMapFilter(){
-    if (!map || !map.getLayer('wildlife-statedata-fill')) return;
-    var on = wildlifeStateDataOn && wildlifeStateDataActive && wildlifeMasterOn;
-    var vis = on ? 'visible' : 'none';
-    map.setLayoutProperty('wildlife-statedata-fill', 'visibility', vis);
-    map.setLayoutProperty('wildlife-statedata-line', 'visibility', vis);
-    map.setLayoutProperty('wildlife-statedata-line-streams', 'visibility', vis);
-    map.setLayoutProperty('wildlife-statedata-line-dashed', 'visibility', vis);
+    if (!map) return;
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var fillId = 'wildlife-statedata-' + tc + '-fill';
+      if (!map.getLayer(fillId)) return;
+      var on = wildlifeStateDataOnByCategory[tc] && wildlifeStateDataActiveByCategory[tc] && wildlifeMasterOnByCategory[tc];
+      var vis = on ? 'visible' : 'none';
+      map.setLayoutProperty(fillId, 'visibility', vis);
+      map.setLayoutProperty('wildlife-statedata-' + tc + '-line', 'visibility', vis);
+      map.setLayoutProperty('wildlife-statedata-' + tc + '-line-streams', 'visibility', vis);
+      map.setLayoutProperty('wildlife-statedata-' + tc + '-line-dashed', 'visibility', vis);
+    });
   }
 
-  function wildlifeStateDataPopupHtml(props, sdLayer){
+  function wildlifeStateDataPopupHtml(props, sdLayer, topCategory){
+    var active = wildlifeStateDataActiveByCategory[topCategory];
     var kindLabel = { range: 'Distribution', stream: 'Stream habitat', lake: 'Lake habitat', streams: 'Stream habitat', lakes: 'Lake habitat', huc12: 'Watershed (context only)', corridor: 'Movement corridor' }[sdLayer] || 'State Data';
     return '<div class="pin-popup-body">' +
-      '<div class="pin-popup-name">' + escapeHtml(wildlifeStateDataActive ? wildlifeStateDataActive.speciesName : 'State Data') + '</div>' +
-      '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (wildlifeStateDataActive ? ' · ' + escapeHtml(STATE_DATA_SOURCES[wildlifeStateDataActive.topCategory][wildlifeStateDataActive.stateKey].state) : '') + '</div>' +
+      '<div class="pin-popup-name">' + escapeHtml(active ? active.speciesName : 'State Data') + '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (active ? ' · ' + escapeHtml(STATE_DATA_SOURCES[topCategory][active.stateKey].state) : '') + '</div>' +
       '</div>';
   }
 
   var openWildlifeStateDataPopup = null;
-  function openWildlifeStateDataPopupAt(props){
+  function openWildlifeStateDataPopupAt(props, topCategory){
     var sdLayer = props._sdLayer;
-    showViewDrawer('wildlifeStateData', (wildlifeStateDataActive ? wildlifeStateDataActive.speciesName : 'statedata') + '_' + sdLayer, wildlifeStateDataPopupHtml(props, sdLayer));
+    var active = wildlifeStateDataActiveByCategory[topCategory];
+    showViewDrawer('wildlifeStateData', (active ? active.speciesName : 'statedata') + '_' + sdLayer, wildlifeStateDataPopupHtml(props, sdLayer, topCategory));
     openWildlifeStateDataPopup = { remove: viewDrawerRemoveShim };
   }
 
@@ -18098,20 +18331,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // Habitat or only Migration is on, two lines when both are (see #active-layers-chip's own CSS
   // comment for the ellipsis-truncation safety net on each line). Unlike the trip chip, this is
   // the one chip in the stack that's fully hidden (not just emptied) when neither is active.
+  // Builds one line per active source, across ALL 3 top categories (Session 56 — previously only
+  // one category could ever be configured at a time, so this only ever needed to look at the one
+  // shared wildlifeActive/wildlifeStateDataActive value).
   function updateActiveLayersChip(){
     var chip = document.getElementById('active-layers-chip');
     var linesEl = document.getElementById('active-layers-chip-lines');
     var lines = [];
 
-    if (wildlifeMasterOn && wildlifeOn && wildlifeActive && wildlifeActive.codes.length){
-      lines.push(escapeHtml(wildlifeDisplayName(wildlifeActive.speciesName)));
-    }
-    if (wildlifeMasterOn && migrationsOn && migrationActiveSpecies && migrationActiveCategoryList().length){
-      lines.push(escapeHtml(wildlifeActive ? wildlifeActive.speciesName : migrationActiveSpecies) + ' migration');
-    }
-    if (wildlifeMasterOn && wildlifeStateDataOn && wildlifeStateDataActive){
-      lines.push(escapeHtml(wildlifeStateDataActive.speciesName) + ' — ' + escapeHtml(STATE_DATA_SOURCES[wildlifeStateDataActive.topCategory][wildlifeStateDataActive.stateKey].state) + ' data');
-    }
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var active = wildlifeActiveByCategory[tc];
+      var masterOn = wildlifeMasterOnByCategory[tc];
+      if (masterOn && wildlifeOnByCategory[tc] && active && active.codes.length){
+        lines.push(escapeHtml(wildlifeDisplayName(active.speciesName)));
+      }
+      if (tc === 'biggame' && masterOn && migrationsOn && migrationActiveSpecies && migrationActiveCategoryList().length){
+        lines.push(escapeHtml(active ? active.speciesName : migrationActiveSpecies) + ' migration');
+      }
+      var sdActive = wildlifeStateDataActiveByCategory[tc];
+      if (masterOn && wildlifeStateDataOnByCategory[tc] && sdActive){
+        lines.push(escapeHtml(sdActive.speciesName) + ' — ' + escapeHtml(STATE_DATA_SOURCES[tc][sdActive.stateKey].state) + ' data');
+      }
+    });
 
     if (!lines.length){
       chip.classList.add('hidden');
@@ -18130,16 +18371,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // tap on the active-layers chip — mirrors the Layers panel's own "‹category› — Select species
   // ›" rows, not #layers-btn itself (that opens the shallower #layers-panel, one level up — the
   // chip skips straight to the deeper panel, which is what actually shows what's currently
-  // active). Session 54: there's only ever one active species now (Habitat/Migrations/State Data
-  // are all sub-toggles of it), so this just jumps to whichever top-level tab that species
-  // belongs to — no more picking between two independently-active selections.
+  // active). Session 56: up to 3 categories can be independently active at once now, so this
+  // prefers whichever tab was last displayed (if IT has an active species — the common case, and
+  // what the chip's own text most likely refers to if the user just came from that tab), falling
+  // back to the first category (in tab order) that has anything configured, and finally to just
+  // whatever tab was last displayed even with nothing active, rather than assuming there's only
+  // ever one possible answer.
   function openActiveLayersPanel(){
     var panel = document.getElementById('wildlife-panel');
-    var topCategory = wildlifeActive ? wildlifeActive.topCategory : wildlifeActiveTopCategory;
+    var topCategory = wildlifeActiveTopCategory;
+    if (!wildlifeActiveByCategory[topCategory]){
+      var withActive = WILDLIFE_TOP_CATEGORIES.find(function(tc){ return wildlifeActiveByCategory[tc]; });
+      if (withActive) topCategory = withActive;
+    }
     closeAllPanels();
     panel.classList.remove('hidden');
     setWildlifeTopCategory(topCategory);
-    if (wildlifeActive) document.getElementById('wildlife-species-select').value = wildlifeActive.speciesName;
+    var active = wildlifeActiveByCategory[topCategory];
+    if (active) document.getElementById('wildlife-species-select').value = active.speciesName;
     renderSpeciesToggles();
   }
 
@@ -18301,8 +18550,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateMigrationsBadge();
   }
 
+  // Session 56: the header's own all-on/off checkbox — turns every CURRENTLY VISIBLE migration
+  // category on or off together (only 3 of the 4 ids when the active species has no Annual Range
+  // data, matching the badge's own "count only what's offered" convention — flipping a hidden
+  // category would be a no-op on the map anyway, but would leave a misleading checked state
+  // waiting if that species/herd's data ever gained an AnnualRange feature later). Explicitly
+  // syncs each checkbox's own DOM .checked too, since (unlike a normal single-checkbox click)
+  // there's no direct user interaction with the 4 individual inputs to reflect the change.
+  function setAllMigrationCategoriesOn(on){
+    var hasAnnual = document.getElementById('migration-annualrange-row').style.display !== 'none';
+    var categories = ['Corridor', 'Stopover', 'WinterRange'].concat(hasAnnual ? ['AnnualRange'] : []);
+    var idFor = { Corridor: 'migration-corridor-toggle', Stopover: 'migration-stopover-toggle', WinterRange: 'migration-winterrange-toggle', AnnualRange: 'migration-annualrange-toggle' };
+    categories.forEach(function(cat){
+      if (cat === 'Corridor') state.settings.migrationCorridorOn = on;
+      else if (cat === 'Stopover') state.settings.migrationStopoverOn = on;
+      else if (cat === 'WinterRange') state.settings.migrationWinterRangeOn = on;
+      else if (cat === 'AnnualRange') state.settings.migrationAnnualRangeOn = on;
+      var el = document.getElementById(idFor[cat]);
+      if (el) el.checked = on;
+    });
+    scheduleSave();
+    updateMigrationMapFilter();
+    updateActiveLayersChip();
+    updateMigrationsBadge();
+  }
+
   // Shared by renderMigrationSublayers (species change) and setMigrationCategoryOn (checkbox
   // change) so the "X/4" header badge never drifts out of sync with the 4 checkboxes' real state.
+  // Also drives the header's own all-on/off checkbox — checked when every visible category is on,
+  // unchecked when none are, indeterminate (the standard tri-state "select all" convention) when
+  // some but not all are.
   function updateMigrationsBadge(){
     var hasAnnual = document.getElementById('migration-annualrange-row').style.display !== 'none';
     var total = hasAnnual ? 4 : 3;
@@ -18311,6 +18588,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .filter(function(id){ var el = document.getElementById(id); return el && el.checked; }).length;
     var badge = document.getElementById('wildlife-migrations-count');
     if (badge) badge.textContent = checkedCount + '/' + total;
+    var allToggle = document.getElementById('migration-all-toggle');
+    if (allToggle){
+      allToggle.checked = checkedCount === total && total > 0;
+      allToggle.indeterminate = checkedCount > 0 && checkedCount < total;
+    }
   }
 
   // Re-applies the checked-category filter to the migration layers — called after every style
@@ -18321,7 +18603,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // wildlifeOn check, not because the two variables can disagree.
   function updateMigrationMapFilter(){
     if (!map || !map.getLayer('migration-fill')) return;
-    var cats = (migrationsOn && migrationActiveSpecies && wildlifeMasterOn) ? migrationActiveCategoryList() : [];
+    var cats = (migrationsOn && migrationActiveSpecies && wildlifeMasterOnByCategory.biggame) ? migrationActiveCategoryList() : [];
     // migration-line only ever shows Stopover + Winter Range + Annual Range (Corridor stays a
     // no-stroke gradient — see the migration-fill/migration-line layer setup comment), so its
     // filter is always a subset of the fill layer's, never the same list.
@@ -18695,6 +18977,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             }
             if (state.settings.wildlifeStateDataOn === undefined) state.settings.wildlifeStateDataOn = false;
             if (state.settings.wildlifeStateDataStateKey === undefined) state.settings.wildlifeStateDataStateKey = null;
+            // Session 56: wildlifeByCategory/wildlifeStateDataByCategory (one independent slot per
+            // top category) replace the single shared wildlifeOn/wildlifeMasterOn/wildlifeCategory/
+            // wildlifeSpeciesName/wildlifeCodes/wildlifeStateDataOn/wildlifeStateDataStateKey
+            // fields above, which could only ever describe ONE category's selection at a time —
+            // picking a species in a different tab silently overwrote whatever the previous tab
+            // had configured. One-time migration: fold an existing user's pre-Session-56 single
+            // selection into its own category's slot (using the already-migrated
+            // wildlifeTopCategory to know which one), rather than losing it on upgrade.
+            if (state.settings.wildlifeByCategory === undefined || state.settings.wildlifeByCategory === null){
+              state.settings.wildlifeByCategory = { biggame: null, uplandgame: null, fish: null };
+              if (state.settings.wildlifeSpeciesName && state.settings.wildlifeTopCategory){
+                state.settings.wildlifeByCategory[state.settings.wildlifeTopCategory] = {
+                  on: !!state.settings.wildlifeOn,
+                  masterOn: state.settings.wildlifeMasterOn !== undefined ? !!state.settings.wildlifeMasterOn : true,
+                  category: state.settings.wildlifeCategory,
+                  speciesName: state.settings.wildlifeSpeciesName,
+                  codes: state.settings.wildlifeCodes || []
+                };
+              }
+            }
+            if (state.settings.wildlifeStateDataByCategory === undefined || state.settings.wildlifeStateDataByCategory === null){
+              state.settings.wildlifeStateDataByCategory = { biggame: null, uplandgame: null, fish: null };
+              if (state.settings.wildlifeStateDataStateKey && state.settings.wildlifeTopCategory){
+                state.settings.wildlifeStateDataByCategory[state.settings.wildlifeTopCategory] = {
+                  on: !!state.settings.wildlifeStateDataOn,
+                  stateKey: state.settings.wildlifeStateDataStateKey
+                };
+              }
+            }
             if (state.settings.migrationsOn === undefined) state.settings.migrationsOn = false;
             if (state.settings.migrationSpecies === undefined) state.settings.migrationSpecies = null;
             if (state.settings.migrationCorridorOn === undefined) state.settings.migrationCorridorOn = false;
@@ -18854,32 +19165,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ---------- Panels ----------
   // ---------- Wire up UI ----------
   function bindUI(){
-    // Restore the wildlife species selection from settings before anything else touches
-    // wildlifeActive/wildlifeOn — this only needs the plain strings already in
-    // state.settings, not the map (which may not exist yet), so the quick-toggle button
-    // can show the right species name immediately on load. The actual GeoJSON fetch (if
-    // the layer was left "on") is triggered later, once, from inside the first
-    // map.on('style.load', ...) handler in createMap() — see overlayDataRestoredOnInit.
-    if (state.settings.wildlifeSpeciesName){
-      wildlifeActive = {
-        topCategory: state.settings.wildlifeTopCategory || 'biggame',
-        category: state.settings.wildlifeCategory,
-        speciesName: state.settings.wildlifeSpeciesName,
-        codes: state.settings.wildlifeCodes || []
-      };
-    }
+    // Restore each of the 3 categories' own wildlife selection from settings independently
+    // (Session 56) before anything else touches wildlifeActiveByCategory/wildlifeOnByCategory —
+    // this only needs the plain per-category objects already in state.settings, not the map
+    // (which may not exist yet), so each quick-toggle button can show its own right species name
+    // immediately on load. The actual GeoJSON fetch (for whichever categories were left "on") is
+    // triggered later, once per category, from inside the first map.on('style.load', ...) handler
+    // in createMap() — see overlayDataRestoredOnInit.
+    var savedByCategory = state.settings.wildlifeByCategory || {};
+    var savedStateDataByCategory = state.settings.wildlifeStateDataByCategory || {};
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var saved = savedByCategory[tc];
+      if (saved){
+        wildlifeActiveByCategory[tc] = { category: saved.category, speciesName: saved.speciesName, codes: saved.codes || [] };
+        wildlifeOnByCategory[tc] = !!saved.on;
+        wildlifeMasterOnByCategory[tc] = saved.masterOn !== undefined ? !!saved.masterOn : true;
+      }
+      var savedSd = savedStateDataByCategory[tc];
+      if (savedSd && wildlifeActiveByCategory[tc]){
+        wildlifeStateDataActiveByCategory[tc] = { speciesName: wildlifeActiveByCategory[tc].speciesName, stateKey: savedSd.stateKey };
+        wildlifeStateDataOnByCategory[tc] = !!savedSd.on;
+      }
+    });
     wildlifeActiveTopCategory = state.settings.wildlifeTopCategory || wildlifeActiveTopCategory;
-    wildlifeOn = !!state.settings.wildlifeOn;
-    wildlifeMasterOn = state.settings.wildlifeMasterOn !== undefined ? !!state.settings.wildlifeMasterOn : true;
     migrationActiveSpecies = state.settings.migrationSpecies || null;
     migrationsOn = !!state.settings.migrationsOn;
-    // State Data restores as a plain settings echo (no map/network dependency) — the actual
-    // GeoJSON fetch, like wildlife/migration above, happens later from the first style.load
-    // handler once wildlifeActive is known to still reference a real, loadable species.
-    if (state.settings.wildlifeStateDataStateKey && wildlifeActive){
-      wildlifeStateDataActive = { topCategory: wildlifeActive.topCategory, speciesName: wildlifeActive.speciesName, stateKey: state.settings.wildlifeStateDataStateKey };
-    }
-    wildlifeStateDataOn = !!state.settings.wildlifeStateDataOn;
 
     renderTagChips();
     renderStateChips();
@@ -19334,22 +19644,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // ── Wildlife Layers (Session 54): Big Game / Upland Game / Fish, one species-first picker
     // shell shared by all 3 — each has its own compact-row quick-toggle in the main Layers
-    // panel, but all 3 read/write the SAME underlying wildlifeActive/wildlifeMasterOn selection
-    // (only one species, in one category, can be active at a time). This checkbox is the MASTER
-    // toggle (Session 55) — see setWildlifeMasterOn — not Habitat range's own on/off, which is
-    // why it needs to be a genuine one-tap switch even when Migrations/State Data (not Habitat
-    // range) are the only thing configured for the active species. ──
+    // panel, and (Session 56) each independently reads/writes ITS OWN slot in
+    // wildlifeActiveByCategory/wildlifeMasterOnByCategory — configuring one category can never
+    // wipe or hide another's. This checkbox is the MASTER toggle (Session 55) — see
+    // setWildlifeMasterOn — not Habitat range's own on/off, which is why it needs to be a genuine
+    // one-tap switch even when Migrations/State Data (not Habitat range) are the only thing
+    // configured for that category's active species. ──
     WILDLIFE_TOP_CATEGORIES.forEach(function(topCategory){
       document.getElementById('wildlife-' + topCategory + '-quick-toggle').addEventListener('change', function(){
-        setWildlifeMasterOn(this.checked);
+        var checkbox = this;
+        // Session 56: with no species active for THIS category, there is nothing for a master
+        // toggle to show/hide — checking the box used to just silently do nothing (matching
+        // wildlifeMasterOn's effect exactly, but with no configured layer for it to affect). Real
+        // user direction: tapping "on" here should open species selection directly instead of
+        // staying inert. Only applies to the "nothing configured yet" case — with an active
+        // species already in this category, the checkbox keeps its normal master-toggle behavior.
+        if (checkbox.checked && !wildlifeActiveByCategory[topCategory]){
+          checkbox.checked = false; // nothing was actually configured — revert the visual toggle
+          openWildlifeCategoryPicker(topCategory);
+          return;
+        }
+        setWildlifeMasterOn(topCategory, checkbox.checked);
       });
       document.getElementById('wildlife-' + topCategory + '-open-btn').addEventListener('click', function(e){
         // See sheet-weather-btn's handler above for why stopPropagation is required here.
         e.stopPropagation();
-        var panel = document.getElementById('wildlife-panel');
-        closeAllPanels();
-        panel.classList.remove('hidden');
-        setWildlifeTopCategory(topCategory);
+        openWildlifeCategoryPicker(topCategory);
       });
     });
     document.getElementById('wildlife-close-btn').addEventListener('click', function(){
@@ -19370,10 +19690,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         .map(function(cb){ return cb.dataset.code; });
       // A species with multiple GAP layer codes lets the user pick which ones show — this
       // updates the already-active species' own codes directly (no re-pick), matching the old
-      // per-code sublayer behavior.
-      if (wildlifeActive && wildlifeActive.topCategory === wildlifeActiveTopCategory){
-        wildlifeActive.codes = checked;
-        wildlifeOn = checked.length > 0;
+      // per-code sublayer behavior. Always the currently-displayed category's own slot.
+      var tcForSublayers = wildlifeActiveTopCategory;
+      if (wildlifeActiveByCategory[tcForSublayers]){
+        wildlifeActiveByCategory[tcForSublayers].codes = checked;
+        wildlifeOnByCategory[tcForSublayers] = checked.length > 0;
         persistWildlifeSettings();
         updateWildlifeMapFilter();
         updateActiveLayersChip();
@@ -19392,6 +19713,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       body.classList.toggle('collapsed', !willOpen);
       var chev = this.querySelector('.layer-section-chevron');
       if (chev) chev.textContent = willOpen ? '▾' : '▸';
+    });
+    // Lives inside the same header <button> as the expand/collapse chevron — must stop
+    // propagation or every check/uncheck would also toggle the collapsed state.
+    document.getElementById('migration-all-toggle').addEventListener('click', function(e){
+      e.stopPropagation();
+    });
+    document.getElementById('migration-all-toggle').addEventListener('change', function(e){
+      e.stopPropagation();
+      setAllMigrationCategoriesOn(this.checked);
     });
     document.getElementById('migration-corridor-toggle').addEventListener('change', function(){
       setMigrationCategoryOn('Corridor', this.checked);
