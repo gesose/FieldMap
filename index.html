@@ -3185,7 +3185,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.51.0';
+  var APP_VERSION = '2.52.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -9949,6 +9949,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           }
         });
       }
+    });
+
+    // Session 58 fix: Habitat range's own fill/line were added BEFORE State Data's (above), so
+    // State Data's blue wash always painted on top wherever the two overlap — confirmed live via
+    // real screenshot (Ring-necked Pheasant, Utah: Habitat range's rust `getPaintProperty()`-
+    // confirmed correct color was completely invisible on screen, entirely replaced by State
+    // Data's solid blue, with the active-layers chip correctly showing both were on). The color
+    // VALUES were never wrong — this is a pure z-order/visual-dominance bug, not a recolor bug,
+    // and it reproduces for ANY category (Big Game/Upland Game/Fish alike), not Fish-specific,
+    // any time both a species' Habitat range AND its State Data are checked together (a completely
+    // ordinary thing to do — "show me everything for this species"). Fixed by moving Habitat
+    // range's fill+line to the TOP of the layer stack, above State Data's, so Habitat range's own
+    // rust tint/outline is always the last thing painted wherever the two overlap, instead of
+    // being silently swallowed. moveLayer() with no second argument moves a layer to the very top;
+    // called once per category, after both blocks above have already added every layer.
+    WILDLIFE_CATEGORIES.forEach(function(cat){
+      var fillLayerId = 'wildlife-' + cat + '-fill';
+      var lineLayerId = 'wildlife-' + cat + '-line';
+      if (map.getLayer(fillLayerId)) map.moveLayer(fillLayerId);
+      if (map.getLayer(lineLayerId)) map.moveLayer(lineLayerId);
     });
 
     // Active fire perimeters — fetched live each time the toggle is turned on (see
@@ -18003,6 +18023,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // no error — confirmed live: Big Game's fully-configured Elk selection vanished, including its
   // active-layers chip lines, the moment a Fish species was picked in the same panel session).
   function setWildlifeSpecies(topCategory, speciesName){
+    // Session 58 fix: the real, shared root cause behind "State Data silently unchecks itself"
+    // reported across all 3 categories (Big Game/Upland Game/Fish alike, not specific to any
+    // one) — this function used to unconditionally clear THIS category's State Data (and reset
+    // its master toggle) on every call, even when speciesName was the SAME species already
+    // active. Confirmed live: dispatching a plain 'change' event on #wildlife-species-select
+    // with its value UNCHANGED (Elk still selected, re-dispatched) silently wiped a fully-
+    // configured State Data selection (Nevada) that had just survived a real page reload intact
+    // — the checkbox read unchecked on the very next render even though nothing the user did
+    // was a real species change. Real browsers, especially mobile Safari/WebKit's native
+    // <select> picker, are documented to sometimes fire 'change' even when the user re-selects
+    // (or simply dismisses a picker still showing) the ALREADY-active option — this is the
+    // realistic real-device trigger, not something a user has to deliberately do. A genuine
+    // species change (different species, or clearing to none) still proceeds exactly as before;
+    // only a same-value "change" is now a no-op.
+    var currentActive = wildlifeActiveByCategory[topCategory];
+    var currentSpeciesName = currentActive ? currentActive.speciesName : '';
+    if ((speciesName || '') === currentSpeciesName) return;
     if (!speciesName){
       wildlifeActiveByCategory[topCategory] = null;
     } else {

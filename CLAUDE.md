@@ -428,6 +428,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   sit somewhere between 40,000 (renders fine) and 73,373 (crashes) features, unrelated to the staleness-guard
   fix, which only prevents a stale write — it does nothing to help this dataset actually render even when it
   IS the current, correct selection. See "What's broken" below.
+- Wildlife Layers: real fixes for the "Upland Game shows blue" and "State Data auto-unchecks" reports, both
+  re-diagnosed from scratch live rather than trusting a prior session's "shared-by-design"/"crash-fixed"
+  conclusions, since neither actually held up under the user's own real-device testing (Session 58). "Upland
+  Game shows blue" was NOT a color-value bug — `getPaintProperty()` and an isolated screenshot both confirmed
+  Habitat range's own fill/line are correctly rust (`#c2622d`/`#8a4520`) for every Upland species tested,
+  Ring-necked Pheasant included, not just Chukar. The real bug: State Data's own fill/line layers are added
+  to the map AFTER (and therefore paint on top of) Habitat range's, so whenever a species' Habitat range AND
+  its State Data are BOTH active — an entirely ordinary thing to do — State Data's more opaque blue wash
+  completely covers Habitat range's more transparent rust wash wherever they overlap, confirmed via a real
+  screenshot (Ring-necked Pheasant + Utah: solid blue, zero visible rust, despite both layers correctly
+  configured and listed in the active-layers chip). Fixed by moving Habitat range's fill/line to the top of
+  the layer stack after State Data's own layers are added — confirmed live this measurably changes the result
+  from solid saturated blue to a muted blend where rust is now visibly present, though a fully "clean rust"
+  look isn't achievable through z-order alone (two translucent washes over the same pixels), noted openly
+  rather than overclaimed. "State Data auto-unchecks itself" was root-caused as NOT specific to any one
+  category (the prior session's Big Game crash fix was real but was a DIFFERENT, additional bug layered on
+  top) — the actual shared cause: `setWildlifeSpecies()` unconditionally cleared State Data (and reset the
+  master toggle) on EVERY call, even when the incoming species name was IDENTICAL to the already-active one.
+  Real browsers — mobile Safari/WebKit's native `<select>` picker in particular — are documented to sometimes
+  fire a genuine 'change' event even when the user re-selects (or simply dismisses a picker still showing)
+  the ALREADY-active option, with no real change having happened; every such spurious event was silently
+  wiping a fully-configured State Data selection. Reproduced live: dispatching a same-value 'change' event on
+  a freshly-reloaded, fully-configured Big Game (Elk/Nevada) selection immediately cleared it. Fixed with a
+  no-op guard for a same-value call; confirmed live across all 3 categories (Big Game/Upland Game/Fish) via
+  real DOM checkbox reads after genuine species switches, category switches, AND simulated same-value
+  'change' events on each — all three panels correctly retained their own independent State Data selection
+  throughout. See Architecture notes' "Upland Game z-order fix, State Data same-species no-op guard" entry
+  for full mechanism detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -3685,6 +3713,72 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     sessions), or a real network-backed async test via the new `testStateDataStaleGuard` hook — no claim in
     this entry is based on code review alone. `node --check` confirmed clean syntax on all 4 extracted inline
     `<script>` blocks after every edit. APP_VERSION bumped 2.50.0 → 2.51.0, SHELL_CACHE bumped v163 → v164.
+- Upland Game z-order fix, State Data same-species no-op guard (Session 58) — both items required a full
+  re-diagnosis from scratch: the prior session's "shared-by-design, not Fish-specific" conclusion for the
+  blue report and the crash fix for the auto-uncheck report were both real findings, but neither was the
+  complete picture, and this session's job was to find what was actually still missing, live, not to re-run
+  the same checks and hope for a different answer.
+  - **Upland Game blue — the real mechanism**: confirmed AGAIN, and more thoroughly than before, that the
+    color VALUE itself was never wrong: `getPaintProperty()` on `wildlife-upland-fill`/`-line` reads exactly
+    `#c2622d`/`#8a4520` for every Upland species checked, including Ring-necked Pheasant (not just Chukar,
+    the only one tested previously) — and a real, isolated screenshot (State Data untouched) showed a
+    correctly rust-tinted wash with zero blue. The prior session's "not reproducible" framing for Big Game
+    was accurate in isolation but incomplete: it never tested what a real user is likely to actually do —
+    turn on BOTH Habitat range and State Data for the same species at once. Doing exactly that (Ring-necked
+    Pheasant, Habitat range + Utah State Data both checked) produced a real screenshot showing solid, fully
+    saturated blue across the entire Utah range with no visible rust anywhere, despite the active-layers chip
+    correctly listing both as active. Root cause: `reinitializeLayers()` adds Habitat range's fill/line
+    layers BEFORE State Data's (in an earlier, separate `WILDLIFE_CATEGORIES.forEach` block), so State
+    Data's fill (opacity 0.35) always paints on top of and visually dominates Habitat range's fill (opacity
+    0.18) wherever the two overlap — not a recolor bug, a pure z-order/visual-dominance bug, and one that
+    reproduces identically for any category (Big Game/Upland Game/Fish alike), since all three share the
+    exact same layer-ordering code. Fixed with a small follow-up loop, run once per category right after
+    State Data's own layer block, that calls `map.moveLayer(fillLayerId)`/`map.moveLayer(lineLayerId)` with
+    no second argument (moves a layer to the very top of the stack) for each category's Habitat range
+    fill/line — confirmed via `getStyle().layers` index comparison that Habitat range's fill now sits after
+    (on top of) State Data's fill post-fix. Re-tested the identical Ring-necked Pheasant + Utah scenario
+    afterward: the result changed from solid saturated blue to a visibly muted, grayish-blue blend with rust
+    now genuinely contributing to the tint — a real, measurable improvement, honestly reported as NOT a
+    complete "clean rust" appearance, since two translucent fill washes over the same pixels (Habitat range
+    at 0.18 opacity, State Data at 0.35) can only ever produce a blend, not one fully overriding the other's
+    visible color, without a larger design change (e.g. raising Habitat range's own opacity globally, which
+    would affect its appearance everywhere, including when State Data isn't active, and was deliberately not
+    done without explicit direction, since 0.18 was an intentional, spec'd value from when Habitat range was
+    first built — "same fill treatment as Draw Area").
+  - **State Data auto-unchecks itself — the real, single, cross-category root cause**: the prior session's
+    `updateActiveLayersChip()` crash-guard fix was real and correctly fixed a real bug, but it was a
+    DIFFERENT, additional bug that happened to be reproduced (and fixed) via Big Game specifically — it was
+    never the actual explanation for the report being "not Big-Game/Fish-specific." Root-caused live, from
+    scratch: `setWildlifeSpecies(topCategory, speciesName)` — the ONE shared function every category's
+    species `<select>` change handler calls — unconditionally cleared that category's State Data (via
+    `clearWildlifeStateData`) and reset its master toggle on EVERY invocation, with no check for whether
+    `speciesName` was actually different from the species already active. Confirmed live: on a freshly
+    reloaded page with Big Game's Elk/Nevada State Data fully configured and correctly restored (verified via
+    `wildlifeSnapshot()` immediately after reload), simply dispatching a plain `'change'` event on
+    `#wildlife-species-select` with its value left completely UNCHANGED ("Elk (Rocky Mountain)" still
+    selected) was enough to silently wipe the State Data selection back to `null`/`off` — reproducing the
+    "auto-uncheck" symptom exactly, with no code-level explanation needed beyond this one unconditional call.
+    This is a fully plausible REAL-DEVICE trigger, not a sandbox artifact: mobile Safari/WebKit's native
+    `<select>` picker is documented to sometimes fire a genuine `'change'` event even when the user re-selects
+    (or simply dismisses a picker still open on) the value that was ALREADY selected — no deliberate "pick a
+    different species" action required. Fixed with a guard at the top of `setWildlifeSpecies()`: if the
+    incoming `speciesName` (treating empty/falsy as `''`) equals the currently-active species name for that
+    category, return immediately before touching State Data, the master toggle, or anything else — a genuine
+    species change (different species, or clearing to none) still proceeds exactly as before. Verified this
+    doesn't break the only other call site (`clearWildlifeSelection()`'s "Clear selection" link, which passes
+    `''` and correctly still no-ops only when nothing was already selected, same as before). Verified live,
+    end to end, exactly matching the requested repro: configured all 3 categories (Big Game/Elk/Nevada,
+    Upland Game/Ring-necked Pheasant/Utah, Fish/Rainbow Trout/Washington) on a fresh reload, dispatched
+    same-value 'change' events on each in turn while switching between all 3 tabs, did a genuine species
+    change on Upland Game (Pheasant → Chukar, confirmed this correctly clears ONLY Upland's own State Data
+    while Big Game's and Fish's stay completely untouched — cross-category independence still holds),
+    switched back, and confirmed via the real DOM checkbox/select values (not just internal state) in all
+    three panels, in sequence, that every one of them correctly retained its own State Data configuration
+    throughout — screenshot-confirmed via the active-layers chip showing all 5 expected lines simultaneously
+    (Elk, Elk migration, Elk–Nevada data, Ring-necked Pheasant, Ring-necked Pheasant–Utah data, Rainbow
+    Trout–Washington data).
+  - `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks after every edit.
+    APP_VERSION bumped 2.51.0 → 2.52.0, SHELL_CACHE bumped v164 → v165.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -5109,3 +5203,30 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   what the new MapLibre-limit finding still leaves open. `node --check` confirmed clean syntax on all 4
   extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.50.0 → 2.51.0, SHELL_CACHE bumped
   v163 → v164.
+- Session 58: Re-diagnosed two Wildlife panel reports from scratch, live, after being told directly that
+  three prior "confirmed" claims on this feature hadn't held up on the real device — the explicit instruction
+  was to re-verify with real clicks/screenshots, not trust the previous session's conclusions. Both turned out
+  to be real, previously-unfound bugs, not restatements of what was already fixed. (1) "Upland Game shows
+  blue": confirmed again that Habitat range's own color is correctly rust for every Upland species tested
+  (Ring-necked Pheasant this time, not just Chukar) — but found, via a screenshot the prior session never
+  took, that turning on BOTH Habitat range AND State Data for the same species (an entirely ordinary thing to
+  do) produces solid, fully saturated blue with the rust completely invisible, because State Data's layers
+  are added to the map after Habitat range's and always paint on top. Fixed by moving Habitat range's own
+  fill/line to the top of the layer stack; confirmed live this changes the result from solid blue to a
+  visibly muted blend with rust now present — a real improvement, honestly reported as not a fully "clean
+  rust" look, since two translucent washes over the same pixels can only ever blend, not fully override one
+  another, without a bigger opacity/design change not attempted here. (2) "State Data auto-unchecks itself,
+  not category-specific": the prior session's crash-guard fix in `updateActiveLayersChip()` was real but was
+  a different bug that happened to surface through Big Game testing — root-caused the actual shared cause as
+  `setWildlifeSpecies()` unconditionally clearing State Data on every call, even when the species passed in
+  was IDENTICAL to the one already active. Reproduced live: on a freshly reloaded, fully-configured session,
+  simply re-dispatching a `'change'` event on the species `<select>` with its value unchanged was enough to
+  silently wipe State Data — a real, plausible mobile-Safari trigger (native pickers there are documented to
+  sometimes fire `'change'` on a same-value re-selection or dismissal), not a sandbox artifact. Fixed with a
+  same-species no-op guard; verified live across all 3 categories via real DOM checkbox reads after genuine
+  species switches, category switches, and simulated same-value dispatches on each — all three correctly held
+  their own independent configuration throughout, confirmed via a real screenshot showing all 5 expected
+  active-layers-chip lines simultaneously. See Architecture notes' "Upland Game z-order fix, State Data
+  same-species no-op guard" entry for full mechanism detail on both. `node --check` confirmed clean syntax on
+  all 4 extracted inline `<script>` blocks after every edit. APP_VERSION bumped 2.51.0 → 2.52.0, SHELL_CACHE
+  bumped v164 → v165.
