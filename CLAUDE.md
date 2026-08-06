@@ -622,6 +622,27 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   list step, and dismissing the list via its own × opened no popup (confirmed via computed `display:none` on
   the drawer, not just DOM text which can be stale leftover content). See Architecture notes' "Tap-stack:
   Wildlife State Data extension" entry for the full click-handler audit and verification detail.
+- Pin-to-pin navigation (Session 68) — a new, ephemeral (device-session-only, never persisted) live
+  bearing+distance readout to a single selected pin, reached either by tapping a pin's marker or its sidebar
+  row to open its popup, then "Navigate to" in the overflow menu (⋮) — a new menu item added only to the pin
+  popup, alongside the existing Move/Delete. North-relative (true bearing, no device-orientation sensor or
+  permission prompt — pure great-circle math from the live GPS position to the target's coordinates, reusing
+  the exact same primitives Compass/the Bearing tool already use: `bearingDegrees`/`bearingCardinalLabel` for
+  angle, `formatDist` for distance — matching the app's existing feet/miles-only, no-metric convention rather
+  than Compass's own inconsistent mi+km display). Single target only — picking a new pin always replaces the
+  prior one, with zero multi-target/accumulation state. Reuses the Session 37 shared GPS watcher as its own
+  additional consumer rather than a new independent `watchPosition`. Renders as a new chip
+  (`#nav-chip`/`#nav-chip-mobile`) joining the existing floating info stack: on desktop, another chip in the
+  same vertical top-right column (same width/padding/height as the coords/scale/trip chips); on mobile, its
+  own full-width 3-column bar (distance / arrow / bearing) sitting directly below the active-layers chip,
+  matching that chip's already-established full-width-row convention rather than inventing a new layout.
+  Shows "Waiting for GPS…" (a single unified message, not two different ones, matching spec) whenever there's
+  no position fix yet, for any reason (no fix received yet, a permission-denied error, or the rare case
+  `navigator.geolocation` doesn't exist at all) rather than stale or wrong numbers — updates live the moment a
+  real fix arrives. Dismissed via an explicit × on the chip (both platform variants), matching the app's
+  existing "Clear selection" dismiss convention; also auto-clears if the target pin itself is deleted (hooked
+  into `deletePinById` plus both bulk-delete code paths, so it can't be left pointing at a pin that no longer
+  exists). See Architecture notes' "Pin-to-pin navigation" entry for full design and verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -4712,6 +4733,102 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     — active state populated immediately, survived a real dismiss/reopen cycle. Zero console errors throughout
     (`read_console_messages` with `onlyErrors:true`). `node --check` confirmed clean syntax on all extracted
     inline `<script>` blocks. APP_VERSION bumped 2.52.0 → 2.53.0, SHELL_CACHE bumped v165 → v166.
+- Pin-to-pin navigation (Session 68) — a new object type-adjacent feature: not a persisted item like
+  pins/tracks/etc., but a live, ephemeral UI overlay tracking "which pin am I currently navigating toward."
+  - **Reused primitives, not new ones**: `bearingDegrees(lat1,lng1,lat2,lng2)` (0=north, clockwise, TRUE
+    bearing — confirmed via grep that no magnetic-declination adjustment exists anywhere in this codebase, so
+    "true bearing, no device-orientation sensor" was already this app's only convention, not a new choice) and
+    `haversineMiles`/`bearingCardinalLabel`/`formatDist` are the exact same functions Compass and the Bearing
+    draw tool already use — no new geo-math was written. Distance format deliberately follows `formatDist`'s
+    app-wide feet/miles-only convention (ft below 0.2mi, mi above, no km) rather than Compass's own live
+    target-column display, which inconsistently shows both mi AND km — flagged and resolved in favor of the
+    more general, already-documented "feet/miles only" precedent (established for Range Ring/Buffer) over
+    copying Compass's one inconsistent spot.
+  - **State**: `navTargetPinId` (plain scalar, null when inactive — reassignment naturally replaces any prior
+    target, satisfying "single target only" with no extra logic), `navGpsSubId` (this feature's own id into
+    the Session 37 shared GPS watcher — `subscribeSharedGps`/`unsubscribeSharedGps` — a 4th consumer, not a
+    new independent `watchPosition`), `navCurrentPos` (`{lat,lng}`, null until a real fix arrives),
+    `navGpsUnsupported` (true only if `navigator.geolocation` doesn't exist at all — a real, if rare, distinct
+    condition from "no fix yet," but per the task's own wording both are collapsed into the SAME displayed
+    message, see below). Deliberately NOT persisted to `state.settings`/localStorage — "what am I navigating
+    to right now" is an ephemeral, device-session concept, matching the same reasoning already established for
+    Elevation Range's always-off-at-boot persistence pattern from an earlier session, not a new precedent.
+  - **`setNavTarget(pinId)`/`clearNavTarget()`/`updateNavChip()`**: `setNavTarget` only subscribes to the
+    shared GPS watcher on the FIRST call (`if (navGpsSubId == null)`) — selecting a second pin while already
+    navigating reuses the existing subscription rather than re-subscribing, confirmed live this correctly
+    just swaps which pin's name/coords the next `updateNavChip()` computes against, with zero flicker or
+    re-fetch of a GPS fix. `updateNavChip()` re-reads the target pin fresh from `state.pins` on every call
+    (never caches its name/coords at selection time) — an edit to the pin (renamed, moved) is picked up
+    automatically on the next GPS tick, and — the same lookup doubling as a safety net — a deleted target pin
+    is caught here defensively even for a removal path that doesn't go through the explicit cleanup hooks
+    below. One shared render function drives BOTH platform variants (`#nav-chip` desktop, `#nav-chip-mobile`
+    mobile) rather than one CSS-reflowed element, since the two have genuinely different DOM shapes (a single
+    name+detail block vs. 3 separate distance/arrow/bearing columns) — both are always kept in sync, with CSS
+    `display:none` (not JS) choosing which one is actually visible per breakpoint.
+  - **Unified "Waiting for GPS…" message**: initially built with two distinct messages ("GPS unavailable" for
+    the unsupported-browser case, "Waiting for GPS…" for the no-fix-yet case) — corrected during this
+    session's own verification to match the spec's literal wording exactly, which named ONE message
+    ("Waiting for GPS...") covering BOTH "GPS unavailable or no fix yet." Collapsed to a single
+    `if (navGpsUnsupported || !navCurrentPos)` branch. This also means a permission-denied error (the shared
+    watcher's `onError` callback firing) naturally falls into the same "Waiting for GPS…" state, since it only
+    ever leaves `navCurrentPos` null rather than setting any special flag of its own — confirmed live via a
+    real injected error callback before any fix ever arrived.
+  - **Arrow rotation**: `.nav-chip-arrow`'s CSS `transform:rotate(Ndeg)` is set directly to the raw computed
+    bearing (0-359, unclamped by CSS itself) — verified live from two different synthetic GPS positions (due
+    south of the target → correctly N/0°/arrow pointing up; due west of the target → correctly E/90°/arrow
+    pointing right), confirming both the math and the visual rotation direction are correct, not just the
+    numeric bearing value.
+  - **Real bug found and fixed via live testing, not caught by code review**: a bearing very close to the
+    360°/0° wrap point (e.g. 359.97°) rounds via `Math.round()` to the literal integer `360`, not `0` —
+    reproduced live with a real injected GPS position placing the true bearing at ~359.999°, which displayed
+    "N 360°" instead of "N 0°." Fixed with `Math.round(bearing) % 360` in the new code. Deliberately did NOT
+    touch Compass's own `handleCompassMapTap`, which has the IDENTICAL bug pattern (confirmed via reading its
+    source) — out of scope for this task, left as a known, pre-existing, undocumented-until-now gap rather
+    than silently fixed as a drive-by change.
+  - **Entry points**: both "tap a pin's marker" and "select from the sidebar" route through the SAME
+    mechanism — the sidebar row's existing click handler already opens the pin's popup
+    (`markersById[id].openPopup()`), so rather than inventing a second, sidebar-specific UI affordance, a
+    single new "Navigate to" button was added to the pin popup's own overflow menu (`popupFooterHtml`'s
+    optional trailing `extraMenuItemsHtml` param, additive — every other item type's call site is
+    unchanged), reached identically whether the popup was opened via a marker tap or a sidebar row click.
+    Confirmed live via a REAL mouse click on an actual rendered `.maplibregl-marker` DOM element (not just a
+    sidebar-row click, which was also separately confirmed) — hit a real coordinate-mapping gotcha along the
+    way: `getBoundingClientRect()` returns CSS-pixel coordinates, but this session's screenshot/click tooling
+    operates in a scaled pixel space (`devicePixelRatio:1.25` here — 1568px screenshot vs. 1254px
+    `window.innerWidth`) — the fix was multiplying the CSS-pixel marker center by `devicePixelRatio` before
+    clicking, the same class of coordinate-space mismatch already documented in this session's own Tap-stack
+    (Session 67) entry, confirming it's a recurring tooling quirk to watch for, not a one-off.
+  - **Cleanup on deletion**: `deletePinById` clears the nav target if the deleted pin was the active one
+    (`if (id === navTargetPinId) clearNavTarget();`); the same one-line guard was also added to BOTH separate
+    bulk-delete code paths that bypass `deletePinById` (found via grep for every `pinIds.forEach` site,
+    deliberately excluding the unrelated bulk-EDIT path that only modifies fields, never deletes) — otherwise
+    a bulk-deleted target pin would leave the nav chip pointing at a now-nonexistent pin until the next GPS
+    tick's defensive re-lookup in `updateNavChip()` happened to catch it.
+  - **Layout**: desktop joins `#floating-info-stack`'s existing vertical column as a 5th chip (same 40px
+    height/8px radius/padding as the coords/scale/trip chips). Mobile is its own full-width 3-column bar
+    (distance / arrow / bearing), placed as a sibling immediately after `#active-layers-chip` in DOM order —
+    the same "next flex child in the column" pattern already established for that chip's own full-width-row
+    behavior (Session 29), so it automatically sits directly below whichever of the persistent row / active-
+    layers row are currently visible, with no separate position-tracking JS needed (confirmed live: with no
+    wildlife layers active, `#active-layers-chip` is `display:none` and the nav bar correctly sits right below
+    the persistent chip row instead, with no leftover gap).
+  - **Verified live**, via the already-connected Chrome browser extension against a local `python -m
+    http.server`, both in the main desktop-width tab and via a genuine 390×844 `<iframe>` for real mobile
+    `@media` matching (the established technique from Sessions 28-30/48, including its own now-familiar
+    stale-service-worker-inside-the-iframe gotcha — resolved the same way, by unregistering the iframe's own
+    SW and clearing its own Cache Storage before reloading with a cache-busting query string): target
+    selection via both a real sidebar-row click and a real marker click, both landing on the same "Navigate
+    to" popup button; the chip/bar rendering correctly on both platforms (screenshot-confirmed on both,
+    including the mobile 3-column layout); arrow direction correct from 2 different synthetic GPS positions;
+    live distance/bearing updates confirmed across multiple injected position fixes, including the specific
+    360°→0° wrap case that caught the rounding bug above; the unified "Waiting for GPS…" state confirmed
+    (screenshot-verified) for a real permission-denied error with no fix ever received; both × dismiss buttons
+    confirmed hiding the chip/bar (they share one underlying state, so either one fully exits nav mode);
+    single-target replacement confirmed by injecting a second test pin and selecting it while the first was
+    still active — the chip immediately swapped to the new pin's name with zero accumulation, and the next
+    fix correctly recomputed bearing/distance against the new target, not the old one. Zero console errors
+    throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION
+    bumped 2.57.0 → 2.58.0, SHELL_CACHE bumped v174 → v175.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -6499,3 +6616,33 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   working earlier in the same session, and used the corrected math for the remaining clicks. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.56.0 → 2.57.0
   (minor — extends a real feature to a real gap), SHELL_CACHE bumped v173 → v174.
+- Session 68: Built pin-to-pin navigation — a live, north-relative bearing+distance readout to a single
+  selected pin, reached via a new "Navigate to" item in the pin popup's overflow menu (reachable identically
+  from a marker tap or a sidebar-row click, both of which already open the same popup). Reused every piece of
+  existing math (Compass/Bearing's own `bearingDegrees`/`bearingCardinalLabel`/`formatDist`) rather than
+  writing anything new, and resolved a real unit-convention ambiguity the task explicitly asked to be
+  resolved rather than guessed — Compass's own live display inconsistently mixes mi+km, so the new chip
+  instead follows the more general, already-documented app-wide feet/miles-only convention. Reused the
+  Session 37 shared GPS watcher as a 4th consumer instead of a new independent `watchPosition`. Renders as a
+  new 5th chip in the existing desktop floating-info-stack column, and as its own full-width 3-column
+  (distance/arrow/bearing) bar on mobile, positioned as a plain DOM sibling right after the active-layers chip
+  so it naturally sits below whichever rows are currently visible with no extra position-tracking code. Found
+  and fixed one real bug via live testing, not code review: a bearing near the 360°/0° wrap point rounded to
+  the literal string "360°" instead of "0°" — fixed with a modulo in the new code, deliberately left
+  unfixed in Compass's own pre-existing code that has the identical gap (out of scope, flagged not silently
+  copied-forward). Also caught and corrected a real spec-matching gap during verification: the chip initially
+  showed two different messages for "GPS unsupported" vs. "no fix yet," when the task asked for one unified
+  "Waiting for GPS…" message covering both — collapsed to match exactly. Verified live end-to-end via the
+  already-connected Chrome browser extension: both entry points (a real marker click and a real sidebar-row
+  click, the former requiring a live coordinate-space fix for a devicePixelRatio/screenshot-scaling mismatch,
+  the same class of gotcha already hit in this session's own Tap-stack work); the chip/bar's correct
+  appearance on both desktop (screenshot) and a genuine 390×844 mobile `<iframe>` (screenshot, plus its own
+  now-familiar stale-service-worker-inside-the-iframe hiccup, resolved the established way); arrow direction
+  confirmed correct from 2 different synthetic GPS positions (due south → N/0°/arrow up; due west →
+  E/90°/arrow right); live recompute confirmed across multiple injected position fixes, including the
+  360°-wrap case that caught the rounding bug; the unified "Waiting for GPS…" state confirmed for a real
+  injected permission-denied error with no fix ever received; both × dismiss buttons confirmed exiting nav
+  mode; single-target replacement confirmed by selecting a second injected test pin mid-navigation and
+  observing the chip swap immediately with zero accumulation. Zero console errors throughout. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.57.0 → 2.58.0
+  (minor — new feature), SHELL_CACHE bumped v174 → v175.

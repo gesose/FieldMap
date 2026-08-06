@@ -150,6 +150,37 @@
      proofing measure) — each active layer gets its own line/div, truncated independently. */
   .active-layers-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
 
+  /* Pin-to-pin navigation chip (Session 68) — desktop variant. Matches the other 3 persistent
+     chips' own uniform sizing (see #center-readout-float,#scale-bar,#active-trip-chip above) —
+     same 40px height/8px radius/background/border — since spec calls for "same width and padding
+     as those, just another chip in that stack." #nav-chip-mobile (its own separate element, see
+     that rule below) is used instead on mobile — hidden here the same way #center-readout-float
+     is hidden on mobile for the same "different platform, different content" reason. */
+  #nav-chip{
+    height:40px;box-sizing:border-box;border-radius:8px;
+    display:flex;align-items:center;gap:8px;
+    font-family:var(--font-sans);font-size:11px;color:var(--text-muted);
+    background:var(--bg-elevated);border:1px solid var(--border);
+    padding:5px 9px;
+  }
+  #nav-chip.hidden{display:none;}
+  #nav-chip-text{min-width:0;flex:1;display:flex;flex-direction:column;justify-content:center;}
+  #nav-chip-name{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #nav-chip-detail{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .nav-chip-arrow{
+    flex-shrink:0;display:inline-block;font-size:16px;line-height:1;color:var(--accent);
+    transition:transform 0.2s ease;
+  }
+  #nav-chip-close{flex-shrink:0;color:var(--text-muted);}
+  #nav-chip-close:hover{color:var(--text);}
+  /* Mobile-only variant (hidden on desktop — see the mobile media query for its real layout,
+     which turns it into the spec'd 3-column full-width bar). Kept as a completely separate
+     element from #nav-chip rather than one shared div reflowed by CSS, matching
+     #center-readout-float/#center-readout-mobile's own precedent, since desktop shows the pin's
+     name and mobile's 3-column layout has no room for it at all. */
+  #nav-chip-mobile{display:none;}
+  #nav-chip-mobile.hidden{display:none;}
+
   /* Trip picker panel's list rows (Stage 2) */
   .trip-picker-row{
     display:flex;align-items:baseline;justify-content:space-between;gap:8px;
@@ -1185,6 +1216,29 @@
     .active-layers-line{display:inline;white-space:nowrap;}
     .active-layers-line + .active-layers-line::before{content:' · ';}
 
+    /* Pin-to-pin navigation bar (Session 68) — mobile variant, its own full-width row directly
+       below #active-layers-chip (DOM order already places it there — see the HTML comment), same
+       "own full-width row underneath the persistent chips" convention #active-layers-chip itself
+       established, not a new layout pattern. #nav-chip (desktop) is hidden entirely here the same
+       way #center-readout-float already is. 3 equal columns per spec — distance / arrow / bearing
+       — plus the close button as a 4th, fixed-width slot (not counted as one of the "3 columns"
+       the spec means, which are the live readout values). */
+    #nav-chip{display:none;}
+    #nav-chip-mobile{
+      display:flex;align-items:center;
+      width:100%;height:32px;box-sizing:border-box;
+      border-radius:8px;background:var(--bg-elevated);border:1px solid var(--border);
+      padding:2px 10px;gap:4px;
+    }
+    #nav-chip-mobile.hidden{display:none;}
+    .nav-chip-mobile-col{
+      flex:1;min-width:0;text-align:center;
+      font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    #nav-chip-mobile-arrow{flex:0 0 auto;font-size:15px;}
+    #nav-chip-mobile-close{flex-shrink:0;color:var(--text-muted);}
+
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
     .leaflet-control-zoom{display:none !important;}
 
@@ -1505,6 +1559,30 @@
       </svg>
     </span>
     <div id="active-layers-chip-lines"></div>
+  </div>
+  <!-- Pin-to-pin navigation chip (Session 68) — a live bearing+distance readout to a single
+       selected pin, deliberately its own two variants (desktop/mobile) exactly like
+       #center-readout-float/#center-readout-mobile already are, rather than one shared div
+       reflowed by CSS, since the actual CONTENT differs (desktop shows the pin's name; mobile's
+       3-column layout per spec has no room for it and doesn't show it at all) — see
+       updateNavChip's own comment for why both are driven from one function regardless. Hidden
+       by default for the same pre-JS-flash reason as the trip/active-layers chips; JS drives
+       visibility from setNavTarget/clearNavTarget, never CSS alone. Deliberately a sibling of
+       #active-layers-chip (not inside #floating-info-row1) so mobile gets its own full-width row
+       directly beneath it, per spec, rather than cramming into the 3-chip row. -->
+  <div id="nav-chip" class="hidden" aria-label="Navigating to a pin">
+    <span id="nav-chip-arrow" class="nav-chip-arrow">▲</span>
+    <div id="nav-chip-text">
+      <div id="nav-chip-name"></div>
+      <div id="nav-chip-detail"></div>
+    </div>
+    <button id="nav-chip-close" class="link-btn" aria-label="Stop navigating" style="font-size:16px;line-height:1;">×</button>
+  </div>
+  <div id="nav-chip-mobile" class="hidden" aria-label="Navigating to a pin">
+    <span id="nav-chip-mobile-dist" class="nav-chip-mobile-col"></span>
+    <span id="nav-chip-mobile-arrow" class="nav-chip-mobile-col nav-chip-arrow">▲</span>
+    <span id="nav-chip-mobile-bearing" class="nav-chip-mobile-col"></span>
+    <button id="nav-chip-mobile-close" class="link-btn" aria-label="Stop navigating" style="font-size:16px;line-height:1;">×</button>
   </div>
 </div>
 
@@ -3186,7 +3264,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.57.0';
+  var APP_VERSION = '2.58.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -7481,6 +7559,105 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
+  // ── Pin-to-pin navigation (Session 68) — a live bearing+distance readout to a single
+  // selected pin, north-relative (no device-orientation sensor/permission needed — pure great-
+  // circle bearing math from the live GPS position to the target pin's coordinates, the exact
+  // same primitives Compass/Bearing already use: bearingDegrees + bearingCardinalLabel for the
+  // angle, formatDist for distance). Deliberately NOT persisted to state.settings/localStorage —
+  // "what am I navigating to right now" is an ephemeral, device-session concept, not saved data,
+  // matching the same reasoning Elevation Range's own always-off-at-boot persistence already
+  // established for a different feature. Single target only: navTargetPinId is a plain scalar,
+  // so picking a new pin always just replaces it — there is no array/multi-target state to
+  // manage. Reuses the Session 37 shared GPS watcher (subscribeSharedGps/unsubscribeSharedGps) as
+  // its own 4th consumer rather than a new independent watchPosition.
+  var navTargetPinId = null;
+  var navGpsSubId = null;
+  var navCurrentPos = null; // {lat,lng} from the shared watcher, null until a real fix arrives
+  var navGpsUnsupported = false; // true only if navigator.geolocation doesn't exist at all
+
+  function setNavTarget(pinId){
+    var pin = state.pins.find(function(p){ return p.id === pinId; });
+    if (!pin) return;
+    navTargetPinId = pinId;
+    if (navGpsSubId == null){
+      navGpsUnsupported = !navigator.geolocation;
+      navGpsSubId = subscribeSharedGps(function(pos){
+        navCurrentPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        updateNavChip();
+      }, function(){
+        // A transient error (e.g. a momentary fix loss) intentionally does NOT blank out
+        // navCurrentPos if we already have a real fix — only the "never got one yet" case
+        // shows the waiting state, handled naturally by navCurrentPos still being null then.
+        updateNavChip();
+      });
+    }
+    updateNavChip(); // show the chip immediately (with "Waiting for GPS…" if no fix yet) rather
+                      // than waiting for the first position callback to make it appear at all
+  }
+
+  function clearNavTarget(){
+    navTargetPinId = null;
+    navCurrentPos = null;
+    navGpsUnsupported = false;
+    if (navGpsSubId != null){ unsubscribeSharedGps(navGpsSubId); navGpsSubId = null; }
+    updateNavChip();
+  }
+
+  // Single render function driving BOTH platform variants (see their own HTML/CSS comments for
+  // why they're two separate elements, not one reflowed by CSS) — called from every state change
+  // (setNavTarget, clearNavTarget) and from every real GPS position update. Re-reads the target
+  // pin fresh from state.pins every time rather than caching its name/coords at selection time,
+  // so an edit to the pin (renamed, moved) is picked up automatically on the next GPS tick with
+  // no extra wiring, and — the same lookup this also doubles as — a deleted target pin is
+  // detected here defensively (in addition to the explicit, immediate clear in deletePinById) for
+  // any OTHER removal path (bulk delete, a sync merge dropping it) that doesn't go through that
+  // one function.
+  function updateNavChip(){
+    var chip = document.getElementById('nav-chip');
+    var chipMobile = document.getElementById('nav-chip-mobile');
+    if (!navTargetPinId){
+      chip.classList.add('hidden');
+      chipMobile.classList.add('hidden');
+      return;
+    }
+    var pin = state.pins.find(function(p){ return p.id === navTargetPinId; });
+    if (!pin){ clearNavTarget(); return; }
+
+    chip.classList.remove('hidden');
+    chipMobile.classList.remove('hidden');
+    document.getElementById('nav-chip-name').textContent = pin.name;
+
+    var detailText, bearingText, distText, arrowDeg = null;
+    if (navGpsUnsupported || !navCurrentPos){
+      // Spec asks for one unified message here ("GPS unavailable or no fix yet") rather than
+      // two different strings for the two cases — this covers both no-geolocation-API-at-all
+      // AND the far more common case (no fix yet, including a permission-denied error, which
+      // the shared watcher's onError callback surfaces only by leaving navCurrentPos null).
+      detailText = bearingText = distText = 'Waiting for GPS…';
+    } else {
+      var bearing = bearingDegrees(navCurrentPos.lat, navCurrentPos.lng, pin.lat, pin.lng);
+      var distMi = haversineMiles(navCurrentPos.lat, navCurrentPos.lng, pin.lat, pin.lng);
+      var dirLabel = bearingCardinalLabel(bearing);
+      // % 360 after rounding — a bearing very close to the wrap point (e.g. 359.6°) rounds to
+      // 360, not 0, without this; a real, live-caught edge case (Compass's own equivalent
+      // display has the identical gap, out of scope to touch here, but not one to knowingly
+      // repeat in new code just because it matches the existing convention's format).
+      bearingText = dirLabel + ' ' + (Math.round(bearing) % 360) + '°';
+      distText = formatDist(distMi);
+      detailText = distText + ' · ' + bearingText;
+      arrowDeg = bearing;
+    }
+    document.getElementById('nav-chip-detail').textContent = detailText;
+    document.getElementById('nav-chip-mobile-dist').textContent = distText;
+    document.getElementById('nav-chip-mobile-bearing').textContent = bearingText;
+    // Arrow stays pointing straight up (its own default, unrotated orientation) whenever there's
+    // no real bearing to show yet — rotating to a stale/zero angle while GPS is still resolving
+    // would read as a real direction when it isn't one.
+    var transform = arrowDeg != null ? 'rotate(' + arrowDeg + 'deg)' : 'none';
+    document.getElementById('nav-chip-arrow').style.transform = transform;
+    document.getElementById('nav-chip-mobile-arrow').style.transform = transform;
+  }
+
   // Generic long-press gesture (Session 37 — no equivalent existed anywhere in this file before,
   // confirmed via a repo-wide search for "longpress"/"long-press" turning up nothing). Fires
   // onLongPress after `ms` of a held pointer, cancelled by more than a small movement tolerance
@@ -9076,7 +9253,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // "edit shape/endpoints"-style action beyond Delete, so their overflow menu just omits
   // that button rather than rendering an empty one; every existing caller still passes both,
   // completely unaffected.
-  function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick, menuId, geometryLabel, geometryOnclick, deleteOnclick){
+  // extraMenuItemsHtml (Session 68) — an optional trailing param, additive-only: every existing
+  // call site simply doesn't pass it (defaults to undefined/''), so all 6 are unaffected. Only
+  // pins currently pass one (their own "Navigate to" row) — a whole extra generic param on the
+  // shared footer was chosen over a pin-specific footer variant so pin's own Directions/Share/
+  // Edit data/overflow markup stays byte-identical to every other type's, matching how
+  // geometryLabel/geometryOnclick were already optional for exactly this reason.
+  function popupFooterHtml(directionsOnclick, shareOnclick, editOnclick, menuId, geometryLabel, geometryOnclick, deleteOnclick, extraMenuItemsHtml){
     return '<div class="pin-popup-footer">' +
       '<button class="btn btn-small" onclick="' + directionsOnclick + '">Directions</button>' +
       '<button class="btn btn-small" onclick="' + shareOnclick + '">Share</button>' +
@@ -9085,6 +9268,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<button class="popup-overflow-btn" onclick="FieldMap.toggleOverflowMenu(\'' + menuId + '\')" aria-label="More actions">&#8942;</button>' +
         '<div class="popup-overflow-menu" id="' + menuId + '">' +
           (geometryLabel ? '<button onclick="' + geometryOnclick + '">' + geometryLabel + '</button>' : '') +
+          (extraMenuItemsHtml || '') +
           '<button class="danger" onclick="' + deleteOnclick + '">Delete</button>' +
         '</div>' +
       '</div>' +
@@ -9445,7 +9629,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         'FieldMap.directionsToPin(\'' + pin.id + '\')',
         'FieldMap.sharePin(\'' + pin.id + '\')',
         'FieldMap.editPin(\'' + pin.id + '\')',
-        'overflow-pin-' + pin.id, 'Move', 'FieldMap.movePin(\'' + pin.id + '\')', 'FieldMap.deletePin(\'' + pin.id + '\')'
+        'overflow-pin-' + pin.id, 'Move', 'FieldMap.movePin(\'' + pin.id + '\')', 'FieldMap.deletePin(\'' + pin.id + '\')',
+        '<button onclick="FieldMap.navigateToPin(\'' + pin.id + '\')">Navigate to</button>'
       );
   }
 
@@ -12115,6 +12300,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderPinList();
     scheduleSave();
     showToast('Pin deleted');
+    // Session 68 — immediate, explicit cleanup for the single most common removal path;
+    // updateNavChip()'s own defensive re-lookup covers every other one (bulk delete, a sync
+    // merge dropping this pin) on the next GPS tick regardless, but this avoids a visibly stale
+    // chip lingering for however long that next tick takes to arrive.
+    if (id === navTargetPinId) clearNavTarget();
   }
 
   window.FieldMap = {
@@ -12135,6 +12325,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (!pin) return;
       openDirectionsTo(pin.lat, pin.lng);
     },
+    // Session 68 — pin popup's "Navigate to" button; also the same function a sidebar row's own
+    // click reaches, since a sidebar click already opens this exact popup (openPopup()) rather
+    // than needing a second, separate sidebar-only entry point for the same target-selection
+    // action.
+    navigateToPin: function(id){ setNavTarget(id); },
     // Fires on every keystroke in the tap-anywhere title input. Deliberately additive-only
     // (see detectCategoryTagIds) — typing further text can add more matched chips but never
     // silently removes one already added, even if the triggering word gets deleted again;
@@ -15293,6 +15488,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
       recordTombstone(id);
       removeMarkerForPin(id);
+      // Session 68 — same immediate-cleanup reasoning as deletePinById's own call site; this
+      // path deletes pins directly rather than going through that function.
+      if (id === navTargetPinId) clearNavTarget();
     });
     trackIds.forEach(function(id){
       state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
@@ -15445,6 +15643,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.pins = state.pins.filter(function(p){ return p.id !== id; });
       recordTombstone(id);
       removeMarkerForPin(id);
+      // Session 68 — same immediate-cleanup reasoning as deletePinById's own call site; this
+      // path deletes pins directly rather than going through that function.
+      if (id === navTargetPinId) clearNavTarget();
     });
     trackIds.forEach(function(id){
       state.tracks = state.tracks.filter(function(t){ return t.id !== id; });
@@ -20651,6 +20852,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('tap-stack-panel-close').addEventListener('click', closeTapStackPanel);
     document.getElementById('tap-stack-back-btn').addEventListener('click', tapStackGoBack);
+    // Session 68 — explicit dismiss on the pin-to-pin navigation chip itself, matching the
+    // "Clear selection" pattern used elsewhere in the app (e.g. the Wildlife species picker's
+    // own clear link) — one listener per platform variant, both just call clearNavTarget().
+    document.getElementById('nav-chip-close').addEventListener('click', clearNavTarget);
+    document.getElementById('nav-chip-mobile-close').addEventListener('click', clearNavTarget);
     document.getElementById('group-vis-all-btn').addEventListener('click', function(){
       if (listSortMode === 'category') eyeHiddenTags = {};
       else if (listSortMode === 'trip') eyeHiddenTrips = {};
