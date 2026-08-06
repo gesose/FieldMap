@@ -3186,7 +3186,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.55.2';
+  var APP_VERSION = '2.55.3';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4578,7 +4578,18 @@
         // available State Data option for every fish species rather than omitted, since the
         // layer DOES cover any species picked, just not in isolation. Made explicit in the picker
         // UI (see renderStateDataOptions) rather than silently pretending it's species-specific.
-        note: 'Statewide layer — shows all mapped species together, not filtered to just this one.'
+        note: 'Statewide layer — shows all mapped species together, not filtered to just this one.',
+        // Session 65 — temporarily removed from the SELECTABLE UI (stateDataOptionsFor skips any
+        // entry with disabled:true) after confirming live that WDFW's own server
+        // (geodataservices.wdfw.wa.gov) returns a 500 at every page size the adaptive-backoff
+        // pagination tries (2000/500/125) — the server itself is unavailable, not a bug in this
+        // app's request logic or in the Session 63/64 updateData()/immediate-clear fixes, both of
+        // which are confirmed correct and deliberately left untouched here. This entry, its real
+        // URL/attribution, and every loading/clearing code path that reads it (loadStateDataLayer,
+        // applyStateDataToSource, clearWildlifeStateDataSource) are all intentionally left fully
+        // intact — removing just this one flag is the entire re-enable path once WDFW's endpoint is
+        // reachable again, grouped with future Wyoming data work rather than chased further now.
+        disabled: true
       },
       or: {
         // Session 62 — switched from a live perSpecies ArcGIS fetch to a static, offline-
@@ -4749,6 +4760,12 @@
     var out = [];
     Object.keys(byState).forEach(function(stateKey){
       var src = byState[stateKey];
+      // Session 65 — a source can be temporarily marked disabled (its own real endpoint down,
+      // etc.) without deleting its catalog entry or any of its loading/clearing code — see
+      // STATE_DATA_SOURCES.fish.wa's own comment for the current example. Skipped here exactly
+      // like the 4 deferred Oregon species: omitted from the selectable list entirely, not shown
+      // as a disabled/greyed option.
+      if (src.disabled) return;
       if (src.type === 'unified' || ((src.type === 'perSpecies' || src.type === 'localFile') && src.species[speciesName])){
         out.push({ stateKey: stateKey, stateName: src.state });
       }

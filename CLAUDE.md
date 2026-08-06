@@ -575,6 +575,18 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   source type on either side of the switch, confirmed live for all 4 directions (Oregon↔Washington,
   Arizona↔Washington). See Architecture notes' "Fish State Data: state persistence across species switches,
   Washington updateData() retrofit" entry, its own "Session 64" sub-bullet, for full mechanism detail.
+- Washington temporarily removed from the Fish State Data state selector (Session 65) — deliberate, not a
+  bug fix: WDFW's own live endpoint (`geodataservices.wdfw.wa.gov`) is confirmed returning HTTP 500 at every
+  page size the existing adaptive-backoff pagination tries (2000/500/125), a real server-side outage
+  unrelated to this app's request logic or to the Session 63/64 `updateData()`/immediate-clear fixes (both
+  confirmed still correct). `STATE_DATA_SOURCES.fish.wa` gained a `disabled:true` flag that
+  `stateDataOptionsFor` now skips, exactly the same "omit entirely, not greyed out" treatment already used
+  for Oregon's 4 deferred species — Washington's catalog entry, URL/attribution, and every loading/clearing
+  code path that reads it (`loadStateDataLayer`, `applyStateDataToSource`, `clearWildlifeStateDataSource`)
+  are all deliberately left completely untouched, so re-enabling it later (grouped with future Wyoming data
+  work) is a one-line revert. See Architecture notes' "Fish State Data: state persistence across species
+  switches, Washington updateData() retrofit" entry, its own "Session 65" sub-bullet, including a flagged
+  live-verification gap this session hit and could not resolve.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -1103,6 +1115,56 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     panel-then-reopen cycle (not JS events) all confirmed holding exactly as before. `node --check` confirmed
     clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
     2.55.1 → 2.55.2, SHELL_CACHE bumped v170 → v171.
+  - **Session 65 — Washington temporarily removed from the selectable UI, deliberate not a bug fix**: the
+    explicit trigger was confirming live that WDFW's own real endpoint now returns a bare HTTP 500 at every
+    page size the existing `fetchStateDataLayerPaged` adaptive-backoff pagination tries (2000 → 500 → 125,
+    the exact same 3-step ladder Session 56 built for this class of failure) — a genuine server-side outage,
+    not a request-shape or auth problem this app's own code could route around, and explicitly NOT caused by
+    or related to Session 63's `updateData()` retrofit or Session 64's immediate-clear fix, both independently
+    re-confirmed correct and left completely untouched here. Rather than delete `STATE_DATA_SOURCES.fish.wa`
+    (which would also delete the only place its real URL/attribution/note live, making a future re-enable a
+    bigger job than it needs to be) or silently leave it selectable-but-guaranteed-to-fail, added a single
+    `disabled: true` flag to that one catalog entry and one matching `if (src.disabled) return;` guard at the
+    very top of `stateDataOptionsFor`'s per-state loop — the SAME function every other exclusion in this
+    catalog already flows through (this is the exact mechanism, and the exact UX treatment — omitted
+    entirely from the dropdown, not shown greyed-out or "coming soon" — Session 62 already established for
+    Oregon's 4 deferred species; Washington's disable reuses it rather than inventing a second pattern).
+    Confirmed by tracing every other `STATE_DATA_SOURCES[...]` read site in the file that none of them needed
+    a matching `disabled` check: `wildlifeSpeciesGroups`'s own species-list-building loop (a DIFFERENT
+    function, builds the species dropdown, not the state dropdown) already only reads `perSpecies`/`localFile`
+    sources for that purpose, structurally excluding Washington's `type:'unified'` regardless, both before and
+    after this change; every other `STATE_DATA_SOURCES[tc][stateKey]` read in the file is keyed by an
+    ALREADY-CHOSEN stateKey (the active selection, a pending no-data flag, or the `<select>`'s own current
+    value) — since `stateKey==='wa'` can now never be chosen through the UI going forward, none of those
+    sites can be reached with it either, with no code changes needed at any of them. `loadStateDataLayer`,
+    `applyStateDataToSource`, and the Session 64 `clearWildlifeStateDataSource` fix are all completely
+    unmodified — the entire re-enable path, whenever WDFW's endpoint is reachable again, is deleting the one
+    `disabled: true` line. One known, deliberately out-of-scope edge case: a device that already had
+    Washington active from before this session (a real possibility, since it was genuinely working as
+    recently as Session 62/63's own testing) will still restore that persisted selection on boot and attempt
+    a real fetch against the still-down endpoint — not silently, since `loadStateDataLayer`'s existing
+    `anyFailed` branch already shows an honest "Couldn't load this state's data" toast for exactly this case
+    (built in Session 56, unrelated to this session) — but the task's own scope was explicitly "remove it
+    from the selectable UI surface," not "migrate every device's already-persisted selection away from it,"
+    so no migration/force-clear logic was added for this narrower, already-gracefully-degrading case.
+    **Verification gap, flagged rather than silently skipped**: this session's browser tooling could not be
+    gotten into a working state at all — repeated `navigate` calls (8+ attempts across multiple freshly
+    created tab groups, an explicit browser reselect via `select_browser`, and real wall-clock waits between
+    attempts) each reported a plausible-looking success, but every immediately-following `tabs_context_mcp`/
+    `javascript_exec` call showed the tab was still genuinely stuck on `chrome://newtab`, never the app URL —
+    a harder, more persistent failure than the intermittent stalls/freezes documented in several earlier
+    sessions' own testing notes (those recovered, on their own or via a fresh tab, within a call or two; this
+    one did not recover across the whole session). As a result, none of this session's 3 requested live
+    checks — Washington genuinely absent from the dropdown, Oregon/Arizona/Nevada/Utah still working, the
+    selector still cycling cleanly between them — were completed live this session. The change itself was
+    instead verified as rigorously as possible without a browser: a full manual trace of every
+    `STATE_DATA_SOURCES` read site in the file (documented above), a diff re-read confirming the change is
+    exactly the two lines intended and touches nothing else, and `node --check` clean on all 4 extracted
+    inline `<script>` blocks and `service-worker.js`. This is real, un-downgraded risk on a very small, low-
+    complexity change (unlike the async/timing bugs earlier sessions in this thread have had to chase) — a
+    live pass confirming the dropdown genuinely excludes Washington and the other 4 states still cycle
+    cleanly should be the first thing done once the browser tooling is usable again, not silently assumed
+    from this session's code-review-only confidence.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -6156,3 +6218,30 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   real mouse-driven check→dismiss→reopen cycle all still hold unchanged. `node --check` confirmed clean
   syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.55.1 →
   2.55.2 (patch — a real regression fix), SHELL_CACHE bumped v170 → v171.
+- Session 65: A deliberate, explicitly-not-a-bug-fix removal — Washington taken out of the selectable Fish
+  State Data state dropdown after confirming live that WDFW's own real endpoint now returns a bare HTTP 500
+  at every page size the existing adaptive-backoff pagination tries, a genuine server-side outage unrelated
+  to this app's own code or to Sessions 63/64's `updateData()`/immediate-clear fixes (both re-confirmed
+  correct and left untouched). See Architecture notes' "Fish State Data: state persistence across species
+  switches, Washington `updateData()` retrofit" entry, its own "Session 65" sub-bullet, for full detail.
+  Added a single `disabled: true` flag to `STATE_DATA_SOURCES.fish.wa` and one matching guard at the top of
+  `stateDataOptionsFor`'s per-state loop, reusing the exact same "omit entirely, not greyed out" mechanism
+  Session 62 already built for Oregon's 4 deferred species — Washington's catalog entry, real URL/
+  attribution, and every loading/clearing code path that reads it are all deliberately left untouched, so
+  re-enabling it later is a one-line revert. Traced every other `STATE_DATA_SOURCES` read site in the file
+  by hand and confirmed none of them needed a matching change: the species-dropdown-building function
+  already structurally excludes `type:'unified'` sources for an unrelated reason, and every other read site
+  is keyed by an already-chosen stateKey that can now never resolve to `'wa'` through the UI. **This
+  session's browser tooling could not be gotten into a working state at all**, flagged explicitly rather
+  than silently skipped or faked: 8+ navigation attempts across several freshly created tab groups, an
+  explicit browser reselect, and real wall-clock waits between attempts all reported plausible-looking
+  success while the tab remained genuinely stuck on `chrome://newtab` every single time — a harder, more
+  persistent failure than the intermittent stalls documented in several earlier sessions (those recovered
+  within a call or two; this one never did, across the whole session). None of the 3 requested live checks
+  (Washington absent from the dropdown, the other 4 states still working, clean cycling between them) were
+  completed. The change was instead verified as rigorously as possible without a browser — a full manual
+  trace of every relevant read site, a diff re-read confirming exactly the intended two-line change and
+  nothing else, and `node --check` clean on all 4 extracted inline `<script>` blocks and service-worker.js —
+  but this is real, un-downgraded risk on an otherwise very small and low-complexity change, and a live pass
+  once the browser tooling is usable again should be the first thing done, not assumed from this session's
+  code-review-only confidence. APP_VERSION bumped 2.55.2 → 2.55.3, SHELL_CACHE bumped v171 → v172.
