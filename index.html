@@ -3186,7 +3186,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.55.1';
+  var APP_VERSION = '2.55.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -18467,6 +18467,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
   }
 
+  // Session 64 — real bug found on a real device: switching the state <select> left the
+  // PREVIOUS state's data fully rendered on the map for the entire duration of the new state's
+  // fetch, not just the crash-risk-avoidance detail applyStateDataToSource already handled
+  // correctly. The actual root cause was never about source TYPE (localFile vs. unified both hit
+  // the exact same 2-line branch in applyStateDataToSource, byte-identical either way) — it was
+  // about WHEN that function is ever called at all: only from inside loadStateDataLayer's own
+  // completion callback, i.e. only once the ENTIRE new fetch resolves. For Oregon (a fast static
+  // file) and Arizona/Nevada/Utah (small live fetches) this gap is sub-second and invisible; for
+  // Washington's real, live, ~35-request paginated fetch of its full 73,373-feature SWIFD table
+  // it can run many seconds, during which the OLD state's data — regardless of what type it was —
+  // stayed fully rendered with zero indication a switch was even in progress, reading exactly like
+  // "the old source isn't being cleared" on a real device. Fixed by clearing the shared source
+  // IMMEDIATELY, synchronously, the instant a new state is picked — before the new fetch even
+  // starts — rather than waiting for applyStateDataToSource's own (still-needed, still-correct)
+  // clear-then-apply to run once data arrives. This is deliberately type-agnostic and needs no
+  // branch on src.type at all: an empty setData() is always safe and always fully replaces
+  // whatever was there, independent of whether the OLD or NEW state uses 'localFile'/'unified'/
+  // 'perSpecies' on either side of the switch.
+  function clearWildlifeStateDataSource(tc){
+    var srcObj = map && map.getSource('wildlife-statedata-' + tc + '-source');
+    if (srcObj) srcObj.setData({ type: 'FeatureCollection', features: [] });
+  }
+
   // Picks (and loads) one state's data for the current species, in the currently-displayed
   // category — only one state's State Data is shown at a time per category, matching GMU
   // boundaries' own "only one state at a time" rule. Picking a state also activates it (checkbox
@@ -18493,6 +18516,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (checkbox) checkbox.checked = true;
     persistWildlifeStateData();
     updateActiveLayersChip();
+    // Session 64 — clear whatever the PREVIOUS state left rendered right now, synchronously,
+    // instead of leaving it on screen for the entire duration of this new pick's fetch (see
+    // clearWildlifeStateDataSource's own comment for the full mechanism this fixes).
+    clearWildlifeStateDataSource(tc);
     loadStateDataLayer(tc, active.speciesName, stateKey, function(data){
       var stillCurrent = wildlifeStateDataActiveByCategory[tc] && wildlifeStateDataActiveByCategory[tc].stateKey === stateKey && wildlifeStateDataActiveByCategory[tc].speciesName === active.speciesName;
       if (!stillCurrent) return; // switched away while this was in flight

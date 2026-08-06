@@ -562,6 +562,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   it via the retrofitted path) after this sandbox's main app tab's own Mapbox-loading stall (the same
   long-documented limitation as every prior session touching DEM/vectorbase) made direct in-app visual
   confirmation unreliable partway through.
+- Fixed a real regression from Session 63, found on a real device (Session 64) — switching the State Data
+  state `<select>` left the PREVIOUS state's data fully rendered on the map for the entire duration of the
+  new state's fetch, most visibly whenever Washington (a real, slow, ~35-request paginated fetch of its full
+  73,373-feature table) was on either side of the switch, since Oregon/Arizona/Nevada/Utah's own much faster
+  fetches made the same underlying gap imperceptible. Root cause was never about source TYPE (localFile vs.
+  unified both already hit the exact same clear-then-apply branch in `applyStateDataToSource`) — it was
+  about WHEN that function is ever called: only from inside the new state's own fetch-completion callback,
+  so nothing visibly changed on screen until the ENTIRE new fetch resolved. Fixed with a new
+  `clearWildlifeStateDataSource(tc)` helper, called synchronously the instant a new state is picked —
+  before the new fetch even starts — so the old state's rendered data disappears immediately regardless of
+  source type on either side of the switch, confirmed live for all 4 directions (Oregon↔Washington,
+  Arizona↔Washington). See Architecture notes' "Fish State Data: state persistence across species switches,
+  Washington updateData() retrofit" entry, its own "Session 64" sub-bullet, for full mechanism detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -1034,6 +1047,62 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     (an artifact of the raw DOM manipulation, not reachable through any real user interaction sequence),
     repaired directly in that tab's localStorage, and the affected verification steps were redone cleanly with
     only real interactions afterward.
+  - **Session 64 — real regression, found on a real device right after Session 63 shipped**: repro was
+    Oregon Rainbow Trout State Data rendering correctly, then switching the state `<select>` to Washington —
+    the chip/dropdown updated correctly but Oregon's old data stayed visibly rendered instead of/alongside
+    Washington's; same with Arizona → Washington; cycling Oregon ↔ Arizona (never touching Washington) worked
+    correctly. Investigated the exact hypothesis the report itself raised — that `applyStateDataToSource`'s
+    clearing logic runs correctly for same-type switches but not across a type change — and found it doesn't
+    hold: `applyStateDataToSource`'s `localFile`/`unified` branch is byte-identical for both (`srcObj.
+    setData({features:[]})` then `srcObj.updateData({add:features})`), so there's no type-conditional gap in
+    that function at all. The REAL root cause, found by re-reading `setWildlifeStateDataState` end to end:
+    `applyStateDataToSource` is only ever CALLED from inside `loadStateDataLayer`'s own completion callback —
+    i.e., only once the ENTIRE new fetch resolves. Nothing clears or updates the map the instant the user
+    switches; the old state's rendered content simply stays exactly as it was for the full duration of the
+    new fetch. For Oregon (a fast static file) and Arizona/Nevada/Utah (small live fetches) this gap is
+    sub-second and imperceptible; for Washington's real ~35-request paginated fetch of its full 73,373-feature
+    SWIFD table it can run many seconds, making the SAME pre-existing gap — present for every state switch,
+    not something Session 63 introduced — glaringly obvious for the first time. This also fully explains why
+    Oregon↔Arizona cycling looked clean: both are fast enough that the gap was already there but never
+    noticed. Fixed with a new `clearWildlifeStateDataSource(tc)` helper — a single, type-agnostic empty
+    `setData({features:[]})` call, needing no branch on `src.type` at all since an empty reset is always safe
+    regardless of what the OLD or NEW state's own source kind is — called synchronously inside
+    `setWildlifeStateDataState`, immediately after the new pick's active/on/lastState bookkeeping updates and
+    BEFORE `loadStateDataLayer` even starts the new fetch. `applyStateDataToSource`'s own existing
+    empty-reset-then-apply sequence (still needed for the actual `updateData()` crash-avoidance, unrelated to
+    this bug) runs unchanged, a harmless second reset in the common case, once the new fetch's data actually
+    arrives. Verified live: (1) a direct, deterministic timing proof — captured the real `GeoJSONSource`
+    object, switched Oregon → Washington and Arizona → Washington with ZERO wait after the `change` dispatch,
+    and confirmed `_data.features.length` reads `0` immediately, synchronously, before Washington's network
+    fetch could possibly have started, let alone finished — confirmed against Arizona's real, already-settled
+    223-feature dataset specifically (Arizona uses a plain `setData()`, so `_data` reliably reflects its real
+    feature count, unlike Oregon/Washington's `updateData()`-based sources): Arizona's 223 real features were
+    genuinely GONE from `_data` the instant the switch to Washington fired, not just visually covered by
+    something painted on top; (2) all 4 directions tested this way — Oregon→Washington, Arizona→Washington, Washington→Arizona,
+    Washington→Oregon — every one showed the immediate `0`, confirming the fix isn't directional, and a
+    subsequent real Arizona re-settle correctly landed at 223 features again, confirming the existing
+    `stillCurrent` guard still correctly protects against a late-resolving Washington callback stomping on
+    whatever the user switched to in the meantime; (3) since `GeoJSONSource.updateData()` never touches the
+    client-side `_data` property (confirmed by reading the vendored `maplibre-gl.js` source directly —
+    `setData(t){this._data=t,this._updateWorkerData()}` vs. `updateData(t){this._updateWorkerData(t)}`, the
+    latter never assigning `_data`), `_data` alone can't prove Washington's real content actually renders
+    post-fix — closed that gap with a dedicated isolated-`maplibregl.Map` harness (same zero-Mapbox-dependency
+    technique as Sessions 60/62/63) that applied a synthetic "fake Oregon" feature, called the new immediate
+    clear, confirmed `_data.features.length` was `0` right after, then fetched REAL Washington data for the
+    real West Patit Creek area and applied it via the unchanged `updateData()` path — a genuine screenshot
+    confirmed a clean, correctly-colored real stream network with zero visual artifacts, and
+    `queryRenderedFeatures` explicitly confirmed the synthetic "fake Oregon" feature (a marked, identifiable
+    id) was NOT present in the final rendered output, directly satisfying the task's own "confirm the old
+    state's data is gone, not just visually overlapping" requirement; (4) re-confirmed, live, that this fix
+    didn't disturb anything from Session 63 — species-switch persistence (a no-data hop from Rainbow Trout to
+    Apache Trout, correctly showing the message and leaving Oregon selected-but-off; switching onward to Brown
+    Trout correctly kept it off per the already-documented "off stays off across a no-data hop" behavior;
+    explicitly re-picking Oregon then switching to Sockeye correctly reloaded and stayed on, with a correct
+    active-layers-chip update), the Session 59 checkbox-only-click fix (uncheck then recheck with the
+    `<select>` never touched, correctly reactivating Sockeye/Oregon), and a real mouse-driven close-the-whole-
+    panel-then-reopen cycle (not JS events) all confirmed holding exactly as before. `node --check` confirmed
+    clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
+    2.55.1 → 2.55.2, SHELL_CACHE bumped v170 → v171.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -6055,3 +6124,35 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   value at the end while leaving standby-timeout-ac disabled permanently. `node --check` confirmed clean
   syntax on all extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.55.0 → 2.55.1
   (patch — two real bug fixes to an existing feature, no new UI), SHELL_CACHE bumped v169 → v170.
+- Session 64: A real regression reported right after Session 63 shipped — see Architecture notes' "Fish
+  State Data: state persistence across species switches, Washington `updateData()` retrofit" entry, its own
+  "Session 64" sub-bullet, for complete mechanism detail. Repro: Oregon Rainbow Trout State Data rendered
+  correctly, but switching the state `<select>` to Washington left Oregon's old data visibly rendered
+  instead of/alongside Washington's, even though the chip/dropdown updated correctly; same for Arizona →
+  Washington; Oregon ↔ Arizona cycling (never touching Washington) worked fine. Investigated the report's
+  own hypothesis — a type-conditional gap in `applyStateDataToSource` — and ruled it out directly: that
+  function's `localFile`/`unified` branch is byte-identical for both, no type-based bug exists there at all.
+  The real root cause was about WHEN, not IF: `applyStateDataToSource` only ever runs inside the new state's
+  own fetch-completion callback, so nothing clears the map until the ENTIRE new fetch resolves — a
+  pre-existing gap present for every state switch, imperceptible for Oregon's static file and Arizona/
+  Nevada/Utah's small live fetches, but stretched into a many-seconds-long visible window by Washington's
+  real ~35-request paginated fetch of its full 73,373-feature table. Fixed with a new, deliberately
+  type-agnostic `clearWildlifeStateDataSource(tc)` helper — a single empty `setData()` call needing no
+  branch on source type at all — called synchronously the instant a new state is picked, before the new
+  fetch even starts, rather than waiting for `applyStateDataToSource`'s own (unchanged, still-needed)
+  clear-then-apply to run once data arrives. Verified live with a direct, deterministic timing proof (zero
+  wait after the `<select>`'s `change` dispatch, confirming Arizona's real 223-feature dataset was genuinely
+  gone from the source the instant a switch to Washington fired, well before Washington's fetch could
+  possibly have started) across all 4 directions (Oregon↔Washington, Arizona↔Washington), confirming the fix
+  isn't directional; closed the one remaining gap — `GeoJSONSource.updateData()` never updates the
+  client-side `_data` property (confirmed by reading the vendored `maplibre-gl.js` source directly), so
+  `_data` alone can't prove Washington's real content actually renders post-fix — with a dedicated isolated
+  `maplibregl.Map` harness that applied a synthetic "fake Oregon" feature, ran the new immediate clear, then
+  fetched and applied REAL Washington data for the real West Patit Creek area: a genuine screenshot showed a
+  clean real stream network with zero artifacts, and `queryRenderedFeatures` explicitly confirmed the marked
+  synthetic feature was NOT present in the final output — directly proving the old state's data is gone, not
+  just visually overlapping. Re-confirmed live, per explicit instruction since this fix touches the same
+  area again, that Session 63's species-switch persistence, the Session 59 checkbox-only-click fix, and a
+  real mouse-driven check→dismiss→reopen cycle all still hold unchanged. `node --check` confirmed clean
+  syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.55.1 →
+  2.55.2 (patch — a real regression fix), SHELL_CACHE bumped v170 → v171.
