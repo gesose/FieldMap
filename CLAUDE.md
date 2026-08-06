@@ -587,6 +587,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   work) is a one-line revert. See Architecture notes' "Fish State Data: state persistence across species
   switches, Washington updateData() retrofit" entry, its own "Session 65" sub-bullet, including a flagged
   live-verification gap this session hit and could not resolve.
+- Watershed (huc12) zoom-based auto-hide for State Data (Session 66), inspired by the AZGFD Trout Challenge's
+  own public map — once zoomed to Z10+, the huc12 coarse-basin-context wash (shared with real stream/lake
+  detail data in the same fill/line layers, currently only present for Arizona's Trout Challenge species)
+  auto-hides so it doesn't clutter the real distribution data it's rendered alongside, and reappears when
+  zoomed back out — but ONLY when a real stream/lake detail layer is also present for that pick; a
+  watershed-only selection (not reachable with today's real catalog, but handled correctly regardless) stays
+  visible at any zoom. Pure filter-based (no new toggle/setting) — `map.setFilter()` on the shared
+  `wildlife-statedata-{tc}-fill`/`-line` layers, driven by a `map.on('zoom', ...)` listener plus a recompute
+  wired into the existing `updateWildlifeStateDataMapFilter()` (so every State Data change already triggers
+  it for free). Confirmed live, directly on the production map instance, that the real listener correctly
+  toggles the filter crossing Z10 both directions, and confirmed via a real-data harness (byte-identical
+  filter/click-handler code to the shipped app) that Session 57's stream-click-priority-over-huc12 fix holds
+  correctly below Z10, above Z10, and after reverting. See Architecture notes' "Watershed (huc12) zoom-based
+  auto-hide" entry for full detail, including a flagged gap: a raw mouse click specifically on the live
+  embedded app's own tiny rendered stream line could not be landed this session due to an unresolved
+  coordinate-mapping issue for that tab (confirmed unrelated to this feature — even clicking known, large UI
+  buttons at their own computed screen coordinates failed the same way).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -1165,6 +1182,85 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     live pass confirming the dropdown genuinely excludes Washington and the other 4 states still cycle
     cleanly should be the first thing done once the browser tooling is usable again, not silently assumed
     from this session's code-review-only confidence.
+- Watershed (huc12) zoom-based auto-hide (Session 66) — inspired by the AZGFD Trout Challenge's own public
+  map: once the user is zoomed in past Z10, huc12 (coarse basin CONTEXT, not real distribution data) is
+  redundant clutter next to whatever real stream/lake detail data it's sharing the map with, so it hides;
+  zooming back out reveals it again for orientation.
+  - **Why this is a filter change, not a new layer or a visibility toggle**: huc12 shares the SAME
+    `wildlife-statedata-{tc}-fill`/`-line` polygon layers as real lake/range distribution data — filtered
+    apart only by `_sdShape`/`_sdLayer` (see `reinitializeLayers`'s own comment on this), not a separate
+    layer of its own. Hiding "just huc12" therefore can't be a whole-layer `visibility` change (that would
+    also hide any real lake/range data sharing the layer) — it has to be a `map.setFilter()` refinement that
+    excludes `_sdLayer==='huc12'` specifically, layered on top of the existing `_sdShape==='polygon'` filter,
+    reverted back to the original inclusive filter when the hide condition no longer holds.
+  - **The mechanism**: `WILDLIFE_WATERSHED_AUTOHIDE_ZOOM = 10` (fixed app-wide per explicit instruction, not
+    per-basin-size — easy to make basin-size-aware later if some watersheds turn out to feel cluttered or
+    too eager to hide at this fixed level, not attempted this session). `categoryHasDetailAlongsideWatershed
+    (tc)` reads the CATALOG (not live source `_data`, which the Session 64 entry already established can't
+    be trusted for `updateData()`-based sources) for the currently active state/species pick: true only if
+    that pick's own `spec.layers` object has BOTH a `huc12` key AND at least one other key (streams/lakes) —
+    i.e., there's real detail data worth decluttering the wash for. Only `'perSpecies'` sources can have a
+    `huc12` sub-layer at all (Arizona's Trout Challenge is the only current example — Big Game/Upland Game's
+    own State Data sources, and Fish's `unified`/`localFile` sources, never have one), so this is correctly
+    false for every other source type without a separate type check needed beyond the one already there.
+    `updateWildlifeWatershedZoomVisibility()` — called from a `map.on('zoom', ...)` listener (continuous,
+    not `'zoomend'`, so the wash hides/reappears live through the gesture, matching the reference map's own
+    responsive feel — cheap to call this often since the function only touches the map at all when the
+    hide/show state actually FLIPS, tracked per-category in `wildlifeWatershedHiddenByCategory`, not on every
+    fractional zoom tick) and from the tail of the existing `updateWildlifeStateDataMapFilter()` (so every
+    one of THAT function's own call sites — species/state picked, State Data toggled on/off, master toggle —
+    already re-evaluates the watershed-hide state for free, no new call sites needed) — computes `shouldHide
+    = on && zoom >= 10 && categoryHasDetailAlongsideWatershed(tc)` per category and, only when this actually
+    changed, calls `setFilter` on that category's fill/line layers with either the original filter or one
+    that additionally excludes `_sdLayer==='huc12'`. `reinitializeLayers()`'s own WILDLIFE_TOP_CATEGORIES
+    loop resets `wildlifeWatershedHiddenByCategory[tc] = false` right after re-adding the fill/line layers,
+    since a style switch re-adds them fresh with their static, un-hidden default filter — without this reset
+    the cached flag could drift stale relative to the just-reset real layer filter.
+  - **The explicit click-priority regression check, investigated and confirmed clean**: the task's own
+    concern was whether this reintroduces the bug Session 57 fixed (streams/lakes must win click priority
+    over the huc12 wash they share a layer with). Traced through why it can't: Session 57's fix is entirely
+    about CLICK-HANDLER REGISTRATION ORDER (`map.on('click', streamsId, ...)` registered before `map.on(
+    'click', fillId, ...)` — MapLibre delegated listeners for the same native click fire in registration
+    order, independent of paint/z-order, confirmed by reading the vendored `maplibre-gl.js`'s own dispatch
+    code in that session) — completely orthogonal to and unaffected by which FEATURES a `setFilter` includes
+    or excludes. Below Z10 (or with no detail layer present), the filter is byte-identical to before this
+    session, so click behavior there is provably unchanged. Above Z10 with the wash hidden, huc12 features
+    are excluded from the fill layer's own rendered/hit-testable set ENTIRELY — a click landing where huc12
+    used to be can now only ever resolve to whatever real feature (if any) is actually still there, never to
+    a huc12 feature that no longer exists in that layer's data at all; the registration-order fix's own logic
+    is untouched and still governs any genuine remaining overlap (e.g. a stream over a real lake polygon).
+  - **Verification — direct production-code proof, not just reasoning**: live, on the actual running app
+    (not a harness) with Apache Trout/Arizona genuinely active as State Data: captured the real `Map`
+    instance and read `map.getFilter('wildlife-statedata-fish-fill')` before and after real `map.jumpTo`
+    zoom changes — Z8 → base filter (`_sdShape==='polygon'`), Z11 → the huc12-exclusion filter, back to Z8 →
+    base filter again — driven entirely by the real `map.on('zoom', updateWildlifeWatershedZoomVisibility)`
+    listener with zero manual intervention, definitive proof the actual shipped wiring works, not a
+    hand-verified approximation of it. For the click-priority check specifically, this sandbox's main app tab
+    hit an unresolved coordinate-mapping issue this session (raw `computer`-tool clicks failed to land even
+    on large, well-known UI buttons at their own precisely computed screen coordinates, in both a
+    screenshot-scaled and a true/native coordinate hypothesis — confirmed NOT a feature bug, since the app's
+    own JS/map state stayed fully correct and responsive throughout every failed click attempt) — worked
+    around with a dedicated isolated `maplibregl.Map` harness using byte-identical filter expressions AND
+    byte-identical click-handler registration order copied verbatim from the shipped code, loaded with REAL
+    Apache Trout data fetched live from AZGFD's own Trout Challenge endpoint, with a REAL overlap point found
+    via genuine point-in-polygon math (a real stream vertex confirmed inside a real huc12 polygon — the same
+    "Silver Creek" feature Session 57's own verification used, confirmed by matching the label visible on the
+    real basemap tiles once the main app tab did briefly render). Real `computer`-tool clicks on this harness
+    (calibrated against ITS OWN screenshots each time, no sidebar-offset complexity) confirmed: below Z10
+    (9.9), a click on the stream resolves to `streams-layer`, with huc12 confirmed genuinely present at that
+    point via `queryRenderedFeatures`; applying the hide filter (simulating crossing Z10) and re-rendering
+    confirmed huc12 genuinely gone from `queryRenderedFeatures` at that exact point while the stream stayed
+    present, and a real click there still correctly resolved to `streams-layer`; reverting the filter
+    (simulating crossing back below Z10) confirmed huc12 reappeared and a real click still correctly resolved
+    to the stream — the full below/above/below cycle, with real clicks at both ends, exactly as the task
+    asked. The "watershed alone, no detail layer stays visible" requirement isn't reachable through today's
+    real catalog (every Arizona species with `huc12` also has at least `lakes`) — verified instead via a
+    standalone Node reproduction of `categoryHasDetailAlongsideWatershed`'s exact logic against 7 synthetic
+    catalog shapes (real AZ streams+lakes+huc12 → true; real AZ lakes+huc12-only species like Splake → true;
+    a hypothetical huc12-only entry → false; streams+lakes with no huc12 → false; Washington `unified` →
+    false; Oregon `localFile` → false; no active selection → false), all 7 passing. `node --check` confirmed
+    clean syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped
+    2.55.3 → 2.56.0 (minor — new feature), SHELL_CACHE bumped v172 → v173.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -6245,3 +6341,38 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   but this is real, un-downgraded risk on an otherwise very small and low-complexity change, and a live pass
   once the browser tooling is usable again should be the first thing done, not assumed from this session's
   code-review-only confidence. APP_VERSION bumped 2.55.2 → 2.55.3, SHELL_CACHE bumped v171 → v172.
+- Session 66: Built watershed (huc12) zoom-based auto-hide for Fish State Data, inspired by the AZGFD Trout
+  Challenge's own public map — once zoomed past Z10 (fixed app-wide per explicit instruction), the huc12
+  coarse-basin-context wash auto-hides so it doesn't clutter the real stream/lake detail data it shares a
+  layer with, reappearing when zoomed back out; stays visible at any zoom if there's no detail layer to
+  declutter for. See Architecture notes' "Watershed (huc12) zoom-based auto-hide" entry for full mechanism
+  detail. Pure `map.setFilter()` refinement on the existing shared `wildlife-statedata-{tc}-fill`/`-line`
+  layers (huc12 has never had its own layer — it's filtered apart from real lake/range data within the same
+  one), driven by a `map.on('zoom', ...)` listener plus a recompute wired into the existing
+  `updateWildlifeStateDataMapFilter()` so every existing State Data change trigger gets it for free — no new
+  toggle or setting, matching the explicit "purely automatic behavior" scope. The explicit click-priority
+  regression check (does this reintroduce the bug Session 57 fixed, where streams/lakes must win over the
+  huc12 wash they share a layer with) was investigated and confirmed clean by tracing the actual mechanism:
+  Session 57's fix is entirely about click-HANDLER REGISTRATION ORDER, completely orthogonal to which
+  features a `setFilter` happens to include — below the threshold the filter is byte-identical to before
+  this session, and above it huc12 is excluded from the layer's data entirely, so there's nothing left for a
+  click to ambiguously resolve to. Verified live in two complementary ways, both real: (1) directly on the
+  production app with real Apache Trout/Arizona State Data active, read `map.getFilter(...)` before and
+  after real `map.jumpTo` zoom changes across Z8→Z11→Z8 — confirmed the real `map.on('zoom', ...)` listener
+  correctly toggles the filter with zero manual intervention, definitive proof of the actual shipped wiring;
+  (2) for the click-priority check specifically, this sandbox's main app tab hit an unresolved click-
+  coordinate-mapping issue this session (confirmed unrelated to the feature — even known, large UI buttons
+  failed to respond to computer-tool clicks at their own precisely-computed screen coordinates, in both a
+  screenshot-scaled and a true-resolution coordinate hypothesis, while the app's own JS/map state stayed
+  fully correct and responsive throughout) — worked around with an isolated `maplibregl.Map` harness using
+  byte-identical filter expressions and click-handler registration order copied verbatim from the shipped
+  code, real Apache Trout data fetched live from AZGFD's own endpoint, and a real point-in-polygon-confirmed
+  overlap point (the same "Silver Creek" feature Session 57's own verification used) — real clicks on this
+  harness confirmed the full below-Z10/above-Z10/reverted-below-Z10 cycle all correctly resolve to the
+  stream, with huc12 confirmed genuinely present via `queryRenderedFeatures` below the threshold and
+  genuinely absent above it (not just visually covered). The one edge case not reachable through today's
+  real catalog data (a watershed-only pick with no detail layer, which per spec must stay visible at any
+  zoom) was verified instead via a standalone Node reproduction of the exact catalog-reading logic against 7
+  synthetic shapes, all passing, including the specific unreachable-in-practice case. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION
+  bumped 2.55.3 → 2.56.0 (minor — new feature), SHELL_CACHE bumped v172 → v173.

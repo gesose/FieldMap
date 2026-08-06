@@ -3186,7 +3186,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.55.3';
+  var APP_VERSION = '2.56.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -7369,6 +7369,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('dragstart', _onMapDragStart);
       map.on('move', updateCenterReadout);
       map.on('move', updateScaleBar);
+      // Session 66 — 'zoom' (continuous, fires throughout a pinch/scroll gesture), not
+      // 'zoomend', so the watershed wash hides/reappears live as the user crosses the
+      // threshold, matching the AZGFD Trout Challenge reference map's own responsive feel —
+      // cheap to call this often since updateWildlifeWatershedZoomVisibility only touches the
+      // map at all when the hide/show state actually flips, not on every fractional zoom tick.
+      map.on('zoom', updateWildlifeWatershedZoomVisibility);
       map.on('zoomend', scheduleClusterRefresh);
       map.on('moveend', scheduleClusterRefresh);
       map.on('zoomend', scheduleHydroRefresh);
@@ -10025,6 +10031,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           }
         });
       }
+      // Session 66 — fillId/lineId above were just re-added (or already existed) with their
+      // static, un-hidden default filter; the watershed auto-hide's own cached "currently
+      // hidden" flag must be reset to match, or a later zoom tick that doesn't cross the
+      // threshold again would wrongly skip re-applying the hide filter this category actually
+      // needs. updateWildlifeStateDataMapFilter()/updateWildlifeWatershedZoomVisibility() (called
+      // separately, wherever State Data visibility itself gets restored) will recompute and
+      // reapply the correct filter fresh from here.
+      wildlifeWatershedHiddenByCategory[tc] = false;
     });
 
     // Session 58 fix: Habitat range's own fill/line were added BEFORE State Data's (above), so
@@ -18672,6 +18686,60 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // dashed line, distinct from streams' solid line.
   var WILDLIFE_STATEDATA_FILL = '#2d6ea8', WILDLIFE_STATEDATA_STROKE = '#153e63';
   var WILDLIFE_STATEDATA_STREAM_COLOR = '#4aa8e8';
+
+  // Session 66 — watershed (huc12) zoom-based auto-hide, inspired by the AZGFD Trout
+  // Challenge's own public map. huc12 is coarse basin CONTEXT, not real distribution data,
+  // and shares the fill/line polygon layers with the actual detail data (lake/range polygons)
+  // it's rendered alongside — filtered apart only by `_sdShape`/`_sdLayer`, not a separate
+  // layer of its own (see reinitializeLayers' WILDLIFE_TOP_CATEGORIES block). Once the user is
+  // zoomed in close enough to clearly be within one basin, the wash is redundant next to the
+  // real stream/lake data it's sharing the map with — but only when there IS real detail data
+  // to declutter FOR; a category with only huc12 and nothing else (not reachable with today's
+  // catalog, but not assumed impossible either) must stay visible at any zoom, since hiding it
+  // would just leave nothing on screen.
+  var WILDLIFE_WATERSHED_AUTOHIDE_ZOOM = 10;
+  var WILDLIFE_STATEDATA_POLYGON_FILTER = ['==', ['get', '_sdShape'], 'polygon'];
+  var WILDLIFE_STATEDATA_POLYGON_FILTER_NO_WATERSHED = ['all', ['==', ['get', '_sdShape'], 'polygon'], ['!=', ['get', '_sdLayer'], 'huc12']];
+  // Tracks which categories currently have the watershed wash filtered OUT, so
+  // updateWildlifeWatershedZoomVisibility only calls setFilter when this actually flips rather
+  // than on every 'zoom' tick — cheap, but no reason to churn it on every fractional zoom
+  // change when the answer hasn't moved. Reset to false in reinitializeLayers() (see that
+  // block's own comment) since a style switch re-adds these layers fresh with their static,
+  // un-hidden default filter, which would otherwise leave this cache stale.
+  var wildlifeWatershedHiddenByCategory = { biggame: false, uplandgame: false, fish: false };
+  // Reads the CATALOG (not live source data, which isn't reliably inspectable for
+  // updateData()-based sources — see the Session 64 entry on why `_data` can't be trusted for
+  // those) for the currently active state/species pick in one category: true only if that
+  // pick's own sub-layer set includes BOTH a huc12 entry AND at least one non-huc12 entry
+  // (streams/lakes/etc) — i.e., there's real detail data to declutter the watershed wash for.
+  // Only 'perSpecies' sources can have a huc12 sub-layer at all (Arizona's Trout Challenge is
+  // the only current example); 'unified'/'localFile' sources never do, so this is correctly
+  // false for them without needing a separate type check.
+  function categoryHasDetailAlongsideWatershed(tc){
+    var active = wildlifeStateDataActiveByCategory[tc];
+    if (!active) return false;
+    var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][active.stateKey];
+    if (!src || src.type !== 'perSpecies') return false;
+    var spec = src.species && src.species[active.speciesName];
+    if (!spec || !spec.layers || !spec.layers.huc12) return false;
+    return Object.keys(spec.layers).some(function(k){ return k !== 'huc12'; });
+  }
+  function updateWildlifeWatershedZoomVisibility(){
+    if (!map) return;
+    var zoom = map.getZoom();
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var fillId = 'wildlife-statedata-' + tc + '-fill';
+      if (!map.getLayer(fillId)) return;
+      var on = wildlifeStateDataOnByCategory[tc] && wildlifeStateDataActiveByCategory[tc] && wildlifeMasterOnByCategory[tc];
+      var shouldHide = !!(on && zoom >= WILDLIFE_WATERSHED_AUTOHIDE_ZOOM && categoryHasDetailAlongsideWatershed(tc));
+      if (shouldHide === wildlifeWatershedHiddenByCategory[tc]) return;
+      wildlifeWatershedHiddenByCategory[tc] = shouldHide;
+      var filter = shouldHide ? WILDLIFE_STATEDATA_POLYGON_FILTER_NO_WATERSHED : WILDLIFE_STATEDATA_POLYGON_FILTER;
+      map.setFilter(fillId, filter);
+      map.setFilter('wildlife-statedata-' + tc + '-line', filter);
+    });
+  }
+
   // Independently updates each of the 3 categories' own State Data layer set — Big Game/Upland
   // Game/Fish can each show their own selection (or none) at the same time (Session 56).
   function updateWildlifeStateDataMapFilter(){
@@ -18686,6 +18754,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.setLayoutProperty('wildlife-statedata-' + tc + '-line-streams', 'visibility', vis);
       map.setLayoutProperty('wildlife-statedata-' + tc + '-line-dashed', 'visibility', vis);
     });
+    // Session 66 — re-evaluate the watershed auto-hide immediately whenever State Data itself
+    // changes (species/state picked, toggled on/off, master toggle) — every one of THIS
+    // function's own call sites is already "State Data just changed," so this covers all of
+    // them for free with no new call sites needed.
+    updateWildlifeWatershedZoomVisibility();
   }
 
   function wildlifeStateDataPopupHtml(props, sdLayer, topCategory){
