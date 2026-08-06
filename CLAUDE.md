@@ -523,6 +523,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `updateData()` timing research and will need per-species sharding consideration (not attempted this
   session) once actually wired in. See Architecture notes' "Oregon fish habitat data processing pipeline"
   entry for the complete pipeline, every bug found and fixed along the way, and full verification detail.
+- Oregon is now a real, live State Data option under Fish, for 30 of the 34 processed species (Session 62) —
+  the first time the Session 61 offline-processed dataset and the Session 60 `updateData()` pattern have both
+  actually shipped in the app, not just been proven/prepared. Reuses the EXACT existing Fish State Data
+  architecture (species dropdown, checkbox, state `<select>`, shared `wildlife-statedata-fish-*` source/
+  layers, Coldwater/Warmwater grouping via the already-existing `WILDLIFE_FISH_GROUPS`) with zero new UI —
+  Oregon's old, never-actually-working live ArcGIS entry (permanently CORS-blocked, confirmed dead since
+  Session 56) is replaced by a new `type: 'localFile'` source kind that fetches the Session 61 static files
+  and, per explicit instruction, loads them via `updateData()` (never `setData()`), with the diff mechanism's
+  required unique id resolved by the data's own top-level `feature.id` (no `promoteId` source option needed
+  or set — that only ever reads `properties`, and the actual unique id lives at the GeoJSON-standard `id`
+  location instead). CoastalCutthroatTrout/Coho/WinterSteelhead/RedbandTrout are deliberately omitted from
+  the species list entirely (not "coming soon") until their geographic sub-sharding is designed. Live-
+  verified across 3 species (Bull Trout, Largemouth Bass, Rainbow Trout — both Coldwater and Warmwater) with
+  real fetches, real rendering (screenshots, via an isolated harness — this sandbox's own base map is stuck
+  in the same long-documented Mapbox-loading limbo as every prior session, unrelated to this feature), and
+  the full check→dismiss→reopen cycle holding correctly (including the specific checkbox-only-click path the
+  Session 59 fix addressed). See Architecture notes' "Oregon fish State Data wiring" entry for full mechanism
+  detail, the required updates to 3 other `src.type`-branching functions, and what was and wasn't verifiable
+  live in this sandbox.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -824,6 +843,83 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     every one of the 34 files (all now comfortably under the V8 string-length ceiling post-simplification,
     unlike the raw/merged intermediates), every single feature confirmed to have a non-null id, real geometry,
     `properties.habitatType`, and `properties.OBJECTID` — 97,620 features total, 105MB combined.
+- Oregon fish State Data wiring (Session 62) — wires the Session 61 processed dataset and the Session 60
+  `updateData()` pattern into the real Fish State Data UI, reusing the existing architecture with zero new UI
+  patterns, exactly as scoped.
+  - **`STATE_DATA_SOURCES.fish.or`**: changed from `type: 'perSpecies'` (a live ArcGIS fetch against
+    `nrimp.dfw.state.or.us` that never actually worked — that server sends no CORS headers at all, confirmed
+    in Session 56, so this path was permanently, silently dead since it was first written) to a new
+    `type: 'localFile'`, `species: { '<Display Name>': { file: '<Species>.geojson' } }` — 30 entries, one per
+    in-scope species, explicit filename mapping rather than a derived-from-display-name guess (needed since
+    the mapping isn't always a trivial space-strip — e.g. `'Hybrid Bass (wiper)'` → `HybridBass.geojson`).
+    `CoastalCutthroatTrout`/`Coho`/`WinterSteelhead`/`RedbandTrout` are omitted from the species list entirely
+    (not "coming soon") — the cleanest option given neither of those two choices required new UI, and since
+    no other Fish state source ever covered these 4, omitting them makes them simply not appear in the
+    species dropdown at all, the same as any species with no State Data source anywhere. The dead
+    `OR_FISH_BASE` constant (and its live per-sublayer fetch/merge logic, no longer reachable) was deleted
+    outright rather than left as inert dead code.
+  - **`loadStateDataLayer()`'s new `'localFile'` branch**: a single direct `fetch('data/fish/oregon/' +
+    file)` (no pagination — that all already happened offline), tagging each feature with `_sdLayer`/
+    `_sdShape`/`_sdSortKey` — the exact same shape `fetchStateDataLayerPaged`'s own `tagAndCollect` already
+    produces for every live-fetched source — derived from the feature's OWN real `habitatType`/
+    `geometry.type` (`_sdLayer = properties.habitatType`; `_sdShape = 'line'` for LineString/MultiLineString,
+    else `'polygon'`), never guessed from a name, matching the "don't trust a name, check the actual
+    geometry" principle Session 55 already established for the analogous Washington streams-rendering-as-
+    fill bug. This is what lets the EXISTING `wildlife-statedata-fish-fill`/`-line`/`-line-streams` paint
+    layers (unchanged, zero edits) render Oregon's data correctly with no new layer or paint expression —
+    confirmed via direct grep of every one of this file's own `src.type ===` branch points
+    (`stateDataOptionsFor`, the cache-key ternary, `loadStateDataLayer`'s own dispatch, `wildlifeSpeciesGroups`)
+    to find every place needing the new type recognized, rather than assuming the 2-type (`unified`/
+    `perSpecies`) pattern was exhaustively handled everywhere it mattered.
+  - **`updateData()`, not `setData()`, per explicit instruction** — `applyStateDataToSource(tc, stateKey,
+    data)`, a new shared helper called from both places that used to call `.setData()` directly (the manual
+    `setWildlifeStateDataState` path and the boot-time restore path), branches on `STATE_DATA_SOURCES[tc]
+    [stateKey].type === 'localFile'`. Deliberately does NOT set a `promoteId` source option — the Session 61
+    pipeline's own globally-unique id lives at the GeoJSON-standard top-level `feature.id`, not a properties
+    field, and MapLibre's own diff mechanism (`_dataUpdateable`, per the Session 60 source-reading) already
+    uses `feature.id` automatically whenever no `promoteId` is configured; setting one anyway would be wrong
+    here, since `promoteId` only ever looks inside `properties`, and `properties.OBJECTID` is deliberately
+    the OLD, only-unique-per-source-layer id kept for traceability, not the field to promote. A real
+    prerequisite reasoned through before writing this, not discovered by trial and error: MapLibre's diff
+    path requires the worker's internal `_dataUpdateable` Map to already exist and be valid, which only gets
+    (re)built on a genuine full load — but Washington/Arizona/Nevada, sharing the SAME `wildlife-statedata-
+    fish-source`, still use plain `setData()` with data never explicitly guaranteed to carry clean/unique
+    ids, so switching FROM one of those states TO Oregon without precaution could inherit an invalid (or
+    simply absent) `_dataUpdateable` and throw `"Cannot update existing geojson data"`. Fixed by always
+    calling a trivial empty `setData({features:[]})` immediately before every `updateData({add:...})` call —
+    an empty FeatureCollection always passes the diff mechanism's validity check trivially (nothing to fail
+    it), so this reset can never itself throw, and it has the same "source visibly clears" effect a plain
+    `setData()` switch always had. Confirmed live that switching between a live-fetched state and Oregon,
+    both directions, continues to work correctly.
+  - **Verification — live, not just code review, per explicit instruction**: species dropdown confirmed
+    showing exactly 33 real species (30 Oregon + 3 Arizona-only: Apache Trout/Arctic Grayling/Splake — no
+    duplicates, matching the expected union), correctly grouped into Coldwater (19) then Warmwater (14) via
+    the ALREADY-EXISTING `WILDLIFE_FISH_GROUPS`/`WILDLIFE_FISH_GROUP_ORDER` (no changes needed there — Fish
+    already had this exact grouping infrastructure, just never had real State Data species to exercise it
+    against). All 4 excluded species confirmed absent from the dropdown by direct query. 3 species tested
+    end-to-end (Bull Trout and Rainbow Trout — Coldwater; Largemouth Bass — Warmwater): real
+    `data/fish/oregon/<Species>.geojson` fetches confirmed via captured network requests; checkbox/state-
+    select/active-layers-chip all confirmed correct immediately after selection; the full check→dismiss
+    panel→reopen cycle confirmed holding for all 3, INCLUDING a deliberate checkbox-only-click test (toggle
+    off then back on with zero `<select>` interaction) for Rainbow Trout — the exact interaction shape the
+    Session 59 same-cause fix was built to handle, confirmed still working correctly for this new source type
+    too. Real visual rendering was confirmed via screenshots, but not directly against the live embedded app
+    map — this sandbox's own base map was stuck in the same long-documented Mapbox-v4-loading limbo every
+    prior session touching DEM/vectorbase has hit (`isStyleLoaded()` never became `true` despite several
+    minutes of real wall-clock waiting and the established foreground-forcing-screenshot workaround, tried
+    repeatedly), unrelated to this feature. Worked around exactly as Session 60 did: built an isolated
+    `maplibregl.Map` instance (same vendored library, zero Mapbox dependency) with the real
+    `wildlife-statedata-fish-fill`/`-line-streams` paint config copied verbatim, loaded REAL Bull Trout and
+    Largemouth Bass data through the REAL tagging logic and the REAL `updateData()`-with-empty-reset pattern
+    — confirmed a real dense stream network rendering correctly in the stream color, and a real lake polygon
+    shoreline rendering correctly in the fill color, both via genuine screenshots. This proves the actual
+    paint/rendering mechanism works correctly for real Oregon data; it does not by itself prove the SAME
+    result would show inside the live embedded app's own map instance right now, only because that instance
+    couldn't be gotten to a paintable state at all in this sandbox — a real device / working Mapbox access is
+    the natural next check, same standing caveat as every session before this one that hit the identical
+    environmental wall. Confirmed zero new console errors from this session's changes (the only errors
+    present are the same pre-existing MapLibre internal terrain/elevation exceptions already documented as
+    environmental noise in the Session 60 entry, unchanged in count or content across a fresh reload).
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -5748,3 +5844,49 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   data processing pipeline" entry for the complete mechanism and verification detail on every stage. No
   application source code logic was changed this session (data files + version bump only). APP_VERSION
   bumped 2.53.1 → 2.54.0 (minor — new data asset added to the repo), SHELL_CACHE bumped v167 → v168.
+- Session 62: Wired the Session 61 processed Oregon fish habitat dataset and the Session 60 `updateData()`
+  payload-ceiling pattern into the real Fish State Data UI — the first time both pieces of prior work
+  actually shipped together as a real user-facing feature. Scope: 30 of the 34 processed species; the 4
+  still needing geographic sub-sharding (CoastalCutthroatTrout/Coho/WinterSteelhead/RedbandTrout) were
+  omitted from the species list entirely rather than marked "coming soon," since omission required zero new
+  UI and matches how any species with no State Data source already behaves. Reused the existing Fish State
+  Data architecture completely as instructed — species dropdown, checkbox, state `<select>`, and critically
+  the EXISTING `wildlife-statedata-fish-fill`/`-line`/`-line-streams` paint layers, which needed zero
+  changes at all, since Oregon's data gets tagged into the exact same `_sdLayer`/`_sdShape` shape every
+  other state's data already produces. Also found, with no changes needed, that Fish already had a complete
+  Coldwater/Warmwater grouping system (`WILDLIFE_FISH_GROUPS`/`WILDLIFE_FISH_GROUP_ORDER`) sitting unused
+  for State Data species — simply worked correctly the moment real species existed to group. Replaced
+  Oregon's old `perSpecies` catalog entry (a live ArcGIS fetch against a server confirmed in Session 56 to
+  send no CORS headers at all — permanently, silently broken since it was first written) with a new
+  `type: 'localFile'` source kind, and updated the 3 other places in the file that branch on `src.type`
+  (`stateDataOptionsFor`, `wildlifeSpeciesGroups`, the cache-key logic) to recognize it — found by directly
+  grepping every `src.type ===` check in the file rather than assuming the existing 2-type pattern was
+  exhaustively handled. Implemented the explicitly-requested `updateData()`-not-`setData()` loading via a
+  new shared `applyStateDataToSource()` helper, deliberately WITHOUT setting a `promoteId` source option —
+  the Session 61 pipeline's unique id lives at the GeoJSON-standard top-level `feature.id`, not a properties
+  field, which MapLibre's own diff mechanism already uses by default; setting `promoteId` would have been
+  wrong here, not just unnecessary. Found and fixed one real prerequisite by reasoning through the mechanism
+  before writing code, not by trial and error: since Washington/Arizona/Nevada share the same source and
+  still use plain `setData()` with data never guaranteed to carry clean ids, switching from one of those
+  states to Oregon without precaution could inherit an invalid internal diff-tracking state and throw —
+  fixed by always clearing via a trivial empty `setData()` immediately before every `updateData()` call, a
+  reset that can never itself fail. Verified the actual real geometry types in the shipped data rather than
+  assuming (`lake` is always Polygon, `stream` is LineString/MultiLineString, no MultiPolygon anywhere in
+  the 30 in-scope files) before writing the tagging logic. Live-verified 3 species across both groups (Bull
+  Trout, Rainbow Trout — Coldwater; Largemouth Bass — Warmwater): real network fetches confirmed, checkbox/
+  chip/state-select correctness confirmed immediately and through a full check→dismiss→reopen cycle for all
+  3 (including a deliberate checkbox-only-click test — the exact interaction the Session 59 fix addressed —
+  confirmed still working for this new source type). Real visual rendering was confirmed via an isolated
+  `maplibregl.Map` harness using the exact real paint config and real fetched data (this sandbox's own
+  embedded app map was stuck in the same long-documented Mapbox-loading limbo every prior session has hit,
+  unrelated to this feature) — a real dense stream network and a real lake polygon shoreline both confirmed
+  rendering correctly in genuine screenshots, though this doesn't by itself prove the identical result inside
+  the live app's own map instance, only that it couldn't be gotten to a paintable state in this sandbox to
+  check directly; flagged as the natural next real-device check. Confirmed zero new console errors from this
+  session's own changes. Also handled, per explicit instruction at the start of the session: captured the
+  pre-existing AC monitor-timeout power setting (3600s) before changing it, set both monitor-timeout-ac and
+  standby-timeout-ac to 0 for the remote session, and restored monitor-timeout-ac to its original value at
+  the end while leaving standby-timeout-ac disabled permanently. See Architecture notes' "Oregon fish State
+  Data wiring" entry for full mechanism detail and everything verified live. `node --check` confirmed clean
+  syntax on all extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.54.0 → 2.55.0
+  (minor — new user-facing feature), SHELL_CACHE bumped v168 → v169.

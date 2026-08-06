@@ -3185,7 +3185,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.54.0';
+  var APP_VERSION = '2.55.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4566,7 +4566,6 @@
   var NV_BIGGAME_BASE = 'https://services.arcgis.com/RyxlXSfFi87rAosq/arcgis/rest/services/NDOWBigGameDistributions/FeatureServer';
   var NV_SMALLGAME_BASE = 'https://services.arcgis.com/RyxlXSfFi87rAosq/arcgis/rest/services/NDOWSmallGameDistributions/FeatureServer';
   var AZ_TROUT_BASE = 'https://services2.arcgis.com/os1CphwIyxBDDUGn/arcgis/rest/services/troutChallenge_';
-  var OR_FISH_BASE = 'https://nrimp.dfw.state.or.us/arcgis/rest/services/FHD/OregonFishHabitatDistribution2/FeatureServer';
   var STATE_DATA_SOURCES = {
     fish: {
       wa: {
@@ -4581,43 +4580,61 @@
         note: 'Statewide layer — shows all mapped species together, not filtered to just this one.'
       },
       or: {
-        state: 'Oregon', type: 'perSpecies',
+        // Session 62 — switched from a live perSpecies ArcGIS fetch to a static, offline-
+        // processed dataset (the old OR_FISH_BASE / nrimp.dfw.state.or.us endpoint constant is
+        // deleted — no longer referenced anywhere). Oregon's own ArcGIS server sends NO CORS
+        // headers on any request — confirmed live via curl in Session 56 — a permanent, server-
+        // side block this app's client-side fetch() can never work around; the live 'perSpecies'
+        // path for Oregon never actually rendered anything, ever, regardless of species/query
+        // shape. Session 61 processed the same underlying ODFW source data offline (see CLAUDE.md's
+        // "Oregon fish habitat data processing pipeline" entry) into data/fish/oregon/<Species>.geojson,
+        // one file per species, each a merged stream+lake FeatureCollection with a real
+        // habitatType ('stream'|'lake') property per feature and a globally-unique top-level
+        // feature.id assigned at merge time (NOT properties.OBJECTID, which is the original,
+        // only-unique-per-source-layer id, kept for traceability only) — see loadStateDataLayer's
+        // 'localFile' branch for how this gets tagged into the same _sdLayer/_sdShape/_sdSortKey
+        // shape every other State Data source already produces, so the existing fill/line/
+        // line-streams paint layers need zero changes to render it correctly.
+        // 4 of the original 34 processed species are deliberately excluded here for now —
+        // CoastalCutthroatTrout/Coho/WinterSteelhead/RedbandTrout are still oversized for a single
+        // shared source per the updateData() payload-ceiling timing research (11,500-53,000
+        // features each) and need geographic sub-sharding, not yet designed — omitted from this
+        // species list entirely (not shown as "coming soon") so they're just not selectable yet,
+        // the same way any species with no State Data source at all already isn't.
+        state: 'Oregon', type: 'localFile',
         attribution: 'Oregon Dept. of Fish & Wildlife — Fish Habitat Distribution',
+        note: 'Offline-processed dataset (Oregon’s own server blocks direct live requests) — a snapshot, not a live feed.',
         species: {
-          'Bull Trout': { base: OR_FISH_BASE, layers: { stream: 1 } },
-          'Fall Chinook': { base: OR_FISH_BASE, layers: { stream: 2, lake: 3 } },
-          'Spring Chinook': { base: OR_FISH_BASE, layers: { stream: 4, lake: 5 } },
-          'Chum': { base: OR_FISH_BASE, layers: { stream: 6 } },
-          'Coho': { base: OR_FISH_BASE, layers: { stream: 7, lake: 8 } },
-          'Sockeye': { base: OR_FISH_BASE, layers: { stream: 9, lake: 10 } },
-          'Summer Steelhead': { base: OR_FISH_BASE, layers: { stream: 11, lake: 12 } },
-          'Winter Steelhead': { base: OR_FISH_BASE, layers: { stream: 13, lake: 14 } },
-          'Redband Trout': { base: OR_FISH_BASE, layers: { stream: 15, lake: 16 } },
-          'Rainbow Trout': { base: OR_FISH_BASE, layers: { stream: 17, lake: 18 } },
-          'Coastal Cutthroat Trout': { base: OR_FISH_BASE, layers: { stream: 19, lake: 20 } },
-          'Lahontan Cutthroat Trout': { base: OR_FISH_BASE, layers: { stream: 21 } },
-          'Westslope Cutthroat Trout': { base: OR_FISH_BASE, layers: { stream: 22 } },
-          'Mountain Whitefish': { base: OR_FISH_BASE, layers: { stream: 23 } },
-          'Brook Trout': { base: OR_FISH_BASE, layers: { stream: 25, lake: 26 } },
-          'Brown Trout': { base: OR_FISH_BASE, layers: { stream: 27, lake: 28 } },
-          'Lake Trout': { base: OR_FISH_BASE, layers: { lake: 29 } },
-          'White Sturgeon': { base: OR_FISH_BASE, layers: { stream: 31 } },
-          'Green Sturgeon': { base: OR_FISH_BASE, layers: { stream: 32 } },
-          'Eulachon': { base: OR_FISH_BASE, layers: { stream: 142 } },
-          'Largemouth Bass': { base: OR_FISH_BASE, layers: { stream: 88, lake: 89 } },
-          'Smallmouth Bass': { base: OR_FISH_BASE, layers: { stream: 90, lake: 91 } },
-          'Bluegill': { base: OR_FISH_BASE, layers: { stream: 92, lake: 93 } },
-          'Pumpkinseed': { base: OR_FISH_BASE, layers: { stream: 94, lake: 95 } },
-          'Warmouth': { base: OR_FISH_BASE, layers: { stream: 96, lake: 97 } },
-          'Black Crappie': { base: OR_FISH_BASE, layers: { stream: 98, lake: 99 } },
-          'White Crappie': { base: OR_FISH_BASE, layers: { stream: 100, lake: 101 } },
-          'Channel Catfish': { base: OR_FISH_BASE, layers: { stream: 111, lake: 112 } },
-          'Flathead Catfish': { base: OR_FISH_BASE, layers: { stream: 113, lake: 114 } },
-          'Yellow Perch': { base: OR_FISH_BASE, layers: { stream: 116, lake: 117 } },
-          'Walleye': { base: OR_FISH_BASE, layers: { stream: 118, lake: 119 } },
-          'Hybrid Bass (wiper)': { base: OR_FISH_BASE, layers: { lake: 121 } },
-          'Striped Bass': { base: OR_FISH_BASE, layers: { stream: 122 } },
-          'American Shad': { base: OR_FISH_BASE, layers: { stream: 147 } }
+          'Bull Trout': { file: 'BullTrout.geojson' },
+          'Fall Chinook': { file: 'FallChinook.geojson' },
+          'Spring Chinook': { file: 'SpringChinook.geojson' },
+          'Chum': { file: 'Chum.geojson' },
+          'Sockeye': { file: 'Sockeye.geojson' },
+          'Summer Steelhead': { file: 'SummerSteelhead.geojson' },
+          'Rainbow Trout': { file: 'RainbowTrout.geojson' },
+          'Lahontan Cutthroat Trout': { file: 'LahontanCutthroatTrout.geojson' },
+          'Westslope Cutthroat Trout': { file: 'WestslopeCutthroatTrout.geojson' },
+          'Mountain Whitefish': { file: 'MountainWhitefish.geojson' },
+          'Brook Trout': { file: 'BrookTrout.geojson' },
+          'Brown Trout': { file: 'BrownTrout.geojson' },
+          'Lake Trout': { file: 'LakeTrout.geojson' },
+          'White Sturgeon': { file: 'WhiteSturgeon.geojson' },
+          'Green Sturgeon': { file: 'GreenSturgeon.geojson' },
+          'Eulachon': { file: 'Eulachon.geojson' },
+          'Largemouth Bass': { file: 'LargemouthBass.geojson' },
+          'Smallmouth Bass': { file: 'SmallmouthBass.geojson' },
+          'Bluegill': { file: 'Bluegill.geojson' },
+          'Pumpkinseed': { file: 'Pumpkinseed.geojson' },
+          'Warmouth': { file: 'Warmouth.geojson' },
+          'Black Crappie': { file: 'BlackCrappie.geojson' },
+          'White Crappie': { file: 'WhiteCrappie.geojson' },
+          'Channel Catfish': { file: 'ChannelCatfish.geojson' },
+          'Flathead Catfish': { file: 'FlatheadCatfish.geojson' },
+          'Yellow Perch': { file: 'YellowPerch.geojson' },
+          'Walleye': { file: 'Walleye.geojson' },
+          'Hybrid Bass (wiper)': { file: 'HybridBass.geojson' },
+          'Striped Bass': { file: 'StripedBass.geojson' },
+          'American Shad': { file: 'AmericanShad.geojson' }
         }
       },
       az: {
@@ -4731,7 +4748,7 @@
     var out = [];
     Object.keys(byState).forEach(function(stateKey){
       var src = byState[stateKey];
-      if (src.type === 'unified' || (src.type === 'perSpecies' && src.species[speciesName])){
+      if (src.type === 'unified' || ((src.type === 'perSpecies' || src.type === 'localFile') && src.species[speciesName])){
         out.push({ stateKey: stateKey, stateName: src.state });
       }
     });
@@ -4850,6 +4867,40 @@
     if (stateDataCache[cacheKey]){ cb(stateDataCache[cacheKey]); return; }
     if (stateDataLoadCallbacks[cacheKey]){ stateDataLoadCallbacks[cacheKey].push(cb); return; }
     stateDataLoadCallbacks[cacheKey] = [cb];
+    // 'localFile' (Oregon, Session 62) — an already-fully-processed static GeoJSON file, one
+    // per species, sitting in data/fish/oregon/ (see CLAUDE.md's "Oregon fish habitat data
+    // processing pipeline" entry). No pagination, no per-sublayer fetch/merge — that all
+    // already happened offline. Tags each feature into the same _sdLayer/_sdShape/_sdSortKey
+    // shape every live-fetched source already produces (see fetchStateDataLayerPaged's own
+    // tagAndCollect above), derived from each feature's OWN real data (habitatType,
+    // geometry.type) rather than guessed, so the existing fill/line/line-streams paint layers
+    // in reinitializeLayers need zero changes to render this correctly.
+    if (src.type === 'localFile'){
+      var localSpec = src.species[speciesName];
+      if (!localSpec){ cb(null); return; }
+      fetch('data/fish/oregon/' + localSpec.file)
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(raw){
+          (raw.features || []).forEach(function(feat){
+            feat.properties = feat.properties || {};
+            feat.properties._sdLayer = feat.properties.habitatType; // 'stream' | 'lake'
+            var gt = feat.geometry && feat.geometry.type;
+            feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
+            feat.properties._sdSortKey = 1; // no huc12-style coarse-context layer in this dataset
+          });
+          var merged = { type: 'FeatureCollection', features: raw.features || [] };
+          stateDataCache[cacheKey] = merged;
+          var cbs = stateDataLoadCallbacks[cacheKey]; delete stateDataLoadCallbacks[cacheKey];
+          cbs.forEach(function(f){ f(merged); });
+        })
+        .catch(function(err){
+          console.error('[FieldMap] Oregon State Data local file fetch failed:', localSpec.file, err);
+          showToast('Couldn’t load this state’s data — the source server may be unavailable from this app right now.');
+          var cbs = stateDataLoadCallbacks[cacheKey]; delete stateDataLoadCallbacks[cacheKey];
+          cbs.forEach(function(f){ f(null); });
+        });
+      return;
+    }
     var fetches = [];
     if (src.type === 'unified'){
       fetches.push({ url: src.url + '/query?where=1%3D1&outFields=*&f=geojson', sdLayer: 'range' });
@@ -6710,7 +6761,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
                   wildlifeStateDataActiveByCategory[tc].speciesName === sdSpeciesAtLoad;
                 if (!stillCurrent) return; // switched away while this boot-time fetch was in flight
                 if (map.getSource('wildlife-statedata-' + tc + '-source')){
-                  map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
+                  applyStateDataToSource(tc, sdStateKeyAtLoad, data);
                   updateWildlifeStateDataMapFilter();
                   updateActiveLayersChip();
                 }
@@ -17898,7 +17949,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (stateSources){
       Object.keys(stateSources).forEach(function(stateKey){
         var src = stateSources[stateKey];
-        if (src.type === 'perSpecies'){
+        if (src.type === 'perSpecies' || src.type === 'localFile'){
           Object.keys(src.species).forEach(function(sp){
             if (!byName[sp]){ byName[sp] = { name: sp, category: null, codes: [], sample: null }; order.push(sp); }
           });
@@ -18292,6 +18343,43 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('wildlife-statedata-toggle').checked = !!(isActiveSelection && wildlifeStateDataOnByCategory[wildlifeActiveTopCategory]);
   }
 
+  // Applies a resolved State Data payload to its shared per-category source — branches between
+  // setData() (every live-fetched state: Washington/Arizona/Nevada/Utah) and updateData()
+  // (Oregon's 'localFile' sources, Session 62) per the MapLibre payload-ceiling findings now in
+  // CLAUDE.md: updateData()'s diff path is what actually avoids the setData()/JSON.stringify()
+  // crash risk on a large dataset, and every Oregon feature already carries a real, globally-
+  // unique top-level `feature.id` from the Session 61 merge step — MapLibre's own diff mechanism
+  // (_dataUpdateable, keyed by feature.id whenever no `promoteId` SOURCE OPTION is configured)
+  // uses that automatically, with zero extra config needed; the unique id lives at the
+  // GeoJSON-standard `feature.id` location, not a properties field, so setting an actual
+  // `promoteId` option here would be wrong — that only ever looks inside `properties`, and
+  // properties.OBJECTID is deliberately the OLD, non-globally-unique, per-source-layer id kept
+  // only for traceability, not the field to promote.
+  // Always resets via a trivial EMPTY setData() first, even on the updateData() path — this is
+  // what actually makes updateData() safe to use here at all: MapLibre's worker-side
+  // `_dataUpdateable` Map (which updateData()'s diff mechanism requires to already exist and be
+  // valid) only gets rebuilt on a genuine full load, and the OTHER states sharing this same
+  // source still use plain setData() with data that was never explicitly guaranteed to carry
+  // clean/unique ids — so switching from one of those states TO Oregon without this reset could
+  // otherwise inherit an invalid (or simply absent) `_dataUpdateable` and throw "Cannot update
+  // existing geojson data". An empty FeatureCollection always passes the diff mechanism's own
+  // validity check trivially (there are no features to fail it), so this reset can never itself
+  // fail, and it has the same "source clears immediately" effect a plain setData() switch always
+  // had — confirmed live (see this session's verification notes) that switching FROM a
+  // live-fetched state TO Oregon and back still works correctly either direction.
+  function applyStateDataToSource(tc, stateKey, data){
+    var srcObj = map && map.getSource('wildlife-statedata-' + tc + '-source');
+    if (!srcObj) return;
+    var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][stateKey];
+    var features = (data && data.features) || [];
+    if (src && src.type === 'localFile'){
+      srcObj.setData({ type: 'FeatureCollection', features: [] });
+      srcObj.updateData({ add: features });
+    } else {
+      srcObj.setData(data || { type: 'FeatureCollection', features: [] });
+    }
+  }
+
   // Picks (and loads) one state's data for the current species, in the currently-displayed
   // category — only one state's State Data is shown at a time per category, matching GMU
   // boundaries' own "only one state at a time" rule. Picking a state also activates it (checkbox
@@ -18315,7 +18403,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     loadStateDataLayer(tc, active.speciesName, stateKey, function(data){
       var stillCurrent = wildlifeStateDataActiveByCategory[tc] && wildlifeStateDataActiveByCategory[tc].stateKey === stateKey && wildlifeStateDataActiveByCategory[tc].speciesName === active.speciesName;
       if (!stillCurrent) return; // switched away while this was in flight
-      if (map && map.getSource('wildlife-statedata-' + tc + '-source')) map.getSource('wildlife-statedata-' + tc + '-source').setData(data || { type: 'FeatureCollection', features: [] });
+      applyStateDataToSource(tc, stateKey, data);
       updateWildlifeStateDataMapFilter();
     });
   }
