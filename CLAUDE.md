@@ -492,6 +492,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   — previously indistinguishable on screen from a silent failure. See Architecture notes' "State Data checkbox
   silently unchecking — the real single-cause fix" entry for full mechanism detail and live verification
   across all 3 categories.
+- MapLibre's `GeoJSONSource.setData()`/`_updateWorkerData()` payload-size ceiling (the same crash documented
+  in the Washington "What's broken" entry below) is now DEFINITIVELY resolved for future large-dataset work
+  (Session 60) — `updateData({add:[...], update:[...], remove:[...]})` genuinely avoids the crash (proven via
+  vendored source reading, not just testing) AND its paint refresh works correctly out of the box, confirmed
+  with real visual before/after screenshots against dense synthetic polyline data (50-15,000 vertices/feature,
+  matching Oregon fish habitat's real shape) — no forced repaint or special lifecycle trigger was needed. The
+  one real, non-obvious catch, found only through direct empirical measurement: `updateData()`'s worker-side
+  diff processing re-derives and re-tiles the WHOLE accumulated dataset on every single call, not just the
+  newly-added chunk — so per-call cost grows with the RUNNING TOTAL already in the source, not the chunk size
+  alone (confirmed: adding just 500 features to an already-17,000-feature source took ~17.5s, matching the
+  cost of the CUMULATIVE total, not a small diff). This directly shapes how Oregon's 34-species/884MB dataset
+  must be structured — see Architecture notes' "MapLibre large-dataset payload ceiling: updateData() pattern"
+  entry for the complete mechanism, the empirical chunk-size/cumulative-size timing table, and the concrete
+  per-source sharding recommendation this produces.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -506,7 +520,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   v3.6.2 library-level limitation, not an app logic bug, and a real fix (likely splitting the dataset across
   multiple sources/layers, e.g. by county or by index range, or investigating whether a newer MapLibre version
   handles this differently) is a real architectural change, appropriately out of scope for this session's
-  already-large fix list.
+  already-large fix list. UPDATE (Session 60): the fix path is now proven and documented — see Architecture
+  notes' "MapLibre large-dataset payload ceiling: updateData() pattern" entry. `updateData({add:[...]})` in
+  per-species (or further per-county/index-range) sharded sources, seeded empty with the correct `promoteId`,
+  is the confirmed-working approach; still not applied to Washington's own data in this codebase as of Session
+  60 — that remains a real, separate follow-up, not done automatically by proving the pattern works.
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
   NOT converted to the new #view-drawer — deliberately out of scope for both drawer-unification batches (not
   named in either batch's spec), not a bug
@@ -541,6 +559,106 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   ~1-1.5s (just JSON-parsing the larger cached blob, no recomputation) — confirmed for both Idaho and Utah.
 
 ## Architecture notes
+- MapLibre large-dataset payload ceiling: `updateData()` pattern (Session 60) — resolves, definitively, the
+  open question left by an earlier (undocumented — a real CLAUDE.md gap, not a false lead) research session:
+  whether MapLibre's `GeoJSONSource.setData()` crash on very large datasets (see the Washington "What's
+  broken" entry) has a working fix, and specifically whether the fix's paint actually refreshes correctly,
+  not just avoids the crash at the data level. This directly unblocks scoping Oregon fish habitat processing
+  (34 species, one raw source file alone 884MB before conversion/simplification).
+  - **The crash, confirmed via the vendored `maplibre-gl.js` source, not just observed behavior**:
+    `GeoJSONSource.setData(t)` sets `this._data = t` then calls `this._updateWorkerData()` with no argument;
+    inside that method, the no-diff branch does `i.data = JSON.stringify(this._data)` before ever handing
+    anything to the worker — a full-dataset `JSON.stringify()` on the MAIN THREAD, which throws
+    `RangeError: Invalid string length` the instant the serialized result would exceed V8's hard string
+    ceiling (536,870,888 UTF-16 code units) — not a MapLibre-specific limit, a fundamental JS engine one,
+    confirmed identical in this session's own Node and Chrome tests. Re-confirmed live this session against
+    the REAL public API (not just a raw `JSON.stringify()` call): `source.setData(fc)` on a dataset already
+    past this ceiling throws the identical `RangeError` synchronously, before any network/worker activity —
+    it never even reaches an async `'error'` event, so a `try/catch` around the call is the only way to
+    observe it.
+  - **Why `updateData()` avoids it, confirmed via source, not assumed**: `updateData(t)` calls
+    `this._updateWorkerData(t)` — WITH the diff object as an argument. Inside `_updateWorkerData`, when an
+    argument IS passed, the code takes an entirely different branch: `i.dataDiff = e` — the full-dataset
+    `JSON.stringify()` branch is never reached at all. The message (`{dataDiff: {add/update/remove/removeAll}}`)
+    goes to the worker via `this.actor.send(...)`, which itself uses `postMessage` with structured clone (a
+    custom `Dn()`/`On()` serializer pair, confirmed by reading the Actor class), not `JSON.stringify` — this
+    is what actually lets a diff-based update sidestep the V8 string-length ceiling: structured clone has no
+    such fixed character-count limit, its costs scale differently (see the cumulative-cost finding below,
+    which is the REAL practical ceiling for this path).
+  - **A real, non-obvious prerequisite, found only by reading the WORKER-side code, not just the source
+    class**: `updateData()`'s diff can only ever be applied against a worker-side `_dataUpdateable` — a
+    `Map<id, feature>` the worker builds from a genuine FULL load (`ge(data, promoteId) ? me(data, promoteId)
+    : void 0`). `ge()` is a strict validity check: EVERY feature in that full load must have a non-null,
+    UNIQUE id (`feature.id`, or `feature.properties[promoteId]` if a `promoteId` source option is set) — if
+    even one feature is missing an id, or two features share one, `_dataUpdateable` is set to `undefined`,
+    and every subsequent `updateData()` call on that source throws `"Cannot update existing geojson data in
+    <source>"`. Concretely, for Oregon: `addSource()` must be seeded with a full load first — an EMPTY
+    `{type:'FeatureCollection', features:[]}` is sufficient and trivially passes the validity check (the
+    per-feature loop never runs) — and the source's `promoteId` option (or each feature's own `.id`) must
+    point at a real, stable, unique per-feature identifier. ArcGIS-sourced GeoJSON typically carries this in
+    `properties.OBJECTID`/`FID`/`FID`-equivalent, not the top-level GeoJSON `.id` — `promoteId` must be set
+    to the correct field name at `addSource()` time, or every `add` diff will silently no-op per feature
+    (`fe(o,i)` returns the promoted id; a feature whose id resolves to `null`/`undefined` is just skipped,
+    not an error) rather than throwing, which would be much harder to notice than the "on empty" case.
+  - **Live proof, not just source reading**: built an isolated `maplibregl.Map` instance (same vendored
+    library the app ships, zero external/Mapbox dependency — a background-color-only style, so it sidesteps
+    this sandbox's own well-documented slow/blocked Mapbox v4 access entirely) and added a real GeoJSON line
+    source seeded empty, then loaded with dense synthetic polyline data explicitly shaped to match Oregon's
+    real geometry (LineStrings, 50-15,000 vertices each — a ~3% "very dense" tail matching the earlier
+    session's own finding that a small fraction of real features account for a disproportionate share of
+    total bytes, not uniform density). Confirmed via the real API, with a real `try/catch`, that `setData()`
+    on this data throws the exact same `RangeError: Invalid string length` synchronously. Confirmed
+    `updateData({add:[...]})` on the identical class of oversized data throws nothing, and — the actual open
+    question this session existed to close — confirmed the paint genuinely refreshes correctly via matched
+    before/after screenshots at an identical viewport (empty source → real squiggly LineString geometry
+    visibly rendered, using the map's own line-layer paint, at both a close zoom showing individual line
+    shapes and a wide zoom showing the full feature spread) — **no forced repaint, no special MapLibre
+    lifecycle event, no workaround of any kind was needed**; the ordinary `'data'` events `_updateWorkerData`
+    already fires (`sourceDataType: 'metadata'` then `'content'`, per-tile events following) are sufficient
+    to drive a correct repaint through MapLibre's own normal internal pipeline, identically to `setData()`.
+  - **The real, empirically-discovered catch — cumulative cost, not per-call cost**: timed `updateData({add})`
+    calls of increasing size against ONE growing source (each call ADDING to, not replacing, what was already
+    there): 2,000 features/17MB → 3.3s; +5,000 more (7,000 cumulative)/48MB new → 12.3s; +10,000 more (17,000
+    cumulative)/114MB new → 38.6s. This is NOT linear in the size of what's newly added — confirmed directly
+    by adding just 500 MORE features (a tiny diff) to the by-then-17,000-feature source: 17.5 seconds, not a
+    "small diff, fast" result. Root cause, found by reading the worker's own diff-application code: applying
+    an `add`/`update`/`remove` diff mutates the worker's `_dataUpdateable` Map, then the callback returns
+    `Array.from(this._dataUpdateable.values())` — the ENTIRE current dataset, every time — which is then
+    re-run through geojson-vt tiling from scratch on every single `updateData()` call, not just the newly
+    added features. This means: `updateData()` genuinely solves the CRASH (no hard ceiling from structured
+    clone the way `JSON.stringify` has one), but it does NOT make repeated incremental ingestion into one
+    source cheap at scale — total cost to build up a source via K equal-sized chunks grows roughly with
+    (cumulative total × number of remaining chunks), not with the total size alone. A single one-shot
+    `updateData({add:[...]})` sized to simulate the full ~600MB crash-threshold-equivalent in one call (25M
+    vertices) was also attempted directly: it did not crash, and did not error, but took long enough that it
+    was still processing after 75+ seconds of waiting in this sandbox — consistent with, not contradicting,
+    the cumulative-cost finding (one huge call pays the "full re-tile" cost once, at the largest possible
+    size, which is exactly the expensive case this finding predicts).
+  - **The concrete recommendation this produces for Oregon (34 species, 884MB raw)**: do NOT stream the
+    entire 884MB into ONE MapLibre source via many sequential `updateData()` calls — the cumulative-re-tile
+    cost means the LAST chunks of such a stream would be by far the slowest, and total wall-clock cost to
+    fully populate one giant source scales worse than linearly with total size. Instead, shard by the
+    boundary that already exists naturally in this codebase's own State Data model
+    (`loadStateDataLayer(topCategory, speciesName, stateKey, cb)` already operates strictly per-species) —
+    give each species (or, for a single unusually large species, a further sub-shard by county/HUC/index
+    range, the same idea already flagged as the real fix for Washington's fish data in the "What's broken"
+    entry) its OWN MapLibre source, each seeded empty with the correct `promoteId`, each populated via
+    `updateData({add:[...]})` in chunks sized to keep any one species' OWN cumulative total in the
+    low-tens-of-MB/low-thousands-of-features range where this session's timing table shows sub-few-second
+    responsiveness (roughly the 2,000-5,000-feature / 15-50MB band) — not one shared source accumulating all
+    34 species' data together, which would recreate the exact cumulative-cost blowup this finding warns
+    against, just moved from "crashes outright" to "eventually becomes impractically slow."
+  - **Standard pattern for any future large dataset, not just Oregon fish** (the reusable recipe this
+    session's task explicitly asked to leave behind): (1) `addSource(id, {type:'geojson', data:{type:
+    'FeatureCollection', features:[]}, promoteId: '<real stable per-feature id field>'})` — seed empty, with
+    the id field genuinely set correctly, since this determines whether `_dataUpdateable` builds at all; (2)
+    ingest via `map.getSource(id).updateData({add: chunkOfFeatures})`, never `setData()`, for anything that
+    could plausibly approach hundreds of MB; (3) keep each chunk AND the running cumulative total for that
+    one source in the low-thousands-of-features range — reshard into a NEW source (new id, new empty seed)
+    rather than continuing to grow one source past that point; (4) no repaint/lifecycle workaround is needed
+    — MapLibre's own `'data'` events already drive a correct repaint for the diff path, identically to
+    `setData()`; (5) every feature in every chunk must carry the SAME unique-id field configured as
+    `promoteId` at step 1, or that feature is silently dropped (no error) rather than rendered.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -5390,3 +5508,41 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   zero console errors throughout. See Architecture notes' "State Data checkbox silently unchecking — the real
   single-cause fix" entry for full mechanism detail. `node --check` confirmed clean syntax on all extracted
   inline `<script>` blocks. APP_VERSION bumped 2.52.0 → 2.53.0, SHELL_CACHE bumped v165 → v166.
+- Session 60: Closed out the one open question left by an earlier, undocumented research session (a real
+  CLAUDE.md gap — that work happened but was never written up, confirmed via git log/reflog/stash showing no
+  trace of it) — whether MapLibre's `updateData({add:[...]})` diff path, already confirmed to avoid the
+  `setData()`/`JSON.stringify()` `RangeError` crash on very large datasets, also correctly triggers a real
+  paint refresh, not just an error-free data load. This was the direct blocker for scoping Oregon fish habitat
+  processing (34 species, one raw source file 884MB before conversion). Read the vendored `maplibre-gl.js`
+  source directly for both `_updateWorkerData()` (confirming exactly why `setData()` crashes and exactly why
+  `updateData()`'s diff path avoids it — structured-clone `postMessage`, never a full-dataset
+  `JSON.stringify()`) and the worker's own diff-application code (confirming a real, previously-undocumented
+  prerequisite: every feature needs a stable unique id, or `promoteId`, for the diff mechanism to work at all;
+  a missing id silently drops that one feature rather than erroring). Built an isolated `maplibregl.Map`
+  instance (same vendored library, a background-only style with zero Mapbox dependency, sidestepping this
+  sandbox's own well-documented slow/blocked Mapbox v4 access) and proved, live, with dense synthetic
+  polyline data explicitly shaped to match Oregon's real geometry (50-15,000 vertices/feature, ~3% very-dense
+  tail): `setData()` on oversized data throws the real `RangeError` synchronously via the real public API;
+  `updateData({add:[...]})` on the same class of data throws nothing AND paints correctly — confirmed via
+  matched before/after screenshots at an identical viewport, not just absence of console errors — with no
+  forced repaint or special lifecycle trigger needed. Discovered, empirically, the one real remaining catch:
+  `updateData()`'s worker-side diff re-derives and re-tiles the WHOLE accumulated dataset on every call, not
+  just the new chunk, so cost scales with the RUNNING TOTAL already in a source, not the added chunk's own
+  size — confirmed by timing progressively larger additions to one growing source (2,000 feat/17MB → 3.3s;
+  +5,000 more → 12.3s; +10,000 more → 38.6s) and, conclusively, by adding just 500 MORE features to an
+  already-17,000-feature source and finding it took ~17.5s, matching the cost of the cumulative total rather
+  than a small diff. This produces a concrete recommendation for Oregon: shard by species (the natural
+  boundary this codebase's own `loadStateDataLayer` already uses per-species), not one giant shared source,
+  keeping each source's own cumulative total in the low-thousands-of-features/low-tens-of-MB range where this
+  session's own timing data shows sub-few-second responsiveness. Hit and worked around this sandbox's own
+  well-documented `requestAnimationFrame`-throttling-while-hidden gotcha (Sessions 27-28/48) repeatedly during
+  testing — every `style.load`/paint-related stall was resolved by a foreground-forcing screenshot action, not
+  a real app or MapLibre bug. Also confirmed a `gl.readPixels()`-based pixel-level paint verification attempt
+  was unreliable specifically because MapLibre's default `preserveDrawingBuffer:false` clears the WebGL buffer
+  after each compositor swap — screenshots (which capture the actual compositor output) remained the
+  reliable visual-proof method, not a flaw in the paint-refresh finding itself. See Architecture notes'
+  "MapLibre large-dataset payload ceiling: updateData() pattern" entry for the complete mechanism, the full
+  empirical timing table, and the reusable 5-step pattern for any future large dataset, not just this one. No
+  application source code was changed this session (a pure investigation/documentation session, matching the
+  established pattern for sessions like this one) — APP_VERSION and SHELL_CACHE were still bumped per explicit
+  instruction. APP_VERSION bumped 2.53.0 → 2.53.1, SHELL_CACHE bumped v166 → v167.
