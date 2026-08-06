@@ -506,6 +506,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   must be structured — see Architecture notes' "MapLibre large-dataset payload ceiling: updateData() pattern"
   entry for the complete mechanism, the empirical chunk-size/cumulative-size timing table, and the concrete
   per-source sharding recommendation this produces.
+- Oregon fish habitat data — the first real end-to-end run of the payload-ceiling `updateData()` pattern
+  above — is now processed and sitting in `data/fish/oregon/` as 34 clean per-species GeoJSON files (Session
+  61), converted from 56 raw Esri JSON files (32 species with stream data, 24 with lake data, 34 unique
+  species total) pulled directly from ArcGIS REST. **Not yet wired into the map UI — that's a deliberate,
+  separate follow-up** (per explicit instruction), so there is no new Layers-panel entry, no new map source,
+  and no new rendering code from this session; this is data-prep only. A real, critical bug was found and
+  fixed during processing, not glossed over: raw OBJECTID is only unique WITHIN one ArcGIS layer (a stream
+  feature and a lake feature can share OBJECTID 1), so merging stream+lake per species without fixing this
+  would have caused MapLibre's `updateData()` diff Map to silently drop/overwrite whichever feature lost the
+  collision — exactly the class of bug this project has spent weeks chasing elsewhere. Fixed by reassigning a
+  new globally-unique sequential id per species at merge time (original OBJECTID preserved in `properties`
+  for traceability). Final sizes range from ~1KB (HybridBass, 1 feature) to 54.4MB (CoastalCutthroatTrout,
+  53,337 features, down from 582MB pre-simplification/905MB raw) — 4 species (CoastalCutthroatTrout, Coho,
+  WinterSteelhead, RedbandTrout) still exceed the "low-thousands-of-features" comfort band from the
+  `updateData()` timing research and will need per-species sharding consideration (not attempted this
+  session) once actually wired in. See Architecture notes' "Oregon fish habitat data processing pipeline"
+  entry for the complete pipeline, every bug found and fixed along the way, and full verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -659,6 +676,154 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     — MapLibre's own `'data'` events already drive a correct repaint for the diff path, identically to
     `setData()`; (5) every feature in every chunk must carry the SAME unique-id field configured as
     `promoteId` at step 1, or that feature is silently dropped (no error) rather than rendered.
+- Oregon fish habitat data processing pipeline (Session 61) — converts the raw Esri JSON pulled from ODFW's
+  ArcGIS REST endpoints (`C:\Users\gsose\Desktop\FieldMap\species overlays\fish\oregon`, read-only source, 56
+  files: 32 species with a `_stream.json` layer, 24 with a `_lake.json` layer, 34 unique species total) into
+  34 clean per-species GeoJSON files in `data/fish/oregon/`. Data-prep only — deliberately NOT wired into the
+  map UI, no new Layers-panel entry, no new MapLibre source/layer, per explicit instruction; that's a separate
+  follow-up once this output is confirmed solid. Built as a set of standalone Node scripts in a scratch
+  working directory (not committed — this repo has no npm project of its own, single-file-app by design), run
+  in the order below; each stage was verified live before the next started, per the task's own explicit
+  instruction not to assume a later stage would catch an earlier stage's problems.
+  - **Tooling substitution, flagged rather than silently done**: the task named `ogr2ogr` (GDAL) for the raw
+    conversion step. GDAL is not installed anywhere on this machine (checked common OSGeo4W/QGIS/conda
+    locations, `pip show gdal`, `python -c "from osgeo import gdal"` — none present), and a `choco install
+    gdal` attempt failed outright (package not found via the configured source) without needing the deeper
+    admin-elevation question to even come up. Rather than spend further session time on a Windows GDAL install
+    (historically finicky, and this exact Esri-JSON-to-GeoJSON conversion is a well-defined, deterministic
+    schema transform with no real ambiguity), wrote a hand-rolled, directly-verified Node converter instead —
+    substituted openly here rather than silently presented as if `ogr2ogr` had been used. `mapshaper` (the
+    Step 4 tool) WAS available via `npx mapshaper` with no install issues, so only the Step 2 tool changed.
+  - **STEP 1 — promoteId/stable-id verification, done BEFORE any conversion, per explicit instruction**:
+    checked every one of the 56 raw files' own field schema (a fast header-only peek, chunked up to 5MB per
+    file since one file's own field-schema declaration or first feature turned out to need that much — see
+    below) for `OBJECTID`/`FID` presence — 55 of 56 files declare `objectIdFieldName:"OBJECTID"` in their own
+    header; the one exception (`SpringChinook_stream.json`) has `"geometryType":null,"fields":null` in its
+    header (that one file's own ArcGIS export evidently didn't capture header metadata, unlike every other
+    file) but still carries a real, populated `attributes.OBJECTID` on every individual feature — confirmed
+    directly, not assumed from the (unreliable, for this one file) header. This is why the actual converter
+    (see Step 2) derives geometry type and field presence from each feature's own real data rather than
+    trusting the declared header, which turned out to matter for exactly this file. The definitive uniqueness/
+    null check (100% of features, not a sample) happened DURING the real Step 2 streaming conversion — see
+    there for the result (fully clean).
+  - **STEP 2 — Esri JSON → GeoJSON conversion** (`convert.js`): a hand-rolled converter, not `ogr2ogr` (see
+    above). Reprojects Web Mercator (confirmed via each file's own `spatialReference:{"wkid":102100,
+    "latestWkid":3857}` — SpringChinook_stream again the one exception with a null header, confirmed via
+    coordinate-magnitude sanity check to be the same projection regardless) to WGS84 via the standard exact
+    spherical inverse-Mercator formula, rounded to 6 decimals (verified against a known real coordinate,
+    landing squarely in Oregon: -123.459, 45.708). Converts `geometry.paths` → GeoJSON LineString/
+    MultiLineString and `geometry.rings` → Polygon/MultiPolygon with REAL ring-hole classification (not a
+    naive pass-through): Esri's ring-winding convention is the opposite of GeoJSON/RFC7946's (Esri: exterior
+    rings clockwise, holes counterclockwise; GeoJSON: the reverse), classified via signed-area (shoelace
+    formula) on the raw pre-reprojection coordinates (safe since Web Mercator's inverse projection is
+    orientation-preserving) and each ring's point order reversed on output to match GeoJSON's own convention
+    — verified via a real MultiPolygon-bearing file (`BlackCrappie_lake` etc., confirmed via the actual
+    geometry-type tally: 88 Polygon + 2 MultiPolygon just in that one file). `feature.id` is set to the
+    original `OBJECTID`/`FID` at this stage (still per-LAYER unique only — see the merge-stage bug below for
+    why this isn't the final id), with the original also kept in `properties.OBJECTID` and a new
+    `properties.habitatType` (`'stream'`/`'lake'`, from the filename) added.
+    - **Real bug found and fixed mid-pipeline, not before starting**: `stream-json` (the npm streaming JSON
+      parser used to avoid loading up to 905MB of raw JSON into memory at once — directly relevant, since a
+      naive `fs.readFileSync` + `JSON.parse` on that file would hit the SAME V8 string-length ceiling this
+      whole project's own MapLibre research is about, confirmed live: attempting exactly that later in the
+      pipeline threw `RangeError: Cannot create a string longer than 0x1fffffe8 characters` — 536,870,888,
+      the exact same ceiling) turned out to leak internal parser state across sequential in-process calls —
+      reproduced with just 2 back-to-back conversions in one Node process, the second always failing with
+      `Parser cannot parse input: expected a value` regardless of which real file it was. Fixed by running
+      each file's conversion in its OWN separate Node process (a bash loop invoking `node convert.js` per
+      file) rather than looping in one long-lived process — slightly more process-startup overhead across 56
+      files, materially more robust.
+    - **Verification (Step 1's real payoff)**: ran across all 56 files, zero errors, zero null OBJECTIDs, zero
+      duplicate OBJECTIDs — 97,644 total features, 100% verified (not sampled), including
+      `SpringChinook_stream.json`'s per-feature OBJECTIDs despite its own null header metadata.
+  - **STEP 3 — per-species stream+lake merge** (`merge.js`): streams two already-converted layer files into
+    one FeatureCollection per species, never holding a whole file in memory (critical for
+    `CoastalCutthroatTrout_stream.geojson` alone, ~581MB post-conversion).
+    - **A second real, critical bug — found only by directly checking, not assumed clean**: OBJECTID is only
+      unique WITHIN one ArcGIS layer — a stream feature and a lake feature for the same species can (and, in
+      real data, DO) share the same OBJECTID, since each layer's own numbering starts fresh at 1. Confirmed
+      live on `BlackCrappie`: 128 merged features, only 90 unique ids. Per the `updateData()`/`promoteId`
+      findings, this is exactly the "silent feature drop" bug class this whole project has spent weeks on —
+      MapLibre's worker-side `_dataUpdateable` Map is keyed by id, so a collision means one of the two
+      colliding features silently overwrites the other with zero error, zero indication anything is wrong.
+      Fixed by reassigning a NEW globally-unique sequential integer id (1..N) to every feature at merge time,
+      stream layer first then lake layer, while leaving `properties.OBJECTID` completely untouched for
+      traceability back to the raw ODFW source. Verified across ALL 34 merged species files (not just
+      BlackCrappie): 97,644 total features, 100% unique, perfectly sequential 1..N per file, zero nulls.
+    - **A third bug, self-inflicted and caught by the same verification pass**: `convert.js`'s own file-ending
+      write (`outStream.end(']}\n', ...)`) appended the closing `]}` directly onto the last feature's own line
+      with no separating newline — cosmetically wrong (not a JSON-validity bug; every converted file still
+      parses correctly as a whole document, confirmed via full `JSON.parse()` on the smaller files before this
+      was found) but broke `merge.js`'s own line-by-line re-reading of those files for the last feature of
+      every layer. Fixed forward in `convert.js` (for any future re-run) and patched `merge.js` defensively to
+      strip the known artifact rather than re-running the already-completed, already-independently-verified
+      56-file conversion pass a second time.
+  - **STEP 4 — mapshaper simplification**: defaulted to 2% (not the standard 8%) per explicit instruction,
+    matching the CMT migration data precedent for Oregon specifically. Checked vertex density BEFORE
+    simplifying, per instruction — found "bytes per vertex" to be a nearly useless signal here (23.85-27.38
+    across all 34 species, a narrow range explained by the converter's own fixed, consistent coordinate
+    formatting, not real geometric density). The genuinely informative signal was average vertices PER
+    FEATURE, which varied 40x+ (213 for Eulachon up to 9,236 for GreenSturgeon) — flagged GreenSturgeon,
+    AmericanShad, FlatheadCatfish, SmallmouthBass, and StripedBass as notably denser than the rest before
+    simplifying, per instruction, though ultimately none needed non-default treatment (see verification below).
+    - **A real, structural bug found via direct testing, not assumed to just work**: mapshaper's internal data
+      model can't hold mixed geometry types (Polyline + Polygon) in one layer — confirmed directly:
+      `-merge-layers force` on a merged stream+lake species file threw `Error: [merge-layers] Incompatible
+      geometry types: polyline, polygon`. Running plain `-simplify` on a mixed-type input instead silently
+      SPLIT it into numbered output files (`BlackCrappie1.geojson`, `BlackCrappie2.geojson`) rather than
+      erroring — caught by noticing the unexpected filenames partway through a batch run, not by an error
+      message. Fixed by reordering: split each already-merged (correct-id) species file back into its two
+      homogeneous-geometry-type halves (`split_by_habitat.js`, reusing the existing ids — no reassignment
+      needed, they're already globally unique per species), run mapshaper on each homogeneous half separately,
+      then re-merge the two SIMPLIFIED halves back into one final file per species (`merge_simplified.js`,
+      again no id reassignment — confirmed live that mapshaper preserves `feature.id` exactly through
+      simplification: `[39,40,41,42,43]` in, same ids out for a test file).
+    - **A fourth real bug, caught by re-running the SAME full-dataset id/geometry verification against the
+      final output rather than assuming simplification is a safe, no-side-effects step**: 24 features in
+      `CoastalCutthroatTrout` (only that one species, out of 97,644 total features checked across all 34)
+      came back with `geometry: null` after simplification, despite `keep-shapes` (mapshaper's own small-shape
+      protection flag). Investigated rather than dismissed: all 24 turned out to be pre-existing degenerate
+      2-vertex LineStrings in the RAW ODFW source data with IDENTICAL start and end coordinates (confirmed via
+      direct distance calculation: exactly 0.0 for all 24) — genuinely zero-length lines, already invisible on
+      any real map render even before simplification touched them (a zero-length LineString draws nothing).
+      Not a processing bug so much as mapshaper's topology cleanup correctly recognizing and dropping
+      already-degenerate geometry that `keep-shapes`'s protection (designed mainly for small-but-real polygon
+      area preservation) doesn't cover for zero-length lines. Explicitly filtered these 24 out of the final
+      output (`clean_null_geom.js`, logged by id) rather than silently shipping `Feature` objects with
+      `geometry:null`, which could trip up naive downstream rendering/lookup code later. Final count: 97,620
+      features (97,644 minus these 24 confirmed-junk entries).
+    - **Simplification results**: dramatic, consistent size reduction — e.g. CoastalCutthroatTrout 582MB →
+      54.4MB (90.7% reduction), Coho 200MB → 14.25MB, WinterSteelhead 252MB → 14.2MB. All 5 species flagged as
+      unusually vertex-dense pre-simplification ended up tiny post-simplification (GreenSturgeon 3.1MB→70KB,
+      AmericanShad 5.4MB→130KB, FlatheadCatfish 700KB→18KB, SmallmouthBass 12.4MB→340KB, StripedBass
+      600KB→16KB) — confirming the uniform 2% default was sufficient for all of them; none needed
+      species-specific non-default treatment.
+  - **STEP 5 — size check against the `updateData()` payload-ceiling findings**: 4 of 34 species still exceed
+    the "low-thousands-of-features/low-tens-of-MB" comfort band identified in the timing research —
+    `CoastalCutthroatTrout` (53,337 features, 54.4MB), `Coho` (12,793 features, 14.25MB), `WinterSteelhead`
+    (11,501 features, 14.22MB), `RedbandTrout` (5,565 features, 6.86MB, right at the edge). None of these are
+    anywhere near the actual CRASH threshold anymore (54.4MB vs. the ~536MB+ V8 ceiling that motivated this
+    whole research thread) — the concern is purely the CUMULATIVE-cost-per-`updateData()`-call finding, not a
+    hard failure risk. Further vertex simplification wouldn't help these 4 specifically, since FEATURE COUNT
+    (not vertex density) is what's driving their size at this point — `CoastalCutthroatTrout`'s size is
+    explained by it being genuinely Oregon's most widely-distributed habitat species (53K+ individual mapped
+    segments statewide), not excess per-feature complexity. Per explicit instruction to propose a next step
+    rather than just flag and stop: the real fix, when this is actually wired into the map (a separate
+    follow-up), is geographic sub-sharding — splitting these 4 species (CoastalCutthroatTrout especially)
+    across multiple MapLibre sources by region (county or HUC8 watershed, matching the same architectural
+    recommendation already on file for Washington's oversized SWIFD dataset) rather than one shared source per
+    species — NOT attempted this session, since it's a map-wiring decision explicitly out of this session's
+    scope.
+  - **Output structure confirmed matching spec**: `data/fish/oregon/<Species>.geojson`, one file per species
+    (34 total, matching PascalCase names like `BullTrout.geojson`/`FallChinook.geojson`), each a single
+    FeatureCollection combining that species' stream AND lake data (not two separate files), each feature
+    carrying `properties.habitatType` (`'stream'`|`'lake'`) for future paint-treatment branching (polyline vs.
+    polygon), each feature's top-level `id` globally unique within its own species file and ready to be used
+    as-is (no `promoteId` config needed at `addSource()` time, since `feature.id` — not a properties field —
+    was used) once this gets wired into the map. Final validation pass: full `JSON.parse()` succeeded on
+    every one of the 34 files (all now comfortably under the V8 string-length ceiling post-simplification,
+    unlike the raw/merged intermediates), every single feature confirmed to have a non-null id, real geometry,
+    `properties.habitatType`, and `properties.OBJECTID` — 97,620 features total, 105MB combined.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -5546,3 +5711,40 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   application source code was changed this session (a pure investigation/documentation session, matching the
   established pattern for sessions like this one) — APP_VERSION and SHELL_CACHE were still bumped per explicit
   instruction. APP_VERSION bumped 2.53.0 → 2.53.1, SHELL_CACHE bumped v166 → v167.
+- Session 61: Processed Oregon fish habitat data end to end — 56 raw Esri JSON files (32 species with
+  stream data, 24 with lake data, 34 unique species) from ODFW's ArcGIS REST exports into 34 clean
+  per-species GeoJSON files in `data/fish/oregon/`, the first real production run of the Session 60
+  `updateData()` payload-ceiling pattern. Deliberately data-prep only — no map-UI wiring, per explicit
+  instruction. GDAL/`ogr2ogr` (the named conversion tool) wasn't available on this machine and a quick
+  `choco install` attempt failed outright, so a hand-rolled, directly-verified Node converter was
+  substituted instead — flagged openly rather than silently presented as if `ogr2ogr` had been used.
+  Verified each of the 6 pipeline stages live before moving to the next, per explicit instruction not to
+  assume a later stage would catch an earlier one's problems, and found four real bugs doing so — none of
+  them hypothetical: (1) `stream-json`'s parser leaks state across sequential in-process calls, fixed by
+  running each file's conversion in its own process; (2) OBJECTID is only unique WITHIN one ArcGIS layer, so
+  merging a species' stream and lake data without fixing this would have silently dropped/overwritten
+  colliding features in MapLibre's own `updateData()` diff map later — exactly the bug class this whole
+  project has spent weeks chasing — fixed by reassigning globally-unique sequential ids at merge time while
+  preserving the original OBJECTID in properties for traceability; (3) mapshaper can't hold mixed
+  polyline+polygon geometry in one layer and silently SPLIT mixed-type files into numbered outputs rather
+  than erroring, caught by noticing unexpected filenames mid-run, fixed by simplifying stream/lake halves
+  separately and merging after; (4) 24 features in CoastalCutthroatTrout came back with null geometry after
+  simplification despite `keep-shapes` — investigated rather than dismissed, confirmed all 24 were
+  pre-existing zero-length degenerate lines in the raw ODFW source (identical start/end coordinates,
+  already invisible on any real render), explicitly filtered out with a logged count rather than silently
+  left in the shipped data. Final results: CoastalCutthroatTrout 905MB raw → 582MB converted → 54.4MB after
+  2% mapshaper simplification (90.7% reduction); all 5 species flagged as unusually vertex-dense in the
+  pre-simplification density check ended up tiny post-simplification, confirming the uniform 2% default
+  was sufficient without species-specific treatment. 4 of 34 species (CoastalCutthroatTrout, Coho,
+  WinterSteelhead, RedbandTrout) still exceed the "low-thousands-of-features" comfort band from the
+  `updateData()` timing research — none are anywhere near the actual crash threshold anymore, but per
+  explicit instruction to propose rather than just flag, the concrete next step is geographic sub-sharding
+  by region once these are actually wired into the map, matching the same recommendation already on file
+  for Washington's oversized SWIFD dataset — not attempted this session, out of scope. Also handled, per
+  explicit instruction at the start of the session: captured the pre-existing AC monitor-timeout power
+  setting before changing it (3600s), set both monitor-timeout-ac and standby-timeout-ac to 0 for the
+  remote session, and restored monitor-timeout-ac to its original value at the end while leaving
+  standby-timeout-ac disabled permanently, per instruction. See Architecture notes' "Oregon fish habitat
+  data processing pipeline" entry for the complete mechanism and verification detail on every stage. No
+  application source code logic was changed this session (data files + version bump only). APP_VERSION
+  bumped 2.53.1 → 2.54.0 (minor — new data asset added to the repo), SHELL_CACHE bumped v167 → v168.
