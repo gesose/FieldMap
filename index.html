@@ -3186,7 +3186,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.56.0';
+  var APP_VERSION = '2.57.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -10995,6 +10995,44 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       label: function(f){ return { title: wildlifeDisplayName(f.properties.species_common_name), meta: 'Habitat' }; },
       open: function(f, lngLat){ openWildlifePopupAt(f.properties, lngLat); }
     },
+    // Session 67 — Wildlife STATE DATA (wildlife-statedata-{tc}-*, e.g. Nevada Chukar), a real,
+    // independently-clickable layer type since Session 54 (handleWildlifeStateDataFillClick,
+    // click-registered on -fill and -line-streams — the outline (-line) and Nevada's dashed
+    // corridor (-line-dashed) sub-layers were never given their own click handlers, so they're
+    // correctly excluded here too, same "only what already supports tap-to-inspect" rule every
+    // other entry in this registry follows) that was simply never added to this table — it
+    // didn't exist yet when Tap-stack was first built (Session 46). Distinct from the 'wildlife'
+    // entry just above: that one is GAP Habitat range (WILDLIFE_CATEGORIES: big_game/upland/
+    // small_game); this is the per-state species data (WILDLIFE_TOP_CATEGORIES: biggame/
+    // uplandgame/fish) — two genuinely different layer families that happen to sit under the
+    // same "Wildlife" UI section.
+    {
+      type: 'wildlifestatedata',
+      queryLayers: function(){
+        return [].concat.apply([], WILDLIFE_TOP_CATEGORIES.map(function(tc){
+          return ['wildlife-statedata-' + tc + '-fill', 'wildlife-statedata-' + tc + '-line-streams'];
+        }));
+      },
+      getKey: function(f){ return f.layer.id + '|' + f.id; },
+      label: function(f){
+        var tc = f.layer.id.indexOf('-line-streams') !== -1
+          ? f.layer.id.slice('wildlife-statedata-'.length, -'-line-streams'.length)
+          : f.layer.id.slice('wildlife-statedata-'.length, -'-fill'.length);
+        var active = wildlifeStateDataActiveByCategory[tc];
+        var stateInfo = active && STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][active.stateKey];
+        var kindLabel = WILDLIFE_STATEDATA_KIND_LABELS[f.properties._sdLayer] || 'State Data';
+        return {
+          title: active ? active.speciesName : 'State Data',
+          meta: kindLabel + (stateInfo ? ' · ' + stateInfo.state : '')
+        };
+      },
+      open: function(f){
+        var tc = f.layer.id.indexOf('-line-streams') !== -1
+          ? f.layer.id.slice('wildlife-statedata-'.length, -'-line-streams'.length)
+          : f.layer.id.slice('wildlife-statedata-'.length, -'-fill'.length);
+        openWildlifeStateDataPopupAt(f.properties, tc);
+      }
+    },
     {
       type: 'migration', queryLayers: function(){ return ['migration-fill']; },
       getKey: function(f){ return f.id; },
@@ -18686,6 +18724,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // dashed line, distinct from streams' solid line.
   var WILDLIFE_STATEDATA_FILL = '#2d6ea8', WILDLIFE_STATEDATA_STROKE = '#153e63';
   var WILDLIFE_STATEDATA_STREAM_COLOR = '#4aa8e8';
+  // Session 67 — hoisted out of wildlifeStateDataPopupHtml (which still uses it, unchanged) so
+  // the new Tap-stack entry for this type (see TAP_STACK_TYPES) can show the exact same kind
+  // label in its disambiguation-list row without a second, driftable copy of this lookup.
+  var WILDLIFE_STATEDATA_KIND_LABELS = { range: 'Distribution', stream: 'Stream habitat', lake: 'Lake habitat', streams: 'Stream habitat', lakes: 'Lake habitat', huc12: 'Watershed (context only)', corridor: 'Movement corridor' };
 
   // Session 66 — watershed (huc12) zoom-based auto-hide, inspired by the AZGFD Trout
   // Challenge's own public map. huc12 is coarse basin CONTEXT, not real distribution data,
@@ -18764,7 +18806,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function wildlifeStateDataPopupHtml(props, sdLayer, topCategory){
     var active = wildlifeStateDataActiveByCategory[topCategory];
     var activeStateInfo = active && STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][active.stateKey];
-    var kindLabel = { range: 'Distribution', stream: 'Stream habitat', lake: 'Lake habitat', streams: 'Stream habitat', lakes: 'Lake habitat', huc12: 'Watershed (context only)', corridor: 'Movement corridor' }[sdLayer] || 'State Data';
+    var kindLabel = WILDLIFE_STATEDATA_KIND_LABELS[sdLayer] || 'State Data';
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">' + escapeHtml(active ? active.speciesName : 'State Data') + '</div>' +
       '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (activeStateInfo ? ' · ' + escapeHtml(activeStateInfo.state) : '') + '</div>' +

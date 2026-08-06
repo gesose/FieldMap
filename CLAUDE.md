@@ -604,6 +604,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   embedded app's own tiny rendered stream line could not be landed this session due to an unresolved
   coordinate-mapping issue for that tab (confirmed unrelated to this feature — even clicking known, large UI
   buttons at their own computed screen coordinates failed the same way).
+- Wildlife State Data added to Tap-stack's multi-layer disambiguation list (Session 67). Investigated first,
+  per explicit instruction: Tap-stack (Session 46) still exists, is not regressed, and correctly covers all
+  16 of its original types — the gap was that Wildlife STATE DATA (`wildlife-statedata-{tc}-fill`/
+  `-line-streams`, e.g. Nevada Chukar — a real, independently-clickable layer since Session 54) was never
+  added to `TAP_STACK_TYPES`, simply because that layer type didn't exist yet when Tap-stack was built. A
+  full audit of every `map.on('click', ...)` registration in the file (documented below) confirmed this was
+  the ONLY gap — every other click-handled layer type was already correctly registered. Fixed by extending
+  the existing registry with one new `wildlifestatedata` entry (not a rebuild) — a tap hitting a Range Ring/
+  Buffer overlapping an active State Data species (the task's own Nevada Chukar example) now correctly shows
+  the disambiguation list with the real species name, exactly like every other type already did. Verified
+  live end-to-end with a real overlap (a genuine Nevada Chukar State Data polygon plus a real drawn Buffer,
+  both confirmed overlapping via `queryRenderedFeatures` before testing): the list showed all 3 real
+  overlapping items with correct names ("Tap-stack Test Buffer · 0.5 mi", "Chukar · Habitat", "Chukar ·
+  Distribution · Nevada"), each opened its own correct, unmodified popup when picked (including "← Back to
+  list" working for the new type with zero extra wiring), a single-remaining-hit tap opened directly with no
+  list step, and dismissing the list via its own × opened no popup (confirmed via computed `display:none` on
+  the drawer, not just DOM text which can be stale leftover content). See Architecture notes' "Tap-stack:
+  Wildlife State Data extension" entry for the full click-handler audit and verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -1261,6 +1279,78 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     false; Oregon `localFile` → false; no active selection → false), all 7 passing. `node --check` confirmed
     clean syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped
     2.55.3 → 2.56.0 (minor — new feature), SHELL_CACHE bumped v172 → v173.
+- Tap-stack: Wildlife State Data extension (Session 67) — see the "Tap-stack" entry above for Tap-stack's own
+  original design; this is what it took to close the one real gap found in it.
+  - **Investigation, done first per explicit instruction**: confirmed Tap-stack (Session 46) is fully intact
+    — `TAP_STACK_TYPES`, `collectTapStackCandidates`, `openTapStackPanel`, `#tap-stack-panel`, the pre-check
+    `map.on('click', ...)` registered first in `createMap()`, and the "← Back to list" bar are all present
+    and unmodified since. Did a complete audit — grepped every `map.on('click', '<layer-id>', ...)` and
+    `map.on('click', <layerIdVar>, ...)` registration in the file (18 distinct registration sites, some
+    looped over a table like `GMU_STATES`/`WILDFIRE_TIER_IDS`) and cross-referenced each against
+    `TAP_STACK_TYPES`'s 16 entries plus the two deliberate exclusions already documented there
+    (`cluster-circles` — a zoom-to-expand action, not a content item; `draw-preview-line` — mode-only,
+    already excluded since the pre-check bails whenever any tool mode is active) and pins (DOM markers, never
+    MapLibre layers, already excluded by design). Result: every click-handled layer type EXCEPT Wildlife
+    State Data (`wildlife-statedata-{tc}-fill`/`-line-streams`, click-registered since Session 54/refined
+    Session 57 — `handleWildlifeStateDataFillClick`) was already correctly in the registry. This is
+    genuinely distinct from the pre-existing `'wildlife'` entry (`wildlife-{category}-fill`, GAP Habitat
+    range, `WILDLIFE_CATEGORIES`: `big_game`/`upland`/`small_game`) — State Data is a different layer family
+    keyed by `WILDLIFE_TOP_CATEGORIES` (`biggame`/`uplandgame`/`fish`) that simply didn't exist yet when
+    Session 46 built Tap-stack, and was never added across any of the many subsequent State Data sessions
+    (54-66). Confirmed this is exactly the task's own named example (Nevada Chukar is Upland Game State
+    Data) — before the fix, a tap hitting both a Range Ring/Buffer and an active Chukar State Data polygon
+    would find only 1 Tap-stack candidate (the Range Ring/Buffer), never call `preventDefault()`, and
+    silently fall through to whichever handler happened to be registered first — exactly the "silently
+    picks one, no indication anything else was there" failure mode Tap-stack exists to prevent, just not
+    caught for this one type. Conclusion reported: needs EXTENDING, not building from scratch.
+  - **The fix**: one new `TAP_STACK_TYPES` entry, `type: 'wildlifestatedata'`, `queryLayers()` returning both
+    clickable sub-layers (`-fill`, `-line-streams` — NOT `-line`/`-line-dashed`, which have never had their
+    own click handlers, matching the registry's own "only what already supports tap-to-inspect" rule) for
+    all 3 `WILDLIFE_TOP_CATEGORIES`. `label()`/`open()` both resolve the owning category from the hit
+    layer's own id (`wildlife-statedata-{tc}-fill` or `wildlife-statedata-{tc}-line-streams` — parsed via
+    known prefix/suffix `.slice()`, verified against all 6 real layer-id shapes with a standalone Node test
+    before wiring in, since `WILDLIFE_TOP_CATEGORIES` values never contain hyphens this is unambiguous), then
+    reuse `wildlifeStateDataActiveByCategory[tc]`/`STATE_DATA_SOURCES[tc]` exactly like the existing
+    `wildlifeStateDataPopupHtml`/`openWildlifeStateDataPopupAt` do, so the list row shows the real active
+    species name and real kind label ("Chukar" / "Distribution · Nevada") — not a placeholder, and never out
+    of sync with what the popup itself would show once opened. The per-`_sdLayer` kind-label lookup
+    (`{range:'Distribution', stream:'Stream habitat', ...}`) was hoisted out of `wildlifeStateDataPopupHtml`
+    into a new shared `WILDLIFE_STATEDATA_KIND_LABELS` constant specifically so the list row and the popup it
+    opens can never drift out of sync with two separate copies of the same table — `wildlifeStateDataPopupHtml`
+    itself now just reads the shared constant, unchanged output. `open()` calls the existing, completely
+    unmodified `openWildlifeStateDataPopupAt(f.properties, tc)` — the single-feature detail view was never
+    touched, matching every other entry in this registry.
+  - **Verification — live, with a real overlap, not synthetic data**: found the real Nevada Chukar State
+    Data polygon's own genuine interior point (a proper point-in-ring test against the live-fetched source
+    data, not a naive vertex-average centroid — confirmed inside via the same ray-casting check this project
+    has used before for exactly this "naive centroid can miss on a concave shape" gotcha), then created a
+    real Buffer (via the app's own real `state.buffers` storage shape, injected through localStorage and
+    picked up by a genuine reload through the real boot pipeline — the same established testing pattern used
+    throughout this project) with a line straddling that exact point, confirmed BOTH layers genuinely overlap
+    there via `queryRenderedFeatures` before ever clicking anything. One real test-setup bug caught along the
+    way, not a product bug: the injected buffer needed a non-empty `tags` array (`['uncategorized']`) — an
+    empty array fails `itemVisible()`'s own `(item.tags||[]).some(...)` check (an empty array's `.some()` is
+    always false), correctly hiding a truly tag-less item from the map exactly as the app's real filtering
+    logic is supposed to for a genuine zero-tag item; fixed the TEST DATA, not the app. Confirmed live: a tap
+    at the real 3-way overlap point (Buffer + GAP Habitat "Chukar" + State Data "Chukar") showed "3 items
+    here" with all 3 correctly and distinctly labeled; tapping each of the 3 rows in turn opened that exact
+    item's own real, unmodified popup (the Buffer's real width/weather/Directions/Share footer; GAP Habitat's
+    "Game species · Year-round"; State Data's "Distribution · Nevada") with "← Back to list" present and
+    correctly returning to the identical cached list each time; temporarily hiding the Wildlife layers
+    (Upland Game's master toggle off) left only the Buffer at the same point, and a tap there opened its
+    popup DIRECTLY with no list step and no back-bar — confirming single-hit taps are completely unaffected;
+    re-enabling the layers and dismissing a fresh 3-item list via its own × was confirmed, via the drawer's
+    actual computed `display:none` (not just checking `.textContent`, which can hold stale leftover HTML from
+    a previous open/close cycle and gives a false positive), to open no popup at all. One real coordinate-
+    click miscalculation happened mid-session, caught and corrected before drawing any wrong conclusion from
+    it: using `map.project()`'s own container-relative pixel directly as a page/screenshot click coordinate
+    (forgetting to add the map container's own `left`/`top` offset and the screenshot-vs-true-window scale
+    factor) landed a click on empty map background instead of the intended point — re-derived the correct
+    click target from `getBoundingClientRect()` + `window.innerWidth`/`innerHeight` vs. the real screenshot
+    dimensions, confirmed against a value that had already worked earlier in the same session, and reused
+    that corrected math for the rest of the session's clicks. `node --check` confirmed clean syntax on all 4
+    extracted inline `<script>` blocks. APP_VERSION bumped 2.56.0 → 2.57.0 (minor — extends a real feature to
+    a real gap, not a bug fix), SHELL_CACHE bumped v173 → v174.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -6376,3 +6466,36 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   synthetic shapes, all passing, including the specific unreachable-in-practice case. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks and service-worker.js. APP_VERSION
   bumped 2.55.3 → 2.56.0 (minor — new feature), SHELL_CACHE bumped v172 → v173.
+- Session 67: Investigated first, per explicit instruction, whether Tap-stack (referenced from earlier
+  project history) still exists before building anything — confirmed it does, fully intact and unregressed,
+  covering 16 real types since Session 46. A complete audit of every `map.on('click', ...)` registration in
+  the file (18 sites) cross-referenced against the registry found exactly one real gap: Wildlife STATE DATA
+  (`wildlife-statedata-{tc}-fill`/`-line-streams`, e.g. Nevada Chukar — genuinely clickable on its own since
+  Session 54) was never added, simply because it didn't exist yet when Tap-stack was built — not a
+  regression, an incomplete registry. Reported this back before writing any code, as asked, then extended
+  the existing registry with one new `wildlifestatedata` entry rather than building anything from scratch —
+  see Architecture notes' "Tap-stack: Wildlife State Data extension" entry for the full audit and mechanism
+  detail, including hoisting the shared `WILDLIFE_STATEDATA_KIND_LABELS` constant so the new list row and
+  the existing popup it opens can never show different text for the same feature. Verified live end-to-end
+  with a real overlap, not synthetic data: found the real Nevada Chukar State Data polygon's genuine
+  interior point via a proper point-in-ring test, created a real Buffer straddling it (injected via
+  localStorage using the app's own real data shape, picked up through a genuine reload — this project's
+  established testing pattern), and confirmed via `queryRenderedFeatures` the two genuinely overlap before
+  ever clicking. A real tap at that point showed "3 items here" (the Buffer, GAP Habitat "Chukar", and the
+  new State Data "Chukar — Distribution · Nevada") with correct real names for all three; each opened its
+  own correct, completely unmodified popup when picked, "← Back to list" working for the new type with zero
+  extra wiring needed; temporarily hiding the Wildlife layers left only the Buffer at the same point, and
+  tapping there opened its popup directly with no list step, confirming single-hit taps are unaffected;
+  dismissing a fresh list via its own × was confirmed, via the drawer's actual computed `display:none` (not
+  just DOM text, which can hold stale content from a prior open and give a false positive), to open nothing.
+  One real test-setup bug caught and fixed in the TEST DATA, not the app: an empty `tags: []` array on the
+  injected buffer failed the app's own real `itemVisible()` filter (`[].some(...)` is always false), which is
+  correct, expected behavior for a genuinely tag-less item, not a bug — fixed by giving the test buffer the
+  same `['uncategorized']` default real items get. One real coordinate-click miscalculation happened and was
+  caught mid-session: using `map.project()`'s container-relative pixel directly as a screenshot click
+  coordinate (forgetting the container's own offset and the screenshot-vs-true-window scale factor) briefly
+  landed a click on empty background instead of the intended point — re-derived the correct math from
+  `getBoundingClientRect()` and the real screenshot dimensions, cross-checked against a value already proven
+  working earlier in the same session, and used the corrected math for the remaining clicks. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.56.0 → 2.57.0
+  (minor — extends a real feature to a real gap), SHELL_CACHE bumped v173 → v174.
