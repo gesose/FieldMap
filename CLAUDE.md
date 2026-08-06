@@ -542,6 +542,26 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Session 59 fix addressed). See Architecture notes' "Oregon fish State Data wiring" entry for full mechanism
   detail, the required updates to 3 other `src.type`-branching functions, and what was and wasn't verifiable
   live in this sandbox.
+- Two independently-scoped Fish State Data fixes reported from real-device testing of Session 62's Oregon
+  wiring (Session 63) — Fix 1: the state `<select>` was silently resetting on every species switch instead
+  of remembering what the user last picked; Fix 2: Washington's fish State Data (real, correct SWIFD data —
+  confirmed rendering correctly since Session 58) still routed through `setData()`, carrying the same
+  `RangeError: Invalid string length` crash risk Session 57 found for its full 73,373-feature table. Fix 1
+  adds a state memory (`wildlifeStateDataLastStateByCategory`) that survives a species switch independently
+  of the species-scoped `wildlifeStateDataActiveByCategory`, and an honest "No data available for [state] —
+  [species]" inline message (with the persisted state still shown, selected, in the `<select>` — a phantom
+  `<option>` injected just for this case) whenever the remembered state genuinely has no data for the newly
+  picked species, rather than silently defaulting to some other state the user never chose. Fix 2 extends
+  `applyStateDataToSource`'s existing Oregon-only `updateData()` branch (built in Session 62) to Washington's
+  `'unified'` source type too — Washington's real ArcGIS `f=geojson` fetch already carries a stable, unique
+  top-level `feature.id` (confirmed via a live query before relying on it) with zero extra id-assignment code
+  needed, unlike Oregon's own Session 61 merge step. Both fixes verified live and independently, per explicit
+  instruction — see Architecture notes' "Fish State Data: state persistence across species switches, Washington
+  updateData() retrofit" entry for full detail, including a real-device-grade live proof (an isolated
+  `maplibregl.Map` harness fetching real West Patit Creek stream data from WDFW's live endpoint and rendering
+  it via the retrofitted path) after this sandbox's main app tab's own Mapbox-loading stall (the same
+  long-documented limitation as every prior session touching DEM/vectorbase) made direct in-app visual
+  confirmation unreliable partway through.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -920,6 +940,100 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     environmental wall. Confirmed zero new console errors from this session's changes (the only errors
     present are the same pre-existing MapLibre internal terrain/elevation exceptions already documented as
     environmental noise in the Session 60 entry, unchanged in count or content across a fresh reload).
+- Fish State Data: state persistence across species switches, Washington `updateData()` retrofit (Session
+  63) — two real-device bug reports against Session 62's Oregon wiring, deliberately treated and verified as
+  two independent fixes per explicit instruction, not one combined change.
+  - **Fix 1 — the state `<select>` resetting on every species switch**: root cause was two related gaps, not
+    one. `renderStateDataSection(speciesName)`'s `isActiveSelection = active && active.speciesName ===
+    speciesName` check (`active` = `wildlifeStateDataActiveByCategory[tc]`) is, by design, always false the
+    instant the species changes — a State Data selection has always been scoped to the specific species it
+    was loaded for (Session 56's own per-category independence fix relies on exactly this). But
+    `setWildlifeSpecies()` then compounded this by unconditionally calling `clearWildlifeStateData(topCategory)`
+    on every genuine species change, which doesn't just stop treating the OLD state as "active" — it discards
+    all memory of what state was picked at all, so the next render had nothing to fall back to except
+    `options[0]`, silently landing on whatever state happened to sort first. Fixed with a new module var,
+    `wildlifeStateDataLastStateByCategory` (`{biggame,uplandgame,fish} -> stateKey|null`), deliberately
+    SEPARATE from `wildlifeStateDataActiveByCategory` — it's written only by a real user pick
+    (`setWildlifeStateDataState`, which now also clears any pending no-data flag — see below) and, unlike the
+    active/on pair, is NEVER cleared by `clearWildlifeStateData` or a species switch, so it survives exactly
+    as long as the task asked ("within a session" — deliberately an in-memory var, not persisted to
+    `state.settings`/localStorage, a narrower scope than this codebase's usual "persist everything" instinct,
+    called out explicitly as a deliberate choice rather than an oversight). `setWildlifeSpecies()` now reads
+    this remembered key BEFORE clearing, and re-evaluates it against the NEW species via the same
+    `stateDataOptionsFor()` check the render path already uses: if the state has data for the new species AND
+    the prior state was genuinely `on` (not just remembered-but-inactive), it calls
+    `setWildlifeStateDataState(priorStateKey)` directly — reloading real data for the new species and keeping
+    the checkbox on, exactly the "switching species should keep the same state selected" behavior asked for;
+    if the prior state was off, it leaves the pick remembered but inactive (checkbox stays unchecked,
+    selector still shows the right state next render) rather than surprising the user by silently turning
+    something back on they'd explicitly turned off; if the state has NO data for the new species, it sets a
+    second new var, `wildlifeStateDataNoDataForByCategory` (`{stateKey, speciesName}`), instead.
+  - **The "don't silently fall back" half**: `renderStateDataSection` now has a real 3-way branch —
+    genuinely active (unchanged), a pending no-data flag matching the current species (new), or neither (the
+    old `options[0]`-or-last-remembered-if-still-valid fallback). The no-data case injects the persisted
+    state as its own `<option>` (with its real display name, e.g. "Oregon") even though `stateDataOptionsFor`
+    correctly excludes it from the normal list for this species — this is what actually satisfies "leave the
+    state selector showing the persisted state (empty result)" literally, not just conceptually, since a
+    native `<select>` can't show a value with no matching `<option>` as selected. `#wildlife-statedata-nodata`
+    (new `<p class="hint">`, added to the section's existing HTML alongside the note/attribution lines) shows
+    "No data available for [State] — [Species]"; the checkbox is force-unchecked AND `disabled` for this one
+    case (so a real click can't even reach `setWildlifeStateDataOn`'s own "nothing active, read the select"
+    branch and attempt a load for a combination that doesn't exist) — the only way out is picking a different,
+    real state from the `<select>`, which routes through the completely unchanged `setWildlifeStateDataState`
+    and clears the flag as a normal side effect of a real pick.
+  - **Fix 2 — Washington's real 73,373-feature SWIFD data still risked the `setData()` `RangeError`**:
+    Session 62 built `applyStateDataToSource`'s `updateData()` branch (empty-`setData()`-reset then
+    `updateData({add:features})`) but scoped it to `src.type === 'localFile'` only — Oregon's own source kind.
+    Washington (`type: 'unified'`) never got it, despite being the ORIGINAL motivating case for the whole
+    `updateData()` research thread (Session 57's live bisection of the crash boundary, between 40,000 and
+    73,373 features, was against Washington's own real data). Fixed with a one-line condition change
+    (`src.type === 'localFile' || src.type === 'unified'`) — deliberately generic on `type`, not hardcoded to
+    `stateKey === 'wa'`, since `'unified'` sources are architecturally guaranteed to be a single paginated
+    fetch of one ArcGIS layer (`loadStateDataLayer`'s own `unified` branch only ever pushes one `fetches`
+    entry), the same "no cross-layer id collision risk" property Oregon's local files have, just for a
+    different reason (Oregon: one species' pre-merged file; Washington: one real table, no merge at all).
+    Confirmed BEFORE writing this that Washington's live ArcGIS `f=geojson` responses already carry a real,
+    stable, unique top-level `feature.id` (Esri's own GeoJSON output puts OBJECTID there) via a live query
+    against the actual SWIFD endpoint from this sandbox (unlike Mapbox's v4 API, WDFW's ArcGIS server is
+    directly reachable here) — `id: 1` on the first returned feature, confirmed present on every feature,
+    meaning zero extra id-assignment code was needed for this fix, unlike Oregon's own Session 61 merge step.
+  - **Verification, done independently for each fix per explicit instruction**: Fix 1 — live, in the real
+    embedded app (a rare case this session where the app's own map actually rendered, not the isolated-harness
+    workaround): switching Fish species from Bull Trout (Oregon, on) to Apache Trout (no Oregon data) showed
+    the exact expected phantom-Oregon-option-plus-message ("No data available for Oregon — Apache Trout"),
+    checkbox force-unchecked and disabled, `stateDataActive.fish` null, zero fetch attempted; switching on to
+    Rainbow Trout (which DOES have Oregon data, but State Data was off from the no-data hop) correctly
+    pre-selected Oregon in the `<select>` without reactivating it; explicitly re-picking Oregon for Rainbow
+    Trout then switching to Brown Trout (Oregon, on) confirmed the reload-and-keep-on branch, including a real
+    updated active-layers-chip line ("Brown Trout — Oregon data"); the Session 59 checkbox-only-click fix was
+    re-confirmed explicitly, per instruction, immediately after these species switches, using a state combo
+    (Sockeye/Oregon) reached with the `<select>` never touched; a genuine close-the-whole-panel-then-reopen
+    cycle (not just re-rendering in place) confirmed all of the above survives, both in live DOM state and via
+    the app's own `wildlifeSnapshot()` debug hook. Fix 2 — live, in two complementary ways: (1) in the real
+    embedded app, switching Fish State Data to Washington and letting the real ~35-request paginated fetch of
+    the actual 73,373-feature table complete produced zero console errors of any kind (checked explicitly for
+    `RangeError`/`Invalid string length`/anything `updateData`- or `statedata`-related — none found), and a
+    genuine full page reload afterward correctly restored `stateDataActive.fish = {Sockeye, wa}` with
+    `on:true` — proving the retrofit works on BOTH the manual-pick code path and the separate boot-time
+    restore path, not just one; a real check→dismiss→reopen cycle (this time via actual mouse clicks on the
+    real UI, not synthetic events) confirmed the Wildlife Layers panel correctly reopens showing Washington
+    still selected and checked. (2) Since this sandbox's main app tab's own style-loading intermittently
+    stalled mid-session (the same long-documented Mapbox-loading limitation as every prior session touching
+    DEM/vectorbase — not something this fix caused or could fix), independently proved real visual rendering
+    via the same isolated-`maplibregl.Map`-harness technique Sessions 60/62 established: a zero-Mapbox-
+    dependency background-only style, the real `wildlife-statedata-fish-line-streams` paint config copied
+    verbatim, and a REAL live fetch against WDFW's actual SWIFD endpoint scoped to the real West Patit Creek
+    test area (224 real features — Burbot, Brown Trout, etc.) applied via the exact retrofitted
+    empty-`setData()`-then-`updateData()` pattern — confirmed a real, correctly-colored stream network
+    rendering via a genuine screenshot, with zero thrown errors. One real self-inflicted test-harness mistake
+    surfaced and corrected during this session, not a product bug: an earlier attempt to capture the live
+    `Map` instance via direct `classList.remove('show')`/`.closest('button').click()` DOM manipulation (rather
+    than real clicks or the app's own state functions) left one test tab's `wildlifeStateDataActiveByCategory.
+    fish.stateKey` as an empty string in that tab's own localStorage — confirmed via direct inspection this
+    was caused by dispatching a 'change' event while the `<select>` had no rendered options at that moment
+    (an artifact of the raw DOM manipulation, not reachable through any real user interaction sequence),
+    repaired directly in that tab's localStorage, and the affected verification steps were redone cleanly with
+    only real interactions afterward.
 - Single file app: index.html (~9000 lines)
 - Mapbox token in const MAPBOX_TOKEN; 3 styles in MAPBOX_STYLES (topo default — local topo-style.json, aerial, aerial-streets); Street removed
 - refresh-style.js (project root, run with `node refresh-style.js`) re-fetches topo-style.json from Mapbox Studio and re-applies the sprite/glyphs/source-url token-placeholder transforms
@@ -5890,3 +6004,54 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Data wiring" entry for full mechanism detail and everything verified live. `node --check` confirmed clean
   syntax on all extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.54.0 → 2.55.0
   (minor — new user-facing feature), SHELL_CACHE bumped v168 → v169.
+- Session 63: Two real-device bug reports against Session 62's Oregon fish State Data wiring, deliberately
+  treated and verified as two fully independent fixes per explicit instruction — see Architecture notes'
+  "Fish State Data: state persistence across species switches, Washington `updateData()` retrofit" entry for
+  complete mechanism detail on both. Fix 1: the state `<select>` was silently resetting to a default state on
+  every species switch instead of remembering what the user last picked, and — the harder half of the ask —
+  when the remembered state genuinely has no data for a newly-picked species, the app now says so explicitly
+  ("No data available for [state] — [species]") and leaves the `<select>` still showing that state (via a
+  phantom `<option>` injected just for this case) rather than silently jumping to some other state the user
+  never chose. Root cause was two compounding gaps: `renderStateDataSection`'s active-selection check is, by
+  design, always false right after a species change (a State Data selection has always been scoped to one
+  specific species), and `setWildlifeSpecies` then discarded ALL memory of the picked state on every switch,
+  not just its "active" status — there was nothing left to fall back to except `options[0]`. Fixed with a new
+  `wildlifeStateDataLastStateByCategory` var, deliberately separate from the species-scoped active/on pair and
+  never cleared by a species switch, updated only by a real user pick — `setWildlifeSpecies` now reads it
+  before clearing and either reloads it for the new species (if it was genuinely on and still has data),
+  leaves it remembered-but-inactive (if it was off), or flags the new no-data case, rather than unconditionally
+  wiping it. Fix 2: Washington's fish State Data — real, correct SWIFD data, confirmed rendering correctly
+  since Session 58 — still routed through plain `setData()`, carrying the exact `RangeError: Invalid string
+  length` crash risk Session 57 found and bisected for its own real 73,373-feature table (the ORIGINAL
+  motivating case for the whole `updateData()` research thread, ironically never actually retrofitted onto
+  Washington itself when Session 62 built the pattern for Oregon). Fixed with a one-line, deliberately generic
+  condition change (`src.type === 'localFile' || src.type === 'unified'` in `applyStateDataToSource`) rather
+  than hardcoding Washington's own state key — `'unified'` sources are architecturally guaranteed to be a
+  single paginated fetch of one ArcGIS layer, the same "no cross-layer id collision" property Oregon's local
+  files have. Confirmed before writing the fix, via a live query against WDFW's actual SWIFD endpoint from
+  this sandbox (directly reachable here, unlike Mapbox's v4 API), that Washington's real `f=geojson` responses
+  already carry a stable, unique top-level `feature.id` (Esri's own OBJECTID-derived GeoJSON `id`) with zero
+  extra id-assignment code needed. Verified independently for each fix, per explicit instruction: Fix 1 live
+  in the real embedded app (species switches between Bull Trout/Apache Trout/Rainbow Trout/Brown Trout/Sockeye
+  covering both the "state persists and reloads" and "state persists but shows an honest no-data message"
+  cases, the Session 59 checkbox-only-click fix explicitly re-confirmed afterward per instruction, and a real
+  full panel close→reopen cycle holding throughout); Fix 2 two ways — in the real embedded app (a genuine
+  ~35-request paginated fetch of the real 73,373-feature Washington table completing with zero console errors
+  of any kind, a full page reload afterward correctly restoring the selection via the SEPARATE boot-time
+  restore code path without crashing either, and a real mouse-click-driven check→dismiss→reopen cycle holding),
+  and via the same isolated zero-Mapbox-dependency `maplibregl.Map` harness technique Sessions 60/62
+  established (this sandbox's main app tab intermittently stalled on style-loading mid-session, the same
+  long-documented Mapbox limitation as every prior session touching DEM/vectorbase) — a real live fetch
+  against WDFW's actual endpoint at the real West Patit Creek test area (224 real features) applied through
+  the exact retrofitted pattern and confirmed rendering correctly via a genuine screenshot. One real self-
+  inflicted test-harness mistake was found and corrected mid-session, not a product bug: an early attempt to
+  capture the live `Map` instance via raw `classList`/`.closest('button').click()` DOM manipulation (instead
+  of real clicks or the app's own functions) left one test tab's Washington state key as an empty string in
+  that tab's own localStorage, traced to dispatching a 'change' event while the `<select>` had no rendered
+  options — repaired directly in that tab's test data, and the affected verification steps were redone
+  cleanly with only real interactions. Also handled per explicit instruction at the start of the session:
+  captured the pre-existing AC monitor-timeout power setting before changing it, set both monitor-timeout-ac
+  and standby-timeout-ac to 0 for the remote session, and restored monitor-timeout-ac to its original captured
+  value at the end while leaving standby-timeout-ac disabled permanently. `node --check` confirmed clean
+  syntax on all extracted inline `<script>` blocks and service-worker.js. APP_VERSION bumped 2.55.0 → 2.55.1
+  (patch — two real bug fixes to an existing feature, no new UI), SHELL_CACHE bumped v169 → v170.

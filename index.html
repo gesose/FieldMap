@@ -2550,6 +2550,7 @@
         <input type="checkbox" id="wildlife-statedata-toggle"> State Data
       </label>
       <select id="wildlife-statedata-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-top:6px;"></select>
+      <p class="hint" id="wildlife-statedata-nodata" style="display:none;margin-top:6px;font-size:11px;line-height:1.4;color:var(--text-muted);"></p>
       <p class="hint" id="wildlife-statedata-note" style="margin-top:6px;font-size:11px;line-height:1.4;"></p>
       <p class="hint" id="wildlife-statedata-attribution" style="margin-top:4px;font-size:11px;line-height:1.4;"></p>
     </div>
@@ -3185,7 +3186,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.55.0';
+  var APP_VERSION = '2.55.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -18139,8 +18140,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     // A State Data selection belongs to whichever species was active in THIS category when it was
     // loaded — always clear THIS category's own slot on a species change within it, never the
-    // other two categories' independent State Data selections.
+    // other two categories' independent State Data selections. Session 60 (Fix 1): a real report
+    // that the state SELECTOR itself was resetting on every species switch, even when the newly
+    // picked species has data for the exact same state — try to carry the last-picked state
+    // forward instead of just losing it: if it still has data for the new species, re-activate it
+    // (reloading for the new species) when it was genuinely on before the switch, or just leave it
+    // pre-selected-but-off when it wasn't; if it does NOT have data for the new species, leave an
+    // honest "no data" marker behind instead of silently defaulting the selector to some other
+    // state the user never chose (renderStateDataSection/renderSpeciesToggles surface this).
+    var priorStateKey = wildlifeStateDataLastStateByCategory[topCategory];
+    var priorWasOn = wildlifeStateDataOnByCategory[topCategory];
     clearWildlifeStateData(topCategory);
+    wildlifeStateDataNoDataForByCategory[topCategory] = null;
+    if (priorStateKey && speciesName){
+      var stillValidForNewSpecies = stateDataOptionsFor(topCategory, speciesName).some(function(o){ return o.stateKey === priorStateKey; });
+      if (stillValidForNewSpecies){
+        if (priorWasOn) setWildlifeStateDataState(priorStateKey); // reloads for the new species, keeps it on
+        // else: leave it off — wildlifeStateDataLastStateByCategory still holds priorStateKey, so
+        // renderStateDataSection will pre-select it (unchecked) next render without reactivating it
+      } else {
+        wildlifeStateDataNoDataForByCategory[topCategory] = { stateKey: priorStateKey, speciesName: speciesName };
+      }
+    }
     persistWildlifeSettings();
     updateWildlifeMapFilter();
     updateActiveLayersChip();
@@ -18262,7 +18283,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // source has this species for this top-level category (Session 55: no longer a separate
     // popout screen — see the panel's own HTML comment).
     var stateOptions = stateDataOptionsFor(wildlifeActiveTopCategory, speciesName);
-    if (stateOptions.length){
+    var pendingNoData = wildlifeStateDataNoDataForByCategory[wildlifeActiveTopCategory];
+    var showNoDataForThisSpecies = pendingNoData && pendingNoData.speciesName === speciesName;
+    if (stateOptions.length || showNoDataForThisSpecies){
       stateDataSection.style.display = '';
       renderStateDataSection(speciesName);
     }
@@ -18325,54 +18348,118 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // configuring Fish's State Data can never overwrite or hide Big Game's own selection.
   var wildlifeStateDataActiveByCategory = { biggame: null, uplandgame: null, fish: null }; // topCategory -> {speciesName, stateKey} | null
   var wildlifeStateDataOnByCategory = { biggame: false, uplandgame: false, fish: false };
+  // Session 60 (Fix 1) — the last state the user explicitly PICKED per category, independent of
+  // which species is currently active. wildlifeStateDataActiveByCategory above is always tied to
+  // one specific species and gets wiped by clearWildlifeStateData on every species change within
+  // that category (by design — a stale species' data must never keep rendering under a new pick's
+  // name); this separate var is what lets a species switch try to carry the SAME state forward
+  // instead of just losing it. Seeded from whatever was already persisted at boot (bindUI), then
+  // kept live going forward only by a real pick in setWildlifeStateDataState.
+  var wildlifeStateDataLastStateByCategory = { biggame: null, uplandgame: null, fish: null };
+  // Set to {stateKey, speciesName} when the persisted last-picked state has no data for the
+  // CURRENTLY active species (perSpecies/localFile sources only — a 'unified' source like
+  // Washington always has data for every species by definition) — drives the inline "No data
+  // available" message and a phantom <option> in the state <select> so the selector still visibly
+  // shows what was remembered instead of silently jumping to some other state. Cleared the moment
+  // the user picks any real state (setWildlifeStateDataState), or when a species change resolves
+  // to a state that DOES have data.
+  var wildlifeStateDataNoDataForByCategory = { biggame: null, uplandgame: null, fish: null };
 
   // Populates the inline <select> + note/attribution for the given species — called from
   // renderSpeciesToggles every time the State Data section is shown, so it's always in sync with
   // whichever species is currently displayed (there's no longer a separate "open" action to hook
   // this into — it just needs to already be correct whenever the section becomes visible).
   function renderStateDataSection(speciesName){
-    var options = stateDataOptionsFor(wildlifeActiveTopCategory, speciesName);
+    var tc = wildlifeActiveTopCategory;
+    var options = stateDataOptionsFor(tc, speciesName);
     var select = document.getElementById('wildlife-statedata-select');
-    select.innerHTML = options.map(function(o){ return '<option value="' + escapeHtml(o.stateKey) + '">' + escapeHtml(o.stateName) + '</option>'; }).join('');
-    var active = wildlifeStateDataActiveByCategory[wildlifeActiveTopCategory];
+    var active = wildlifeStateDataActiveByCategory[tc];
     var isActiveSelection = active && active.speciesName === speciesName;
-    select.value = isActiveSelection ? active.stateKey : (options[0] ? options[0].stateKey : '');
-    var src = STATE_DATA_SOURCES[wildlifeActiveTopCategory] && STATE_DATA_SOURCES[wildlifeActiveTopCategory][select.value];
+    var pendingNoData = wildlifeStateDataNoDataForByCategory[tc];
+    var showingNoData = !isActiveSelection && pendingNoData && pendingNoData.speciesName === speciesName;
+
+    var optionEls = options.map(function(o){ return { stateKey: o.stateKey, html: '<option value="' + escapeHtml(o.stateKey) + '">' + escapeHtml(o.stateName) + '</option>' }; });
+    var selectedValue;
+    if (isActiveSelection){
+      selectedValue = active.stateKey;
+    } else if (showingNoData){
+      // Session 60 (Fix 1) — the persisted state has no data for this species. Inject it as its
+      // own <option> (even though stateDataOptionsFor correctly excludes it from the normal list)
+      // so the selector still visibly shows what's remembered instead of silently defaulting to
+      // options[0], a different state the user never chose.
+      var noDataSrc = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][pendingNoData.stateKey];
+      var noDataStateName = noDataSrc ? noDataSrc.state : pendingNoData.stateKey;
+      optionEls.unshift({ stateKey: pendingNoData.stateKey, html: '<option value="' + escapeHtml(pendingNoData.stateKey) + '">' + escapeHtml(noDataStateName) + '</option>' });
+      selectedValue = pendingNoData.stateKey;
+    } else {
+      // Nothing active for this species yet — prefer the last state the user actually picked (if
+      // it happens to have data for this species too) over just defaulting to the first option,
+      // so a species switch between two states that both carry the species keeps the selector
+      // showing the same state rather than jumping around.
+      var lastKey = wildlifeStateDataLastStateByCategory[tc];
+      var lastStillValid = lastKey && optionEls.some(function(o){ return o.stateKey === lastKey; });
+      selectedValue = lastStillValid ? lastKey : (optionEls[0] ? optionEls[0].stateKey : '');
+    }
+    select.innerHTML = optionEls.map(function(o){ return o.html; }).join('');
+    select.value = selectedValue;
+
+    var noDataMsgEl = document.getElementById('wildlife-statedata-nodata');
+    if (showingNoData){
+      var noDataSrc2 = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][pendingNoData.stateKey];
+      var stateName2 = noDataSrc2 ? noDataSrc2.state : pendingNoData.stateKey;
+      noDataMsgEl.textContent = 'No data available for ' + stateName2 + ' — ' + speciesName;
+      noDataMsgEl.style.display = '';
+    } else {
+      noDataMsgEl.style.display = 'none';
+    }
+
+    var src = !showingNoData && STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][select.value];
     document.getElementById('wildlife-statedata-note').textContent = (src && src.note) ? src.note : '';
     document.getElementById('wildlife-statedata-attribution').textContent = (src && src.attribution) ? 'Source: ' + src.attribution : '';
-    document.getElementById('wildlife-statedata-toggle').checked = !!(isActiveSelection && wildlifeStateDataOnByCategory[wildlifeActiveTopCategory]);
+    var checkbox = document.getElementById('wildlife-statedata-toggle');
+    checkbox.checked = !!(isActiveSelection && wildlifeStateDataOnByCategory[tc]);
+    checkbox.disabled = !!showingNoData;
   }
 
   // Applies a resolved State Data payload to its shared per-category source — branches between
-  // setData() (every live-fetched state: Washington/Arizona/Nevada/Utah) and updateData()
-  // (Oregon's 'localFile' sources, Session 62) per the MapLibre payload-ceiling findings now in
-  // CLAUDE.md: updateData()'s diff path is what actually avoids the setData()/JSON.stringify()
-  // crash risk on a large dataset, and every Oregon feature already carries a real, globally-
-  // unique top-level `feature.id` from the Session 61 merge step — MapLibre's own diff mechanism
-  // (_dataUpdateable, keyed by feature.id whenever no `promoteId` SOURCE OPTION is configured)
-  // uses that automatically, with zero extra config needed; the unique id lives at the
-  // GeoJSON-standard `feature.id` location, not a properties field, so setting an actual
-  // `promoteId` option here would be wrong — that only ever looks inside `properties`, and
-  // properties.OBJECTID is deliberately the OLD, non-globally-unique, per-source-layer id kept
-  // only for traceability, not the field to promote.
+  // setData() (Arizona/Nevada/Utah's smaller 'perSpecies' fetches) and updateData() (Oregon's
+  // 'localFile' sources, Session 62; Washington's 'unified' SWIFD fetch, Session 60/Fix 2) per
+  // the MapLibre payload-ceiling findings now in CLAUDE.md: updateData()'s diff path is what
+  // actually avoids the setData()/JSON.stringify() crash risk on a large dataset — confirmed
+  // (Session 57) that a real full setData() call with Washington's genuine 73,373-feature SWIFD
+  // table throws MapLibre's own internal `RangeError: Invalid string length`, live-bisected to
+  // somewhere between 40,000 (renders) and 73,373 (crashes) features — this is exactly the
+  // dataset updateData() needs to cover, not just Oregon's smaller pre-processed files. Both
+  // Oregon's local files AND Washington's live ArcGIS f=geojson fetch already carry a real,
+  // unique top-level `feature.id` with zero extra work needed here: Oregon's from its own
+  // Session 61 merge step, Washington's for free from ArcGIS itself (its f=geojson responses put
+  // each feature's OBJECTID at the standard top-level GeoJSON `id` — confirmed via a real live
+  // query against the actual SWIFD endpoint before relying on it, not assumed — and OBJECTID is
+  // a real primary key so this is safely unique within Washington's own single 'range' layer
+  // fetch, the only layer a 'unified' source ever queries). MapLibre's own diff mechanism
+  // (_dataUpdateable, keyed by feature.id whenever no `promoteId` SOURCE OPTION is configured,
+  // confirmed unset for wildlife-statedata-*-source in reinitializeLayers) uses that top-level id
+  // automatically; setting an actual `promoteId` option would be wrong here — that only ever
+  // looks inside `properties`, and properties.OBJECTID is deliberately kept only for
+  // traceability, not the field to promote.
   // Always resets via a trivial EMPTY setData() first, even on the updateData() path — this is
   // what actually makes updateData() safe to use here at all: MapLibre's worker-side
   // `_dataUpdateable` Map (which updateData()'s diff mechanism requires to already exist and be
-  // valid) only gets rebuilt on a genuine full load, and the OTHER states sharing this same
-  // source still use plain setData() with data that was never explicitly guaranteed to carry
-  // clean/unique ids — so switching from one of those states TO Oregon without this reset could
-  // otherwise inherit an invalid (or simply absent) `_dataUpdateable` and throw "Cannot update
-  // existing geojson data". An empty FeatureCollection always passes the diff mechanism's own
-  // validity check trivially (there are no features to fail it), so this reset can never itself
-  // fail, and it has the same "source clears immediately" effect a plain setData() switch always
-  // had — confirmed live (see this session's verification notes) that switching FROM a
-  // live-fetched state TO Oregon and back still works correctly either direction.
+  // valid) only gets rebuilt on a genuine full load, and the OTHER (setData()-based) states
+  // sharing this same source were never explicitly guaranteed to carry clean/unique ids — so
+  // switching from one of those states TO Oregon or Washington without this reset could otherwise
+  // inherit an invalid (or simply absent) `_dataUpdateable` and throw "Cannot update existing
+  // geojson data". An empty FeatureCollection always passes the diff mechanism's own validity
+  // check trivially (there are no features to fail it), so this reset can never itself fail, and
+  // it has the same "source clears immediately" effect a plain setData() switch always had —
+  // confirmed live that switching FROM a setData()-based state TO Oregon and back still works
+  // correctly either direction (Session 62); Washington gets the identical treatment here.
   function applyStateDataToSource(tc, stateKey, data){
     var srcObj = map && map.getSource('wildlife-statedata-' + tc + '-source');
     if (!srcObj) return;
     var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][stateKey];
     var features = (data && data.features) || [];
-    if (src && src.type === 'localFile'){
+    if (src && (src.type === 'localFile' || src.type === 'unified')){
       srcObj.setData({ type: 'FeatureCollection', features: [] });
       srcObj.updateData({ add: features });
     } else {
@@ -18396,6 +18483,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (attrib) attrib.textContent = (src && src.attribution) ? 'Source: ' + src.attribution : '';
     wildlifeStateDataActiveByCategory[tc] = { speciesName: active.speciesName, stateKey: stateKey };
     wildlifeStateDataOnByCategory[tc] = true;
+    // Session 60 (Fix 1) — a real user pick is what "remembers" a state across future species
+    // switches within this category, and clears any pending "no data for the persisted state"
+    // message now that a real (valid, since it just loaded successfully for this species) state
+    // is active again.
+    wildlifeStateDataLastStateByCategory[tc] = stateKey;
+    wildlifeStateDataNoDataForByCategory[tc] = null;
     var checkbox = document.getElementById('wildlife-statedata-toggle');
     if (checkbox) checkbox.checked = true;
     persistWildlifeStateData();
@@ -19447,6 +19540,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         wildlifeMasterOnByCategory[tc] = saved.masterOn !== undefined ? !!saved.masterOn : true;
       }
       var savedSd = savedStateDataByCategory[tc];
+      if (savedSd && savedSd.stateKey){
+        // Session 60 (Fix 1) — seed the "last picked" memory from whatever was already durably
+        // persisted, so a fresh reload still remembers the state the user was using before,
+        // independent of whether it's still valid for whatever species restores as active below.
+        wildlifeStateDataLastStateByCategory[tc] = savedSd.stateKey;
+      }
       if (savedSd && wildlifeActiveByCategory[tc]){
         wildlifeStateDataActiveByCategory[tc] = { speciesName: wildlifeActiveByCategory[tc].speciesName, stateKey: savedSd.stateKey };
         wildlifeStateDataOnByCategory[tc] = !!savedSd.on;
