@@ -643,6 +643,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   existing "Clear selection" dismiss convention; also auto-clears if the target pin itself is deleted (hooked
   into `deletePinById` plus both bulk-delete code paths, so it can't be left pointing at a pin that no longer
   exists). See Architecture notes' "Pin-to-pin navigation" entry for full design and verification detail.
+- Pin-to-pin navigation refinements + Tap-stack pin-overlap fix (Session 69), both from real-device
+  feedback/testing. The nav chip is now taller (56px desktop/44px mobile, up from 40px/32px) with a
+  bigger, genuinely directional SVG dart/chevron arrow (replacing the old symmetric "▲" text glyph) instead
+  of the original "same size as the other persistent chips" design — a deliberate deviation from the
+  original spec, superseded by this explicit follow-up ask. The arrow is now device-heading-relative
+  ("the phone acts as the compass") when device-orientation permission is granted — requested contextually
+  at the exact moment navigation mode starts (tapping "Navigate to"), with a one-line `showToast()`
+  explanation shown immediately before the native iOS permission prompt — and falls back cleanly to the
+  original north-relative rotation (with distance/bearing text always staying absolute either way) if
+  permission is denied, the sensor doesn't exist, or no heading has arrived yet; the chip never breaks.
+  "Navigate to" now also auto-closes the pin's popup/overflow menu the instant navigation starts (was
+  staying open awkwardly). Separately: fixed a real Tap-stack gap where a Bearing's line overlapping a pin
+  never triggered the multi-item disambiguation list — re-investigated per explicit instruction using the
+  same registry-audit approach as the earlier Wildlife State Data gap, but found a structurally different
+  root cause this time (not a missing registry entry — Bearing was already fully wired into `TAP_STACK_TYPES`
+  and working correctly): pins are DOM markers whose own click handler calls `e.stopPropagation()`, which
+  means a click landing on a pin's marker element structurally never reaches the MapLibre canvas-level
+  `map.on('click', ...)` dispatch Tap-stack's pre-check relies on — a different, deeper limitation than a
+  simple missing table row, and one already explicitly flagged as a deliberate exclusion in `TAP_STACK_TYPES`'
+  own comment. Fixed by having the pin marker's own click handler independently query
+  `collectTapStackCandidates()` against the pin's own projected point before deciding whether to open its
+  drawer directly or show the shared disambiguation list alongside whatever else (a Bearing's line, a Buffer,
+  etc.) is really there — not a registry change, since a pin has no MapLibre layer/feature for
+  `queryRenderedFeatures` to ever find. See Architecture notes' "Pin-to-pin navigation refinements + Tap-stack
+  pin-overlap fix" entry for full mechanism/verification detail, including one real, deliberate remaining gap:
+  two overlapping DOM markers (e.g. a pin sitting exactly on a Bearing's own separate target-arrow marker,
+  not its line) still can't both be seen by one click — a browser-level constraint, not something Tap-stack's
+  own mechanism can reach regardless of how it's wired.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -4829,6 +4857,130 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     fix correctly recomputed bearing/distance against the new target, not the old one. Zero console errors
     throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION
     bumped 2.57.0 → 2.58.0, SHELL_CACHE bumped v174 → v175.
+- Pin-to-pin navigation refinements + Tap-stack pin-overlap fix (Session 69) — two real-device follow-ups
+  bundled into one session.
+  - **Taller chip, new arrow shape**: desktop `#nav-chip` height 40px → 56px, mobile `#nav-chip-mobile`
+    32px → 44px (matching row1's own established mobile chip height) — a deliberate deviation from the
+    original Session 68 "same size as the other persistent chips" spec, superseded by explicit real-device
+    feedback that the arrow needed more visual prominence. The old plain "▲" text glyph (a symmetric
+    equilateral triangle — hard to read as "pointing somewhere" at a glance, per the report) was replaced
+    with an inline SVG elongated dart/chevron (`M12 2 L4.6 20.3 L12 16.4 L19.4 20.3 Z`, the same
+    classic-"current-location-arrow" shape family used by most map apps), sized via each SVG's own
+    width/height attribute (28px desktop, 24px mobile) rather than a shared CSS font-size — matching the
+    `.active-layers-icon`/`#north-reset-icon-svg` precedent already established elsewhere in this file for
+    icon sizing. The rotating element is still the same outer `<span id="nav-chip-arrow">`/
+    `<span id="nav-chip-mobile-arrow">` JS already targets — `.style.transform` rotates the SVG's parent
+    identically to rotating a text glyph, so zero JS changes were needed for this half of the fix.
+  - **Device-heading-relative rotation ("the phone acts as the compass")**: a real design change from
+    Session 68's original north-relative-only arrow. Two new module vars — `navDeviceHeadingDeg` (the
+    current compass heading from `DeviceOrientationEvent`, null whenever no real heading has been received:
+    permission not yet granted, denied, no sensor, or simply before the first orientation event fires) and
+    `navOrientationHandler` (the currently-attached listener function, or null, so `clearNavTarget` can
+    remove the exact same reference it added). `startNavOrientation()` — called once, from inside
+    `setNavTarget`'s existing `if (navGpsSubId == null)` first-call gate, so it only ever runs once per
+    navigation "session" the same way the shared GPS subscription itself does — requests permission at the
+    exact moment navigation mode starts (tapping "Navigate to"), not upfront at app load, matching the
+    existing Locate Me/Compass contextual-permission convention. Reuses the identical
+    `DeviceOrientationEvent.requestPermission()`/`deviceorientation(absolute)` pattern already proven for
+    Compass (`openCompassPanel`) and the locate button's GPS dot (`_gpsDotInit`) — but as its own, third,
+    fully independent listener/state, not a shared abstraction: this codebase has never had a shared
+    orientation-watcher the way GPS position does (`subscribeSharedGps`), and each of the 3 orientation
+    consumers has always run its own listener, so this follows that same established pattern rather than
+    inventing a new shared mechanism partway through. `showToast("FieldMap uses your phone's compass to
+    point toward your target", 3500)` fires immediately before `requestPermission()` — a plain synchronous
+    DOM write, not a delay, so it doesn't interfere with iOS Safari's requirement that
+    `requestPermission()` be called synchronously inside the same user gesture. Heading derivation
+    (`e.webkitCompassHeading != null ? e.webkitCompassHeading : (e.absolute && e.alpha != null ? (360 -
+    e.alpha) % 360 : null)`) matches Compass's own `handleCompassOrientation` exactly — the more correct of
+    this codebase's two existing versions (it requires `e.absolute` before trusting an alpha-derived
+    heading; the GPS-dot's own orientation handler doesn't check that at all, a pre-existing inconsistency
+    not touched here). `updateNavChip()`'s arrow rotation is now `(navDeviceHeadingDeg != null) ? ((bearing
+    - navDeviceHeadingDeg + 360) % 360) : bearing` — device-relative when a heading is available, plain
+    north-relative fallback otherwise; `bearingText`/`distText` are completely unaffected either way, always
+    computed from the absolute `bearing` value, per spec's explicit "bearing-in-degrees still accurate"
+    requirement — only the arrow's own visual rotation changes. `clearNavTarget()` removes the listener
+    (both `deviceorientationabsolute` and `deviceorientation` — a harmless no-op on whichever wasn't the one
+    actually attached) and resets `navDeviceHeadingDeg` to null.
+  - **Popup auto-close**: `navigateToPin: function(id){ setNavTarget(id); closeViewDrawer(); }` — a
+    one-line addition. Safe to call unconditionally since this button only ever exists inside that pin's own
+    currently-open compact popup (never mid-edit, where `closeViewDrawer`'s own `drawerExpandedType` guard
+    would no-op anyway, though that state was never reachable from this button to begin with).
+  - **Tap-stack pin-overlap fix — investigated first, per explicit instruction, using the same
+    registry-audit approach as the earlier Wildlife State Data gap**: confirmed Bearing is fully, correctly
+    registered in `TAP_STACK_TYPES` (`queryLayers: ['bearings-line-touch', 'bearing-target-arrow']`) and its
+    click handling has worked correctly since Session 46 — this was NOT a missing-table-row gap the way
+    Wildlife State Data was. The real, structurally different root cause: `addMarkerForPin`'s own click
+    listener calls `e.stopPropagation()` before opening the pin's drawer (needed so the click doesn't bubble
+    into the map's own generic click handler and immediately re-close the drawer this same click just
+    opened — a pre-existing, load-bearing line, unrelated to this fix) — which means a click landing on a
+    pin's marker DOM element never reaches MapLibre's own canvas-level `map.on('click', ...)` dispatch at
+    all, the exact mechanism Tap-stack's pre-check (and every `TAP_STACK_TYPES` entry) depends on. This is
+    not a bug freshly introduced — `TAP_STACK_TYPES`' own comment already explicitly documents pins as a
+    deliberate exclusion for exactly this reason, dating back to Session 46 — but it meant a pin overlapping
+    ANY other Tap-stack-eligible layer (not just Bearing — Buffer, Wildlife, GMU, etc. would have hit the
+    identical gap) could never be disambiguated, only ever showing the pin directly with no indication
+    anything else was there.
+  - **The fix — not a registry entry, since a pin has no MapLibre layer/feature `queryRenderedFeatures`
+    could ever find**: `addMarkerForPin`'s click handler, in the "no special mode active" branch, now calls
+    `collectTapStackCandidates(map.project([pin.lng, pin.lat]))` — the pin's own real geographic location
+    projected to the current screen point, not the raw click coordinate (a small but real distinction, since
+    the marker element itself has some on-screen size) — using the EXACT same shared function every other
+    Tap-stack type already relies on, reused as-is with zero changes to it. Zero other candidates (the
+    overwhelming common case) falls straight through to the unchanged `openPinDrawer(pin)` call that was
+    always there; 1+ others means a genuine overlap, so a synthetic pin candidate
+    (`{type:'pin', key:'pin:'+pin.id, label:{title:pin.name, meta:'Pin'}, openFn:function(){
+    openPinDrawer(pin); }}`) is prepended to the real candidates and the whole set is shown via the
+    existing, unmodified `openTapStackPanel()` — the pin joins the shared disambiguation list exactly like
+    every other type already does when it overlaps something. One real, deliberate limitation this can't
+    reach, documented in a code comment rather than silently left unexplained: two overlapping DOM markers
+    (e.g. this same pin sitting exactly on a Bearing's own separate draggable target-arrow marker, not its
+    line) can never both be seen by one click — only whichever element is topmost in the DOM ever receives
+    it at all, a browser-level constraint no amount of Tap-stack wiring can work around; the reported bug
+    (pin overlapping a Bearing's LINE, a real MapLibre layer) is fully fixed by this change regardless.
+  - **Verified live**, via the already-connected Chrome browser extension against a local `python -m
+    http.server`. Compass rotation: mocked `DeviceOrientationEvent.requestPermission` (desktop Chrome has no
+    native implementation of this iOS-only API) to test both paths independently. GRANTED path: confirmed
+    the explanatory toast fires with the exact spec'd text before the (mocked) permission call; confirmed,
+    with a real injected GPS fix placing the true bearing at 0°/N, that the arrow starts at `rotate(0deg)`
+    (no heading yet) and correctly rotates to `rotate(270deg)` the instant a synthetic device-orientation
+    event reporting a 90°/East-facing heading was dispatched — exactly matching `(bearing - heading + 360) %
+    360 = (0 - 90 + 360) % 360 = 270`; confirmed the bearing TEXT stayed "N 0°" (unchanged, absolute)
+    throughout, satisfying the "text always accurate" requirement independent of arrow rotation. DENIED
+    path: confirmed `requestPermission` was called exactly once, the chip stayed fully functional (correct
+    real distance "5.77 mi" and correct absolute bearing "E 90°"), and — the real point of this check — a
+    stray `deviceorientationabsolute` event dispatched immediately AFTER the denial had zero effect on the
+    arrow's rotation (still the plain, unrotated north-relative value), directly confirming the orientation
+    listener was correctly never attached at all when permission was denied, not just coincidentally
+    ignored. Popup auto-close: confirmed live via the real UI (marker click → popup → overflow menu →
+    "Navigate to") that the popup/overflow menu disappears the instant navigation mode starts, with the nav
+    chip appearing in its place, screenshot-confirmed both before and after. Tap-stack pin-overlap fix:
+    injected a real test Bearing (matching the app's own real data shape via localStorage, picked up through
+    a genuine reload — this project's established testing pattern) whose line passes exactly through the
+    existing test pin's coordinates, confirmed the overlap visually (the dashed bearing line rendering
+    directly through the pin marker in a real screenshot) before testing; a real click dispatched directly on
+    the pin marker's DOM element correctly showed "2 items here" (Export Test Pin / Bearing), each row opened
+    its own correct, completely unmodified detail view when picked, "← Back to list" correctly returned to
+    the identical 2-item list, and dismissing via the panel's own × correctly left nothing open (confirmed via
+    real computed `display:none` on the panel, the view-drawer, AND the back-bar — not just DOM text, which
+    can hold stale content from an earlier step and give a false positive; an earlier check in this same
+    session that showed stale open state was traced to the test's OWN sequencing, not a product bug — a
+    previous detail view left open from an earlier step, in a scenario the fix's own code never touches, since
+    it only runs on the pin's own click, never a MapLibre-layer click). Flagged rather than silently
+    presented as fully covered: the "zero overlap → pin opens directly, no list" branch (the overwhelmingly
+    common single-pin-tap case) could not be independently re-confirmed live this session — this sandbox's
+    map hit a sustained style-loading stall (no markers ever rendered across a fresh reload, a fresh tab, and
+    over a minute of combined waiting, worse than the intermittent stalls documented in several earlier
+    sessions' own testing notes, which recovered within a call or two; this one did not recover for the rest
+    of the session) right as this specific check was attempted. This is treated as genuinely low remaining
+    risk, not silently assumed safe: the "else" branch this session's own edit added is the exact,
+    byte-identical `openPinDrawer(pin)` call that already existed before this change and was thoroughly
+    re-confirmed working earlier in this same session (both the very first pin click of Session 68's own
+    testing and again at the start of this session), and `collectTapStackCandidates()` returning an empty
+    array for a point with nothing else there is the same already-proven behavior every other Tap-stack type
+    has relied on since Session 46 — but a real single-pin-tap confirmation after this specific code change,
+    once the sandbox's map recovers or on a real device, is the natural next check, not assumed already done.
+    `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
+    2.58.0 → 2.59.0, SHELL_CACHE bumped v175 → v176.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -6646,3 +6798,49 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   observing the chip swap immediately with zero accumulation. Zero console errors throughout. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.57.0 → 2.58.0
   (minor — new feature), SHELL_CACHE bumped v174 → v175.
+- Session 69: Two real-device follow-up items, bundled into one session — see Architecture notes' "Pin-to-pin
+  navigation refinements + Tap-stack pin-overlap fix" entry for full mechanism/verification detail.
+  Item 1 (pin-to-pin nav chip refinements): made the chip taller (56px desktop/44px mobile) and replaced the
+  old symmetric "▲" text-glyph arrow with an SVG elongated dart/chevron, per feedback that the arrow needed
+  more visual prominence and a clearer directional read — both deliberate deviations from Session 68's
+  original "match the other chips exactly" spec. Switched the arrow from north-relative to device-heading-
+  relative rotation ("the phone acts as the compass") — a real design change, not a bug fix — requesting
+  `DeviceOrientationEvent` permission at the exact moment navigation mode starts (not upfront), with a
+  one-line explanatory toast shown immediately before the native iOS prompt, and a clean fallback to the
+  original north-relative rotation (distance/bearing text always staying absolute either way) if permission
+  is denied or unavailable — reused the exact permission/listener pattern already proven for Compass and the
+  locate button's GPS dot, as a third fully independent listener rather than inventing a shared abstraction.
+  Fixed "Navigate to" leaving the pin's popup open — it now auto-closes via `closeViewDrawer()` the instant
+  navigation starts. Item 2 (Tap-stack Bearing+pin gap): re-ran the same registry-audit approach used for
+  the earlier Wildlife State Data gap, per explicit instruction, and found a genuinely different root cause
+  this time — Bearing was already correctly registered and working in `TAP_STACK_TYPES`; the real problem is
+  that pins are DOM markers whose own click handler calls `e.stopPropagation()`, which structurally prevents
+  a click landing on a pin from ever reaching the MapLibre canvas-level dispatch Tap-stack's pre-check relies
+  on — not a missing table row, but the exact, deliberate exclusion `TAP_STACK_TYPES`' own comment already
+  documents. Fixed by having the pin marker's own click handler independently call the existing
+  `collectTapStackCandidates()` against the pin's own projected point before deciding whether to open its
+  drawer directly (zero other candidates, the common case, completely unchanged) or show the shared
+  disambiguation list alongside whatever else is really there. Verified live: both permission paths for the
+  compass rotation (mocked `DeviceOrientationEvent.requestPermission`, since desktop Chrome has no native
+  implementation) — granted path confirmed the toast fires with the right text and the arrow correctly
+  rotates device-relative once a synthetic orientation event arrives (bearing 0°, device heading 90° →
+  arrow at 270°, computed exactly as `(bearing - heading + 360) % 360`), with the bearing TEXT confirmed
+  staying absolute/unchanged throughout; denied path confirmed the chip stays fully functional with correct
+  distance/bearing and confirmed, via a stray orientation event dispatched right after denial having zero
+  effect, that the listener was genuinely never attached, not just coincidentally ignored. Popup auto-close
+  confirmed live via the real UI. The Tap-stack fix was verified with a real injected test Bearing whose line
+  passes exactly through the existing test pin (confirmed overlapping via a real screenshot before testing):
+  a real click dispatched directly on the pin marker correctly showed "2 items here," each row opened its own
+  correct unmodified detail view, "← Back to list" returned to the identical list, and the panel's own ×
+  correctly left nothing open (computed `display:none` on all three surfaces, not just DOM text). Flagged
+  rather than silently claimed as fully covered: the "zero overlap → pin opens directly, no list" branch (the
+  overwhelmingly common single-pin-tap case) could not be independently re-confirmed after this specific edit
+  — this sandbox's map hit a sustained style-loading stall (no markers rendered across a fresh reload, a
+  fresh tab, and over a minute of combined waiting) right as this check was attempted, worse than the
+  intermittent stalls documented in earlier sessions that recovered within a call or two. Treated as low,
+  not zero, remaining risk — the branch is the exact pre-existing `openPinDrawer(pin)` call already thoroughly
+  proven working earlier this session, guarded by the same already-proven `collectTapStackCandidates()` every
+  other Tap-stack type relies on — but a real single-pin-tap confirmation once the sandbox recovers or on a
+  real device is the natural next check, not assumed already done. `node --check` confirmed clean syntax on
+  all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.58.0 → 2.59.0, SHELL_CACHE bumped v175 →
+  v176.

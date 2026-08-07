@@ -150,26 +150,36 @@
      proofing measure) — each active layer gets its own line/div, truncated independently. */
   .active-layers-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
 
-  /* Pin-to-pin navigation chip (Session 68) — desktop variant. Matches the other 3 persistent
-     chips' own uniform sizing (see #center-readout-float,#scale-bar,#active-trip-chip above) —
-     same 40px height/8px radius/background/border — since spec calls for "same width and padding
-     as those, just another chip in that stack." #nav-chip-mobile (its own separate element, see
-     that rule below) is used instead on mobile — hidden here the same way #center-readout-float
-     is hidden on mobile for the same "different platform, different content" reason. */
+  /* Pin-to-pin navigation chip (Session 68, resized/re-shaped Session 69 per real-device
+     feedback: "arrow needs more visual prominence at current size"). No longer the exact same
+     40px height as the other 3 persistent chips (a deliberate deviation from the original
+     "same width and padding as those" spec, superseded by this explicit follow-up ask) — taller
+     specifically to give the now-SVG directional arrow (see .nav-chip-arrow below) real room.
+     #nav-chip-mobile (its own separate element, see that rule below) is used instead on mobile —
+     hidden here the same way #center-readout-float is hidden on mobile for the same "different
+     platform, different content" reason. */
   #nav-chip{
-    height:40px;box-sizing:border-box;border-radius:8px;
-    display:flex;align-items:center;gap:8px;
+    height:56px;box-sizing:border-box;border-radius:8px;
+    display:flex;align-items:center;gap:10px;
     font-family:var(--font-sans);font-size:11px;color:var(--text-muted);
     background:var(--bg-elevated);border:1px solid var(--border);
-    padding:5px 9px;
+    padding:7px 10px;
   }
   #nav-chip.hidden{display:none;}
   #nav-chip-text{min-width:0;flex:1;display:flex;flex-direction:column;justify-content:center;}
   #nav-chip-name{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #nav-chip-detail{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* Session 69: swapped the old plain "▲" text glyph (a symmetric equilateral triangle, hard to
+     read as "pointing somewhere" at a glance) for an inline SVG elongated dart/chevron — same
+     shape family as a classic map "current heading" pointer, asymmetric enough along its own
+     axis to clearly read as directional even before it's rotated. Sizing now lives on each SVG's
+     own width/height attribute (see the HTML), not this class, since the two platform variants
+     are deliberately different sizes — this class only owns color/centering/the rotate transition,
+     matching the .active-layers-icon/#north-reset-icon-svg precedent of sizing icons via their
+     own SVG attributes rather than a shared CSS font-size. */
   .nav-chip-arrow{
-    flex-shrink:0;display:inline-block;font-size:16px;line-height:1;color:var(--accent);
-    transition:transform 0.2s ease;
+    flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+    color:var(--accent);transition:transform 0.2s ease;
   }
   #nav-chip-close{flex-shrink:0;color:var(--text-muted);}
   #nav-chip-close:hover{color:var(--text);}
@@ -1216,19 +1226,20 @@
     .active-layers-line{display:inline;white-space:nowrap;}
     .active-layers-line + .active-layers-line::before{content:' · ';}
 
-    /* Pin-to-pin navigation bar (Session 68) — mobile variant, its own full-width row directly
-       below #active-layers-chip (DOM order already places it there — see the HTML comment), same
-       "own full-width row underneath the persistent chips" convention #active-layers-chip itself
-       established, not a new layout pattern. #nav-chip (desktop) is hidden entirely here the same
-       way #center-readout-float already is. 3 equal columns per spec — distance / arrow / bearing
-       — plus the close button as a 4th, fixed-width slot (not counted as one of the "3 columns"
-       the spec means, which are the live readout values). */
+    /* Pin-to-pin navigation bar (Session 68, taller Session 69 — same real-device "arrow needs
+       more prominence" feedback as the desktop chip above) — mobile variant, its own full-width
+       row directly below #active-layers-chip (DOM order already places it there — see the HTML
+       comment), same "own full-width row underneath the persistent chips" convention
+       #active-layers-chip itself established, not a new layout pattern. #nav-chip (desktop) is
+       hidden entirely here the same way #center-readout-float already is. 3 equal columns per
+       spec — distance / arrow / bearing — plus the close button as a 4th, fixed-width slot (not
+       counted as one of the "3 columns" the spec means, which are the live readout values). */
     #nav-chip{display:none;}
     #nav-chip-mobile{
       display:flex;align-items:center;
-      width:100%;height:32px;box-sizing:border-box;
+      width:100%;height:44px;box-sizing:border-box;
       border-radius:8px;background:var(--bg-elevated);border:1px solid var(--border);
-      padding:2px 10px;gap:4px;
+      padding:4px 10px;gap:6px;
     }
     #nav-chip-mobile.hidden{display:none;}
     .nav-chip-mobile-col{
@@ -1236,7 +1247,7 @@
       font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
-    #nav-chip-mobile-arrow{flex:0 0 auto;font-size:15px;}
+    #nav-chip-mobile-arrow{flex:0 0 auto;} /* sizing now lives on its own nested <svg> — see .nav-chip-arrow's own comment above */
     #nav-chip-mobile-close{flex-shrink:0;color:var(--text-muted);}
 
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
@@ -1571,7 +1582,9 @@
        #active-layers-chip (not inside #floating-info-row1) so mobile gets its own full-width row
        directly beneath it, per spec, rather than cramming into the 3-chip row. -->
   <div id="nav-chip" class="hidden" aria-label="Navigating to a pin">
-    <span id="nav-chip-arrow" class="nav-chip-arrow">▲</span>
+    <span id="nav-chip-arrow" class="nav-chip-arrow">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M12 2 L4.6 20.3 L12 16.4 L19.4 20.3 Z"/></svg>
+    </span>
     <div id="nav-chip-text">
       <div id="nav-chip-name"></div>
       <div id="nav-chip-detail"></div>
@@ -1580,7 +1593,9 @@
   </div>
   <div id="nav-chip-mobile" class="hidden" aria-label="Navigating to a pin">
     <span id="nav-chip-mobile-dist" class="nav-chip-mobile-col"></span>
-    <span id="nav-chip-mobile-arrow" class="nav-chip-mobile-col nav-chip-arrow">▲</span>
+    <span id="nav-chip-mobile-arrow" class="nav-chip-mobile-col nav-chip-arrow">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 2 L4.6 20.3 L12 16.4 L19.4 20.3 Z"/></svg>
+    </span>
     <span id="nav-chip-mobile-bearing" class="nav-chip-mobile-col"></span>
     <button id="nav-chip-mobile-close" class="link-btn" aria-label="Stop navigating" style="font-size:16px;line-height:1;">×</button>
   </div>
@@ -3264,7 +3279,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.58.0';
+  var APP_VERSION = '2.59.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -7574,6 +7589,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var navGpsSubId = null;
   var navCurrentPos = null; // {lat,lng} from the shared watcher, null until a real fix arrives
   var navGpsUnsupported = false; // true only if navigator.geolocation doesn't exist at all
+  // Session 69 — "the phone acts as the compass": device-heading-relative arrow rotation,
+  // requested at real-device-testing time to replace the original north-relative-only design.
+  // navDeviceHeadingDeg stays null (never guessed/defaulted) whenever no real heading has been
+  // received yet — permission not yet granted, denied, no sensor, or simply the very first tick
+  // before the first orientation event fires — and updateNavChip()'s own arrow-rotation branch
+  // falls back to plain north-relative rotation in every one of those cases, matching the
+  // explicit "don't break the whole feature if the user says no" requirement. Distance and the
+  // bearing-in-degrees TEXT are never affected either way — only the arrow's own visual rotation
+  // changes, see updateNavChip. navOrientationHandler is the currently-attached listener
+  // function (or null), kept so clearNavTarget can remove the exact same reference it added —
+  // this codebase has no shared orientation-watcher abstraction the way GPS position does
+  // (subscribeSharedGps); Compass (openCompassPanel) and the locate button's GPS dot
+  // (_gpsDotInit) both already run their own fully independent orientation listener, and this is
+  // a third one, matching that same established "each orientation consumer gets its own" pattern
+  // rather than trying to retrofit a shared abstraction that doesn't exist yet.
+  var navDeviceHeadingDeg = null;
+  var navOrientationHandler = null;
 
   function setNavTarget(pinId){
     var pin = state.pins.find(function(p){ return p.id === pinId; });
@@ -7590,16 +7622,65 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         // shows the waiting state, handled naturally by navCurrentPos still being null then.
         updateNavChip();
       });
+      startNavOrientation();
     }
     updateNavChip(); // show the chip immediately (with "Waiting for GPS…" if no fix yet) rather
                       // than waiting for the first position callback to make it appear at all
+  }
+
+  // Requests device-orientation access at the exact moment navigation mode actually starts —
+  // not upfront at app load — the same contextual-permission convention Locate Me/Compass
+  // already follow for both geolocation and orientation. iOS 13+ Safari's
+  // DeviceOrientationEvent.requestPermission() must be called synchronously inside a user
+  // gesture (this is one — setNavTarget is only ever reached from a real click) and gates access
+  // behind a native OS permission dialog; showToast() here (a plain synchronous DOM write, not a
+  // delay) fires immediately before that call so the native prompt has some context, per spec —
+  // styled via the app's own existing toast mechanism rather than a new blocking screen.
+  function startNavOrientation(){
+    if (typeof DeviceOrientationEvent === 'undefined') return; // no sensor API at all — arrow stays north-relative
+    if (typeof DeviceOrientationEvent.requestPermission === 'function'){
+      showToast("FieldMap uses your phone's compass to point toward your target", 3500);
+      DeviceOrientationEvent.requestPermission().then(function(state){
+        if (state === 'granted') attachNavOrientationListener();
+        // Denied: navDeviceHeadingDeg simply never gets set — updateNavChip's own fallback
+        // (north-relative rotation) keeps the chip fully functional regardless, per spec.
+      }).catch(function(){ /* treat like a denial — same graceful north-relative fallback */ });
+    } else {
+      attachNavOrientationListener(); // Android/desktop: no explicit permission gate to request
+    }
+  }
+
+  function attachNavOrientationListener(){
+    if (navOrientationHandler) return; // already attached from an earlier setNavTarget in this session
+    navOrientationHandler = function(e){
+      // Same heading-derivation formula as Compass's own handleCompassOrientation (the more
+      // correct of this codebase's two existing versions — it requires e.absolute before
+      // trusting an alpha-derived heading, unlike the locate button's GPS-dot orientation
+      // handler, which doesn't check that at all).
+      var heading = e.webkitCompassHeading != null ? e.webkitCompassHeading :
+                    (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
+      if (heading == null) return;
+      navDeviceHeadingDeg = heading;
+      updateNavChip();
+    };
+    if ('ondeviceorientationabsolute' in window)
+      window.addEventListener('deviceorientationabsolute', navOrientationHandler, true);
+    else
+      window.addEventListener('deviceorientation', navOrientationHandler, true);
   }
 
   function clearNavTarget(){
     navTargetPinId = null;
     navCurrentPos = null;
     navGpsUnsupported = false;
+    navDeviceHeadingDeg = null;
     if (navGpsSubId != null){ unsubscribeSharedGps(navGpsSubId); navGpsSubId = null; }
+    if (navOrientationHandler){
+      // Harmless no-op on whichever event name wasn't actually the one attached.
+      window.removeEventListener('deviceorientationabsolute', navOrientationHandler, true);
+      window.removeEventListener('deviceorientation', navOrientationHandler, true);
+      navOrientationHandler = null;
+    }
     updateNavChip();
   }
 
@@ -7645,7 +7726,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       bearingText = dirLabel + ' ' + (Math.round(bearing) % 360) + '°';
       distText = formatDist(distMi);
       detailText = distText + ' · ' + bearingText;
-      arrowDeg = bearing;
+      // Device-heading-relative when a real compass heading is available (Session 69 — "the
+      // phone acts as the compass"): rotate the target's absolute bearing by however far the
+      // phone has turned away from north, so the arrow visually points toward the target
+      // relative to the CURRENT direction the phone is facing, not true north. Falls back to
+      // plain north-relative rotation (the original Session 68 behavior) whenever no heading has
+      // been received yet, permission was denied, or the sensor doesn't exist — bearingText/
+      // distText above are always absolute regardless, per spec ("bearing-in-degrees still
+      // accurate") — only this arrow rotation value changes.
+      arrowDeg = (navDeviceHeadingDeg != null) ? ((bearing - navDeviceHeadingDeg + 360) % 360) : bearing;
     }
     document.getElementById('nav-chip-detail').textContent = detailText;
     document.getElementById('nav-chip-mobile-dist').textContent = distText;
@@ -9692,6 +9781,36 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // click not already claimed by a layer feature) calls closeAllPanels(), which also
       // closes #view-drawer — immediately undoing the open this same click just did.
       e.stopPropagation();
+      // Session 69 — Tap-stack awareness for pins. Pins are DOM markers, not a MapLibre layer,
+      // so they were always structurally invisible to Tap-stack's own map.on('click', ...)
+      // pre-check — this listener's own e.stopPropagation() above means a click landing on a
+      // pin's marker element never bubbles far enough to reach that canvas-level dispatch at
+      // all (this is the exact, deliberate exclusion TAP_STACK_TYPES' own comment documents;
+      // it is NOT a missing-registry-entry gap the way Wildlife State Data was — a pin has no
+      // MapLibre layer/feature queryRenderedFeatures could ever find, so it can't just be added
+      // to that table). Instead of adding pins to the registry, this reuses
+      // collectTapStackCandidates() directly against the pin's own projected screen point (its
+      // real geographic location, not the raw click coordinate — a small but real distinction
+      // since the marker element itself has some on-screen size) to see whether anything ELSE
+      // genuinely sits at this exact spot (a Bearing's line, a Buffer, a Wildlife polygon,
+      // etc.). Zero other candidates — the overwhelming common case — falls straight through to
+      // the unchanged single-pin-tap behavior below; 1+ others means a real overlap, so the pin
+      // joins them as one more row in the same shared disambiguation list every other type
+      // already gets when it overlaps something. Known, inherent limitation this can't reach:
+      // two overlapping DOM markers (e.g. this pin sitting exactly on a Bearing's own separate
+      // target-arrow marker, not its line) can never both be seen by one click — only whichever
+      // element is topmost in the DOM ever receives it at all, a browser-level constraint no
+      // amount of Tap-stack wiring can work around.
+      var otherTapStackCandidates = collectTapStackCandidates(map.project([pin.lng, pin.lat]));
+      if (otherTapStackCandidates.length){
+        var pinTapStackCandidate = {
+          type: 'pin', key: 'pin:' + pin.id,
+          label: { title: pin.name, meta: 'Pin' },
+          openFn: function(){ openPinDrawer(pin); }
+        };
+        openTapStackPanel([pinTapStackCandidate].concat(otherTapStackCandidates), latlng);
+        return;
+      }
       openPinDrawer(pin);
     });
 
@@ -12328,8 +12447,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Session 68 — pin popup's "Navigate to" button; also the same function a sidebar row's own
     // click reaches, since a sidebar click already opens this exact popup (openPopup()) rather
     // than needing a second, separate sidebar-only entry point for the same target-selection
-    // action.
-    navigateToPin: function(id){ setNavTarget(id); },
+    // action. closeViewDrawer() (Session 69) auto-closes the popup/overflow menu the instant
+    // navigation mode starts, per real-device feedback that it was awkwardly staying open —
+    // safe to call unconditionally since this button only ever exists inside that pin's own
+    // currently-open compact popup, never mid-edit (closeViewDrawer's own drawerExpandedType
+    // guard would no-op there regardless, but that state isn't reachable from this button).
+    navigateToPin: function(id){ setNavTarget(id); closeViewDrawer(); },
     // Fires on every keystroke in the tap-anywhere title input. Deliberately additive-only
     // (see detectCategoryTagIds) — typing further text can add more matched chips but never
     // silently removes one already added, even if the triggering word gets deleted again;
