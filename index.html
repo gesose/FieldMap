@@ -324,6 +324,13 @@
   .opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
   .opacity-row.show{display:flex;}
   .opacity-row input{flex:1;accent-color:var(--accent);}
+  /* Aspect's 4 independent N/E/S/W cardinal checkboxes — same show/hide-on-master convention as
+     .opacity-row (hidden until aspect-toggle is checked), just a wrapped row of small labeled
+     checkboxes instead of one flex:1 slider. */
+  .aspect-cardinals-row{display:none;gap:12px;margin-top:8px;font-size:12px;color:var(--text-muted);flex-wrap:wrap;}
+  .aspect-cardinals-row.show{display:flex;}
+  .aspect-cardinals-row label{display:flex;align-items:center;gap:4px;cursor:pointer;}
+  .aspect-cardinals-row input{accent-color:var(--accent);}
   .hint{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.4;}
 
   #search-input{
@@ -1081,8 +1088,10 @@
     padding:10px;box-shadow:0 2px 10px rgba(0,0,0,0.4);
   }
   #aspect-legend.hidden{display:none;}
-  /* Background is a conic-gradient set via JS (loadAspectLegend) computed from the same hue math
-     as the worker's own per-pixel coloring — nothing here hardcodes actual color values. */
+  /* Background is a conic-gradient set via JS (renderAspectLegendWheel) computed from the same
+     hue math as the worker's own per-pixel coloring — nothing here hardcodes actual color
+     values. Inactive-cardinal stops render muted (see ASPECT_INACTIVE_COLOR) so the wheel
+     itself shows which quarters are currently contributing to the map. */
   .aspect-legend-wheel{
     position:relative;width:72px;height:72px;border-radius:50%;
     border:1px solid rgba(255,255,255,0.3);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.25);
@@ -2432,10 +2441,21 @@
       <label class="layer-overlay-row">
         <input type="checkbox" id="aspect-toggle"> Aspect <button class="layer-hint-btn" data-layer-id="lh-aspect" title="About">?</button>
       </label>
+      <!-- 4-cardinal-toggle redesign: aspect-toggle above is now the MASTER on/off (shows/hides
+           whichever of these 4 is currently selected, without clearing the selection — see
+           setAspectOn's own comment); each of these independently controls one 90°-wide arc
+           (itself + its 2 adjacent intercardinals, e.g. N covers NW through NE). Shown/hidden in
+           sync with aspect-opacity-row, both driven by the master toggle. -->
+      <div class="aspect-cardinals-row" id="aspect-cardinals-row">
+        <label><input type="checkbox" id="aspect-cardinal-N" checked> N</label>
+        <label><input type="checkbox" id="aspect-cardinal-E" checked> E</label>
+        <label><input type="checkbox" id="aspect-cardinal-S" checked> S</label>
+        <label><input type="checkbox" id="aspect-cardinal-W" checked> W</label>
+      </div>
       <div class="opacity-row" id="aspect-opacity-row"><input type="range" id="aspect-opacity" min="20" max="100" value="60"></div>
       <div class="layer-info-panel" id="lh-aspect">
         <div class="layer-info-desc">Which way each slope faces, color-mapped around temperature and sun exposure: blue (north) is coldest and holds snow/moisture longest; green-yellow (east) gets morning sun; orange-red (south) is warmest, with earliest snowmelt and green-up; purple (west) gets the afternoon heat. Flat ground isn't shaded.</div>
-        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Shares Slope Angle's own underlying gradient calculation, just keeping direction instead of steepness — so the two can't both be on at once (turning one on turns the other off). Computed on your device, in a background thread — no extra download, same max zoom as Elevation (DEM).</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">4 independent N/E/S/W toggles, each showing its own cardinal plus its 2 adjacent intercardinals (e.g. N shows N, NE, and NW) — pick just the directions you care about, or check all 4 for the full wheel. The main checkbox above is a master switch: it hides/shows your current N/E/S/W picks without losing them, so you can quickly toggle the whole overlay off and back on. Shares Slope Angle's own underlying gradient calculation, just keeping direction instead of steepness — so the two can't both be on at once (turning one on turns the other off). Computed on your device, in a background thread — no extra download, same max zoom as Elevation (DEM).</div>
       </div>
 
       <label class="layer-overlay-row">
@@ -3279,7 +3299,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.59.0';
+  var APP_VERSION = '2.60.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -3962,6 +3982,14 @@
       // this guarantees the two mutually-exclusive layers can never both already be true at
       // boot without needing extra defensive logic in reinitializeLayers().
       aspectOn: false, aspectOpacity: 0.6,
+      // 4-cardinal-toggle redesign — aspectCardinals is the actual N/E/S/W SELECTION, kept
+      // completely separate from aspectOn (the master visibility toggle) so switching the
+      // master off and back on never loses a specific selection — persisted normally (like
+      // aspectOpacity), unlike aspectOn's own always-off-at-boot treatment, since a saved
+      // N/E/S/W pick is a real preference worth keeping across sessions, not a "was this
+      // layer actively in use" runtime flag. All 4 default true, matching the pre-redesign
+      // "always shows all 8 directions" behavior as the natural equivalent starting point.
+      aspectCardinals: { N: true, E: true, S: true, W: true },
       // Disturbance History (Session 42) — Wildfire History/Timber Harvest/Timber Thinning,
       // independently-toggleable live viewport-bbox overlays (see the "Disturbance History"
       // Architecture notes entry). Unlike Slope Angle/Elevation Range/Aspect these persist
@@ -4349,9 +4377,13 @@
   // current map viewport (esriGeometryEnvelope bbox) and re-queried on every pan/zoom while
   // the toggle is on, same idea as a live tile service. Layer 3 = NetworkNHDFlowline
   // (rivers/streams, polyline), layer 9 = NHDWaterbody (lakes/ponds, polygon) — field names
-  // confirmed live (lowercase, matching the USFS-boundaries lesson): gnis_name.
+  // confirmed live (lowercase, matching the USFS-boundaries lesson): gnis_name. Layer 12 =
+  // WBDHU12 (watershed/basin boundaries, polygon) — added in a later session (see that
+  // session's own CLAUDE.md entry) to surface the watershed NAME alongside stream/lake names;
+  // its own name field is 'name' (confirmed live, also lowercase), distinct from gnis_name.
   var HYDRO_FLOWLINE_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/3/query';
   var HYDRO_WATERBODY_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/9/query';
+  var HYDRO_HUC12_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/12/query';
   var HYDRO_MIN_ZOOM = 10; // below this a bbox query spans too much area and would hit the 2000-feature cap
   var HYDRO_FILL_COLOR = '#4a9fd8', HYDRO_STROKE_COLOR = '#2a6f97';
   var hydroRefreshTimer = null;
@@ -7312,7 +7344,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           }
           var feature = e.features && e.features[0];
           if (!feature) return;
-          openHydroPopupAt(feature.properties, kind, e.lngLat);
+          openHydroPopupAt(feature.properties, kind, e.lngLat, hydroWatershedNameAt(e.lngLat, e.point));
         };
       }
       map.on('click', 'hydro-flowline-touch', handleHydroClick('flowline'));
@@ -8068,17 +8100,44 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     return ASPECT_HUE_ANCHORS[0].hue;
   }
-  var aspectLegendLoaded = false;
-  function loadAspectLegend(){
-    if (aspectLegendLoaded) return;
+  // 4-cardinal-toggle redesign — which 90°-wide cardinal arc a bearing falls in (N covers NW
+  // through NE, etc.), mirroring terrain-overlay-worker.js's own identical copy exactly (kept in
+  // sync manually — a worker can't import from this file's own closure or vice versa, same
+  // reasoning as ASPECT_HUE_ANCHORS' own comment above). Used both to build the legend wheel
+  // (grayed stops for inactive cardinals) and nowhere else on the main thread — the actual pixel
+  // filtering happens worker-side, driven by the tile URL's own cardinals query param, not by
+  // calling this function per-pixel from here.
+  function aspectCardinalForBearing(bearing){
+    var b = bearing % 360;
+    if (b >= 315 || b < 45) return 'N';
+    if (b < 135) return 'E';
+    if (b < 225) return 'S';
+    return 'W';
+  }
+  // Re-renders the wheel every time (no longer a build-once cache — a prior session's
+  // aspectLegendLoaded flag made sense when the wheel's own gradient never changed after first
+  // paint, but now it must reflect whichever cardinals are currently active, so it has to be
+  // cheap to rebuild on every toggle, which it is: 37 short string stops). Inactive cardinals'
+  // stops render as a flat muted gray instead of their real hue, so the legend visually shows
+  // exactly which quarter of the circle is/isn't currently contributing to the map.
+  var ASPECT_INACTIVE_COLOR = 'rgba(255,255,255,0.08)';
+  function renderAspectLegendWheel(){
     var wheel = document.getElementById('aspect-legend-wheel');
+    if (!wheel) return;
+    var active = state.settings.aspectCardinals || { N: true, E: true, S: true, W: true };
     var stops = [];
     for (var deg = 0; deg <= 360; deg += 10){
-      var hue = Math.round(aspectHueForBearing(deg));
-      stops.push('hsl(' + hue + ',70%,50%) ' + deg + 'deg');
+      var cardinal = aspectCardinalForBearing(deg);
+      var css;
+      if (active[cardinal]){
+        var hue = Math.round(aspectHueForBearing(deg));
+        css = 'hsl(' + hue + ',70%,50%)';
+      } else {
+        css = ASPECT_INACTIVE_COLOR;
+      }
+      stops.push(css + ' ' + deg + 'deg');
     }
     wheel.style.background = 'conic-gradient(from 0deg, ' + stops.join(', ') + ')';
-    aspectLegendLoaded = true;
   }
 
   // ── Shared label-point generation (GMU AZ/OR, USFS boundaries) ──
@@ -8752,10 +8811,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ── Hydrography (NHDPlus HR) — live viewport-bbox queries, not a bulk fetch (see the
   // constants block above for why) ──
-  function hydroBboxQueryString(){
+  // Shared geometry/spatialRel portion only — outFields differs per layer (flowline/waterbody
+  // want gnis_name; HUC12 wants name+huc12), so each fetch call appends its own outFields
+  // rather than this function baking in one shared field list for all three.
+  function hydroBboxGeometryQS(){
     var b = map.getBounds();
     return 'geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
-      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=gnis_name&f=geojson';
+      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&f=geojson';
   }
 
   function loadHydrographyForViewport(){
@@ -8763,17 +8825,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (map.getZoom() < HYDRO_MIN_ZOOM){
       if (map.getSource('hydro-flowline-source')) map.getSource('hydro-flowline-source').setData({ type: 'FeatureCollection', features: [] });
       if (map.getSource('hydro-waterbody-source')) map.getSource('hydro-waterbody-source').setData({ type: 'FeatureCollection', features: [] });
+      if (map.getSource('hydro-huc12-source')) map.getSource('hydro-huc12-source').setData({ type: 'FeatureCollection', features: [] });
       if (!hydroZoomHintShown){ showToast('Zoom in to load rivers, streams & lakes'); hydroZoomHintShown = true; }
       return;
     }
-    var qs = hydroBboxQueryString();
+    var qs = hydroBboxGeometryQS();
     Promise.all([
-      fetch(HYDRO_FLOWLINE_URL + '?' + qs).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
-      fetch(HYDRO_WATERBODY_URL + '?' + qs).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
+      fetch(HYDRO_FLOWLINE_URL + '?' + qs + '&outFields=gnis_name').then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
+      fetch(HYDRO_WATERBODY_URL + '?' + qs + '&outFields=gnis_name').then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
+      // Watershed/basin boundaries — same viewport, same live service, just layer 12 instead of
+      // 3/9 (see the constants block's own comment). Used purely for hit-testing which HUC12 a
+      // clicked stream/lake point falls inside (see handleHydroClick) — never rendered visibly
+      // (hydro-huc12-fill's own fill-opacity is 0), so there's no visual overlay change here.
+      fetch(HYDRO_HUC12_URL + '?' + qs + '&outFields=name,huc12').then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
     ]).then(function(results){
       if (!state.settings.hydroOn) return; // toggled off while this was in flight
       if (results[0] && map.getSource('hydro-flowline-source')) map.getSource('hydro-flowline-source').setData(results[0]);
       if (results[1] && map.getSource('hydro-waterbody-source')) map.getSource('hydro-waterbody-source').setData(results[1]);
+      if (results[2] && map.getSource('hydro-huc12-source')) map.getSource('hydro-huc12-source').setData(results[2]);
     });
   }
 
@@ -8798,15 +8867,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (on) loadHydrographyForViewport();
   }
 
-  function hydroPopupHtml(props, kind){
-    var name = props.gnis_name || (kind === 'waterbody' ? 'Unnamed lake/pond' : 'Unnamed stream');
-    return '<div class="pin-popup-body"><div class="pin-popup-name">' + escapeHtml(name) + '</div></div>';
+  // Which HUC12 watershed polygon (if any) contains a given point — reuses MapLibre's own
+  // accurate polygon hit-testing against the already-fetched viewport data (hydro-huc12-fill,
+  // invisible, fill-opacity:0) rather than a second network round-trip per click or hand-rolled
+  // point-in-polygon math. `point` (a screen pixel, e.g. a real click event's own e.point) is
+  // optional — reused directly when the caller already has one (handleHydroClick); derived via
+  // map.project() when it doesn't (Tap-stack's open() functions only receive lngLat). A point
+  // that falls in a real gap in HUC12 coverage (or simply hasn't loaded yet) just returns no
+  // feature here — the caller's watershedName stays null and the popup gracefully omits that
+  // line entirely rather than showing "undefined" or an error.
+  function hydroWatershedNameAt(lngLat, point){
+    var screenPoint = point || map.project(lngLat);
+    var huc12Feature = map.queryRenderedFeatures(screenPoint, { layers: ['hydro-huc12-fill'] })[0];
+    return (huc12Feature && huc12Feature.properties && huc12Feature.properties.name) || null;
   }
 
-  function openHydroPopupAt(props, kind, lngLat){
+  // watershedName (added alongside the HUC12 lookup) is optional/nullable throughout — a
+  // gracefully-omitted meta line, not a required field, matching the same "meta ? ... : ''"
+  // convention every other popup builder in this file already uses for an optional sub-line.
+  function hydroPopupHtml(props, kind, watershedName){
+    var name = props.gnis_name || (kind === 'waterbody' ? 'Unnamed lake/pond' : 'Unnamed stream');
+    var kindLabel = kind === 'waterbody' ? 'Lake/pond' : 'Stream';
+    var meta = kindLabel + (watershedName ? ' · ' + watershedName : '');
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(name) + '</div>' +
+      '<div class="pin-popup-meta">' + escapeHtml(meta) + '</div>' +
+    '</div>';
+  }
+
+  function openHydroPopupAt(props, kind, lngLat, watershedName){
     if (openHydroPopup){ openHydroPopup.remove(); openHydroPopup = null; }
     var popup = new maplibregl.Popup({ offset: 6, maxWidth: '260px', className: 'pin-popup' })
-      .setLngLat(lngLat).setHTML(hydroPopupHtml(props, kind)).addTo(map);
+      .setLngLat(lngLat).setHTML(hydroPopupHtml(props, kind, watershedName)).addTo(map);
     popup.on('close', function(){ if (openHydroPopup === popup) openHydroPopup = null; });
     openHydroPopup = popup;
   }
@@ -9216,7 +9308,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   // aspectOn is force-reset to false at every boot, same treatment (and same reasoning) as
-  // elevRangeOn above — see the settings-defaults/loadState/boot-restore comments.
+  // elevRangeOn above — see the settings-defaults/loadState/boot-restore comments. This is the
+  // MASTER toggle only — it shows/hides whatever the current N/E/S/W cardinal SELECTION is
+  // (aspectCardinals, a completely separate, normally-persisted setting — see
+  // setAspectCardinalOn) without ever touching that selection itself, which is what makes
+  // "quickly cycle the whole overlay on/off while preserving specific picks" work: the tile
+  // URL's own cardinals query param is driven purely by aspectCardinals, never by aspectOn, so
+  // flipping the master off and back on re-shows tiles already fetched under the unchanged URL
+  // with zero new network/worker work, rather than losing or resetting the selection.
   function setAspectOn(on){
     if (on && state.settings.slopeAngleOn){
       setSlopeAngleOn(false);
@@ -9227,8 +9326,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     state.settings.aspectOn = on;
     if (map && map.getLayer('aspect-raster')) map.setLayoutProperty('aspect-raster', 'visibility', on ? 'visible' : 'none');
     document.getElementById('aspect-opacity-row').classList.toggle('show', on);
-    if (on) loadAspectLegend();
+    document.getElementById('aspect-cardinals-row').classList.toggle('show', on);
+    if (on) renderAspectLegendWheel();
     document.getElementById('aspect-legend').classList.toggle('hidden', !on);
+  }
+
+  // Builds aspect-source's own tile URL from the CURRENT cardinal selection (state.settings.
+  // aspectCardinals) — the letters live in the tile URL itself (see the aspect addProtocol
+  // handler's own comment), matching Elevation Range's exact min/max-in-the-URL pattern, so a
+  // changed selection produces a genuinely different URL MapLibre treats as needing a fresh
+  // fetch/recompute rather than reusing tiles cached under the old selection.
+  function aspectTileUrl(){
+    var active = ['N', 'E', 'S', 'W'].filter(function(c){ return state.settings.aspectCardinals[c]; });
+    return 'aspect://{z}/{x}/{y}?cardinals=' + active.join(',');
+  }
+
+  // Toggles one cardinal's own selection independently of the master (aspectOn) — called by each
+  // of the 4 checkboxes' own change listener. Rebuilds the tile URL and calls .setTiles()
+  // unconditionally, even while the master is currently off, so the source is always correct and
+  // ready the instant the master is flipped back on (see setAspectOn's own comment for why this
+  // matters) rather than needing a refresh triggered from there.
+  function setAspectCardinalOn(cardinal, on){
+    state.settings.aspectCardinals[cardinal] = on;
+    if (map && map.getSource('aspect-source')) map.getSource('aspect-source').setTiles([aspectTileUrl()]);
+    renderAspectLegendWheel();
+    scheduleSave();
   }
 
   // Rebuilds elevrange-source's own tile URL template with the new min/max baked in and calls
@@ -10074,17 +10196,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // Aspect (Session 40) — same DEM-derived approach as Slope Angle above (shares its own
-    // gradient computation in the worker, keeping direction instead of magnitude), via the
-    // 'aspect://' protocol. Mutually exclusive with Slope Angle (see setAspectOn/setSlopeAngleOn
-    // — turning either on programmatically turns the other off) — state.settings.aspectOn is
-    // force-reset to false at every boot (same treatment as elevRangeOn, see that field's own
-    // comment), which is what guarantees this and slopeAngleOn can never BOTH already be true
-    // when this function runs on initial load, without needing extra defensive logic here.
+    // Aspect (Session 40, 4-cardinal-toggle redesign in a later session) — same DEM-derived
+    // approach as Slope Angle above (shares its own gradient computation in the worker, keeping
+    // direction instead of magnitude), via the 'aspect://' protocol. Mutually exclusive with
+    // Slope Angle (see setAspectOn/setSlopeAngleOn — turning either on programmatically turns
+    // the other off) — state.settings.aspectOn is force-reset to false at every boot (same
+    // treatment as elevRangeOn, see that field's own comment), which is what guarantees this and
+    // slopeAngleOn can never BOTH already be true when this function runs on initial load,
+    // without needing extra defensive logic here. Tile URL built via aspectTileUrl() (not a
+    // static string) so a style switch — which tears down and re-adds every custom source, see
+    // this file's own diff:false comment — re-seeds the source with whatever the CURRENT
+    // aspectCardinals selection is, not always-defaulting back to all-4-on.
     if (!map.getSource('aspect-source')){
       map.addSource('aspect-source', {
         type: 'raster',
-        tiles: ['aspect://{z}/{x}/{y}'],
+        tiles: [aspectTileUrl()],
         tileSize: 256,
         maxzoom: 14
       });
@@ -10098,7 +10224,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         paint: { 'raster-opacity': state.settings.aspectOpacity != null ? state.settings.aspectOpacity : 0.6 }
       });
     }
-    if (state.settings.aspectOn) loadAspectLegend();
+    if (state.settings.aspectOn) renderAspectLegendWheel();
 
     // Wildlife range polygons — one source per category, added first so they render
     // beneath all user-drawn content (pins/tracks/areas/bearings). Sources are seeded
@@ -10527,6 +10653,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         source: 'hydro-waterbody-source',
         layout: { visibility: state.settings.hydroOn ? 'visible' : 'none' },
         paint: { 'line-color': HYDRO_STROKE_COLOR, 'line-width': 1 }
+      });
+    }
+    // Watershed (HUC12) boundaries — purely for hit-testing (see loadHydrographyForViewport's
+    // own comment); fill-opacity 0 so it never changes what's visibly rendered, matching the
+    // same "invisible layer just for queryRenderedFeatures" pattern hydro-flowline-touch already
+    // uses above (14px/opacity:0). Always visibility:'visible' (MapLibre's own
+    // queryRenderedFeatures skips any layer set to 'none') — its DATA still gets cleared at low
+    // zoom / while hydro is off via loadHydrographyForViewport, so there's nothing stale to hit-
+    // test against even though the layer itself stays "visible."
+    if (!map.getSource('hydro-huc12-source')){
+      map.addSource('hydro-huc12-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('hydro-huc12-fill')){
+      map.addLayer({
+        id: 'hydro-huc12-fill',
+        type: 'fill',
+        source: 'hydro-huc12-source',
+        layout: { visibility: 'visible' },
+        paint: { 'fill-opacity': 0 }
       });
     }
     if (state.settings.hydroOn) loadHydrographyForViewport();
@@ -11399,13 +11544,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       type: 'hydroflowline', queryLayers: function(){ return ['hydro-flowline-touch']; },
       getKey: function(f){ return f.id; },
       label: function(f){ return { title: f.properties.gnis_name || 'Unnamed stream', meta: 'Stream' }; },
-      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'flowline', lngLat); }
+      // Same HUC12 hit-test as the direct single-feature click path (handleHydroClick) — Tap-
+      // stack's own open() already receives lngLat, so map.project() gets back to a screen
+      // point for queryRenderedFeatures, keeping this path's popup consistent with the direct
+      // one rather than silently omitting the watershed name only when reached via the stack.
+      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'flowline', lngLat, hydroWatershedNameAt(lngLat)); }
     },
     {
       type: 'hydrowaterbody', queryLayers: function(){ return ['hydro-waterbody-fill']; },
       getKey: function(f){ return f.id; },
       label: function(f){ return { title: f.properties.gnis_name || 'Unnamed lake/pond', meta: 'Lake/pond' }; },
-      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'waterbody', lngLat); }
+      open: function(f, lngLat){ openHydroPopupAt(f.properties, 'waterbody', lngLat, hydroWatershedNameAt(lngLat)); }
     },
     {
       type: 'gauge', queryLayers: function(){ return ['gauge-stations-circle']; },
@@ -11778,17 +11927,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       return { cancel: function(){ cancelled = true; } };
     });
 
-    // Same shape as slopeangle's own protocol (no query params — aspect coloring is a fixed
-    // function of the DEM data and zoom, unlike elevrange's user-adjustable min/max).
+    // cardinals query param (4-cardinal-toggle redesign) mirrors elevrange's own min/max-in-the-
+    // URL pattern: the active N/E/S/W selection lives in the tile URL itself (see
+    // aspectTileUrl()/setAspectCardinalOn), so a changed selection produces a genuinely different
+    // URL MapLibre correctly treats as needing a fresh fetch rather than reusing a stale tile
+    // computed under the old selection. The captured group is optional and may be an empty
+    // string (zero cardinals active, e.g. every checkbox unchecked) — split(',').filter(Boolean)
+    // collapses "missing" and "present-but-empty" to the same correct [] result either way.
     maplibregl.addProtocol('aspect', function(params, callback){
-      var m = params.url.match(/^aspect:\/\/(\d+)\/(\d+)\/(\d+)/);
+      var m = params.url.match(/^aspect:\/\/(\d+)\/(\d+)\/(\d+)(?:\?cardinals=([A-Z,]*))?/);
       if (!m){ callback(new Error('bad aspect tile url')); return { cancel: function(){} }; }
       var z = +m[1], x = +m[2], y = +m[3];
+      var cardinals = m[4] ? m[4].split(',').filter(Boolean) : [];
       var cancelled = false;
       fetchDemTileImageData(z, x, y).then(function(demData){
         if (cancelled) return null;
         if (!demData) throw new Error('no DEM data for this tile');
-        return computeTerrainOverlayTile('aspect', demData, { metersPerPixel: metersPerPixelAtZoom(z, tileCenterLat(z, y)) });
+        return computeTerrainOverlayTile('aspect', demData, { metersPerPixel: metersPerPixelAtZoom(z, tileCenterLat(z, y)), cardinals: cardinals });
       }).then(function(rgbaBuffer){
         if (cancelled || !rgbaBuffer) return null;
         return rgbaBufferToPngArrayBuffer(rgbaBuffer);
@@ -19778,6 +19933,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             // it must never be trusted from a persisted value, always forced false at boot.
             if (state.settings.aspectOpacity === undefined) state.settings.aspectOpacity = 0.6;
             // aspectOn has NO fixup line either, same exception, same reason — see setAspectOn.
+            if (!state.settings.aspectCardinals) state.settings.aspectCardinals = { N: true, E: true, S: true, W: true };
             if (state.settings.wildfireRecentOn === undefined) state.settings.wildfireRecentOn = false;
             if (state.settings.wildfireRecentOpacity === undefined) state.settings.wildfireRecentOpacity = 0.55;
             if (state.settings.wildfireOlderOn === undefined) state.settings.wildfireOlderOn = false;
@@ -20293,6 +20449,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       setAspectOn(this.checked);
       scheduleSave();
     });
+    ['N', 'E', 'S', 'W'].forEach(function(c){
+      document.getElementById('aspect-cardinal-' + c).addEventListener('change', function(){
+        setAspectCardinalOn(c, this.checked); // setAspectCardinalOn already calls scheduleSave()
+      });
+    });
     document.getElementById('aspect-opacity').addEventListener('input', function(){
       state.settings.aspectOpacity = this.value / 100;
       if (map.getLayer('aspect-raster')) map.setPaintProperty('aspect-raster', 'raster-opacity', state.settings.aspectOpacity);
@@ -20469,6 +20630,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('aspect-opacity').value = Math.round((state.settings.aspectOpacity != null ? state.settings.aspectOpacity : 0.6) * 100);
     document.getElementById('aspect-opacity-row').classList.toggle('show', false);
     document.getElementById('aspect-legend').classList.toggle('hidden', true);
+    // aspectCardinals (the N/E/S/W SELECTION, distinct from aspectOn the master toggle) DOES
+    // restore normally from persisted state — see the settings-defaults/loadState-fixup comments
+    // for why this one field, unlike aspectOn itself, is meant to survive a reload.
+    ['N', 'E', 'S', 'W'].forEach(function(c){
+      document.getElementById('aspect-cardinal-' + c).checked = !!state.settings.aspectCardinals[c];
+    });
+    document.getElementById('aspect-cardinals-row').classList.toggle('show', false);
     document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
     document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;

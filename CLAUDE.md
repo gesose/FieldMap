@@ -671,6 +671,22 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   two overlapping DOM markers (e.g. a pin sitting exactly on a Bearing's own separate target-arrow marker,
   not its line) still can't both be seen by one click — a browser-level constraint, not something Tap-stack's
   own mechanism can reach regardless of how it's wired.
+- Hydrography now surfaces watershed (HUC12) names alongside stream/lake names (Session 70) — one more
+  viewport bbox query to the same live NHDPlus HR service Hydrography already uses (layer 12, WBDHU12), not
+  a new data source. A tapped stream/lake's popup meta line now reads "Stream · [watershed name]" (or just
+  "Stream" when no watershed boundary is loaded/found at that point — a real, gracefully-handled edge case,
+  not an error). Also wired into Tap-stack's own hydroflowline/hydrowaterbody `open()` functions for the same
+  popup content regardless of which path opened it. See Architecture notes' "Hydrography watershed name
+  display" entry for full mechanism/verification detail.
+- Aspect redesigned from an always-on 8-direction wheel to 4 independent N/E/S/W cardinal toggles, each
+  covering its own cardinal plus its 2 adjacent intercardinals (Session 70) — e.g. checking only "N" shows
+  N/NE/NW terrain and leaves everything else transparent. The original `aspect-toggle` checkbox is now a
+  pure master on/off switch that shows/hides whatever the current N/E/S/W selection is without ever clearing
+  it, so cycling the whole overlay off and back on preserves specific picks. Same underlying color math and
+  same mutual exclusion with Slope Angle as before — neither changed. Legend wheel now grays out whichever
+  cardinal arcs are currently inactive. See Architecture notes' "Aspect: 4-cardinal-toggle redesign" entry
+  for full mechanism/verification detail, including a real MapLibre `setTiles()`-resolves-via-
+  `requestAnimationFrame` timing gotcha hit (and resolved) during this session's own live testing.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -4981,6 +4997,147 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     once the sandbox's map recovers or on a real device, is the natural next check, not assumed already done.
     `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks. APP_VERSION bumped
     2.58.0 → 2.59.0, SHELL_CACHE bumped v175 → v176.
+- Hydrography watershed name display (Session 70) — extends the existing live NHDPlus HR viewport-bbox
+  pattern (see the "Hydrography (NHDPlus HR)" Architecture notes entry, unchanged) with a third parallel
+  query to the SAME service's layer 12 (WBDHU12), confirmed live before writing any code: field name is
+  `name` (lowercase, matching `gnis_name`'s own lowercase convention on layers 3/9), plus `huc12`/`states`/
+  `tohuc`/`areaacres`. Also independently confirmed live that `reachcode` (already present on layers 3/9,
+  though never requested by this app) embeds the containing HUC8 code as its own first 8 digits — a real
+  flowline's `reachcode:"15060202006672"` and the local HUC12 codes `"150602020613"` etc. share the identical
+  `"15060202"` prefix — but that's a CODE, not a name, which is why the actual fix reads layer 12's own
+  `name` field rather than trying to derive anything from `reachcode`.
+  - **No new source, no spatial join**: `hydroBboxGeometryQS()` (renamed from `hydroBboxQueryString()`,
+    which used to bake `outFields=gnis_name` into the shared string — now split out per-fetch since layer 12
+    needs different fields) builds just the shared geometry/spatialRel portion; `loadHydrographyForViewport()`
+    fetches flowline/waterbody/huc12 in one `Promise.all`, same live-viewport-bbox pattern, same
+    `HYDRO_MIN_ZOOM` gate, same graceful-empty-on-zoom-out behavior extended to the new
+    `hydro-huc12-source`.
+  - **Hit-testing, not a spatial join between datasets**: `hydro-huc12-fill` is a real MapLibre fill layer
+    (`fill-opacity:0`, always `visibility:'visible'` since `queryRenderedFeatures` skips `'none'` layers) —
+    invisible on the map, existing purely so `map.queryRenderedFeatures()` can answer "which HUC12 polygon
+    contains this exact point" using MapLibre's own accurate hit-testing, the same "invisible wide layer just
+    for click detection" pattern `hydro-flowline-touch` (14px, `line-opacity:0`) already established. This
+    was chosen over either a live per-click point-query against the ArcGIS service (an extra network round
+    trip per click, and not what "one more bbox query" in the task's own framing implied) or hand-rolled
+    point-in-polygon math against the fetched GeoJSON (unnecessary — MapLibre already solves this correctly).
+  - **`hydroWatershedNameAt(lngLat, point)`**: shared helper, used both by the direct single-feature click
+    path (`handleHydroClick`, which already has a real `e.point` from the click event) and by Tap-stack's own
+    `hydroflowline`/`hydrowaterbody` `open(f, lngLat)` functions (which only receive `lngLat`, not a screen
+    point, so they derive one via `map.project()`) — added to the latter so a stream/lake popup reached via
+    the Tap-stack disambiguation list shows the identical content a direct tap would, rather than silently
+    omitting the watershed name only on that one alternate path.
+  - **`hydroPopupHtml(props, kind, watershedName)`**: `watershedName` is optional/nullable throughout — the
+    popup's meta line is now `kindLabel + (watershedName ? ' · ' + watershedName : '')`, so "Stream" alone
+    (no crash, no "undefined") is exactly what renders when no watershed boundary is loaded/found at that
+    point — confirmed live, not just reasoned about, per the task's own explicit "verify what the service
+    returns for an edge case" ask. Previously `hydroPopupHtml` had NO meta line at all (just a bare name) —
+    the kind label ("Stream"/"Lake/pond") is a small additive improvement surfaced here for free, since
+    Tap-stack's own `label()` functions already computed those exact same 2 strings separately.
+  - **Verified live**, via the already-connected Chrome browser extension against a local `python -m
+    http.server`, using REAL data (unlike DEM-derived overlays, this sandbox's own earlier research this
+    session confirmed `hydro.nationalmap.gov` is directly reachable, not blocked like Mapbox v4): jumped the
+    map to the real Beaver Creek/Verde River area near Camp Verde, AZ (the same area used for this session's
+    own research phase) and toggled Hydrography on — confirmed real basemap tiles AND real blue Hydrography
+    flowline data rendering (86 real flowline features fetched for the viewport), and confirmed the new
+    `hydro-huc12-source` genuinely populated with 4 real watershed names ("Copper Canyon-Verde River",
+    "Beaver Creek", "Grief Hill Wash-Verde River", "Wickiup Creek") — exactly matching the names independently
+    found via `curl` during this session's own research phase, not approximated. Found a real named flowline
+    feature ("Beaver Creek") in the live fetched data, computed its exact on-screen point via `map.project()`,
+    and confirmed via `queryRenderedFeatures` (before clicking, not assumed) that both the flowline-touch AND
+    huc12-fill layers genuinely overlap there. A real `computer`-tool pixel click landed on empty map
+    background instead (opening tap-anywhere) due to the same class of screenshot-vs-CSS-pixel scaling
+    mismatch this session's own earlier work already hit — recovered by firing a real, properly-constructed
+    MapLibre `click` event (`map.fire('click', {lngLat, point, originalEvent, preventDefault, ...})`) at the
+    exact verified point instead of a raw screen-coordinate click, which correctly triggers the SAME
+    registered `handleHydroClick` handler a real tap would. Confirmed live: the resulting popup read
+    "Beaver Creek" (name) / "Stream · Beaver Creek" (meta — kind label + real watershed name, both correct,
+    and in this specific real-world case the creek and its containing watershed happen to share the same
+    name, confirmed as a genuine coincidence in the real data, not a bug echoing one value into the other).
+    Separately verified the graceful-degradation path with equal rigor, not just reasoned about: temporarily
+    cleared `hydro-huc12-source`'s live data (simulating "no watershed boundary loaded/found here," a real
+    state the code must handle) and re-fired the identical click at the identical real point — confirmed the
+    popup correctly read "Beaver Creek" / "Stream" (watershed portion cleanly omitted, no crash, no
+    "undefined") with zero thrown exceptions, then restored the real data afterward. Zero console errors
+    throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks.
+- Aspect: 4-cardinal-toggle redesign (Session 70) — replaces the original always-on 8-direction hue wheel
+  (Session 40) with 4 independent N/E/S/W checkboxes plus a master on/off toggle, per explicit real-device
+  design feedback. The underlying color math (`ASPECT_HUE_ANCHORS`/`hueForBearing`/`hslToRgb`) and the
+  mutual exclusion with Slope Angle are both completely unchanged — this redesign only adds a filtering
+  layer on top of the existing per-pixel computation, it doesn't touch how a passing pixel gets colored.
+  - **The 4 arcs**: each cardinal covers a 90°-wide arc centered on itself — "N shows N, NE, and NW" is
+    literal: N's own arc runs NW(315°) through N(0°) to NE(45°). `cardinalForBearing(bearing)`
+    (`N:[315,360)∪[0,45)`, `E:[45,135)`, `S:[135,225)`, `W:[225,315)`) is duplicated in BOTH
+    `terrain-overlay-worker.js` (the actual per-pixel filter) and index.html (the legend wheel) — kept in
+    sync manually, the same "a worker can't import from the app's own closure" reasoning already established
+    for `ASPECT_HUE_ANCHORS`'s own existing duplication. A standalone Node test
+    (`test_aspect_cardinals.js`, run against the real worker file, not a reimplementation) confirmed the 4
+    arcs exhaustively partition the full circle with zero gaps or overlaps (every integer bearing 0-359
+    mapped to exactly one cardinal, each arc covering exactly 90 of them) before any live testing.
+  - **Master toggle vs. selection — genuinely separate state, by design**: `aspectOn` (existing) keeps its
+    exact original role as a pure visibility/mutual-exclusion master switch — completely unchanged code,
+    same force-reset-at-boot treatment. The new `state.settings.aspectCardinals = {N,E,S,W}` (default all
+    true, matching the old always-on-all-directions behavior as the natural starting point) is the actual
+    N/E/S/W SELECTION, persisted NORMALLY (unlike `aspectOn` itself) since a saved directional preference is
+    a real setting worth keeping, not a "was this actively in use" runtime flag. This split is what makes
+    "master toggle shows/hides the current selection without clearing it" literal, not just approximate —
+    turning the master off and back on never touches `aspectCardinals` at all, confirmed live through a real
+    mutual-exclusion-triggered off/on cycle (see Verified live below).
+  - **cardinals baked into the tile URL, matching Elevation Range's own established min/max pattern**:
+    `aspectTileUrl()` builds `'aspect://{z}/{x}/{y}?cardinals=N,E,S,W'` (or any subset) from the current
+    selection; `setAspectCardinalOn(cardinal, on)` updates `aspectCardinals` and calls
+    `.setTiles([aspectTileUrl()])` UNCONDITIONALLY, even while the master is off, so the source is always
+    correct and ready the instant the master flips back on — no refresh needed from that path, and (a real,
+    if minor, efficiency win) toggling the master off/back on with the selection unchanged reuses whatever
+    was already fetched/cached under the same unchanged URL rather than re-fetching. The `aspect://`
+    protocol handler's regex now captures an optional `?cardinals=([A-Z,]*)` group — `m[4] ?
+    m[4].split(',').filter(Boolean) : []` collapses both "no query string at all" and "present but empty"
+    (zero cardinals selected) to the same correct `[]` result, which `computeAspect` treats as "nothing
+    matches any active cardinal" — an all-transparent tile, a valid and harmless state, not an error.
+  - **Legend reflects active/inactive cardinals**: `renderAspectLegendWheel()` (replacing the old
+    build-once-and-cache `loadAspectLegend()` — it must now be cheap to rebuild on every single toggle,
+    which 37 short gradient-stop strings comfortably is) computes each 10°-step stop's real HSL color only
+    when that stop's own cardinal is active; inactive stops render a flat muted gray
+    (`ASPECT_INACTIVE_COLOR`, `rgba(255,255,255,0.08)`) instead — confirmed live via a real screenshot that
+    unchecking S correctly grays out exactly the S quadrant of the wheel while N/E/W stay in full color.
+  - **A real MapLibre timing gotcha hit and root-caused during this session's own live verification, not a
+    bug in the shipped code**: reading `map.getSource('aspect-source').tiles` immediately after calling
+    `.setTiles()` (even after an `await` + 50ms `setTimeout`) initially showed the OLD tile URL, looking like
+    `.setTiles()` wasn't working. Traced directly in the vendored `maplibre-gl.js` source (not assumed):
+    `RasterTileSource.setTiles()` only ever writes to `this._options.tiles`, then calls `this.load()`, which
+    — for a plain `tiles:[...]` source with no `url` (this app's case) — resolves via
+    `t.h.frame(() => a(null, e))`, a `requestAnimationFrame`-scheduled callback, not a synchronous one; only
+    THAT callback's own resolution actually copies the new value onto the live, tile-loading-relevant
+    `this.tiles` property. In a backgrounded/inactive automation tab, `requestAnimationFrame` is well-
+    documented (Sessions 27-28's own entries) to be throttled hard enough that this can sit pending far
+    longer than any reasonable `setTimeout` wait — confirmed directly: forcing the tab to the foreground via
+    a screenshot action (the same established workaround from those earlier sessions) let the pending frame
+    fire immediately, and `.tiles` then correctly showed the updated cardinals. This is a real, useful
+    finding about how `setTiles()` behaves under this specific test harness's own foregrounding requirements
+    — not evidence of a bug in `setAspectCardinalOn`/`aspectTileUrl` themselves, which were already proven
+    correct by the time this was traced (the underlying `_options.tiles` value, and later the resolved
+    `.tiles` value once foregrounded, were both exactly right every time).
+  - **Verified live**, via the already-connected Chrome browser extension against a local `python -m
+    http.server`: standalone Node test (`test_aspect_cardinals.js`) confirmed the arc-boundary math and — via
+    a synthetic uniform south-facing DEM tile — confirmed real gradient-based filtering behavior (26/26
+    assertions: `S`-only produces byte-identical colored output to all-4-active for a genuinely south-facing
+    slope; `N`-only, an empty cardinals array, and an `undefined` cardinals value all correctly produce zero
+    colored pixels with no thrown exception) before any browser testing began. Live: toggling the master
+    checkbox correctly showed/hid the 4 N/E/S/W checkboxes and the legend together; unchecking individual
+    cardinals (E, then S) correctly updated `state.settings.aspectCardinals` (confirmed via direct
+    `localStorage` inspection) and — once the `requestAnimationFrame` timing gotcha above was accounted for
+    — correctly updated the live MapLibre source's own resolved tile URL to
+    `aspect://{z}/{x}/{y}?cardinals=N,E,W`; the legend wheel visually confirmed showing exactly the S
+    quadrant grayed out; a real pan (`map.panBy`) confirmed the full protocol-handler → worker →
+    PNG-encode → MapLibre-callback pipeline runs cleanly end to end against the real cardinal-filtered URL
+    with zero console errors (the DEM fetch itself fails gracefully in this sandbox, same standing Mapbox v4
+    block as every prior session touching DEM data — the pipeline's own error handling, not real terrain
+    rendering, is what was being verified here). Mutual exclusion re-confirmed working correctly in both
+    directions with the new cardinal-selection state present: turning Slope Angle on correctly forced
+    Aspect's master off (with the existing toast) while leaving `aspectCardinals:{N:true,E:true,S:false,
+    W:true}` completely untouched in `localStorage`; turning Slope Angle back off and Aspect's master back on
+    afterward correctly restored the checkboxes AND the legend to that exact preserved selection — not the
+    all-4-default — directly confirming the master/selection split's own core design goal. `node --check`
+    confirmed clean syntax on all 4 extracted inline `<script>` blocks and `terrain-overlay-worker.js`.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -6844,3 +7001,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   real device is the natural next check, not assumed already done. `node --check` confirmed clean syntax on
   all 4 extracted inline `<script>` blocks. APP_VERSION bumped 2.58.0 → 2.59.0, SHELL_CACHE bumped v175 →
   v176.
+- Session 70: Two independent feature tasks in one session, run through without stopping for confirmation
+  in between per explicit instruction — see Architecture notes' "Hydrography watershed name display" and
+  "Aspect: 4-cardinal-toggle redesign" entries for full mechanism/verification detail on each.
+  Task 1 (Hydrography watershed names): extended the existing live NHDPlus HR viewport-bbox query pattern
+  with a third parallel fetch to the same service's layer 12 (WBDHU12) — confirmed live before coding that
+  its name field is `name` (lowercase, matching `gnis_name`'s own convention) — and used a real, invisible
+  MapLibre hit-testing layer (`hydro-huc12-fill`, `fill-opacity:0`) rather than a spatial join or a second
+  per-click network request to answer "which watershed contains this tapped point." A stream/lake popup's
+  meta line now reads "Stream · [watershed name]" when a HUC12 boundary is found at that point, or plain
+  "Stream" when it isn't — confirmed live, not just reasoned about, that the "not found" case degrades
+  gracefully with zero crash. Verified against real data in the Beaver Creek/Verde River area near Camp
+  Verde, AZ (the same area this session's own earlier research phase used): real flowline data, real HUC12
+  watershed names matching the research exactly, and a real popup showing both the stream name and its
+  watershed name together after firing a genuine MapLibre click event at a `queryRenderedFeatures`-confirmed
+  overlap point (a raw pixel click missed due to the same screenshot-vs-CSS-pixel scaling issue this session
+  had already hit once before — recovered by dispatching a real, properly-shaped `map.fire('click', ...)`
+  event instead of retrying pixel coordinates).
+  Task 2 (Aspect redesign): replaced the always-on 8-direction hue wheel with 4 independent N/E/S/W
+  checkboxes (each covering its own cardinal plus its 2 adjacent intercardinals — a 90°-wide arc) plus a
+  master on/off toggle that shows/hides the current selection without ever clearing it — achieved by keeping
+  the selection (`aspectCardinals`, normally persisted) and the master (`aspectOn`, force-reset at boot,
+  completely unchanged role) as genuinely separate state. The cardinal filter lives in the tile URL itself
+  (`aspect://.../?cardinals=N,E,W`), matching Elevation Range's own established min/max-in-the-URL pattern,
+  and is applied worker-side as a simple post-gradient arc check — the underlying color math and the mutual
+  exclusion with Slope Angle are both completely untouched. A standalone Node test against the real worker
+  file (26/26 assertions: exact arc boundaries, an exhaustive 360°-partition check, and real gradient-based
+  filtering behavior against a synthetic directional DEM tile) passed before any browser testing. Live
+  verification hit and root-caused a real MapLibre timing gotcha (not a bug in the new code): a raster
+  source's `setTiles()` only resolves via `requestAnimationFrame` for a plain `tiles:[...]` source, which
+  this automation tab's own backgrounding throttled hard enough to look like a stuck update until the tab
+  was foregrounded — traced directly in the vendored `maplibre-gl.js` source, not assumed, and matching the
+  same rAF-throttling class of gotcha this project's own Sessions 27-28 already documented. Once accounted
+  for, confirmed live: individual cardinal toggles correctly update both the persisted selection and the
+  live tile URL; the legend wheel correctly grays out inactive cardinal arcs; and — the core design goal —
+  a full mutual-exclusion-triggered off/on cycle (Slope Angle forcing Aspect's master off, then manually
+  turning Slope Angle back off and Aspect's master back on) correctly restored the exact preserved N/E/S/W
+  selection, not the all-4 default. `node --check` confirmed clean syntax on all 4 extracted inline
+  `<script>` blocks and `terrain-overlay-worker.js`. APP_VERSION bumped 2.59.0 → 2.60.0, SHELL_CACHE bumped
+  v176 → v177.

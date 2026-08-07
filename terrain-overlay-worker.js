@@ -22,7 +22,7 @@ self.onmessage = function(evt){
   } else if (msg.type === 'elevrange'){
     computeElevRange(demBytes, width, height, msg.minFt, msg.maxFt, out);
   } else if (msg.type === 'aspect'){
-    computeAspect(demBytes, width, height, msg.metersPerPixel, out);
+    computeAspect(demBytes, width, height, msg.metersPerPixel, msg.cardinals, out);
   }
 
   self.postMessage({ id: msg.id, rgba: out.buffer }, [out.buffer]);
@@ -154,7 +154,29 @@ function hslToRgb(h, s, l){
 // morning/evening sun) is just as meaningful on a gentle hillside as a steep one; this only
 // exists to suppress noise on genuinely flat ground.
 var ASPECT_MIN_SLOPE_DEG = 3;
-function computeAspect(demBytes, width, height, metersPerPixel, out){
+// 4-cardinal-toggle redesign — each of the 4 independent cardinal toggles (N/E/S/W) shows its
+// own cardinal plus its 2 adjacent intercardinals (e.g. N covers NW through NE), so each arc is
+// 90° wide, centered on its own cardinal bearing, and the 4 arcs together tile the full 360°
+// circle with no gaps or overlap: N=[315,360)∪[0,45), E=[45,135), S=[135,225), W=[225,315).
+// Mirrored on the main thread (see index.html's own copy, used for the legend wheel and to build
+// the tile URL's cardinals query param) — kept in sync manually, same reasoning as
+// ASPECT_HUE_ANCHORS above (a worker can't import from the app's own closure or vice versa).
+function cardinalForBearing(bearing){
+  if (bearing >= 315 || bearing < 45) return 'N';
+  if (bearing < 135) return 'E';
+  if (bearing < 225) return 'S';
+  return 'W';
+}
+// cardinals: array of active cardinal letters (e.g. ['N','S']), read from the tile URL's own
+// query string (see the addProtocol handler in index.html) rather than any runtime state read
+// here — this worker has no access to state.settings at all, by design (see this file's own
+// header comment: no network/app-state access, just DEM bytes in, RGBA bytes out). A pixel whose
+// descent direction falls outside every currently-active cardinal's arc stays fully transparent,
+// exactly like a pixel under ASPECT_MIN_SLOPE_DEG already does — an empty/missing cardinals
+// array (all 4 toggles off) is a valid, harmless state that just produces an all-transparent tile.
+function computeAspect(demBytes, width, height, metersPerPixel, cardinals, out){
+  var activeSet = {};
+  (cardinals || []).forEach(function(c){ activeSet[c] = true; });
   for (var y = 0; y < height; y++){
     for (var x = 0; x < width; x++){
       var grad = gradientAt(demBytes, width, height, x, y, metersPerPixel);
@@ -166,6 +188,7 @@ function computeAspect(demBytes, width, height, metersPerPixel, out){
       // hand-worked cases (elevation rising due north -> aspect faces south/180°; elevation
       // rising due east -> aspect faces west/270°) before relying on it.
       var bearing = (Math.atan2(-grad.dzdx, grad.dzdy) * 180 / Math.PI + 360) % 360;
+      if (!activeSet[cardinalForBearing(bearing)]) continue;
       var hue = hueForBearing(bearing);
       var rgb = hslToRgb(hue, 0.70, 0.50);
       var oi = (y * width + x) * 4;
