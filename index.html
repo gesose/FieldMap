@@ -3299,7 +3299,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.62.0';
+  var APP_VERSION = '2.62.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -7530,6 +7530,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // (a real updateData() call) the first time zoom crosses 8 or 11 for whichever of the 4
       // tiered Oregon species is currently active, if any.
       map.on('zoom', updateNhdTieredZoomLoading);
+      // Session 73 — a SEPARATE listener from updateNhdTieredZoomLoading directly above on
+      // purpose: that one decides whether a tier needs its one-time updateData() call; this one
+      // decides whether an already-loaded tier is currently painted. Same cheap-unless-changed
+      // shape (see updateNhdTierVisibilityFilter's own comment).
+      map.on('zoom', updateNhdTierVisibilityFilter);
       map.on('zoomend', scheduleClusterRefresh);
       map.on('moveend', scheduleClusterRefresh);
       map.on('zoomend', scheduleHydroRefresh);
@@ -10499,6 +10504,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // separately, wherever State Data visibility itself gets restored) will recompute and
       // reapply the correct filter fresh from here.
       wildlifeWatershedHiddenByCategory[tc] = false;
+      // Session 73 — same reasoning as the watershed reset directly above, for the tier-
+      // visibility filter's own cache: fillId/lineId/streamsId were just re-added (or already
+      // existed) with their static, unrestricted default filter, so the cached "last applied
+      // signature" must be invalidated to `undefined` (guaranteed to differ from both `null` and
+      // any real signature string) or a later 'zoom' tick that doesn't happen to cross a NEW
+      // threshold would wrongly skip re-applying a real tier restriction this category still
+      // needs post-switch.
+      nhdVisibleTiersSignatureByCategory[tc] = undefined;
     });
 
     // Session 58 fix: Habitat range's own fill/line were added BEFORE State Data's (above), so
@@ -19113,7 +19126,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         var tiers = { major: [], medium: [], minor: [] };
         (raw.features || []).forEach(function(feat){
           tagLocalFileFeature(feat);
-          tiers[nhdTierForFeature(feat)].push(feat);
+          // Session 73 — _nhdTier is a real per-feature property (not just a bucketing-time-only
+          // local variable) specifically so the display-filter mechanism below can reference it in
+          // a MapLibre filter expression, independent of which array the feature happens to sit in
+          // in `tiers` (that array only ever governs the ONE-TIME updateData() load, never display).
+          var tier = nhdTierForFeature(feat);
+          feat.properties._nhdTier = tier;
+          tiers[tier].push(feat);
         });
         loadState.tiers = tiers;
         console.log('[NHD-TIER] ' + speciesName + ' fetch+bucket: ' + Math.round(performance.now() - t0) + 'ms' +
@@ -19387,6 +19406,77 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!spec || !spec.layers || !spec.layers.huc12) return false;
     return Object.keys(spec.layers).some(function(k){ return k !== 'huc12'; });
   }
+  // Session 73 — a zoom-reactive DISPLAY filter layered on top of the Session 72 tiered LOADING
+  // mechanism, exactly the same separation of concerns as the watershed auto-hide immediately
+  // above: a tier being loaded (backing a real, already-made updateData() call) and a tier being
+  // VISIBLE right now are two independent facts. Loading logic (nhdTieredLoad/loadNhdTier/
+  // updateNhdTieredZoomLoading, all directly above) is completely untouched by this — a tier
+  // still loads exactly once and is never unloaded; this only ever changes which already-loaded
+  // features are currently painted. Real-device bug this fixes: without this filter, "loaded"
+  // and "visible" were the same thing, so zooming back out after tiers 2/3 loaded left the FULL
+  // accumulated dataset on screen — a real display-only fix, not a change to the loading model.
+  //
+  // Computed purely from CURRENT ZOOM (never from which tiers happen to be loaded yet) — Tier 1/
+  // major is always visible per spec; Tier 2/medium only at zoom>=8; Tier 3/minor only at
+  // zoom>=11. A feature with no _nhdTier property at all (every feature from every OTHER State
+  // Data species/state/category — Arizona, Nevada, Washington, and the other 30 non-tiered
+  // Oregon species, none of which ever set this property) always passes this filter unconditionally,
+  // so it's a true no-op for anything sharing this same source that isn't one of the 4 tiered
+  // species — confirmed via the `['!', ['has', '_nhdTier']]` branch below, not by scoping the
+  // filter to "only when a tiered species is active" and hoping nothing else needs updating.
+  function nhdVisibleTiers(){
+    var zoom = map ? map.getZoom() : 0;
+    var tiers = ['major'];
+    if (zoom >= NHD_TIER_ZOOM.medium) tiers.push('medium');
+    if (zoom >= NHD_TIER_ZOOM.minor) tiers.push('minor');
+    return tiers;
+  }
+  function nhdTierVisibilityFilterFragment(tc){
+    if (!nhdTieredLoad[tc]) return null; // no tiered species active in this category — no restriction
+    return ['any', ['!', ['has', '_nhdTier']], ['in', ['get', '_nhdTier'], ['literal', nhdVisibleTiers()]]];
+  }
+  // Builds the FULL, currently-correct filter for each layer, combining whichever OTHER filter
+  // concern already applies (the watershed hide/show state for -fill/-line; the corridor
+  // exclusion for -line-streams) with the tier-visibility fragment above. Both
+  // updateWildlifeWatershedZoomVisibility and updateNhdTierVisibilityFilter call these same
+  // builders and always apply the FULL combined result, never a partial one — this is what
+  // keeps the two independent zoom-driven filter updates (watershed hide, tier visibility) from
+  // ever racing and overwriting each other's own concern, since whichever fires last on a given
+  // 'zoom' tick always reapplies the complete, correct filter rather than just its own half.
+  function wildlifeStateDataPolygonFilter(tc){
+    var base = wildlifeWatershedHiddenByCategory[tc] ? WILDLIFE_STATEDATA_POLYGON_FILTER_NO_WATERSHED : WILDLIFE_STATEDATA_POLYGON_FILTER;
+    var tierFrag = nhdTierVisibilityFilterFragment(tc);
+    return tierFrag ? ['all', base, tierFrag] : base;
+  }
+  function wildlifeStateDataStreamsFilter(tc){
+    var base = ['all', ['==', ['get', '_sdShape'], 'line'], ['!=', ['get', '_sdLayer'], 'corridor']];
+    var tierFrag = nhdTierVisibilityFilterFragment(tc);
+    return tierFrag ? ['all', base, tierFrag] : base;
+  }
+  // Per-category cache of the last-applied visible-tier signature (e.g. "major,medium", or null
+  // when no tiered species is active in that category) — same "only call setFilter when the
+  // answer actually changed" discipline as wildlifeWatershedHiddenByCategory just above, so this
+  // costs nothing on the vast majority of 'zoom' ticks that don't cross a tier threshold. Reset
+  // to undefined (a sentinel guaranteed to differ from both null and any real signature string)
+  // in reinitializeLayers() for the same reason wildlifeWatershedHiddenByCategory is reset there
+  // — a style switch re-adds these layers fresh with their static, unfiltered default, and a
+  // stale cache entry could otherwise wrongly skip re-applying a real restriction after that.
+  var nhdVisibleTiersSignatureByCategory = { biggame: undefined, uplandgame: undefined, fish: undefined };
+  function updateNhdTierVisibilityFilter(){
+    if (!map) return;
+    var signature = nhdVisibleTiers().join(',');
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var fillId = 'wildlife-statedata-' + tc + '-fill';
+      if (!map.getLayer(fillId)) return;
+      var thisSignature = nhdTieredLoad[tc] ? signature : null;
+      if (thisSignature === nhdVisibleTiersSignatureByCategory[tc]) return;
+      nhdVisibleTiersSignatureByCategory[tc] = thisSignature;
+      map.setFilter(fillId, wildlifeStateDataPolygonFilter(tc));
+      map.setFilter('wildlife-statedata-' + tc + '-line', wildlifeStateDataPolygonFilter(tc));
+      map.setFilter('wildlife-statedata-' + tc + '-line-streams', wildlifeStateDataStreamsFilter(tc));
+    });
+  }
+
   function updateWildlifeWatershedZoomVisibility(){
     if (!map) return;
     var zoom = map.getZoom();
@@ -19397,9 +19487,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var shouldHide = !!(on && zoom >= WILDLIFE_WATERSHED_AUTOHIDE_ZOOM && categoryHasDetailAlongsideWatershed(tc));
       if (shouldHide === wildlifeWatershedHiddenByCategory[tc]) return;
       wildlifeWatershedHiddenByCategory[tc] = shouldHide;
-      var filter = shouldHide ? WILDLIFE_STATEDATA_POLYGON_FILTER_NO_WATERSHED : WILDLIFE_STATEDATA_POLYGON_FILTER;
-      map.setFilter(fillId, filter);
-      map.setFilter('wildlife-statedata-' + tc + '-line', filter);
+      // Session 73 — apply the FULL combined filter (watershed state ∩ tier visibility), not just
+      // the watershed-only constant this used to swap between — see wildlifeStateDataPolygonFilter's
+      // own comment for why this matters (avoids this function's own setFilter call ever silently
+      // clobbering a tier-visibility restriction updateNhdTierVisibilityFilter had already applied).
+      map.setFilter(fillId, wildlifeStateDataPolygonFilter(tc));
+      map.setFilter('wildlife-statedata-' + tc + '-line', wildlifeStateDataPolygonFilter(tc));
     });
   }
 
@@ -19422,6 +19515,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // function's own call sites is already "State Data just changed," so this covers all of
     // them for free with no new call sites needed.
     updateWildlifeWatershedZoomVisibility();
+    // Session 73 — same reasoning: State Data changing (species/state picked, a tier just
+    // finishing its one-time load via loadNhdTier's own tail call into this function, on/off,
+    // master toggle) is exactly when the tier-visibility filter also needs a fresh look, on top
+    // of whatever 'zoom' ticks already trigger independently.
+    updateNhdTierVisibilityFilter();
   }
 
   function wildlifeStateDataPopupHtml(props, sdLayer, topCategory){

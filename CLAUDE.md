@@ -726,6 +726,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   complexity is far below the deliberately vertex-dense synthetic data that research used. See Architecture
   notes' "NHD tiered zoom-based loading (Fish, 4 oversized Oregon species)" entry for the full mechanism,
   every real number measured, and what was and wasn't verifiable live in the real app vs. an isolated harness.
+- Fixed a real-device bug in Session 72's own tiered rendering (Session 73) — zooming back out after tiers 2/3
+  had loaded showed the FULL accumulated dataset as an overwhelming solid mass, since "loaded" and "visible"
+  were the same thing: once a tier's `updateData()` call had run, its features stayed painted at every zoom
+  forever, not just its own intended zoom band. Fixed with a zoom-reactive `setFilter()` layered on top of
+  the untouched Session 72 loading mechanism — the same separation of concerns as the Session 66 watershed
+  auto-hide (data/layer stays loaded; a filter alone controls what's currently painted) — so Tier 1 stays
+  always visible once loaded, Tier 2 is only PAINTED at zoom>=8 (hidden again below that, even though it's
+  still fully loaded in memory), and Tier 3 the same at zoom>=11. Verified live that re-entering a tier's
+  zoom band after zooming out shows it again instantly with ZERO new `updateData()` calls (checked via a real
+  call counter, not just visually) — the loading model itself is provably untouched. See Architecture notes'
+  "NHD tiered zoom-based loading (Fish, 4 oversized Oregon species)" entry, its own "Session 73" sub-bullet,
+  for the full filter-composition mechanism (including how it coexists with the pre-existing watershed
+  auto-hide filter on the same shared layers without either one clobbering the other).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -5450,6 +5463,93 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     every non-Oregon State Data source) are completely unaffected by this session's changes, not just by code
     review of the branch condition (`if (speciesSpec && speciesSpec.tiered){ ... } else { /* unchanged */ }`)
     alone.
+  - **Session 73 — display filter, real-device bug fix**: a real-device screenshot showed the exact gap this
+    entry's own original design description warned it was avoiding for LOADING but never actually addressed
+    for DISPLAY — "loaded" and "visible" had always been the same thing, so once tiers 2/3 finished their
+    one-time `updateData()` calls, their features stayed painted at every zoom level forever, including
+    zoomed all the way back out, producing an overwhelming solid mass instead of the calm major-rivers-only
+    view appropriate there. Fixed with a genuinely separate, zoom-reactive DISPLAY filter layered on top of
+    the completely untouched Session 72 loading mechanism — explicitly the same "data stays loaded, a filter
+    alone controls what's painted" separation of concerns the Session 66 watershed auto-hide already
+    established for a different problem, reused here rather than inventing a new pattern.
+    - **Mechanism**: each bucketed feature now also carries a real `_nhdTier` property (`'major'`/`'medium'`/
+      `'minor'`, set once at bucket time in `startNhdTieredLoad` alongside the existing tier-array push — the
+      SAME tier computation, just also persisted onto the feature so a MapLibre filter expression can read
+      it, not a second, parallel classification). `nhdVisibleTiers()` computes the currently-visible tier set
+      from CURRENT ZOOM ALONE (never from which tiers happen to be loaded) — `['major']` below zoom 8,
+      `['major','medium']` from 8 to just under 11, all three from 11 up — matching the spec's literal
+      "Tier 2 visible at zoom>=8, Tier 3 visible at zoom>=11, Tier 1 always" rule exactly.
+      `nhdTierVisibilityFilterFragment(tc)` returns `null` (no restriction at all) whenever
+      `nhdTieredLoad[tc]` is falsy — i.e. no tiered species is the active selection in that category — and
+      otherwise returns `['any', ['!', ['has', '_nhdTier']], ['in', ['get', '_nhdTier'], ['literal',
+      nhdVisibleTiers()]]]`: a feature with NO `_nhdTier` property at all (every feature from every other
+      State Data species/state/category — Arizona, Nevada, Washington, the other 30 non-tiered Oregon
+      species, none of which this session touches) always passes unconditionally via the first `any` branch,
+      making this a true no-op for anything else sharing the same source, confirmed directly (not just
+      reasoned about — see Verification below) rather than merely scoped-to-only-run-when-relevant.
+    - **Composing with the pre-existing watershed filter, not overwriting it**: `-fill`/`-line` already had
+      TWO possible base filters (watershed-visible vs. watershed-hidden-for-huc12, swapped by
+      `updateWildlifeWatershedZoomVisibility`) before this session, and both are ALSO registered on
+      `map.on('zoom', ...)` — meaning a real risk existed of one function's own `setFilter()` call
+      overwriting the other's concern on the same 'zoom' tick, depending on which fired last. Fixed not by
+      adding fragile ordering logic, but by making BOTH functions always build and apply the SAME complete,
+      currently-correct filter via two new shared builders — `wildlifeStateDataPolygonFilter(tc)` (watershed
+      base ∩ tier-visibility fragment, used for `-fill`/`-line`) and `wildlifeStateDataStreamsFilter(tc)`
+      (corridor-exclusion base ∩ tier-visibility fragment, used for `-line-streams`, a layer the watershed
+      mechanism never touched since huc12 is always a polygon) — so whichever of the two zoom listeners fires
+      last on a given tick always reapplies the FULL correct filter, never a partial one, eliminating the
+      race entirely rather than trying to sequence around it. `updateWildlifeWatershedZoomVisibility` itself
+      keeps its own unchanged "which layers, when to fire, how to detect a real change" logic — only the
+      actual filter VALUE it applies changed, from a bare 2-constant swap to a call into the shared builder.
+    - **Dedup, matching the watershed listener's own "cheap unless something changed" discipline**: a new
+      per-category cache, `nhdVisibleTiersSignatureByCategory` (a joined string like `"major,medium"`, or
+      `null` when no tiered species is active), gates `updateNhdTierVisibilityFilter()`'s own `setFilter()`
+      calls the same way `wildlifeWatershedHiddenByCategory` already gated the watershed function — so this
+      costs nothing on the vast majority of `'zoom'` ticks that don't cross a tier threshold. Registered as a
+      genuinely SEPARATE `map.on('zoom', ...)` listener from `updateNhdTieredZoomLoading` (the LOADING
+      trigger) — one decides whether a tier needs its one-time `updateData()` call, the other decides whether
+      an already-loaded tier is currently painted; keeping them as two independent listeners, rather than
+      folding the display concern into the loading function, is what makes it structurally obvious in the
+      code (not just by convention) that this fix never touches loading. Also folded into
+      `updateWildlifeStateDataMapFilter()`'s own tail (alongside the existing watershed call) so every one of
+      ITS existing call sites — species/state picked, master toggle, on/off, AND (critically)
+      `loadNhdTier`'s own existing tail call into it every time a tier finishes loading — re-evaluates tier
+      visibility for free, with zero new call sites needed at any of those points. `nhdVisibleTiersSignatureByCategory[tc]`
+      is reset to `undefined` (a sentinel guaranteed to differ from both `null` and any real signature string)
+      in `reinitializeLayers()`'s existing per-category reset block, right alongside the pre-existing
+      `wildlifeWatershedHiddenByCategory[tc] = false` reset, for the identical reason: a style switch
+      re-adds these layers fresh with their static, unrestricted default filter, and a stale cache entry
+      could otherwise wrongly skip re-applying a real restriction the category still needs afterward.
+    - **Verified live**, via the same isolated zero-Mapbox-dependency `maplibregl.Map` harness technique
+      (rebuilt with the new filter functions copied verbatim from the shipped code) used for Session 72's own
+      timing work: for CoastalCutthroatTrout, confirmed the applied `-fill`/`-line-streams` filters were the
+      exact expected combined expressions (`['all', <shape/corridor base>, ['any', ['!',['has','_nhdTier']],
+      ['in',['get','_nhdTier'],['literal',[...]]]]]`) via direct `map.getFilter()` inspection, not just
+      inferred from behavior; confirmed a real screenshot at zoom 4 with only Tier 1 loaded matched the
+      earlier reference screenshot (a sparse branching network); loaded all 3 tiers via real zoom-8/zoom-11
+      crossings (3 real `updateData()` calls total, confirmed via a call counter), then zoomed back to 4 and
+      confirmed `nhdVisibleTiersSignatureByCategory.fish === 'major'` — and, the actual regression this
+      session exists to fix, a SECOND real screenshot at the identical zoom 4 came back visually IDENTICAL to
+      the first (calm, sparse major-only network), not the dense ~26,000-feature mass a pre-fix build would
+      have shown with all 3 tiers still fully loaded in memory. Then, the requirement explicitly named as
+      most important to verify precisely: zoomed back in past 8 (confirming `visibleTiers` correctly returned
+      to `"major,medium"`) and separately past 11 (`"major,medium,minor"`), both times confirming via the
+      real call counter that ZERO new `updateData()` calls fired and zero new `[NHD-TIER]` log lines
+      appeared — the re-entry is provably instant/free, not a disguised reload. Repeated the complete
+      load-all-3/zoom-out/confirm-Tier-1-only/re-enter-8/re-enter-11 sequence for the other 3 species (Coho,
+      Winter Steelhead, Redband Trout), each producing byte-identical results (all `loaded` flags `true`
+      throughout, `visibleAt4:"major"`, `visibleAt8.5:"major,medium"`, `visibleAt11.5:"major,medium,minor"`,
+      exactly 3 cumulative `updateData()` calls each, no more). Also directly verified — since this session's
+      own refactor touches `updateWildlifeWatershedZoomVisibility`, a function it did NOT intend to change
+      the behavior of — that with no tiered species active (`nhdTieredLoad.fish` reset to `null`, matching
+      what a real switch-away-from-Oregon does), `wildlifeStateDataPolygonFilter('fish')` produces filters
+      BYTE-IDENTICAL (`JSON.stringify` equality, not just visual similarity) to the original, pre-Session-73
+      `WILDLIFE_STATEDATA_POLYGON_FILTER`/`_NO_WATERSHED` constants in both the watershed-hidden and
+      watershed-visible states — confirming Arizona's own watershed auto-hide (the only source that ever
+      triggers it) is completely unaffected by this session's composition refactor, not just plausible by
+      code review. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+      `service-worker.js`. APP_VERSION bumped 2.62.0 → 2.62.1 (patch — a real bug fix to an already-shipped
+      feature, no new UI), SHELL_CACHE bumped v179 → v180.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7449,3 +7549,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   behavior, not a gap in what was checked. `node --check` confirmed clean syntax on all 4 extracted inline
   `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.61.0 → 2.62.0 (minor — new feature),
   SHELL_CACHE bumped v178 → v179.
+- Session 73: fixed a real-device bug found in Session 72's own tiered rendering — see Architecture notes'
+  "NHD tiered zoom-based loading (Fish, 4 oversized Oregon species)" entry, its own "Session 73" sub-bullet,
+  for full mechanism/verification detail. Confirmed via a real-device screenshot: zooming back out after
+  tiers 2/3 had loaded showed the FULL accumulated dataset as an overwhelming solid mass, not just Tier 1's
+  major rivers — the root cause was that "loaded" and "visible" had always been the same thing; once a
+  tier's one-time `updateData()` call ran, its features stayed painted at every zoom forever, never actually
+  hidden again below their own threshold. Fixed with a zoom-reactive `setFilter()` layered on top of the
+  Session 72 loading mechanism, left completely untouched per the task's own explicit instruction — the same
+  "data stays loaded, a filter alone controls what's painted" separation of concerns already established by
+  the Session 66 watershed auto-hide, reused rather than reinvented. Tagged each bucketed feature with a real
+  `_nhdTier` property (the same tier computation already used for bucketing, just also persisted onto the
+  feature so a filter expression can read it) and built a filter fragment that lets any feature with no
+  `_nhdTier` at all (every non-tiered species/state/category sharing the same source) pass through
+  unconditionally — a true no-op for the other 30 species, not just narrowly scoped to avoid them. Composed
+  this with the PRE-EXISTING watershed-hide filter via two shared builder functions rather than two
+  independent partial `setFilter()` calls, specifically to eliminate a real race risk this session's own
+  design surfaced: both the watershed listener and the new tier-visibility listener are registered on the
+  same `'zoom'` event, and without a shared builder, whichever fired last on a given tick could silently
+  clobber the other's own filter concern. Verified live via the same isolated-harness technique established
+  in Session 72: confirmed the applied filters were the exact expected combined expressions via direct
+  `map.getFilter()` inspection; confirmed zooming out to 4 after all 3 tiers loaded produced a screenshot
+  visually identical to the earlier Tier-1-only reference (not the dense mass a pre-fix build would show);
+  confirmed — the requirement flagged as most important to verify precisely — that re-entering zoom 8 and
+  zoom 11 after zooming back out shows the medium/minor tiers again with a real call-counter confirming ZERO
+  new `updateData()` calls and zero new console log lines, proving the reappearance is genuinely free, not a
+  disguised reload; repeated the complete sequence for the other 3 species with byte-identical results; and
+  directly confirmed (via `JSON.stringify` equality against the original pre-fix filter constants, not just
+  visual similarity) that Arizona's own pre-existing watershed auto-hide — the one other mechanism sharing
+  these same layers and listeners — is completely unaffected by this session's filter-composition refactor.
+  `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
+  APP_VERSION bumped 2.62.0 → 2.62.1 (patch — bug fix), SHELL_CACHE bumped v179 → v180.
