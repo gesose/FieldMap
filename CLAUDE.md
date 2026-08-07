@@ -687,6 +687,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   cardinal arcs are currently inactive. See Architecture notes' "Aspect: 4-cardinal-toggle redesign" entry
   for full mechanism/verification detail, including a real MapLibre `setTiles()`-resolves-via-
   `requestAnimationFrame` timing gotcha hit (and resolved) during this session's own live testing.
+- The 4 oversized Oregon fish species (CoastalCutthroatTrout/Coho/WinterSteelhead/RedbandTrout) now carry a
+  real NHD-derived stream-order/prominence field on every stream feature (Session 71) — `nhdStreamOrder`
+  (Strahler order, MINIMUM across sampled points, a conservative choice for a future "hide minor tributaries
+  until zoomed in" feature), `nhdDrainageAreaSqKm` (MAXIMUM upstream drainage area, a complementary
+  continuous-value signal), and `nhdMatchConfidence` (0-1, how many sampled points found a close real NHD
+  match). Data-prep only, matching Session 61's own precedent for this same dataset — nothing new is wired
+  into the map UI or rendering yet; this just adds the field a future progressive-detail feature will read.
+  Produced via a real, hand-rolled geometric nearest-line spatial join (no GDAL/geopandas/QGIS available in
+  this environment, confirmed live before starting — matching Session 61's own already-established finding)
+  against real NHDPlus HR flowline data fetched live from the same service Hydrography uses, covering 143
+  real geographic tiles the 4 species' data actually touches. Match rate: 99.88%-100% across all 4 species
+  (82,901 stream features, 82,852 matched). A real bug was found and fixed during verification, not glossed
+  over: NHD uses `-9` as a genuine NODATA sentinel on a small fraction of its own flowline features (954 of
+  1,792,465 fetched), which the first join pass didn't exclude — silently letting a sentinel poison the
+  per-feature minimum-order calculation; re-run after excluding non-positive order values. See Architecture
+  notes' "Oregon fish NHD stream-order join" entry for the full feasibility investigation, the memory-bounded
+  join design (two earlier attempts at a single global spatial index ran out of heap — real NHD density
+  across the full 4-species extent turned out to be ~1.78 million unique features, far more than a
+  single-sample-tile extrapolation suggested), and full verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -5138,6 +5157,148 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     afterward correctly restored the checkboxes AND the legend to that exact preserved selection — not the
     all-4-default — directly confirming the master/selection split's own core design goal. `node --check`
     confirmed clean syntax on all 4 extracted inline `<script>` blocks and `terrain-overlay-worker.js`.
+- Oregon fish NHD stream-order join (Session 71) — a data-prep-only session (no map-UI wiring, matching
+  Session 61's own precedent for this exact dataset), adding a real NHD-derived stream-order/prominence field
+  to the 4 oversized Oregon fish species' data, for a future zoom-based progressive-detail feature (major
+  rivers always visible, minor tributaries appearing only as the user zooms in) to eventually read.
+  - **Feasibility check (Step 1), done first and honestly, per explicit instruction not to force a bad join
+    through**: confirmed live (not assumed carried forward) that no GDAL/ogr2ogr/geopandas/shapely/QGIS is
+    available in this environment — matching Session 61's own already-established finding for this exact
+    machine. Built a real, hand-rolled Node.js nearest-line spatial join (no external geometry library, the
+    same "hand-rolled geometry, no turf.js" precedent this codebase has followed since Session 21) and tested
+    it against a REAL sample: 300 real RedbandTrout stream features in a dense, real bbox (John Day River
+    area, eastern OR, found via an actual density scan of the real data, not picked arbitrarily) joined
+    against 8,371 real NHD flowline features fetched live for the identical bbox. Results: 94.2% of
+    individual sampled points found a real NHD flowline within a 150m cutoff (matching this codebase's own
+    already-established offline-trail-snap tolerance for "same real-world feature" — Session 48), median
+    match distance among clean matches was 3.6m, and the join computation itself (once NHD data is fetched
+    and indexed) was effectively free (14ms for 300 features). The one honest, non-blocking caveat found:
+    stream order is NOT always consistent along a single fish-habitat polyline's own length (only ~22% of
+    features had every sampled point agree on the exact same order) — investigated rather than assumed to be
+    a matching failure, and confirmed to reflect genuine hydrology: a single "fish habitat" line can
+    legitimately span a real confluence, where the true order genuinely changes partway through. Resolved
+    with a deliberate, documented design choice (see below) rather than treated as a blocker. Concluded:
+    feasible, proceed to Step 2.
+  - **The join method**: for each fish stream feature, sample up to 5 evenly-spaced points along its own
+    length (matching its longest part for a MultiLineString), find the nearest real NHD flowline FEATURE for
+    each sampled point within the 150m cutoff (a feature-level spatial grid index, not a segment-level one —
+    see the memory section below for why that distinction mattered), then assign:
+    - `nhdStreamOrder` = the MINIMUM `streamorde` among sampled points with a good match — deliberately
+      conservative: a habitat line touching even one minor/low-order segment is treated as at least that
+      minor, so a future "hide until zoomed in" feature never prematurely renders a mixed-order line at a
+      too-far-zoomed-out view just because PART of it is a major river.
+    - `nhdDrainageAreaSqKm` = the MAXIMUM `totdasqkm` among the same good-match points — the largest real
+      upstream drainage area this line's true stream ultimately reaches, a complementary continuous-value
+      prominence signal alongside the discrete order.
+    - `nhdMatchConfidence` = fraction (0-1) of sampled points that found a good match — surfaced per-feature
+      so a lower-confidence assignment is identifiable later, not silently presented with the same authority
+      as a clean 100%-confidence one.
+    Lake features (`habitatType:'lake'`) are completely untouched — stream order is a linear-network concept
+    that doesn't apply to a polygon; only `habitatType:'stream'` features were ever touched.
+  - **Real NHD data fetch**: the union of every 0.5°-tile the 4 species' stream features actually touch is
+    only 143 tiles (not the sum of each species' own tile count, 272 — real geographic overlap between the
+    coldwater coastal species means most tiles are shared, only needing to be fetched once). Fetched live via
+    the same `hydro.nationalmap.gov` NHDPlus HR service Hydrography already uses (layer 3, NetworkNHDFlowline,
+    `outFields=gnis_name,streamorde,totdasqkm,permanent_identifier`), real adaptive pagination (2000-feature
+    server cap per request, matching the same pattern this codebase already uses elsewhere for large ArcGIS
+    responses), each tile saved to its own file immediately so the fetch is resumable. Real, live total: 1.9GB
+    of raw NHD flowline data. A `field name confirmed live before use` gotcha, consistent with this app's own
+    established "USFS-boundaries lesson" (lowercase ArcGIS field names, not the capitalized aliases): Strahler
+    order's real field name is `streamorde`, not `streamorder` — a live test query with the wrong name
+    silently returned an unrelated 400 error, caught and corrected before the real fetch began.
+  - **A real infrastructure gotcha hit and worked around, not a data problem**: the first fetch attempt,
+    launched via the Bash tool's own `run_in_background` with a 600000ms (10 min) timeout, was killed by that
+    same timeout partway through (only 20/143 tiles done) — the realistic total fetch time (~4.7 minutes once
+    resumed, after most tiles were already cached from the first attempt, or a fresh ~279s/123-tile run in
+    isolation) genuinely can approach or exceed a single Bash invocation's own 10-minute ceiling depending on
+    server responsiveness, and this tool has no way to raise that ceiling. Fixed by re-launching the exact
+    same (already resumable-by-design — it skips any tile that already has a saved file) fetch script as a
+    genuinely detached OS process via PowerShell's `Start-Process`, decoupling it from any single tool call's
+    own timeout entirely; progress was tracked via a separate `Monitor` polling the tile-output directory's
+    own file count, not the fetch process's own (unreliably-buffered, when redirected to a file rather than a
+    real TTY) stdout. All 143 tiles fetched cleanly, zero errors, confirmed via the fetch's own completion log
+    and a direct scan of the saved tile files for any error/failed lines (none found).
+  - **A real memory-architecture problem found and fixed during Step 2, not glossed over**: the first join
+    attempt tried to build ONE global spatial index over the FULL deduped NHD dataset at once — 1,778,688
+    unique features (a real number, confirmed live, far higher than a naive extrapolation from the single-
+    sample-tile density in the Step 1 feasibility check would have suggested) — and exhausted a 6GB Node heap
+    building it. Root-caused (not just worked around by throwing more memory at it) to the index design
+    itself: storing one full JS object per line SEGMENT (not per feature), duplicated across every fine-
+    grained (0.01°) grid cell its own bounding box touched, produces tens of millions of small object
+    allocations for a dataset this dense — some individual fetched tiles alone had 20,000+ features. Fixed
+    with a genuine architecture change, not just a bigger `--max-old-space-size`: process one 0.5° tile GROUP
+    at a time (that tile plus its 8 immediate neighbors, bounding real cross-tile-boundary matches), building
+    a small LOCAL index scoped to just that group's real NHD data, running the join for every fish feature
+    whose PRIMARY tile (the tile its first coordinate falls in) is that group, then letting the local index be
+    garbage-collected before moving to the next group — memory stays bounded to roughly "9 tiles' worth of
+    data" at any moment, regardless of the 1.78M-feature total. A second, complementary fix: the local index
+    itself moved from segment-level objects to FEATURE-level integer references in each grid cell (a coarser
+    0.02° cell), with the true point-to-line distance computed lazily by walking each candidate feature's OWN
+    already-in-memory coordinate array directly — no per-segment object ever allocated at all. This combined
+    fix completed the full real join (82,901 stream features against the full 1.78M-feature NHD dataset) in
+    ~412 seconds with peak heap comfortably under 2GB, confirmed via live per-tile-group progress logging
+    (heap usage printed every 10 groups) showing it never exceeding ~1.9GB throughout the entire run.
+  - **A real correctness bug found during Step 3 verification, not shipped silently**: NHD's own `streamorde`
+    field uses `-9` as a genuine NODATA sentinel on a real (if small) fraction of its own flowline features —
+    confirmed live by scanning the actual fetched data: 954 of 1,792,465 raw NHD features (0.05%) carry this
+    exact value, none of them a real Strahler order. The first join run didn't exclude it, which let a single
+    sampled point landing near one of these sentinel features silently poison that fish feature's own MINIMUM-
+    order calculation (a real spot-check surfaced multiple named Oregon rivers — Umpqua, Rogue, Siuslaw —
+    showing an impossible "order range -9 to 9"). Fixed by requiring `streamorde > 0` (not just `!= null`)
+    before a sampled point's match counts toward the minimum — a real Strahler order is always a positive
+    integer, so this cleanly excludes the sentinel with no other side effects. Re-run (from the untouched
+    `_preNhdJoin_backup/` originals, not from the already-buggy output, so the correction is a clean re-join
+    rather than a patch on top of bad data) — CoastalCutthroatTrout's own matched count dropped very slightly
+    (53,184 → 53,174, exactly the 10 features whose ENTIRE sample-point set had been NODATA-poisoned and now
+    correctly report no match at all rather than a garbage value) with the other 3 species' counts unaffected
+    (none of their sampled points happened to hit one of the 954 sentinel features).
+  - **Final real match-rate statistics, the full run, not the sample**: CoastalCutthroatTrout 53,174/53,208
+    (99.94%), Coho 12,775/12,790 (99.88%), WinterSteelhead 11,485/11,485 (100%), RedbandTrout 5,418/5,418
+    (100%) — 82,852/82,901 stream features matched overall (99.94%). No species stood out as notably worse
+    than the others; the small residual unmatched counts are consistent with genuine bbox-edge/coverage gaps
+    (a habitat line's sampled points all landing more than 150m from any real NHD data), not a systemic
+    problem with any one species.
+  - **Data integrity, confirmed live, not assumed from the join script's own logic alone**: for all 4 output
+    files, directly compared against the untouched `_preNhdJoin_backup/` originals — feature counts identical
+    (nothing lost or duplicated), every lake feature confirmed to have zero new fields (completely untouched),
+    every original property key confirmed still present on every single feature (nothing dropped or
+    restructured — only 3 new keys added to stream features), and confirmed zero remaining non-positive
+    `nhdStreamOrder` values anywhere in the corrected output.
+  - **Sensible-values spot-check (Step 3)**: real named Oregon rivers reach real high orders at their
+    downstream/mainstem extent — Willamette River up to order 9, Umpqua/Rogue up to 8-9, Nehalem/Siuslaw up to
+    7-8 — while a real sample of "Unnamed trib to X"-named features (98 of them, in CoastalCutthroatTrout)
+    skews heavily toward low orders: 37 at order 1, 26 at order 2, 28 at order 3, only 7 at order 4, and
+    ZERO at order 5 or higher — exactly the pattern real hydrology predicts (unnamed tributaries are, almost
+    by definition, minor headwater streams) and a strong independent confirmation the join is producing
+    geographically/hydrologically sensible results, not just numerically-plausible-looking noise.
+  - **App-loading verification (Step 3's second half)**: these 4 species are deliberately NOT wired into the
+    live Wildlife > Fish > Oregon State Data picker UI at all (Session 62 explicitly omitted them pending
+    geographic sub-sharding — see that entry), so there was no existing UI path to exercise. Verified the
+    actual load-bearing mechanism directly instead: this sandbox's main app tab hit the same long-documented
+    Mapbox-v4-loading stall as many prior sessions, worked around with the established isolated-
+    `maplibregl.Map`-harness technique (a zero-Mapbox-dependency background-only style, proven in Sessions
+    60/62/63 for this exact class of verification) — fetched the REAL updated files via the app's own
+    `fetch('data/fish/oregon/...')` call, then loaded them through the EXACT real `setData({features:[]})`-
+    then-`updateData({add:...})` pattern `applyStateDataToSource` already uses for Oregon's other, already-
+    wired species. Confirmed live for both the smallest (RedbandTrout, 7.2MB) and largest
+    (CoastalCutthroatTrout, 58MB, the file most likely to stress the exact large-payload mechanism Session 60
+    built `updateData()` to solve in the first place) files: zero errors, real rendering confirmed via
+    `queryRenderedFeatures` at a real matching viewport (a genuine "Hawkins Creek" RedbandTrout feature
+    rendered with `nhdStreamOrder:1`, `nhdDrainageAreaSqKm:907.246`, `nhdMatchConfidence:1` alongside every
+    original property, confirmed via direct feature inspection, not just an absence-of-errors check), and the
+    larger file's `updateData()` call completed in ~2.5s with no error — confirming the ~7-9% file-size
+    increase from the 3 new fields doesn't approach the V8 string-length/payload ceiling this whole mechanism
+    exists to avoid.
+  - **Backups**: `data/fish/oregon/_preNhdJoin_backup/` holds the untouched pre-join originals for all 4
+    species, created before the first write and deliberately left OUT of this session's git commit (kept
+    locally, not pushed) — the previous commit in git history already preserves the identical pre-join
+    content, so committing a second, duplicate ~90MB copy into the repo would be pure bloat with no real
+    recovery benefit git history doesn't already provide.
+  - Scratch working files (the tile-fetch scripts, the 1.9GB of raw fetched NHD tiles, and the intermediate
+    join-script iterations that hit the memory/sentinel bugs above) live in this session's own scratchpad
+    directory, not the repo — reusable if this join is ever re-run (e.g. once the 4 species are eventually
+    wired into the map UI and their own geographic sub-sharding is designed, per Session 61's own flagged
+    follow-up), but not something this repository needs to carry.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7040,3 +7201,44 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   selection, not the all-4 default. `node --check` confirmed clean syntax on all 4 extracted inline
   `<script>` blocks and `terrain-overlay-worker.js`. APP_VERSION bumped 2.59.0 → 2.60.0, SHELL_CACHE bumped
   v176 → v177.
+- Session 71: Waterway-prominence tiering for the 4 oversized Oregon fish species — see Architecture notes'
+  "Oregon fish NHD stream-order join" entry for full mechanism/verification detail; this is what it took to
+  get there. Step 1 (feasibility, done first per explicit instruction not to force a bad join through):
+  confirmed live that no GDAL/geopandas/QGIS is available (matching Session 61's own established finding),
+  built a real hand-rolled Node.js nearest-line spatial join (no external geometry library, matching this
+  codebase's own established precedent), and tested it against a real 300-feature RedbandTrout sample in a
+  dense real bbox joined against 8,371 real NHD flowline features fetched live for the identical area — 94.2%
+  of sampled points matched within 150m, median distance 3.6m among clean matches, join computation itself
+  effectively free. The one honest caveat (stream order not always consistent along one line's own length)
+  was investigated and confirmed to reflect genuine hydrology (a habitat line can span a real confluence),
+  resolved with a documented design choice (report the MINIMUM order across sampled points) rather than
+  treated as a blocker. Concluded feasible and proceeded to Step 2. Real NHD data was fetched for the union
+  of 143 tiles the 4 species' data actually touches (not the sum per-species — real geographic overlap means
+  most tiles are shared). Hit and worked around a real infrastructure limit: the first fetch attempt was
+  killed by the Bash tool's own 10-minute background-timeout ceiling partway through; recovered by relaunching
+  the same already-resumable fetch script as a genuinely detached OS process via PowerShell's `Start-Process`,
+  decoupling it from any single tool call's timeout, with progress tracked via a separate `Monitor` polling
+  the output directory rather than the process's own unreliably-buffered stdout. All 143 tiles fetched
+  cleanly (1.9GB, zero errors). The first join attempt then blew a 6GB heap trying to build one global
+  spatial index over the full 1,778,688-feature deduped NHD dataset — a real number, far higher than the
+  single-sample-tile density would have suggested — root-caused to storing a full JS object per line segment
+  duplicated across fine grid cells, not a memory-size problem alone; fixed with a genuine architecture
+  change (process one 0.5° tile group at a time with a small local index, feature-level integer references
+  instead of per-segment objects, lazy distance computation against each feature's own already-in-memory
+  coordinates) that completed the full real join in ~412 seconds with peak heap comfortably under 2GB. A
+  real correctness bug was then found during Step 3 spot-checking, not shipped silently: NHD uses `-9` as a
+  genuine NODATA sentinel on 954 of 1,792,465 real flowline features, which the first join pass let poison
+  a small number of features' minimum-order calculation (caught via a real spot-check showing an impossible
+  "order range -9 to 9" for named Oregon rivers) — fixed by requiring a positive order value, then re-run
+  cleanly from the untouched pre-join backups. Final real match rates across the full run: 99.88%-100% per
+  species, 82,852/82,901 stream features overall (99.94%). Step 3 verification: confirmed real data
+  integrity (feature counts, lake features, and all original properties all unchanged from the pre-join
+  backups, zero remaining invalid order values); confirmed sensible real-world values via a spot-check (named
+  Oregon rivers reaching order 8-9, unnamed tributaries skewing to order 1-4 with zero at 5+, matching real
+  hydrology); and confirmed the app's actual loading mechanism still works correctly with the updated files
+  — since these 4 species aren't wired into any live UI yet (Session 62 deliberately deferred them), verified
+  the real `fetch()` + `updateData()` pattern directly via an isolated MapLibre harness (the same technique
+  established in Sessions 60/62/63 for when this sandbox's own Mapbox-loading stall blocks direct in-app
+  testing), confirmed for both the smallest and largest (58MB) files with zero errors and real rendered
+  output. Pre-join backups kept locally, deliberately not committed (git history already preserves the same
+  content from the previous commit). APP_VERSION bumped 2.60.0 → 2.61.0, SHELL_CACHE bumped v177 → v178.
