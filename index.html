@@ -3299,7 +3299,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.61.0';
+  var APP_VERSION = '2.62.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4732,12 +4732,12 @@
         // 'localFile' branch for how this gets tagged into the same _sdLayer/_sdShape/_sdSortKey
         // shape every other State Data source already produces, so the existing fill/line/
         // line-streams paint layers need zero changes to render it correctly.
-        // 4 of the original 34 processed species are deliberately excluded here for now —
-        // CoastalCutthroatTrout/Coho/WinterSteelhead/RedbandTrout are still oversized for a single
-        // shared source per the updateData() payload-ceiling timing research (11,500-53,000
-        // features each) and need geographic sub-sharding, not yet designed — omitted from this
-        // species list entirely (not shown as "coming soon") so they're just not selectable yet,
-        // the same way any species with no State Data source at all already isn't.
+        // The remaining 4 of the original 34 processed species (CoastalCutthroatTrout/Coho/
+        // WinterSteelhead/RedbandTrout, 11,500-53,000 features each) were excluded here through
+        // Session 62-71 for being too large for a single one-shot updateData() load — Session 71
+        // added a real NHD-derived nhdStreamOrder field to their data, and Session 72 (below,
+        // `tiered: true`) wires them in via progressive zoom-tiered loading instead of geographic
+        // sub-sharding — see startNhdTieredLoad's own comment for the full mechanism.
         state: 'Oregon', type: 'localFile',
         attribution: 'Oregon Dept. of Fish & Wildlife — Fish Habitat Distribution',
         note: 'Offline-processed dataset (Oregon’s own server blocks direct live requests) — a snapshot, not a live feed.',
@@ -4771,7 +4771,15 @@
           'Walleye': { file: 'Walleye.geojson' },
           'Hybrid Bass (wiper)': { file: 'HybridBass.geojson' },
           'Striped Bass': { file: 'StripedBass.geojson' },
-          'American Shad': { file: 'AmericanShad.geojson' }
+          'American Shad': { file: 'AmericanShad.geojson' },
+          // Session 71 (NHD join) → Session 72 (wiring) — the 4 species Session 62 deliberately
+          // omitted for being oversized (11,500-53,000 features each) are now wired in via
+          // `tiered: true` instead of a normal one-shot load — see startNhdTieredLoad below for
+          // the full progressive-zoom loading mechanism this flag triggers.
+          'Coastal Cutthroat Trout': { file: 'CoastalCutthroatTrout.geojson', tiered: true },
+          'Coho': { file: 'Coho.geojson', tiered: true },
+          'Winter Steelhead': { file: 'WinterSteelhead.geojson', tiered: true },
+          'Redband Trout': { file: 'RedbandTrout.geojson', tiered: true }
         }
       },
       az: {
@@ -4993,6 +5001,19 @@
     fetchPage(0, PAGE_SIZE_START);
   }
 
+  // Tags one raw Oregon local-file feature into the same _sdLayer/_sdShape/_sdSortKey shape every
+  // other State Data source already produces (see fetchStateDataLayerPaged's own tagAndCollect),
+  // derived from the feature's OWN real data (habitatType, geometry.type) rather than guessed.
+  // Shared by loadStateDataLayer's normal one-shot 'localFile' path AND startNhdTieredLoad's
+  // progressive path (Session 72) so both stay byte-identical in how they tag a feature.
+  function tagLocalFileFeature(feat){
+    feat.properties = feat.properties || {};
+    feat.properties._sdLayer = feat.properties.habitatType; // 'stream' | 'lake'
+    var gt = feat.geometry && feat.geometry.type;
+    feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
+    feat.properties._sdSortKey = 1; // no huc12-style coarse-context layer in this dataset
+  }
+
   function loadStateDataLayer(topCategory, speciesName, stateKey, cb){
     var src = STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][stateKey];
     if (!src){ cb(null); return; }
@@ -5024,13 +5045,7 @@
       fetch('data/fish/oregon/' + localSpec.file)
         .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function(raw){
-          (raw.features || []).forEach(function(feat){
-            feat.properties = feat.properties || {};
-            feat.properties._sdLayer = feat.properties.habitatType; // 'stream' | 'lake'
-            var gt = feat.geometry && feat.geometry.type;
-            feat.properties._sdShape = (gt === 'LineString' || gt === 'MultiLineString') ? 'line' : 'polygon';
-            feat.properties._sdSortKey = 1; // no huc12-style coarse-context layer in this dataset
-          });
+          (raw.features || []).forEach(tagLocalFileFeature);
           var merged = { type: 'FeatureCollection', features: raw.features || [] };
           stateDataCache[cacheKey] = merged;
           var cbs = stateDataLoadCallbacks[cacheKey]; delete stateDataLoadCallbacks[cacheKey];
@@ -6897,18 +6912,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
               // session, well after the user had already moved on to Arizona. Same
               // capture-the-target-at-call-time / re-check-at-resolve-time pattern as the
               // manual-selection path.
-              var sdStateKeyAtLoad = sdActive.stateKey, sdSpeciesAtLoad = sdActive.speciesName;
-              loadStateDataLayer(tc, sdActive.speciesName, sdActive.stateKey, function(data){
-                var stillCurrent = wildlifeStateDataActiveByCategory[tc] &&
-                  wildlifeStateDataActiveByCategory[tc].stateKey === sdStateKeyAtLoad &&
-                  wildlifeStateDataActiveByCategory[tc].speciesName === sdSpeciesAtLoad;
-                if (!stillCurrent) return; // switched away while this boot-time fetch was in flight
-                if (map.getSource('wildlife-statedata-' + tc + '-source')){
-                  applyStateDataToSource(tc, sdStateKeyAtLoad, data);
-                  updateWildlifeStateDataMapFilter();
-                  updateActiveLayersChip();
-                }
-              });
+              // Session 72 — the boot-time restore path needs the exact same tiered/non-tiered
+              // branch as the manual-selection path (setWildlifeStateDataState) for the 4 large
+              // Oregon species, or a device that had one of them active before reloading would
+              // silently attempt a full one-shot ~53k-feature updateData() call on every boot.
+              var sdBootSrc = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][sdActive.stateKey];
+              var sdBootSpec = sdBootSrc && sdBootSrc.species && sdBootSrc.species[sdActive.speciesName];
+              if (sdBootSpec && sdBootSpec.tiered){
+                startNhdTieredLoad(tc, sdActive.stateKey, sdActive.speciesName);
+              } else {
+                var sdStateKeyAtLoad = sdActive.stateKey, sdSpeciesAtLoad = sdActive.speciesName;
+                loadStateDataLayer(tc, sdActive.speciesName, sdActive.stateKey, function(data){
+                  var stillCurrent = wildlifeStateDataActiveByCategory[tc] &&
+                    wildlifeStateDataActiveByCategory[tc].stateKey === sdStateKeyAtLoad &&
+                    wildlifeStateDataActiveByCategory[tc].speciesName === sdSpeciesAtLoad;
+                  if (!stillCurrent) return; // switched away while this boot-time fetch was in flight
+                  if (map.getSource('wildlife-statedata-' + tc + '-source')){
+                    applyStateDataToSource(tc, sdStateKeyAtLoad, data);
+                    updateWildlifeStateDataMapFilter();
+                    updateActiveLayersChip();
+                  }
+                });
+              }
             }
           });
           if (migrationsOn && migrationActiveSpecies) loadMigrationData(function(data){
@@ -7500,6 +7525,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // cheap to call this often since updateWildlifeWatershedZoomVisibility only touches the
       // map at all when the hide/show state actually flips, not on every fractional zoom tick.
       map.on('zoom', updateWildlifeWatershedZoomVisibility);
+      // Session 72 — same "cheap unless something actually needs to change" shape as the
+      // watershed listener directly above: updateNhdTieredZoomLoading only ever does real work
+      // (a real updateData() call) the first time zoom crosses 8 or 11 for whichever of the 4
+      // tiered Oregon species is currently active, if any.
+      map.on('zoom', updateNhdTieredZoomLoading);
       map.on('zoomend', scheduleClusterRefresh);
       map.on('moveend', scheduleClusterRefresh);
       map.on('zoomend', scheduleHydroRefresh);
@@ -19038,6 +19068,101 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (srcObj) srcObj.setData({ type: 'FeatureCollection', features: [] });
   }
 
+  // Session 72 — progressive zoom-tiered loading for the 4 Oregon fish species (Coastal
+  // Cutthroat Trout/Coho/Winter Steelhead/Redband Trout) whose files (11,500-53,000 features)
+  // are too large for a single one-shot updateData() call — see the STATE_DATA_SOURCES.fish.or
+  // `tiered: true` flag on their catalog entries. Explicitly NOT a setFilter()-only approach
+  // (like the Session 66 watershed zoom-auto-hide) — a filter would still pay the full
+  // updateData() re-tile cost for all ~53k features up front and just hide most of them
+  // visually, which is exactly the cost this design exists to avoid paying until it's actually
+  // needed. Real tiered loading instead: the raw file is fetched and bucketed into 3 arrays ONCE,
+  // and each tier's own updateData({add:[...]}) call only ever fires once, the first time the
+  // zoom threshold is crossed while this exact species+state is still the active selection.
+  //   Tier 1 (major, nhdStreamOrder >= 6 + all lake features): loaded immediately on selection.
+  //   Tier 2 (medium, nhdStreamOrder 3-5, plus the small number of unmatched/null-order stream
+  //     features — a safe default so they're never permanently invisible rather than being
+  //     lumped into the "small, fast" major tier): loaded once zoom first reaches 8.
+  //   Tier 3 (minor, nhdStreamOrder 1-2): loaded once zoom first reaches 11.
+  // Once a tier loads it's never unloaded/re-added on zoom-out — avoiding repeated updateData()
+  // re-tile cost is the whole point (see the MapLibre large-dataset payload-ceiling research in
+  // CLAUDE.md: updateData() re-tiles the ENTIRE cumulative source on every call, not just the
+  // new chunk, so this design deliberately minimizes total CALLS, not total features loaded).
+  var NHD_TIER_ZOOM = { medium: 8, minor: 11 };
+  // tc -> { speciesName, stateKey, tiers: {major,medium,minor}|null, loaded: {major,medium,minor} }
+  var nhdTieredLoad = {};
+  function nhdTierForFeature(feat){
+    var p = feat.properties;
+    if (p.habitatType === 'lake') return 'major';
+    var order = p.nhdStreamOrder;
+    if (order == null) return 'medium';
+    if (order >= 6) return 'major';
+    if (order >= 3) return 'medium';
+    return 'minor';
+  }
+  function startNhdTieredLoad(tc, stateKey, speciesName){
+    var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][stateKey];
+    var spec = src && src.species && src.species[speciesName];
+    if (!spec){ nhdTieredLoad[tc] = null; return; }
+    var loadState = { speciesName: speciesName, stateKey: stateKey, tiers: null, loaded: { major: false, medium: false, minor: false } };
+    nhdTieredLoad[tc] = loadState;
+    var t0 = performance.now();
+    fetch('data/fish/oregon/' + spec.file)
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(raw){
+        if (nhdTieredLoad[tc] !== loadState) return; // switched away while this fetch was in flight
+        var tiers = { major: [], medium: [], minor: [] };
+        (raw.features || []).forEach(function(feat){
+          tagLocalFileFeature(feat);
+          tiers[nhdTierForFeature(feat)].push(feat);
+        });
+        loadState.tiers = tiers;
+        console.log('[NHD-TIER] ' + speciesName + ' fetch+bucket: ' + Math.round(performance.now() - t0) + 'ms' +
+          ' (major=' + tiers.major.length + ' medium=' + tiers.medium.length + ' minor=' + tiers.minor.length + ')');
+        loadNhdTier(tc, 'major');
+        updateNhdTieredZoomLoading(); // in case the user is already zoomed past 8/11 when the species is picked
+      })
+      .catch(function(err){
+        console.error('[FieldMap] NHD tiered species fetch failed:', spec.file, err);
+        showToast('Couldn’t load this state’s data — the source server may be unavailable from this app right now.');
+      });
+  }
+  function loadNhdTier(tc, tierKey){
+    var loadState = nhdTieredLoad[tc];
+    if (!loadState || !loadState.tiers || loadState.loaded[tierKey]) return;
+    var srcObj = map && map.getSource('wildlife-statedata-' + tc + '-source');
+    if (!srcObj) return;
+    var t0 = performance.now();
+    var features = loadState.tiers[tierKey];
+    if (tierKey === 'major'){
+      // First real data into this source for this species — reset via a trivial empty setData()
+      // first, matching applyStateDataToSource's own established pattern (required so MapLibre's
+      // worker-side _dataUpdateable diff map is rebuilt from a genuine full load before the first
+      // updateData() call — see that function's comment for the full mechanism).
+      srcObj.setData({ type: 'FeatureCollection', features: [] });
+    }
+    srcObj.updateData({ add: features });
+    loadState.loaded[tierKey] = true;
+    updateWildlifeStateDataMapFilter();
+    console.log('[NHD-TIER] ' + loadState.speciesName + ' tier=' + tierKey + ' loaded ' + features.length +
+      ' features via updateData() in ' + Math.round(performance.now() - t0) + 'ms');
+  }
+  // Called on every 'zoom' tick (cheap — a handful of property reads unless a tier actually needs
+  // loading) AND once right after Tier 1 lands, so a species picked while already zoomed past 8
+  // or 11 loads the right tiers immediately rather than waiting for a zoom event that may never
+  // come.
+  function updateNhdTieredZoomLoading(){
+    if (!map) return;
+    var zoom = map.getZoom();
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var loadState = nhdTieredLoad[tc];
+      if (!loadState || !loadState.tiers) return;
+      var active = wildlifeStateDataActiveByCategory[tc];
+      if (!active || active.speciesName !== loadState.speciesName || active.stateKey !== loadState.stateKey) return;
+      if (!loadState.loaded.medium && zoom >= NHD_TIER_ZOOM.medium) loadNhdTier(tc, 'medium');
+      if (!loadState.loaded.minor && zoom >= NHD_TIER_ZOOM.minor) loadNhdTier(tc, 'minor');
+    });
+  }
+
   // Picks (and loads) one state's data for the current species, in the currently-displayed
   // category — only one state's State Data is shown at a time per category, matching GMU
   // boundaries' own "only one state at a time" rule. Picking a state also activates it (checkbox
@@ -19068,6 +19193,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // instead of leaving it on screen for the entire duration of this new pick's fetch (see
     // clearWildlifeStateDataSource's own comment for the full mechanism this fixes).
     clearWildlifeStateDataSource(tc);
+    // Session 72 — a species/state carrying `tiered: true` (the 4 large Oregon species) routes
+    // through the progressive zoom-tiered loader instead of the normal one-shot
+    // loadStateDataLayer()+applyStateDataToSource() pair. nhdTieredLoad[tc] is reset here
+    // regardless of which branch is taken, so switching FROM a tiered species TO a non-tiered
+    // one leaves no stale tiered state behind for updateNhdTieredZoomLoading to act on later.
+    nhdTieredLoad[tc] = null;
+    var speciesSpec = src && src.species && src.species[active.speciesName];
+    if (speciesSpec && speciesSpec.tiered){
+      startNhdTieredLoad(tc, stateKey, active.speciesName);
+      return;
+    }
     loadStateDataLayer(tc, active.speciesName, stateKey, function(data){
       var stillCurrent = wildlifeStateDataActiveByCategory[tc] && wildlifeStateDataActiveByCategory[tc].stateKey === stateKey && wildlifeStateDataActiveByCategory[tc].speciesName === active.speciesName;
       if (!stillCurrent) return; // switched away while this was in flight
@@ -19129,6 +19265,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function clearWildlifeStateData(topCategory){
     wildlifeStateDataActiveByCategory[topCategory] = null;
     wildlifeStateDataOnByCategory[topCategory] = false;
+    // Session 72 — a species switch away from one of the 4 tiered Oregon species is a fresh load
+    // if the user switches back (per spec), not resumed state — dropping it here (on top of the
+    // identity check inside updateNhdTieredZoomLoading/startNhdTieredLoad's own fetch callback)
+    // is what actually makes "switch back" call startNhdTieredLoad from scratch rather than
+    // silently no-op against a loadState object whose species/state no longer matches.
+    nhdTieredLoad[topCategory] = null;
     updateWildlifeStateDataMapFilter();
     updateActiveLayersChip();
   }

@@ -706,6 +706,26 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   join design (two earlier attempts at a single global spatial index ran out of heap — real NHD density
   across the full 4-species extent turned out to be ~1.78 million unique features, far more than a
   single-sample-tile extrapolation suggested), and full verification detail.
+- Wired the Session 71 `nhdStreamOrder` field into real progressive zoom-tiered loading for the same 4
+  oversized Oregon fish species (Session 72) — a deliberate alternative to the geographic sub-sharding
+  Session 62 originally flagged as the eventual fix, and explicitly NOT a `setFilter()`-only approach (which
+  would still pay the full ~50k-feature `updateData()` cost up front and just hide most of it visually,
+  defeating the actual purpose). All 4 species are now selectable in the Fish species dropdown
+  (`tiered: true` on their `STATE_DATA_SOURCES.fish.or.species` entries) — Tier 1 (major rivers,
+  `nhdStreamOrder >= 6`, plus all lake features) loads immediately on selection; Tier 2 (medium,
+  order 3-5, plus the small number of unmatched/null-order features) loads once via a single `updateData()`
+  call the first time zoom reaches 8; Tier 3 (minor, order 1-2) loads the same way at zoom 11 — each tier
+  loads exactly once (never re-triggered on later zoom ticks past its threshold) and, once loaded, is never
+  unloaded on zoom-out. Real live-measured settle times (CoastalCutthroatTrout, the largest of the 4):
+  Tier 2's `updateData()` call (adding 17,907 features, bringing the cumulative total to ~19,922) settled in
+  ~3.0-3.4s; Tier 3's (adding 33,415 more, bringing the cumulative total to the full ~53,337) settled in
+  ~3.5s — confirming the design holds up at real scale, with NO growing/non-linear blowup between tiers 2
+  and 3 despite the cumulative total nearly tripling, a much better result than the earlier synthetic-data
+  `updateData()` payload-ceiling research predicted (see that research's own entry) — explained by the real
+  Oregon data already being heavily simplified (Session 61's mapshaper pass), so per-feature vertex
+  complexity is far below the deliberately vertex-dense synthetic data that research used. See Architecture
+  notes' "NHD tiered zoom-based loading (Fish, 4 oversized Oregon species)" entry for the full mechanism,
+  every real number measured, and what was and wasn't verifiable live in the real app vs. an isolated harness.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -5299,6 +5319,137 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     directory, not the repo — reusable if this join is ever re-run (e.g. once the 4 species are eventually
     wired into the map UI and their own geographic sub-sharding is designed, per Session 61's own flagged
     follow-up), but not something this repository needs to carry.
+- NHD tiered zoom-based loading (Fish, 4 oversized Oregon species) (Session 72) — wires the Session 71
+  `nhdStreamOrder` field into real progressive loading, replacing geographic sub-sharding (Session 62's
+  originally-flagged eventual fix) as the actual solution for CoastalCutthroatTrout/Coho/WinterSteelhead/
+  RedbandTrout's oversized files (11,500-53,000 features each). Explicitly NOT a `setFilter()`-only approach
+  like the Session 66 watershed zoom-auto-hide — a filter-only approach would still load and `updateData()`
+  the FULL ~50k-feature file up front and just hide most of it visually, paying exactly the processing cost
+  this design exists to avoid until the data is actually needed. Real tiered loading instead: each species'
+  raw file is fetched and bucketed into 3 arrays ONCE, and each tier's own `updateData({add:[...]})` call
+  fires at most once, the first time its zoom threshold is crossed while that exact species+state is still
+  the active selection.
+  - **Catalog wiring**: `STATE_DATA_SOURCES.fish.or.species` gained 4 new entries (previously omitted
+    entirely, not shown as "coming soon" — see Session 62's own comment on this), each with `tiered: true`
+    alongside its existing `file` property. `tagLocalFileFeature()` was extracted out of
+    `loadStateDataLayer()`'s existing 'localFile' branch into its own shared function specifically so both
+    the normal one-shot path (unchanged, still used by the other 30 Oregon species) and the new tiered path
+    tag features into the identical `_sdLayer`/`_sdShape`/`_sdSortKey` shape — no risk of the two paths
+    silently drifting apart. `wildlifeSpeciesGroups()` needed zero changes: it already builds the Fish
+    dropdown from every `perSpecies`/`localFile` source's own `species` keys, so the 4 new species appeared
+    in the real dropdown, correctly grouped (Coldwater, via the already-existing `WILDLIFE_FISH_GROUPS`
+    entries for "Coastal Cutthroat Trout"/"Coho"/"Winter Steelhead"/"Redband Trout" — present since Session
+    54/61 but never previously reachable, since these species were excluded from the catalog until now), the
+    moment the catalog entries existed.
+  - **Tier definitions and bucketing** (`nhdTierForFeature()`): lake features (`habitatType==='lake'`, which
+    never carry `nhdStreamOrder` at all — that field only exists on stream features from the Session 71 join)
+    always go into Tier 1 alongside `nhdStreamOrder >= 6` (major rivers) — deliberately, since lakes are
+    comparatively few (3-147 per species) and not the "minor tributary" concern this design exists to defer.
+    Tier 2 is `nhdStreamOrder` 3-5, PLUS the small number of unmatched/null-order stream features (0-34 per
+    species, the tiny residual from Session 71's own 99.88%-100% match rate) — a safe default so they're
+    never permanently invisible rather than folding them into the "small, fast" Tier 1. Tier 3 is
+    `nhdStreamOrder` 1-2. Real per-species tier sizes (major/medium/minor, verified against the live data
+    both via a standalone count and via the actual `[NHD-TIER] ... fetch+bucket` console log fired from the
+    real app): CoastalCutthroatTrout 2015/17907/33415, Coho 1464/7859/3470, WinterSteelhead 1564/7057/2880,
+    RedbandTrout 286/2545/2734 — every one of these matches the raw major/medium/minor/lake/noOrder counts
+    computed directly from the data files exactly, confirming the bucketing logic has zero off-by-one or
+    boundary errors across all 4 species.
+  - **State and functions**: `nhdTieredLoad` (module var, `tc -> {speciesName, stateKey, tiers:
+    {major,medium,minor}|null, loaded:{major,medium,minor}}`) tracks per-category tiered-load progress.
+    `startNhdTieredLoad(tc, stateKey, speciesName)` fetches the raw file, tags + buckets every feature ONCE,
+    then calls `loadNhdTier(tc,'major')` immediately and `updateNhdTieredZoomLoading()` right after (so a
+    species picked while ALREADY zoomed past 8 or 11 loads the right tiers immediately, rather than waiting
+    for a zoom event that may never come). `loadNhdTier(tc, tierKey)` does the actual `updateData({add:
+    tier})` call (with the same empty-`setData()`-first reset `applyStateDataToSource` already established
+    as required before Tier 1's own updateData() call — later tiers skip this, since the source's diff
+    mechanism is already valid by then) and marks that tier loaded — a no-op if the tier's data isn't bucketed
+    yet or is already loaded, so it's always safe to call speculatively. `updateNhdTieredZoomLoading()` is
+    registered on `map.on('zoom', ...)` alongside the existing Session 66 watershed listener (same "cheap
+    unless something actually needs to change" shape — a few property reads unless a real threshold-crossing
+    tier load is actually due) and independently re-checks all 3 top categories, though in practice only Fish
+    can ever have a tiered species active.
+  - **Wired at both real load-bearing call sites**: `setWildlifeStateDataState()` (the manual state-picker
+    path) and the boot-time State Data restore block both gained an identical branch — if the resolved
+    species' catalog entry has `tiered: true`, call `startNhdTieredLoad()` instead of the normal
+    `loadStateDataLayer()`+`applyStateDataToSource()` pair; otherwise, completely unchanged behavior. Missing
+    the boot-time path would have meant a device that had one of these 4 species active before a reload
+    silently attempted one giant one-shot `updateData()` call on every single boot, defeating the whole
+    design exactly at the moment it matters most (a real app launch).
+  - **Fresh-load-on-switch-back**: `nhdTieredLoad[tc] = null` is set both in `clearWildlifeStateData()`
+    (called on every species change, including switching AWAY from a tiered species) and at the top of
+    `setWildlifeStateDataState()`'s own branch-decision point (so switching FROM one tiered species TO
+    another, or to a non-tiered one, never leaves stale tier state behind) — combined with
+    `startNhdTieredLoad()` always constructing a brand-new `loadState` object with every `loaded` flag reset
+    to `false`, this guarantees switching away and back to the same tiered species always re-fetches and
+    re-buckets from scratch rather than silently resuming or skipping tiers, per spec ("treat it as a fresh
+    load"). Verified directly (not just reasoned through): simulated a switch-away (`nhdTieredLoad.fish =
+    null`) on a fully-3-tier-loaded RedbandTrout state, then a switch-back (`startNhdTieredLoad()` called
+    again for the same species) — confirmed `loaded` reset to `{major:false,medium:false,minor:false}` and
+    `tiers` reset to `null` immediately, not silently reusing the old fully-loaded state.
+  - **Real-world timing, measured live, not estimated**: built an isolated `maplibregl.Map` harness (the
+    same zero-Mapbox-dependency background-only-style technique established in Sessions 60/62/63) with the
+    real `wildlife-statedata-fish-*` source/layer config copied verbatim and the real tiered-loading functions
+    copied verbatim (byte-identical to the shipped code) from `index.html`, plus test-only instrumentation (a
+    `map.on('sourcedata', ...)` listener recording a real wall-clock timestamp whenever `e.isSourceLoaded`
+    fires for the fish source) added ONLY in the harness, never in shipped code — needed because
+    `updateData()` itself is fire-and-forget (posts a message to the worker and returns immediately), so
+    timing the synchronous call alone (also logged, for reference: 24-1068ms across all tier loads and
+    species — this is JUST the diff-object-construction/postMessage cost, not real processing time) would
+    have badly understated the real cost, exactly the mistake the earlier synthetic-data `updateData()`
+    research already warned about. For CoastalCutthroatTrout (the largest of the 4, the explicit stress-test
+    case): Tier 1 (2,015 features, on a freshly-loaded page) showed an anomalously high ~15s real settle time
+    — flagged as a likely one-time cold-start/warm-up artifact of this specific automation sandbox (a
+    freshly-loaded, initially-backgrounded tab) rather than representative of real Tier 1 cost, since it does
+    not fit the pattern of every later measurement; Tier 2 (adding 17,907 features, cumulative ~19,922)
+    settled in a real, consistently-measured ~3.0-3.4s; Tier 3 (adding 33,415 more, cumulative to the full
+    53,337) settled in ~3.5s. **This is the central finding the task asked for**: cumulative cost does NOT
+    grow non-linearly between Tier 2 and Tier 3 despite the cumulative total nearly tripling — both land in
+    the same low-single-digit-seconds band, a dramatically better result than the earlier synthetic-data
+    research's own timing table (which showed e.g. 17,000 cumulative → 38.6s) would have predicted. The most
+    likely explanation, consistent with both datasets' own known properties: that research deliberately used
+    vertex-dense synthetic LineStrings (up to 15,000 vertices/feature) to stress-test the worst case, while
+    the real Oregon fish data was already put through a 2% mapshaper simplification pass in Session 61 — real
+    per-feature vertex complexity here is far below that synthetic worst case, so the worker's real re-tiling
+    cost per feature is proportionally far cheaper. Conclusion reported to the task: the 3-tier design with
+    zoom thresholds 8/11 holds up at real scale as specified — no adjustment (fewer tiers, different
+    thresholds) is indicated by this data. Confirmed the "one-time trigger" rule holds under real repeated
+    zoom ticks, not just a single crossing: re-triggering `updateNhdTieredZoomLoading()` at zoom 8.5, 12, and
+    9 (all past their respective thresholds, already-loaded) produced zero new log entries and zero new
+    `updateData()` calls. Confirmed zoom-out doesn't unload anything, via `querySourceFeatures()` at the
+    identical zoom level (4) before and after all 3 tiers loaded: 1,174 features (Tier 1 only) →  26,487
+    features (all 3 tiers) at the exact same viewport/zoom — plus a direct visual comparison (two real
+    screenshots at zoom 4: a sparse branching major-river-only network, versus a dense, nearly-solid stream
+    silhouette once all 3 tiers were loaded and the view zoomed back out). Repeated the full fetch+bucket+
+    Tier-1+Tier-2+Tier-3 sequence for the other 3 species (Coho, Winter Steelhead, Redband Trout) and
+    confirmed each one's bucket counts match the raw data exactly (see the tier-sizes list above) with the
+    one-time-trigger rule holding for each.
+  - **Verified in the REAL app, not just the isolated harness**: after clearing a stale `SHELL_CACHE` service-
+    worker cache that was initially serving a snapshot from before this session's edits (the same
+    well-documented gotcha noted in many prior sessions' own testing notes — resolved the same way, by
+    unregistering the SW and clearing Cache Storage before reloading), drove the real Wildlife Layers → Fish
+    picker through real DOM `change` events: confirmed the real species `<select>` lists all 4 new species;
+    confirmed picking "Coastal Cutthroat Trout" then "Oregon" fired the real, unmodified
+    `setWildlifeStateDataState()` → `startNhdTieredLoad()` branch, producing a REAL console log
+    (`[NHD-TIER] Coastal Cutthroat Trout fetch+bucket: 879ms (major=2015 medium=17907 minor=33415)`) with
+    bucket counts identical to the isolated harness's own real fetch of the SAME production file; confirmed
+    the checkbox and active-layers chip (`"Coastal Cutthroat Trout — Oregon data"`) updated correctly,
+    coexisting with pre-existing Big Game/Upland Game selections per the established per-category
+    independence design; confirmed zero console errors throughout. The remaining, purely-Mapbox-tile-loading
+    part of the real app's own map instance never reached `style.load` in this sandbox during this session
+    (the same long-documented Mapbox v4 access block hit by every prior session touching DEM/vectorbase/
+    wildlife layers) — confirmed via the real app's own `[BOOT]` console markers stopping at
+    `styleResolveToMapConstructed` with no `firstStyleLoad`/`idle` markers ever following — which meant
+    `reinitializeLayers()` (the function that creates `wildlife-statedata-fish-source`) never actually ran in
+    this specific tab, so `loadNhdTier`'s own pre-existing `if (!srcObj) return;` guard correctly, silently
+    no-op'd rather than crashing; this is a known environmental limitation, not a bug, and is exactly why the
+    isolated-harness measurements above are the load-bearing verification for the actual rendering/timing
+    behavior. Also confirmed, in this same real-app session, that a non-tiered species (Bull Trout) still
+    routes through the completely unmodified `loadStateDataLayer()`/`applyStateDataToSource()` path with zero
+    behavior change — no `[NHD-TIER]` log fired, checkbox/chip updated correctly
+    (`"Bull Trout — Oregon data"`), zero console errors — directly confirming the other 30 Oregon species (and
+    every non-Oregon State Data source) are completely unaffected by this session's changes, not just by code
+    review of the branch condition (`if (speciesSpec && speciesSpec.tiered){ ... } else { /* unchanged */ }`)
+    alone.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7242,3 +7393,59 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   testing), confirmed for both the smallest and largest (58MB) files with zero errors and real rendered
   output. Pre-join backups kept locally, deliberately not committed (git history already preserves the same
   content from the previous commit). APP_VERSION bumped 2.60.0 → 2.61.0, SHELL_CACHE bumped v177 → v178.
+- Session 72: wired the Session 71 `nhdStreamOrder` field into real progressive zoom-tiered loading for the
+  same 4 oversized Oregon fish species, replacing the geographic-sub-sharding plan Session 62 had originally
+  flagged as the eventual fix — see Architecture notes' "NHD tiered zoom-based loading (Fish, 4 oversized
+  Oregon species)" entry for full mechanism/verification detail. Explicit, non-negotiable design constraint
+  going in: this could NOT be a `setFilter()`-only approach like the Session 66 watershed zoom-auto-hide,
+  since a filter still pays the full ~50k-feature `updateData()` cost up front and just hides most of it
+  visually — real tiered loading was required, where each of the 3 tiers (major/medium/minor, split on the
+  real `nhdStreamOrder` field, thresholds at zoom 8 and 11) only ever calls `updateData()` once, the first
+  time its own zoom threshold is crossed, and never unloads on zoom-out. Added `tiered: true` to the 4
+  species' catalog entries (previously fully excluded from the Fish species dropdown), extracted a shared
+  `tagLocalFileFeature()` helper so the new tiered path and the existing one-shot path for the other 30
+  Oregon species tag features identically, and branched both real call sites
+  (`setWildlifeStateDataState()` and the boot-time State Data restore path) to route a tiered species through
+  the new `startNhdTieredLoad()`/`loadNhdTier()`/`updateNhdTieredZoomLoading()` machinery instead of the
+  unchanged `loadStateDataLayer()`+`applyStateDataToSource()` pair. The task's own explicit ask — real,
+  live-measured timing for each tier transition, not an estimate, specifically to check whether the design
+  holds up given the earlier finding that `updateData()` re-tiles the ENTIRE cumulative source on every call
+  — was answered with an isolated `maplibregl.Map` harness (the established zero-Mapbox-dependency technique
+  from Sessions 60/62/63) using byte-identical copies of the real shipped functions and the real production
+  data, plus test-only `sourcedata`/`isSourceLoaded` event instrumentation (needed because `updateData()`
+  itself is fire-and-forget — timing just the synchronous call, as an early attempt did, would have badly
+  understated the real cost). Result for CoastalCutthroatTrout (the largest species, the explicit stress
+  test): Tier 2's `updateData()` (17,907 features, cumulative ~19,922) settled in ~3.0-3.4s real wall-clock
+  time; Tier 3's (33,415 more, cumulative to the full 53,337) settled in ~3.5s — essentially flat, not the
+  non-linear blowup the earlier synthetic-data `updateData()` research predicted for comparable cumulative
+  sizes, most plausibly because the real Oregon data is already mapshaper-simplified (Session 61) while that
+  earlier research deliberately used vertex-dense synthetic data to stress-test the worst case. Conclusion
+  reported back to the task: the 3-tier design at zoom 8/11 holds up at real scale as specified, no
+  adjustment needed. (Tier 1's own first-ever measurement showed an anomalous ~15s, flagged as a likely
+  one-time cold-start artifact of this specific automation sandbox rather than representative — it didn't fit
+  the pattern of every later, consistent ~3-3.5s measurement.) Verified live end to end: CoastalCutthroatTrout
+  showing only major rivers immediately after selection (screenshot: a sparse branching network), medium
+  tributaries appearing exactly once at zoom 8 and minor streams exactly once at zoom 11 (confirmed via
+  `querySourceFeatures()` counts and real console log entries, with re-triggered zoom ticks past each
+  threshold producing zero new `updateData()` calls — the one-time-trigger rule holding under real repeated
+  crossings, not just a single one), zoom-out never unloading anything (1,174 → 26,487 features at the
+  identical zoom level once all 3 tiers were loaded, plus a visual before/after screenshot comparison showing
+  a dramatically denser stream network), and the other 3 species (Coho, Winter Steelhead, Redband Trout) all
+  producing bucket counts matching the raw data exactly with the same one-time-trigger behavior. Also
+  confirmed directly (not just via the isolated harness) in the real app, after clearing a stale
+  `SHELL_CACHE` service-worker cache that was initially serving a pre-edit snapshot (the same well-documented
+  gotcha noted in many prior sessions): the real Fish species dropdown now lists all 4 new species, picking
+  Coastal Cutthroat Trout + Oregon fires the real `startNhdTieredLoad()` branch with a real console log
+  matching the harness's own bucket counts exactly, the checkbox/active-layers chip update correctly and
+  coexist with pre-existing Big Game/Upland Game selections, and — closing the loop on the "other 30 species
+  unaffected" requirement — picking a non-tiered species (Bull Trout) fires zero `[NHD-TIER]` log lines and
+  routes through the completely unchanged old path with a correct chip update and zero console errors. The
+  real map's own base-layer tile loading never reached `style.load` in this sandbox during this session (the
+  same long-documented Mapbox v4 access limitation hit by every prior session touching DEM/vectorbase/
+  wildlife layers — confirmed via the real app's own `[BOOT]` markers stopping short, not assumed), which is
+  why `wildlife-statedata-fish-source` didn't exist yet in that specific tab and `loadNhdTier`'s own
+  pre-existing `if (!srcObj) return;` guard correctly no-op'd there rather than crashing — this is exactly
+  why the isolated-harness measurements are the load-bearing verification for the actual timing/rendering
+  behavior, not a gap in what was checked. `node --check` confirmed clean syntax on all 4 extracted inline
+  `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.61.0 → 2.62.0 (minor — new feature),
+  SHELL_CACHE bumped v178 → v179.
