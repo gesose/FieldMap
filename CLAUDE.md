@@ -739,6 +739,30 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   "NHD tiered zoom-based loading (Fish, 4 oversized Oregon species)" entry, its own "Session 73" sub-bullet,
   for the full filter-composition mechanism (including how it coexists with the pre-existing watershed
   auto-hide filter on the same shared layers without either one clobbering the other).
+- New Mexico wired into Fish State Data (Session — NMDGF Fish Management Plan Waters), a real live-fetch
+  ArcGIS FeatureServer (`nhnm-gisweb.unm.edu`, CORS-open, 1,551 real polygon features — lakes + narrow
+  buffered stream-reach corridors) already confirmed in a prior research session, verified live again before
+  building. Required a genuinely new `STATE_DATA_SOURCES` source type, `'attributeFiltered'` — unlike
+  Arizona/Nevada/Utah's `'perSpecies'` (a different LAYER id per species), NM's data is ONE single shared
+  layer with species selected via a WHERE clause on `Species1_1`. All 38 real species wired in (not a
+  curated "sport fish only" subset, matching this app's existing precedent) — including Rio Grande Cutthroat
+  Trout (303 real waterbody records), Rainbow/Triploid Rainbow Trout, Brown/Brook Trout, Kokanee, Bass,
+  Catfish, Walleye, Northern Pike — plus ~21 native/non-game species the source also carries. A deliberate
+  naming decision, confirmed live rather than assumed: 'Rainbow Trout' vs 'Triploid Rainbow Trout' and
+  'Cutthroat Trout' vs 'Rio Grande Cutthroat Trout' are kept as separate selectable entries, not merged —
+  they're genuinely distinct management categories in NM's own data (wild self-sustaining populations vs.
+  actively-stocked triploid/sterile fish), not inconsistent labeling. The popup now surfaces real per-
+  waterbody fields no other State Data source has (waterbody name via `Name_Working`, confirmed live as the
+  most consistently populated of 3 name fields; `Management1_1` stocking type), gated so this is a pure
+  no-op for every other state. Crappie confirmed absent from NM's real data — not added, a real data gap not
+  an oversight. Found and fixed one real, pre-existing bug (unrelated to this session's own changes, exposed
+  by testing the exact check→dismiss→reopen cycle this task explicitly flagged as historically fragile):
+  `setWildlifeStateDataState()` never cleared the `#wildlife-statedata-nodata` message element or
+  re-enabled the checkbox when a real state was subsequently picked after a "no data for this species"
+  state — reproduced live (remember Oregon via Bull Trout, switch to Rio Grande Cutthroat Trout which has no
+  Oregon data, confirm the stale message persists even after explicitly picking New Mexico) and fixed. See
+  Architecture notes' "New Mexico Fish State Data (NMDGF Fish Management Plan Waters)" entry for the full
+  mechanism and verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -5550,6 +5574,98 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       code review. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
       `service-worker.js`. APP_VERSION bumped 2.62.0 → 2.62.1 (patch — a real bug fix to an already-shipped
       feature, no new UI), SHELL_CACHE bumped v179 → v180.
+- New Mexico Fish State Data (NMDGF Fish Management Plan Waters) — wires a real live ArcGIS FeatureServer
+  (`https://nhnm-gisweb.unm.edu/arcgis/rest/services/ERT/NMDGF_Fish_Management_Data/MapServer/0`) into Fish
+  State Data, already confirmed live/CORS-open in a prior research session and RE-verified live (not
+  assumed) before building: 1,551 real polygon features (lakes + narrow buffered stream-reach corridors, all
+  `esriGeometryPolygon` — `Acres`/`Miles` fields distinguish which), 38 real distinct `Species1_1` values,
+  Crappie confirmed genuinely absent.
+  - **A new source type, `'attributeFiltered'`, not shoehorned into `'perSpecies'`**: every existing
+    `perSpecies` source (Arizona/Nevada/Utah) picks a DIFFERENT LAYER ID per species, on either a shared or
+    per-species FeatureServer. NM's data is the opposite shape — one single shared layer, species selected
+    via a WHERE clause (`Species1_1='...'`) — so it needed its own clean branch rather than overloading an
+    existing one, matching this file's own established practice (localFile/unified/perSpecies are already 3
+    distinct types for exactly this reason). `loadStateDataLayer()` gained a new `else if (src.type ===
+    'attributeFiltered')` branch building a single filtered-query URL (standard SQL single-quote doubling on
+    the species name, even though none of NM's 38 real names contain one) and feeding it through the SAME
+    `fetchStateDataLayerPaged()` every other live source already uses — tagged `_sdLayer:'range'` (no
+    stream/lake/huc12 split at the source, matching Washington/Nevada's own "one unified layer" convention).
+    `stateDataOptionsFor()` and `wildlifeSpeciesGroups()` both extended with `attributeFiltered` alongside
+    the existing type checks so NM shows up as a state option and its species populate the Fish dropdown.
+    `applyStateDataToSource()` deliberately NOT touched — `attributeFiltered` isn't listed there, so it
+    correctly falls to the existing `else` branch (`setData()`, matching `perSpecies`'s own smaller-dataset
+    behavior) with zero new code needed. `categoryHasDetailAlongsideWatershed()` also needed no change —
+    it already only returns true for `type === 'perSpecies'` with a real `huc12` sub-layer, and NM's species
+    entries have no `layers` sub-object at all, so the Session 66 watershed auto-hide correctly never
+    triggers for NM without any explicit exclusion needed.
+  - **Full species list, not a curated subset**: all 38 real species from `Species1_1` are wired in,
+    including ~21 native/non-game species (shiners, suckers, chubs, pupfish) alongside the sport fish named
+    in the task — matching this app's own established precedent (Oregon's 34 species already include
+    non-gamefish like Eulachon/sturgeon; nothing in this codebase pre-filters a real source's own species
+    list down to a curated subset). `WILDLIFE_FISH_GROUPS` (the Coldwater/Warmwater dropdown-grouping map)
+    gained entries only for the genuine game-fish subset (Triploid Rainbow Trout, Cutthroat Trout, Rio Grande
+    Cutthroat Trout, Kokanee Salmon, Gila Trout → Coldwater; Northern Pike, White Bass, Sunfish → Warmwater)
+    — the ~21 native/non-game species deliberately left ungrouped, falling through to this map's own
+    existing "unmapped species trail into Other" fallback rather than guessing at a warm/cold classification
+    for species this map was never designed to categorize.
+  - **Naming judgment call — kept separate, not merged, confirmed live before deciding**: 'Rainbow Trout'
+    (71 real records) vs. 'Triploid Rainbow Trout' (210 real records), and 'Cutthroat Trout' (85) vs. 'Rio
+    Grande Cutthroat Trout' (303), looked like potential duplicate labeling at first glance. Checked real
+    sample records for both pairs before deciding: plain 'Rainbow Trout'/'Cutthroat Trout' records are
+    overwhelmingly `Management1_1:'Wild'` (self-sustaining wild populations) spread across many watersheds,
+    while 'Triploid Rainbow Trout' records are overwhelmingly `'Put and Take'`/`'Put, Grow and Take'`
+    (actively stocked) — triploid/sterile fish are a real, standard fisheries technique specifically used
+    when stocking near wild/native populations to prevent genetic introgression, not a data-entry
+    inconsistency. Collapsing these would have discarded exactly the "wild self-sustaining water vs. actively
+    restocked put-and-take water" distinction an angler would actually care about — kept as 4 separate real,
+    independently-selectable entries instead, documented in `STATE_DATA_SOURCES.fish.nm`'s own comment.
+  - **Popup extended with real per-waterbody fields, gated so it's a no-op for every other state**:
+    `wildlifeStateDataPopupHtml()` now shows a waterbody-name line and a `Management1_1` line when those
+    properties are present on the tapped feature — checked live which of NM's 3 name fields
+    (`Name_DGF`/`Name_NHD`/`Name_Working`) is most consistently populated before choosing a priority order:
+    `Name_Working` (1,516/1,551 records, ~98%) far outpaces `Name_NHD` (1,163, ~75%) and `Name_DGF` (525,
+    ~34%) — used first, with the other two as fallbacks for the rare blank case. A real data-quality detail
+    caught and guarded against: NM's source data uses the LITERAL STRING `"<Null>"` on some records (not a
+    true null) for an unset `Management1_1` — confirmed live, explicitly excluded so the popup never shows
+    the literal text "Management: <Null>" to a user. Verified all 3 real cases directly (a real feature with
+    a name and no management data, one with both, one with neither/literal-null) via the exact popup function
+    body copied into an isolated test — correct output in every case, including the blank-everything case
+    correctly showing neither extra line rather than an empty one.
+  - **A real, pre-existing bug found and fixed via live testing of the exact interaction this task flagged as
+    historically fragile** ("check→dismiss→reopen... this is the exact interaction that's broken this
+    feature multiple times this project"): `setWildlifeStateDataState()` already correctly cleared the
+    underlying `wildlifeStateDataNoDataForByCategory[tc]` state when a real state was picked, but never
+    touched the actual `#wildlife-statedata-nodata` DOM element or the checkbox's own `disabled` flag — both
+    are otherwise only ever written by `renderStateDataSection()`'s full re-render, which this function never
+    triggers. Reproduced live, deliberately, not by accident: picked Bull Trout + Oregon (remembering
+    Oregon), switched to Rio Grande Cutthroat Trout (no Oregon data — correctly showed "No data available
+    for Oregon — Rio Grande Cutthroat Trout" with the checkbox disabled), then explicitly picked New Mexico
+    from the `<select>` (which DOES have RGCT data) — confirmed the stale no-data message and disabled
+    checkbox persisted despite the real, successful pick, exactly the class of bug the task's own framing
+    warned about. Fixed by having `setWildlifeStateDataState()` also hide the no-data message element and
+    re-enable the checkbox — re-verified the exact same repro sequence afterward, confirming the message
+    correctly clears and the checkbox correctly re-enables. This bug is unrelated to and predates this
+    session's own New Mexico changes (the same sequence would reproduce with any two pre-existing states),
+    just newly exposed by testing this specific interaction as instructed.
+  - **Verified live end to end**: New Mexico confirmed appearing as a state option under Fish State Data;
+    species dropdown confirmed populated with real species including a direct spot-check of Rio Grande
+    Cutthroat Trout; real waterbody polygon rendering confirmed via the established isolated
+    zero-Mapbox-dependency `maplibregl.Map` harness technique (this sandbox's main app tab hit the same
+    long-documented Mapbox v4 stall as every prior session touching DEM/vectorbase — confirmed via its own
+    `[BOOT]` markers stopping at `styleResolveToMapConstructed` with no `firstStyleLoad` ever following) — a
+    real fetch of Rio Grande Cutthroat Trout returned exactly 303 features (matching the prior research
+    session's count precisely) and rendered as real, visually-confirmed thin stream-corridor lines and small
+    lake-polygon clusters across northern/central New Mexico, matching RGCT's real known range. The full
+    check→dismiss→reopen cycle confirmed holding in the real app (not the harness): species/state/checkbox/
+    attribution all correctly restored after closing the Wildlife panel via its real close button and
+    reopening through the real Layers → Fish flow. Rainbow Trout vs. Triploid Rainbow Trout confirmed as
+    genuinely separate, independently-selectable dropdown entries with different real state-option lists (3
+    states vs. 1). Crappie confirmed absent — one initial live check showed a false positive traced to
+    leftover state from an earlier chained test sequence in the same browser tab, not a real bug; a clean
+    reload with a fresh cache-bust confirmed Crappie correctly has zero New Mexico state option. Zero console
+    errors across the entire test session. `node --check` confirmed clean syntax on all 4 extracted inline
+    `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.62.1 → 2.63.0 (minor — new state source),
+    SHELL_CACHE bumped v180 → v181.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7580,3 +7696,38 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   these same layers and listeners — is completely unaffected by this session's filter-composition refactor.
   `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
   APP_VERSION bumped 2.62.0 → 2.62.1 (patch — bug fix), SHELL_CACHE bumped v179 → v180.
+- Session (New Mexico Fish State Data): wired NMDGF's real Fish Management Plan Waters ArcGIS FeatureServer
+  into Fish State Data — see Architecture notes' "New Mexico Fish State Data (NMDGF Fish Management Plan
+  Waters)" entry for full mechanism/verification detail. Re-verified the source live (1,551 features, 38
+  species, CORS-open, Crappie genuinely absent) before building anything, per explicit instruction not to
+  assume a prior research session's findings without checking. Required a genuinely new source type,
+  `'attributeFiltered'` — NM's data is one single shared layer with species selected via a WHERE clause,
+  structurally the opposite of Arizona/Nevada/Utah's `'perSpecies'` (a different layer id per species) — so
+  it got its own clean branch in `loadStateDataLayer()`/`stateDataOptionsFor()`/`wildlifeSpeciesGroups()`
+  rather than being shoehorned into the existing type, matching this codebase's own established practice of
+  giving each real source shape its own type. Wired in all 38 real species (not a curated "sport fish only"
+  subset, matching Oregon's own precedent of including non-gamefish species as-is). Made and documented a
+  real naming judgment call: checked live sample records before deciding NOT to merge 'Rainbow Trout' with
+  'Triploid Rainbow Trout', or 'Cutthroat Trout' with 'Rio Grande Cutthroat Trout' — both pairs turned out to
+  be genuinely distinct real management categories in NM's own data (wild self-sustaining vs. actively
+  stocked triploid/sterile fish), not inconsistent labeling, so collapsing them would have discarded real
+  information. Extended the shared State Data popup to show a real waterbody name (picked `Name_Working` as
+  the primary field after confirming live it's the most consistently populated of NM's 3 name fields) and
+  the `Management1_1` stocking type, explicitly guarding against the source's own literal-string `"<Null>"`
+  values so the popup never shows garbage text — both extensions are pure no-ops for every other state's
+  popup. Found and fixed a real, pre-existing bug — unrelated to and predating this session's own changes —
+  by deliberately testing the exact "check→dismiss→reopen" interaction the task flagged as historically
+  fragile for this feature: `setWildlifeStateDataState()` cleared its own underlying "no data" state
+  correctly but never cleared the actual on-screen no-data message or re-enabled the checkbox, both normally
+  only touched by a full panel re-render this function doesn't trigger — reproduced live with a real
+  Oregon-then-New-Mexico state switch and fixed. Verified live end to end: New Mexico appears as a real
+  state option; species dropdown populated with real species, Rio Grande Cutthroat Trout spot-checked
+  directly; real waterbody polygon rendering confirmed via the established isolated MapLibre harness
+  technique (this sandbox's main app tab hit the same long-documented Mapbox v4 stall as every prior
+  session) — 303 real Rio Grande Cutthroat Trout features fetched and rendered, matching the prior research
+  session's count exactly; the full check→dismiss→reopen cycle confirmed holding in the real app; Rainbow
+  Trout vs. Triploid Rainbow Trout confirmed as genuinely separate dropdown entries with different real
+  state-option lists; Crappie confirmed absent (one initial false-positive check traced to stale test-session
+  state, not a real bug, resolved by a clean reload). Zero console errors throughout. `node --check` confirmed
+  clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
+  2.62.1 → 2.63.0 (minor — new state source), SHELL_CACHE bumped v180 → v181.

@@ -3299,7 +3299,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.62.1';
+  var APP_VERSION = '2.63.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4661,7 +4661,20 @@
     'Largemouth Bass': 'Warmwater', 'Smallmouth Bass': 'Warmwater', 'Bluegill': 'Warmwater', 'Pumpkinseed': 'Warmwater',
     'Warmouth': 'Warmwater', 'Black Crappie': 'Warmwater', 'White Crappie': 'Warmwater', 'Channel Catfish': 'Warmwater',
     'Flathead Catfish': 'Warmwater', 'Yellow Perch': 'Warmwater', 'Walleye': 'Warmwater', 'Hybrid Bass (wiper)': 'Warmwater',
-    'Striped Bass': 'Warmwater', 'American Shad': 'Warmwater'
+    'Striped Bass': 'Warmwater', 'American Shad': 'Warmwater',
+    // New Mexico (Session — NMDGF Fish Management Plan Waters) — only the genuine game-fish subset of
+    // its 38 real species is grouped here, matching this map's existing "practical sport-fish bucket,
+    // not full taxonomy" scope (Oregon's own non-gamefish entries like Eulachon/sturgeon were never
+    // grouped by strict biology either). 'Triploid Rainbow Trout' and plain 'Cutthroat Trout' are the
+    // SAME real species as their un-prefixed/subspecies-specific counterparts, just tracked as their
+    // own distinct management categories in NM's source data — see STATE_DATA_SOURCES.fish.nm's own
+    // comment for why they're kept as separate selectable entries rather than merged. The ~21 native
+    // non-gamefish species in NM's data (shiners, suckers, chubs, pupfish, etc.) are deliberately left
+    // ungrouped here — they fall through to this function's own existing "unmapped species trail into
+    // Other" behavior, which is correct and requires no new code.
+    'Triploid Rainbow Trout': 'Coldwater', 'Cutthroat Trout': 'Coldwater', 'Rio Grande Cutthroat Trout': 'Coldwater',
+    'Kokanee Salmon': 'Coldwater', 'Gila Trout': 'Coldwater',
+    'Northern Pike': 'Warmwater', 'White Bass': 'Warmwater', 'Sunfish': 'Warmwater'
   };
   var WILDLIFE_FISH_GROUP_ORDER = ['Coldwater', 'Warmwater'];
 
@@ -4810,6 +4823,57 @@
         species: {
           'Lahontan Cutthroat Trout': { base: 'https://services.arcgis.com/RyxlXSfFi87rAosq/arcgis/rest/services/a12d93/FeatureServer', layers: { range: 0 } }
         }
+      },
+      nm: {
+        // NMDGF Fish Management Plan Waters — confirmed live via a direct research-session query
+        // before building this (not assumed from documentation): 1,551 real polygon features
+        // (lakes + narrow buffered stream-reach corridors, all esriGeometryPolygon — Acres/Miles
+        // fields distinguish which), CORS-open (Access-Control-Allow-Origin echoes the requesting
+        // origin), one row per waterbody-species pair. A NEW source type, 'attributeFiltered' —
+        // doesn't fit 'perSpecies' (which always picks a different LAYER id per species, on either
+        // a shared or per-species FeatureServer) because NM's data is the opposite shape: one
+        // single shared layer, with species selected via a WHERE clause on Species1_1, not by
+        // layer id. See loadStateDataLayer's own 'attributeFiltered' branch for the fetch
+        // mechanism this drives — deliberately a clean new branch, not shoehorned into
+        // 'perSpecies', matching this file's own established practice of giving each real source
+        // SHAPE its own type rather than overloading an existing one (localFile/unified/perSpecies
+        // are already 3 distinct types for exactly this reason).
+        state: 'New Mexico', type: 'attributeFiltered',
+        attribution: 'New Mexico Dept. of Game & Fish — Fish Management Plan Waters',
+        url: 'https://nhnm-gisweb.unm.edu/arcgis/rest/services/ERT/NMDGF_Fish_Management_Data/MapServer/0',
+        whereField: 'Species1_1',
+        // All 38 real species this source has, not a curated "sport fish only" subset — matching
+        // this app's own established precedent (Oregon's 34 species include non-gamefish like
+        // Eulachon/sturgeon; nothing in this codebase pre-filters a real source's own species list).
+        // This deliberately includes ~21 native/non-game species (shiners, suckers, chubs, pupfish)
+        // alongside the sport fish the task named — real data, shown as-is.
+        //
+        // Naming judgment call, documented per explicit instruction: 'Rainbow Trout' vs 'Triploid
+        // Rainbow Trout', and 'Cutthroat Trout' vs 'Rio Grande Cutthroat Trout', are NOT merged —
+        // confirmed live before deciding (not assumed) that these are genuinely distinct management
+        // categories in NM's own data, not inconsistent labeling of the same thing: plain 'Rainbow
+        // Trout'/'Cutthroat Trout' records are overwhelmingly Management1_1:'Wild' (self-sustaining
+        // wild populations), while 'Triploid Rainbow Trout' records are overwhelmingly 'Put and
+        // Take'/'Put, Grow and Take' (actively stocked — triploid/sterile fish are a real, standard
+        // fisheries technique specifically used when stocking near wild/native populations, to
+        // prevent genetic introgression). Collapsing these would discard exactly the "wild
+        // self-sustaining water vs. actively restocked put-and-take water" distinction an angler
+        // would actually care about — kept as 4 separate real entries instead.
+        //
+        // Crappie is confirmed absent from this source (checked live, not assumed) — a real data
+        // gap in NMDGF's own dataset, not an oversight here; not added as an option.
+        species: {
+          'Rainbow Trout': {}, 'Triploid Rainbow Trout': {}, 'Brown Trout': {}, 'Brook Trout': {},
+          'Cutthroat Trout': {}, 'Rio Grande Cutthroat Trout': {}, 'Gila Trout': {}, 'Kokanee Salmon': {},
+          'Largemouth Bass': {}, 'Smallmouth Bass': {}, 'White Bass': {}, 'Sunfish': {},
+          'Channel Catfish': {}, 'Flathead Catfish': {}, 'Walleye': {}, 'Northern Pike': {}, 'Yellow Perch': {},
+          'Arkansas River Shiner': {}, 'Blue Sucker': {}, 'Chihuahua Chub': {}, 'Colorado Pikeminnow': {},
+          'Gila Chub': {}, 'Gray Redhorse': {}, 'Headwater Chub': {}, 'Loach Minnow': {},
+          'Pecos Bluntnose Shiner': {}, 'Pecos Pupfish': {}, 'Peppered Chub': {}, 'Razorback Sucker': {},
+          'Rio Grande Chub': {}, 'Rio Grande Silvery Minnow': {}, 'Rio Grande Sucker': {}, 'Roundtail Chub': {},
+          'Southern Redbelly Dace': {}, 'Spikedace': {}, 'Suckermouth Minnow': {}, 'White Sands Pupfish': {},
+          'Zuni Bluehead Sucker': {}
+        }
       }
     },
     uplandgame: {
@@ -4899,7 +4963,7 @@
       // like the 4 deferred Oregon species: omitted from the selectable list entirely, not shown
       // as a disabled/greyed option.
       if (src.disabled) return;
-      if (src.type === 'unified' || ((src.type === 'perSpecies' || src.type === 'localFile') && src.species[speciesName])){
+      if (src.type === 'unified' || ((src.type === 'perSpecies' || src.type === 'localFile' || src.type === 'attributeFiltered') && src.species[speciesName])){
         out.push({ stateKey: stateKey, stateName: src.state });
       }
     });
@@ -5062,6 +5126,17 @@
     var fetches = [];
     if (src.type === 'unified'){
       fetches.push({ url: src.url + '/query?where=1%3D1&outFields=*&f=geojson', sdLayer: 'range' });
+    } else if (src.type === 'attributeFiltered'){
+      // New Mexico (NMDGF Fish Management Plan Waters) — one single shared layer for every
+      // species, selected via a WHERE clause on src.whereField rather than a different layer id
+      // per species (see STATE_DATA_SOURCES.fish.nm's own comment for why this needed a new type
+      // instead of fitting 'perSpecies'). Standard SQL single-quote doubling on the species name
+      // even though none of NM's 38 real species names contain one — cheap, correct, and matches
+      // how this value would need to be escaped if a future source's species names ever did.
+      var afSpec = src.species[speciesName];
+      if (!afSpec){ cb(null); return; }
+      var whereValue = "'" + speciesName.replace(/'/g, "''") + "'";
+      fetches.push({ url: src.url + '/query?where=' + encodeURIComponent(src.whereField + '=' + whereValue) + '&outFields=*&f=geojson', sdLayer: 'range' });
     } else {
       var spec = src.species[speciesName];
       if (!spec){ cb(null); return; }
@@ -18541,7 +18616,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (stateSources){
       Object.keys(stateSources).forEach(function(stateKey){
         var src = stateSources[stateKey];
-        if (src.type === 'perSpecies' || src.type === 'localFile'){
+        if (src.type === 'perSpecies' || src.type === 'localFile' || src.type === 'attributeFiltered'){
           Object.keys(src.species).forEach(function(sp){
             if (!byName[sp]){ byName[sp] = { name: sp, category: null, codes: [], sample: null }; order.push(sp); }
           });
@@ -19205,7 +19280,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     wildlifeStateDataLastStateByCategory[tc] = stateKey;
     wildlifeStateDataNoDataForByCategory[tc] = null;
     var checkbox = document.getElementById('wildlife-statedata-toggle');
-    if (checkbox) checkbox.checked = true;
+    if (checkbox){ checkbox.checked = true; checkbox.disabled = false; }
+    // Real bug found via live testing (Session — New Mexico wiring), pre-existing and unrelated
+    // to this session's own changes: this function already clears the underlying
+    // wildlifeStateDataNoDataForByCategory state above, but never touched the actual
+    // #wildlife-statedata-nodata DOM element or the checkbox's own disabled flag — both are
+    // otherwise only ever written by renderStateDataSection()'s full re-render, so a real user
+    // picking a state directly from the <select> (which only ever calls this function, not a full
+    // re-render) left a stale "No data available for ..." message on screen, and the checkbox
+    // stuck disabled, even though the pick they just made has real data and is actively loading.
+    // Reproduced live: species with no data for a previously-remembered state, then explicitly
+    // picking a different state that DOES have data for it.
+    var noDataMsgEl = document.getElementById('wildlife-statedata-nodata');
+    if (noDataMsgEl) noDataMsgEl.style.display = 'none';
     persistWildlifeStateData();
     updateActiveLayersChip();
     // Session 64 — clear whatever the PREVIOUS state left rendered right now, synchronously,
@@ -19526,9 +19613,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var active = wildlifeStateDataActiveByCategory[topCategory];
     var activeStateInfo = active && STATE_DATA_SOURCES[topCategory] && STATE_DATA_SOURCES[topCategory][active.stateKey];
     var kindLabel = WILDLIFE_STATEDATA_KIND_LABELS[sdLayer] || 'State Data';
+    // New Mexico's Fish Management Plan Waters layer carries real per-waterbody attributes no
+    // other State Data source has (a waterbody name and a stocking/management type) — shown as
+    // extra meta lines when present, a pure no-op for every other state's popup since none of
+    // them ever populate these exact property names. Name_Working is used first — confirmed live
+    // (not assumed) as by far the most consistently populated of the source's 3 name fields
+    // (~98% of records vs. ~75% for Name_NHD and ~34% for Name_DGF) — falling back to Name_NHD
+    // then Name_DGF for the rare records where it's blank. The source's own real data uses the
+    // LITERAL STRING "<Null>" on some records (not a true null) for an unset Management1_1 —
+    // confirmed live, guarded against explicitly so the popup never shows the literal text
+    // "Management: <Null>" to a user.
+    var extraLines = '';
+    if (props){
+      var waterName = (props.Name_Working && props.Name_Working.trim())
+        || (props.Name_NHD && props.Name_NHD.trim())
+        || (props.Name_DGF && props.Name_DGF.trim())
+        || '';
+      if (waterName) extraLines += '<div class="pin-popup-meta">' + escapeHtml(waterName) + '</div>';
+      if (props.Management1_1 && props.Management1_1 !== '<Null>'){
+        extraLines += '<div class="pin-popup-meta">Management: ' + escapeHtml(props.Management1_1) + '</div>';
+      }
+    }
     return '<div class="pin-popup-body">' +
       '<div class="pin-popup-name">' + escapeHtml(active ? active.speciesName : 'State Data') + '</div>' +
       '<div class="pin-popup-meta">' + escapeHtml(kindLabel) + (activeStateInfo ? ' · ' + escapeHtml(activeStateInfo.state) : '') + '</div>' +
+      extraLines +
       '</div>';
   }
 
