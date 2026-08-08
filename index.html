@@ -3307,7 +3307,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.64.0';
+  var APP_VERSION = '2.64.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -14012,7 +14012,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (!stored || !stored.graph) return null;
         var pf = Object.create(window.FieldMapPathFinder.PathFinder.prototype);
         pf.graph = stored.graph;
-        pf.options = {};
+        // The tolerance used HERE must exactly match whatever tolerance preprocess() used to
+        // BUILD stored.graph in the first place — findPath() rounds its own query point to a
+        // vertex key using this.options.tolerance, then looks that key up directly against
+        // graph.vertices, whose OWN keys were rounded at build time; any mismatch between the
+        // two silently breaks the lookup (a real, self-inflicted bug caught by this project's own
+        // test suite before shipping — see trail-network-worker.js's own TRAIL_GRAPH_TOLERANCE
+        // comment for the full story). Read from what the worker actually reports it used
+        // (stored.tolerance) rather than a second hardcoded literal here, specifically so the two
+        // can never drift apart again regardless of what value the worker ends up using. Falls
+        // back to the library's own default (1e-5) only for a graph stored before this field
+        // existed — every graph built going forward always has one.
+        pf.options = { tolerance: stored.tolerance || 1e-5 };
         return pf;
       });
     }).catch(function(){ return null; });
@@ -17544,6 +17555,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             graph: msg.graph,
             featureCount: msg.featureCount,
             zMax: zMax,
+            // Whatever tolerance the worker actually used to build this graph (see
+            // trail-network-worker.js's own TRAIL_GRAPH_TOLERANCE comment) — read back at draw
+            // time by offlinePathFinderForRoute() so the two can never drift apart, rather than
+            // hardcoding the same value a second time here.
+            tolerance: msg.tolerance,
+            // Marks a graph as having gone through stitchTileBoundaries — every graph built by
+            // this or a later version of trail-network-worker.js. A graph downloaded before this
+            // fix existed won't have this field at all; it's kept usable (never wiped or
+            // rejected) rather than treated as broken, but its own cross-tile-boundary
+            // connectivity is only as good as whatever build produced it — re-downloading the
+            // area is what actually gets it the fix, there is no automatic in-place rebuild.
+            stitched: true,
             builtAt: Date.now()
           }).then(function(){
             resolve({ built: true, featureCount: msg.featureCount, zMax: zMax });

@@ -5875,6 +5875,98 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     Zero console errors across the entire, extensive live-browser test session. `node --check` confirmed clean
     syntax on all 4 extracted inline `<script>` blocks, `trail-network-worker.js`, and `service-worker.js`.
     APP_VERSION bumped 2.63.0 → 2.64.0 (minor — significant new feature), SHELL_CACHE bumped v181 → v182.
+  - **Session (real-device bug fix) — only 1 of 4 route segments traced correctly offline, despite the whole
+    route being fully within a downloaded/processed area**: real-device report explicitly ruled out a
+    download-boundary issue and asked for the real cause to be found, not assumed, before proposing a fix.
+    Investigated all 3 named hypotheses in order, with real evidence for each:
+    - **Hypothesis 1 (offline graph excludes ordinary roads, only includes trails) — falsified by direct code
+      inspection, not just re-asserted**: `TRAIL_NETWORK_CLASSES` in `trail-network-worker.js` already
+      includes `motorway`/`trunk`/`primary`/`secondary`/`tertiary`/`street`/`street_limited`/`track`/
+      `service` alongside the trail-specific classes — a real paved city road like Rocky Butte Rd was already
+      in scope. No change was needed here, and none was made to the class list.
+    - **Hypothesis 3 (tile-boundary correlation) confirmed, then Hypothesis 2 (a real connectivity/stitching
+      bug) confirmed as the actual mechanism**: built a synthetic reproduction using REAL Rocky Butte,
+      Portland OR coordinates, a real zoom-15 tile pair, and a realistic Mapbox-scale tile buffer ratio
+      (1/32 of tile width at extent 4096) simulating how a real tiler independently clips each tile's own
+      geometry at its own buffer boundary. Measured a concrete **53.54-meter gap** between the two tiles' own
+      independently-clipped endpoints of the exact same real road — the root cause: Session 1's own
+      verification had only ever tested a synthetic case that (unrealistically) placed a shared vertex
+      exactly at the true tile boundary in both tiles' data, never a long, sparse-vertex road (an entirely
+      ordinary shape for generalized/simplified paved-road geometry, not a contrived edge case) with no real
+      vertex anywhere near the boundary — a gap this large is nowhere close to `geojson-path-finder`'s own
+      default ~1.1m coordinate-rounding tolerance, the ONLY mechanism the original implementation relied on
+      for cross-tile connectivity.
+    - **The real fix**: `stitchTileBoundaries(features, tiles)`, a new explicit reconciliation step in
+      `trail-network-worker.js`, runs BEFORE `preprocess()` — for every real internal boundary between two
+      tiles that were BOTH actually decoded (the outer edge of the downloaded area is deliberately excluded,
+      matching the existing "route must stay within the downloaded area" assumption), it finds every
+      LineString's OPEN endpoints only (first/last coordinate — a mid-line vertex is never touched) within
+      `BOUNDARY_SNAP_METERS` (200, chosen with real margin above the 53.54m the reproduction measured) of
+      that boundary, nearest-neighbor-matches endpoints from the two tiles' own separate features (real
+      haversine distance, robust regardless of how shallow an angle the road crosses the boundary at — no
+      along-line projection needed), and snaps each matched pair to a single shared coordinate (their
+      real-world midpoint) — after which `geojson-path-finder`'s own ordinary vertex-key matching, now
+      operating on literally-identical coordinates, connects them correctly with no change needed to
+      `preprocess()`/`findPath()` themselves. A known, deliberately accepted tradeoff, not silently glossed
+      over: two genuinely different, unrelated roads that both happen to cross the same tile boundary within
+      200m of each other could theoretically be incorrectly snapped together — judged an acceptable, low-
+      consequence tradeoff (at worst a route briefly uses a nearby parallel road instead of the correct one)
+      against the alternative (a systemic connectivity failure), and verified NOT to actually happen for two
+      roads crossing at genuinely different points on the same boundary (see verification below). Also bumped
+      `preprocess()`'s own `tolerance` option from the library default (1e-5°, ~1.1m) to `TRAIL_GRAPH_TOLERANCE`
+      (3e-5°, ~3.3m) as a small, low-risk additional safety margin for near-miss cases just outside whatever
+      exact snap decision `stitchTileBoundaries` makes — explicitly NOT a substitute for it (3.3m is nowhere
+      near enough to bridge the real tens-of-meters gaps the stitching step exists to close), and deliberately
+      kept small rather than large specifically because a large tolerance would loosen vertex-merging
+      everywhere in the graph, not just near tile boundaries, risking incorrectly merging two genuinely
+      distinct nearby trail/road vertices anywhere in the network.
+    - **A second, independent, self-inflicted bug found and fixed via this session's own test suite BEFORE
+      shipping, not after**: the first version of this fix bumped `preprocess()`'s tolerance without also
+      updating `offlinePathFinderForRoute()`'s own `pf.options` (still `{}`, defaulting `findPath()`'s
+      QUERY-time vertex-key rounding back to the library's default 1e-5) — a mismatch between the tolerance
+      used to BUILD the graph's vertex keys and the tolerance used to QUERY them, which silently broke
+      EVERY lookup, not just near tile boundaries (caught immediately by this session's own regression test —
+      the original, already-working clean-boundary case started failing). Fixed by having the worker report
+      back exactly which tolerance it used (`msg.tolerance`), storing it alongside the graph in
+      `FieldMapLocalDB` (`stitched: true` also stored, as a version marker — a graph downloaded before this
+      fix won't have it, and is left usable rather than rejected, but its own connectivity is only as good as
+      whatever build actually produced it), and reading it back into `pf.options` at draw time — so build-time
+      and query-time tolerance can never drift apart again, rather than two separately-hardcoded literals that
+      could silently do so a second time in the future. A real, explicit, and unavoidable limitation, not
+      silently glossed over: this fix only applies to NEWLY-built graphs — an already-downloaded area's
+      existing graph (built before this fix, including the Rocky Butte area from the original report) keeps
+      its old, broken connectivity until that area is explicitly re-downloaded; there is no automatic
+      in-place rebuild.
+    - **Verification**: a rigorous, verbatim-extraction Node test suite (`test_stitch_fix.js` — the real
+      `trail-network-worker.js` source loaded into a sandboxed `vm` context and run directly, not
+      reimplemented, plus `nearestGraphVertexFeature`/`traceOfflineTrailPath`/`haversineMiles` copied
+      verbatim from index.html) covering 6 scenarios: the original clean-boundary case still connects
+      (regression check); the exact reported 53.54m gap now connects (previously confirmed broken without the
+      fix, via the same reproduction with `stitchTileBoundaries` deliberately omitted); a larger 100m gap
+      still connects; a 250m gap (beyond `BOUNDARY_SNAP_METERS`) correctly does NOT connect, confirming the
+      snap is bounded, not unlimited; a 4-tile/3-boundary/5-waypoint stress test matching the real report's
+      own 5-point/4-segment shape, with 3 different realistic gap sizes (45/80/65m) at the 3 boundaries plus
+      one same-tile segment, correctly traces **all 4 of 4 segments** (the literal fix for the reported "1 of
+      4" symptom); and a false-positive check confirming two genuinely different roads crossing the same
+      boundary at different points stay correctly separate, not incorrectly merged. Also re-confirmed live in
+      a real browser: the real Worker (via `importScripts`, in an actual browser Worker, not a Node
+      approximation) correctly builds the stitched graph for the exact 53.5m-gap scenario (3 raw vertices, 2
+      compacted — the stitched middle point correctly compacted away as a pass-through node — tolerance
+      0.00003 correctly reported back); and the real, unmodified `traceOfflineTrailPath`/
+      `nearestGraphVertexFeature` functions correctly trace that exact scenario end to end in **3.1ms**, with
+      the traced path genuinely passing through the stitched boundary coordinate. One verification gap,
+      flagged rather than silently omitted: this session's browser tooling hit a specific, repeated stall on
+      IndexedDB write operations (`FieldMapLocalDB.put`/`get`) across 3 different tabs, blocking a full live
+      round-trip through `resolveOfflineSnap()`'s own `offlinePathFinderForRoute → loadOfflineAreas →
+      FieldMapLocalDB.get` chain specifically — judged a genuine environmental/tooling issue this session, not
+      a code regression, since that exact storage layer was already extensively verified working (including
+      surviving a real page reload and real Delete-button cleanup) in the immediately preceding session, and
+      today's change only adds two new plain-value fields (`tolerance`, `stitched`) to what was already
+      proven; a full live `resolveOfflineSnap()` round-trip once the tooling is stable again would still be
+      the natural next check, not assumed unnecessary. `node --check` confirmed clean syntax on all 4
+      extracted inline `<script>` blocks, `trail-network-worker.js`, and `service-worker.js`. APP_VERSION
+      bumped 2.64.0 → 2.64.1 (patch — a real correctness fix to an already-shipped feature, no new UI),
+      SHELL_CACHE bumped v182 → v183.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7995,3 +8087,43 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   entire, extensive live-browser session. `node --check` confirmed clean syntax on all 4 extracted inline
   `<script>` blocks, the new `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.63.0 →
   2.64.0 (minor — significant new feature), SHELL_CACHE bumped v181 → v182.
+- Session (offline routing Phase 2 bug fix — tile-boundary connectivity): a real-device report said only 1 of
+  4 route segments traced correctly offline, despite the whole route being fully within a downloaded/
+  processed area — explicitly confirmed NOT a download-boundary issue, with an explicit instruction to find
+  the real cause before proposing a fix. See Architecture notes' "Offline routing Phase 2: real trail-
+  following" entry, its own bug-fix sub-bullet, for the complete investigation and fix; summary here.
+  Investigated all 3 named hypotheses with real evidence for each, not assumptions: the "offline graph
+  excludes ordinary roads" hypothesis was falsified by direct code inspection — `TRAIL_NETWORK_CLASSES`
+  already included ordinary paved-road classes, confirmed by reading the actual shipped file, not memory of
+  it. Built a synthetic reproduction using real Rocky Butte, Portland OR coordinates, a real tile pair, and a
+  realistic Mapbox-scale tile buffer ratio, and measured a concrete 53.54-meter gap between two adjacent
+  tiles' own independently-clipped fragments of the exact same real road — confirming the real root cause: a
+  long, sparse-vertex road (an entirely ordinary shape, not a contrived edge case) can have no real vertex
+  anywhere near a tile boundary, so each tile's own clip interpolates a different real-world endpoint there,
+  tens of meters apart — far beyond `geojson-path-finder`'s own ~1.1m default tolerance, the only mechanism
+  the original implementation relied on for cross-tile connectivity (verified only against an unrealistically
+  clean synthetic case in the prior session). Built the real fix: `stitchTileBoundaries()`, a new explicit
+  reconciliation step in `trail-network-worker.js` that runs before `preprocess()` — finds LineString open
+  endpoints near a real internal tile-grid boundary, nearest-neighbor-matches likely-same-road endpoints
+  across that boundary (bounded by a real-world distance, not unlimited, so it can't casually merge two
+  unrelated roads), and snaps matched pairs to a shared coordinate so the library's own ordinary vertex
+  matching connects them correctly — no change needed to `preprocess()`/`findPath()` themselves. While
+  building this, this session's own test suite caught a second, independent, self-inflicted bug before it
+  ever shipped: bumping `preprocess()`'s own tolerance without also updating the draw-time `PathFinder` reuse
+  object's `options` created a build-time/query-time tolerance mismatch that silently broke every lookup, not
+  just tile-boundary ones — fixed by having the worker report back exactly which tolerance it used and
+  storing it alongside the graph, read back at draw time, so the two can never drift apart again. Verified via
+  a rigorous, verbatim-extraction Node test suite using the real shipped worker file (not a reimplementation)
+  covering 6 scenarios — including a 4-tile/3-boundary/5-waypoint stress test matching the real report's own
+  shape, correctly tracing all 4 of 4 segments — plus a live browser re-confirmation of the exact 53.5m-gap
+  scenario tracing correctly in 3.1ms through the real, unmodified production functions. One flagged,
+  unresolved verification gap: a full live round-trip through `resolveOfflineSnap()`'s own IndexedDB read
+  path hit a genuine environmental tooling stall this session (repeated across 3 tabs) — judged a tooling
+  issue, not a code regression, since that exact storage layer was already proven working in the immediately
+  preceding session and today's change only adds two new plain-value fields to it, but flagged rather than
+  silently treated as fully covered. Also documented, explicitly, a real and unavoidable limitation: this fix
+  only helps NEWLY-downloaded areas — an already-downloaded area (including the Rocky Butte area from the
+  original report) keeps its old, broken connectivity until explicitly re-downloaded; there is no automatic
+  in-place graph rebuild. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
+  `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.64.0 → 2.64.1 (patch — a real
+  correctness fix, no new UI), SHELL_CACHE bumped v182 → v183.
