@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v181';
+var SHELL_CACHE = 'fieldmap-shell-v182';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it
@@ -111,6 +111,18 @@ var SHELL_FILES = [
   // isn't durable/offline-guaranteed) — `new Worker('./terrain-overlay-worker.js')` would 404
   // on a genuine cold boot offline without this.
   './terrain-overlay-worker.js',
+  // Offline route-following (Phase 2): the offline trail-network build's own Web Worker, plus
+  // the two vendored library bundles it (and, for path-finder-bundle.js, the main thread too —
+  // see index.html's own <script src> comment) depend on. Same reasoning as
+  // terrain-overlay-worker.js above — `new Worker('./trail-network-worker.js')` and its own
+  // `importScripts('./vector-tile-bundle.js', './path-finder-bundle.js')` would both 404 on a
+  // genuine cold boot offline without these being explicitly precached; this is also exactly
+  // when this feature needs to work AT ALL (an offline area download happening while the app
+  // still has a live connection is the one time these files are guaranteed reachable — after
+  // that, the whole point of the feature is that it keeps working with no connection left).
+  './trail-network-worker.js',
+  './vector-tile-bundle.js',
+  './path-finder-bundle.js',
   'https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js',
   'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js',

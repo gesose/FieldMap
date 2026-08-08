@@ -3189,6 +3189,14 @@
 
 <script src="./maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.8.0/suncalc.min.js"></script>
+<!-- vector-tile-bundle.js (pbf + @mapbox/vector-tile) is intentionally NOT loaded here — it's
+     only ever needed inside trail-network-worker.js (offline route-following's one-time vector
+     tile decode step), loaded there via importScripts so the main thread's own script payload
+     doesn't carry a dependency it never actually uses. path-finder-bundle.js IS needed here too,
+     not just in the worker — the main thread reuses its PathFinder.prototype directly for an
+     instant, no-reprocessing draw-time lookup against an already-built graph (see
+     offlinePathFinderForRoute in index.html's own script). -->
+<script src="./path-finder-bundle.js"></script>
 <script>
 (function(){
 
@@ -3299,7 +3307,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.63.0';
+  var APP_VERSION = '2.64.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -3922,6 +3930,97 @@
       get: function(){ return Promise.resolve(null); },
       set: function(){ return Promise.resolve(false); }
     };
+  })();
+
+  // ---------- Generic local structured-data store (IndexedDB) ----------
+  // A general-purpose "store some structured JSON-like value locally, keyed by a string" utility —
+  // deliberately NOT hardcoded to only understand trail-network graphs specifically (its first
+  // real consumer, see buildOfflineTrailGraph/TRAIL_GRAPH_KEY_PREFIX below), so a later feature
+  // needing local storage of some other downloaded/derived dataset can reuse it directly rather
+  // than growing a second bespoke IndexedDB wrapper. Deliberately NOT over-engineered either — no
+  // schema/versioning/migration system, just put/get/remove/keysWithPrefix against one object
+  // store; a real second consumer, if one ever shows up, is what should drive adding anything more
+  // than that, not speculation now.
+  // Also deliberately NOT the same thing as `store` right above — that's the existing localStorage/
+  // window.storage abstraction for small, string-keyed, cloud-sync-adjacent settings values. This
+  // is IndexedDB specifically because it can hold genuinely large structured values (megabytes, not
+  // localStorage's ~5-10MB total-origin ceiling) via async structured clone, without blocking the
+  // main thread the way a large synchronous localStorage read/write would — this codebase's first
+  // real IndexedDB usage, confirmed via a full-file grep before writing this that none existed
+  // anywhere previously.
+  // Values are stored AS-IS, never JSON.stringify'd first — IndexedDB's own structured-clone
+  // algorithm already natively handles plain objects/arrays/strings/numbers/booleans (everything
+  // "structured JSON-like data" in practice means), so stringifying first would just be a pointless
+  // extra encode/decode pass on every read and write for no benefit.
+  var FieldMapLocalDB = (function(){
+    var DB_NAME = 'fieldmap-local-v1';
+    var DB_VERSION = 1;
+    var STORE_NAME = 'kv';
+    var dbPromise = null;
+    function available(){ return typeof indexedDB !== 'undefined'; }
+    function openDb(){
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise(function(resolve, reject){
+        if (!available()){ reject(new Error('IndexedDB not available')); return; }
+        var req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = function(){
+          var db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+        };
+        req.onsuccess = function(){ resolve(req.result); };
+        req.onerror = function(){ reject(req.error || new Error('IndexedDB open failed')); };
+      });
+      return dbPromise;
+    }
+    function put(key, value){
+      return openDb().then(function(db){
+        return new Promise(function(resolve, reject){
+          var tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).put(value, key);
+          tx.oncomplete = function(){ resolve(); };
+          tx.onerror = function(){ reject(tx.error); };
+        });
+      });
+    }
+    function get(key){
+      return openDb().then(function(db){
+        return new Promise(function(resolve, reject){
+          var tx = db.transaction(STORE_NAME, 'readonly');
+          var req = tx.objectStore(STORE_NAME).get(key);
+          req.onsuccess = function(){ resolve(req.result === undefined ? null : req.result); };
+          req.onerror = function(){ reject(req.error); };
+        });
+      });
+    }
+    function remove(key){
+      return openDb().then(function(db){
+        return new Promise(function(resolve, reject){
+          var tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).delete(key);
+          tx.oncomplete = function(){ resolve(); };
+          tx.onerror = function(){ reject(tx.error); };
+        });
+      });
+    }
+    // Lists every stored key with the given prefix — lets a caller (offline area deletion, in
+    // particular) clean up whatever it stored under its own chosen key namespace without this
+    // store needing to know anything about what any specific prefix "means".
+    function keysWithPrefix(prefix){
+      return openDb().then(function(db){
+        return new Promise(function(resolve, reject){
+          var tx = db.transaction(STORE_NAME, 'readonly');
+          var req = tx.objectStore(STORE_NAME).getAllKeys();
+          req.onsuccess = function(){
+            var keys = (req.result || []).filter(function(k){
+              return typeof k === 'string' && k.indexOf(prefix) === 0;
+            });
+            resolve(keys);
+          };
+          req.onerror = function(){ reject(req.error); };
+        });
+      });
+    }
+    return { available: available, put: put, get: get, remove: remove, keysWithPrefix: keysWithPrefix };
   })();
 
   var state = {
@@ -13020,6 +13119,31 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         var coords = getPts().map(function(p){ return [p[1],p[0]]; });
         if(coords.length<2){ showToast('Need at least 2 vertices'); return; }
         snapBtn.textContent='Snapping…'; snapBtn.disabled=true;
+        function resetBtn(){ snapBtn.textContent='Snap to trail'; snapBtn.disabled=false; }
+        // Previously had NO offline fallback at all — a plain fetch failure while offline just
+        // fell into the .catch() below with a generic "check connection" message. Now shares the
+        // exact same resolveOfflineSnap() Draw Route/Buffer's own "Snap to trail" button uses
+        // (Phase 2 real trail-following, falling back to Phase 1's per-point nearest-line snap),
+        // reset to always run (success or failure) via the trailing .then(resetBtn) rather than
+        // the original's blind, completion-independent 100ms timer.
+        function offlineFallback(){
+          var pts = getPts().map(function(p){ return { lat: p[0], lng: p[1] }; });
+          resolveOfflineSnap(pts).then(function(result){
+            rebuildVertices(result.points);
+            if (result.usedTrailNetwork){
+              showToast(result.tracedSegments === result.totalSegments
+                ? 'Snapped to trail (offline)'
+                : 'Snapped ' + result.tracedSegments + ' of ' + result.totalSegments + ' segments to trail (offline) — the rest connect directly', 5000);
+            } else if (result.pointSnapCount > 0){
+              showToast('Snapped ' + result.pointSnapCount + ' of ' + result.pointSnapTotal + ' points (offline)', 5000);
+            } else {
+              showToast("Couldn't snap — no downloaded trail/road data near these points", 5000);
+            }
+          }).catch(function(){
+            showToast("Couldn't snap — check connection or trail proximity", 5000);
+          }).then(resetBtn);
+        }
+        if (!navigator.onLine){ offlineFallback(); return; }
         fetch('https://api.openrouteservice.org/v2/directions/'+drawRouteProfile+'/geojson',{
           method:'POST',
           headers:{'Authorization':ORS_API_KEY,'Content-Type':'application/json'},
@@ -13030,9 +13154,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           if(!line||line.length<2) throw new Error('no geometry');
           rebuildVertices(line.map(function(c){ return { lat: c[1], lng: c[0] }; }));
           showToast('Snapped · right-click dense vertices to remove');
-        }).catch(function(){ showToast("Couldn't snap — check connection or trail proximity",5000); });
-        // Reset button after either success or failure
-        setTimeout(function(){ snapBtn.textContent='Snap to trail'; snapBtn.disabled=false; }, 100);
+          resetBtn();
+        }).catch(function(){
+          // Live path-traced snap failed for any reason (offline, ORS unreachable, no route
+          // found, etc.) — same graceful offline fallback Draw Route/Buffer's own button uses,
+          // rather than a plain error.
+          offlineFallback();
+        });
       });
 
       var finish = function(save){
@@ -13717,14 +13845,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // ── Offline point-snap fallback for Draw Route/Buffer's "Snap to trail" ──
   // Used whenever the real path-traced ORS snap above can't run (no network) or fails for any
-  // other reason. Deliberately much simpler than the online path: each dropped waypoint is
-  // independently moved to the nearest point on the nearest trail/road LINE feature MapLibre
-  // currently has rendered from already-downloaded vector tile data — pure nearest-line
-  // geometry, NOT real path-tracing/routing between points (that's a separate, larger "offline
-  // routing" project, explicitly out of scope here). A point with no trail/road data within
-  // OFFLINE_SNAP_RADIUS_FT of it is left exactly where it was, rather than failing the whole
-  // action — and the closing toast reports how many of the total actually found something to
-  // snap to, so it's clear which points did and didn't.
+  // other reason. Two tiers, tried in order (see resolveOfflineSnap below, the shared entry point
+  // both this file's call sites use):
+  //   1. Real trail-FOLLOWING through a downloaded area's own precomputed offline trail-network
+  //      graph (buildOfflineTrailGraph/offlinePathFinderForRoute/traceOfflineTrailPath) — a genuine
+  //      path traced through real trail/road geometry between waypoints, the same shape of result
+  //      the online ORS path produces, just computed entirely offline against data cached at
+  //      download time.
+  //   2. If no such graph is available for this route (area never downloaded, or downloaded before
+  //      this feature existed, or has no vector road data to build a network from at all) — the
+  //      ORIGINAL, simpler per-point fallback: each dropped waypoint is independently moved to the
+  //      nearest point on the nearest trail/road LINE feature MapLibre currently has rendered from
+  //      already-downloaded vector tile data — pure nearest-line geometry, NOT path-tracing between
+  //      points. A point with no trail/road data within OFFLINE_SNAP_RADIUS_FT of it is left
+  //      exactly where it was, rather than failing the whole action.
   var OFFLINE_SNAP_RADIUS_FT = 150;
 
   // Real line-carrying layers from the vector basemap (topo/topo-dark/aerial+topo) that
@@ -13789,30 +13923,166 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return { lat: ll.lat, lng: ll.lng };
   }
 
-  // Runs the offline fallback over every current drawPoint independently and moves both the
-  // point data AND its marker in place — unlike the online path, there's no separate
-  // snappedPoints "traced route" geometry here (point count/identity never changes, so there's
-  // nothing for a parallel array to usefully represent); the drawn line and its editable
-  // vertex markers ARE the now-snapped result. draw-finish-btn's own `snappedPoints ||
-  // drawPoints` fallback picks this up for free.
-  function snapDrawnRouteOffline(){
-    var total = drawPoints.length, snappedCount = 0;
-    drawPoints = drawPoints.map(function(pt){
-      var nearest = nearestTrailPointOffline(pt);
-      if (nearest){ snappedCount++; return nearest; }
-      return pt;
-    });
-    drawMarkers.forEach(function(m, i){ m.setLngLat([drawPoints[i].lng, drawPoints[i].lat]); });
-    snappedPoints = null;
-    redrawDrawLine();
-    updateDrawBar();
-    if (snappedCount === 0){
-      showToast("Couldn't snap — no downloaded trail/road data near these points", 5000);
-    } else if (snappedCount === total){
-      showToast('Snapped all ' + total + ' point' + (total===1?'':'s') + ' to nearby trail/road data (offline)', 4000);
-    } else {
-      showToast('Snapped ' + snappedCount + ' of ' + total + ' points (offline) — ' + (total - snappedCount) + " had no nearby trail/road data", 5000);
+  // ── Offline route Phase 2: real trail-FOLLOWING through a downloaded area's own precomputed
+  // trail-network graph ────────────────────────────────────────────────────────────────────────
+  // The graph itself is built once, at offline-download time (buildOfflineTrailGraph, defined near
+  // the rest of the offline downloader below, right after downloadTileList) — this section is only
+  // the DRAW-TIME half: load whatever was already computed (an IndexedDB read plus a near-zero-cost
+  // object-reuse trick, never geojson-path-finder's own expensive preprocess() again) and trace a
+  // real path through it. See buildOfflineTrailGraph's own comment for the full one-time-processing
+  // design and exactly why this half is fast enough to feel instant.
+  var TRAIL_GRAPH_KEY_PREFIX = 'trailgraph:';
+
+  // A trail graph's own `sourceCoordinates` map (vertex-key -> real [lng,lat]) is what
+  // PathFinder.findPath() actually checks a point against — NOT MapLibre's currently-rendered
+  // pixel geometry the way nearestTrailPointOffline (Phase 1) works, since findPath() only ever
+  // treats a point as routable if its rounded coordinate exactly matches a vertex the topology
+  // builder already knows about. Plain linear scan: even a densely-downloaded area's vertex count
+  // (every point along every road/trail line at the one max-zoom level buildOfflineTrailGraph
+  // decoded — a few thousand at most in practice, confirmed via real timing during live
+  // verification) is small enough for this to be comfortably sub-millisecond; no spatial index
+  // needed at this scale. The cheap bbox pre-filter below uses a deliberately loose, non-latitude-
+  // corrected degrees-per-mile conversion (safe in the "never wrongly excludes a real candidate"
+  // direction only) purely to skip most of the map before the real haversineMiles check below
+  // decides the actual winner.
+  function nearestGraphVertexFeature(graph, latlng, radiusFt){
+    var radiusMiles = (radiusFt * 0.3048) / 1609.344;
+    var radiusDegLoose = radiusMiles / 69;
+    var best = null, bestMiles = Infinity;
+    var coords = graph.sourceCoordinates || {};
+    for (var key in coords){
+      var c = coords[key]; // [lng, lat]
+      if (Math.abs(c[0] - latlng.lng) > radiusDegLoose || Math.abs(c[1] - latlng.lat) > radiusDegLoose) continue;
+      var miles = haversineMiles(latlng.lat, latlng.lng, c[1], c[0]);
+      if (miles < bestMiles){ bestMiles = miles; best = c; }
     }
+    if (!best || bestMiles > radiusMiles) return null;
+    return { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: best } };
+  }
+
+  // Traces the drawn route through the offline trail graph one consecutive waypoint pair at a
+  // time — mirrors the SHAPE of the online ORS response (a possibly-much-longer point list
+  // following real trail geometry), unlike Phase 1's per-point-only snap, which never adds new
+  // intermediate vertices since it never traces a path at all. A pair with no findable path
+  // (either endpoint too far from any real graph vertex, or genuinely disconnected trail
+  // segments — pf.findPath() itself returns undefined for either case) falls back to a plain
+  // straight line for just that one segment, rather than failing the whole route — same
+  // "partial success over total failure" philosophy Phase 1's own per-point snap already used.
+  function traceOfflineTrailPath(pf, points){
+    var out = [points[0]];
+    var tracedSegments = 0, totalSegments = points.length - 1;
+    for (var i = 1; i < points.length; i++){
+      var a = points[i-1], b = points[i];
+      var startF = nearestGraphVertexFeature(pf.graph, a, OFFLINE_SNAP_RADIUS_FT);
+      var endF = nearestGraphVertexFeature(pf.graph, b, OFFLINE_SNAP_RADIUS_FT);
+      var result = (startF && endF) ? pf.findPath(startF, endF) : undefined;
+      if (result && result.path && result.path.length > 1){
+        tracedSegments++;
+        // result.path[0] is the snapped START vertex, not necessarily identical to `a` — skip it
+        // here since `out`'s last entry already covers that join point (either the previous
+        // segment's own traced end, or points[0] on the very first iteration), avoiding a
+        // duplicate near-identical point at every waypoint seam.
+        for (var j = 1; j < result.path.length; j++){
+          out.push({ lat: result.path[j][1], lng: result.path[j][0] });
+        }
+      } else {
+        out.push(b);
+      }
+    }
+    return { points: out, tracedSegments: tracedSegments, totalSegments: totalSegments };
+  }
+
+  // Resolves a ready-to-use, INSTANT offline PathFinder for a drawn route's own starting point.
+  // "Instant" specifically means: the expensive geojson-path-finder topology/compaction work
+  // already happened once, at download time — this only ever does an IndexedDB read plus the
+  // near-zero-cost Object.create(PathFinder.prototype) reuse trick below (confirmed, via a direct
+  // Node comparison against going through the real constructor, to produce byte-identical
+  // findPath() results — see this project's own build notes) — it never re-runs preprocess().
+  // Resolves null if no downloaded area with a real trail network covers the route's own starting
+  // point, which every caller here treats as "fall back to Phase 1," never as an error.
+  function offlinePathFinderForRoute(points){
+    if (!points.length || !window.FieldMapPathFinder) return Promise.resolve(null);
+    return loadOfflineAreas().then(function(areas){
+      var start = points[0];
+      var area = areas.filter(function(a){
+        return a.hasTrailNetwork && boundsFromArea(a).contains([start.lng, start.lat]);
+      })[0];
+      if (!area) return null;
+      return FieldMapLocalDB.get(TRAIL_GRAPH_KEY_PREFIX + area.id).then(function(stored){
+        if (!stored || !stored.graph) return null;
+        var pf = Object.create(window.FieldMapPathFinder.PathFinder.prototype);
+        pf.graph = stored.graph;
+        pf.options = {};
+        return pf;
+      });
+    }).catch(function(){ return null; });
+  }
+
+  // ── Shared offline route-snap resolver ── used by BOTH Draw Route/Buffer's "Snap to trail" and
+  // the vertex-edit "Snap to trail" flow, so the Phase-2-then-Phase-1 fallback logic exists in
+  // exactly one place. Tries real trail-following first and only falls back to Phase 1's simpler
+  // per-point nearest-line snap when no usable graph exists for this route at all, OR a graph
+  // exists but genuinely couldn't trace even one real segment (every waypoint too far from any
+  // known trail vertex). Resolves one shared result shape either way:
+  //   { usedTrailNetwork, points: [{lat,lng}, ...], tracedSegments, totalSegments,
+  //     pointSnapCount, pointSnapTotal }
+  function resolveOfflineSnap(points){
+    return offlinePathFinderForRoute(points).then(function(pf){
+      if (pf){
+        var traced = traceOfflineTrailPath(pf, points);
+        if (traced.tracedSegments > 0){
+          return {
+            usedTrailNetwork: true,
+            points: traced.points,
+            tracedSegments: traced.tracedSegments,
+            totalSegments: traced.totalSegments
+          };
+        }
+      }
+      var total = points.length, snapped = 0;
+      var out = points.map(function(pt){
+        var nearest = nearestTrailPointOffline(pt);
+        if (nearest){ snapped++; return nearest; }
+        return pt;
+      });
+      return { usedTrailNetwork: false, points: out, pointSnapCount: snapped, pointSnapTotal: total };
+    });
+  }
+
+  // Runs resolveOfflineSnap over the current drawPoints and applies whichever result it returns —
+  // real trail-following goes into snappedPoints (same slot/shape the online ORS path already
+  // uses, since path-tracing can add real intermediate vertices the way per-point-only snapping
+  // never did; draw-finish-btn's existing `snappedPoints || drawPoints` fallback already picks
+  // this up with no changes needed there), Phase 1's per-point fallback moves drawPoints/
+  // drawMarkers in place exactly as it always did before Phase 2 existed.
+  function snapDrawnRouteOffline(){
+    resolveOfflineSnap(drawPoints).then(function(result){
+      if (result.usedTrailNetwork){
+        snappedPoints = result.points;
+        redrawDrawLine();
+        updateDrawBar();
+        if (result.tracedSegments === result.totalSegments){
+          showToast('Snapped to trail (offline)', 4000);
+        } else {
+          showToast('Snapped ' + result.tracedSegments + ' of ' + result.totalSegments + ' segment' +
+            (result.totalSegments===1?'':'s') + ' to trail (offline) — the rest connect directly', 5000);
+        }
+        return;
+      }
+      drawPoints = result.points;
+      drawMarkers.forEach(function(m, i){ m.setLngLat([drawPoints[i].lng, drawPoints[i].lat]); });
+      snappedPoints = null;
+      redrawDrawLine();
+      updateDrawBar();
+      var snappedCount = result.pointSnapCount, total = result.pointSnapTotal;
+      if (snappedCount === 0){
+        showToast("Couldn't snap — no downloaded trail/road data near these points", 5000);
+      } else if (snappedCount === total){
+        showToast('Snapped all ' + total + ' point' + (total===1?'':'s') + ' to nearby trail/road data (offline)', 4000);
+      } else {
+        showToast('Snapped ' + snappedCount + ' of ' + total + ' points (offline) — ' + (total - snappedCount) + " had no nearby trail/road data", 5000);
+      }
+    });
   }
   // Repopulates measure-preview-source from measurePoints — called after every measure tap
   // and once at the end of reinitializeLayers() (a style switch wipes the GeoJSON source/
@@ -17033,6 +17303,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return nearestTrailPointOffline({ lat: lat, lng: lng }, layerIdsOverride);
   };
   window.FieldMapDebug.TRAIL_SNAP_LAYERS = TRAIL_SNAP_LAYERS;
+  // Offline route-following (Phase 2) debug hooks — real production functions, not parallel
+  // test-only implementations, same convention as every other FieldMapDebug entry in this file.
+  // Genuinely useful for a real-device tester confirming a downloaded area actually has a usable
+  // trail network (hasOfflineTrailGraph), and for driving/inspecting the draw-time snap logic
+  // directly without needing to actually draw a route through the real UI.
+  window.FieldMapDebug.resolveOfflineSnap = resolveOfflineSnap;
+  window.FieldMapDebug.offlinePathFinderForRoute = offlinePathFinderForRoute;
+  window.FieldMapDebug.buildOfflineTrailGraph = buildOfflineTrailGraph;
+  window.FieldMapDebug.nearestGraphVertexFeature = nearestGraphVertexFeature;
+  window.FieldMapDebug.traceOfflineTrailPath = traceOfflineTrailPath;
+  window.FieldMapDebug.FieldMapLocalDB = FieldMapLocalDB;
+  window.FieldMapDebug.TRAIL_GRAPH_KEY_PREFIX = TRAIL_GRAPH_KEY_PREFIX;
+  window.FieldMapDebug.hasOfflineTrailGraph = function(areaId){
+    return FieldMapLocalDB.get(TRAIL_GRAPH_KEY_PREFIX + areaId).then(function(v){ return !!(v && v.graph); });
+  };
+  // Lets a test pre-seed TILE_CACHE_NAME at the exact real URL the offline downloader itself
+  // would use for a given tile, without that URL (which embeds MAPBOX_TOKEN) ever needing to
+  // leave the page — the caller does the cache.put() itself, in-page.
+  window.FieldMapDebug.tileUrlForLayer = tileUrlForLayer;
+  window.FieldMapDebug.TILE_CACHE_NAME = TILE_CACHE_NAME;
   // captureRealDownloadTotal(startFn) — startFn is whatever actually triggers the download
   // (triggerTestDownload above for a repeatable test, or any other function returning a
   // promise/thenable that resolves once the download work is done). Clears the performance
@@ -17177,6 +17467,99 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function deleteTileList(tileList){
     return caches.open(TILE_CACHE_NAME).then(function(cache){
       return Promise.all(tileList.map(function(t){ return cache.delete(t.url); }));
+    });
+  }
+
+  // ── Offline trail-network graph build (one-time, per-downloaded-area) ──────────────────────
+  // Runs once, right after an offline area's own tile download finishes (see startOfflineDownload
+  // below) — NEVER during in-field route drawing, which is exactly what makes draw-time snapping
+  // feel instant afterward (see offlinePathFinderForRoute above). Decodes ONLY the vectorbase
+  // tiles at the single HIGHEST zoom level actually downloaded for this area (not all 6-7
+  // requested zoom levels a typical download queues — a lower zoom's tiles cover the identical
+  // real-world roads/trails at coarser geometry, so decoding them too would be pure duplicate work
+  // for strictly worse detail; computeTileList's own zUser->native-zoom clamp formula is reused
+  // here, via areaEntry.maxZoom, to find exactly the same native zoom the tile list already used).
+  // The actual decode + geojson-path-finder topology/graph build runs in a dedicated Web Worker
+  // (trail-network-worker.js) so this real, potentially multi-second CPU cost never blocks the
+  // main thread's own UI updates — the caller (startOfflineDownload) is expected to show live
+  // progress via onProgress while this runs, not hide the fact that it's happening.
+  var trailNetworkWorker = null;
+  function getTrailNetworkWorker(){
+    if (!trailNetworkWorker) trailNetworkWorker = new Worker('trail-network-worker.js');
+    return trailNetworkWorker;
+  }
+
+  function buildOfflineTrailGraph(areaEntry, tileList, onProgress){
+    if (typeof Worker === 'undefined' || !('caches' in window)){
+      return Promise.resolve({ built: false, reason: 'unsupported' });
+    }
+    var def = DOWNLOAD_LAYERS.vectorbase;
+    var minNZ = def.minNativeZoom || 1, maxNZ = def.maxNativeZoom || 19;
+    var zMax = Math.max(minNZ, Math.min(maxNZ, areaEntry.maxZoom));
+    var trailTiles = tileList.filter(function(t){ return t.layerId === 'vectorbase' && t.z === zMax; });
+    if (!trailTiles.length){
+      // No vectorbase tiles at all (e.g. only USGS Topo/DEM/etc. were selected) — nothing to
+      // build a road/trail network FROM. Not an error: draw-time offline snapping for this area
+      // will correctly fall straight back to Phase 1's per-point nearest-line snap (which itself
+      // also has nothing to work with here, and degrades further to "left unsnapped" — matching
+      // exactly what happened before this feature existed).
+      return Promise.resolve({ built: false, reason: 'no-vectorbase-tiles' });
+    }
+    return caches.open(TILE_CACHE_NAME).then(function(cache){
+      // Read straight from the cache these tiles were JUST written to by downloadTileList, above
+      // — no network re-fetch. Every one of these should already be present given this only ever
+      // runs right after a successful (non-cancelled) download, but a defensive per-tile null
+      // check still guards against a genuinely corrupt/evicted cache entry rather than letting
+      // one bad tile abort the whole area's processing.
+      return Promise.all(trailTiles.map(function(t){
+        return cache.match(t.url).then(function(resp){
+          return resp ? resp.arrayBuffer().then(function(buf){ return { z:t.z, x:t.x, y:t.y, bytes:buf }; }) : null;
+        });
+      }));
+    }).then(function(results){
+      var tiles = results.filter(Boolean);
+      if (!tiles.length) return { built: false, reason: 'tiles-not-cached' };
+      return new Promise(function(resolve){
+        var worker;
+        try { worker = getTrailNetworkWorker(); }
+        catch (e){ resolve({ built: false, reason: 'worker-error: ' + e.message }); return; }
+        var reqId = uid();
+        function onMsg(evt){
+          var msg = evt.data;
+          if (msg.id !== reqId) return;
+          if (msg.phase === 'decode'){
+            if (onProgress) onProgress('decode', msg.done, msg.total);
+            return;
+          }
+          worker.removeEventListener('message', onMsg);
+          if (!msg.ok){
+            resolve({ built: false, reason: 'worker-error: ' + msg.error });
+            return;
+          }
+          if (!msg.graph){
+            resolve({ built: false, reason: 'no-trail-features' });
+            return;
+          }
+          FieldMapLocalDB.put(TRAIL_GRAPH_KEY_PREFIX + areaEntry.id, {
+            graph: msg.graph,
+            featureCount: msg.featureCount,
+            zMax: zMax,
+            builtAt: Date.now()
+          }).then(function(){
+            resolve({ built: true, featureCount: msg.featureCount, zMax: zMax });
+          }).catch(function(err){
+            resolve({ built: false, reason: 'store-failed: ' + ((err && err.message) || err) });
+          });
+        }
+        worker.addEventListener('message', onMsg);
+        if (onProgress) onProgress('decode', 0, tiles.length);
+        worker.postMessage(
+          { type: 'build', id: reqId, tiles: tiles },
+          tiles.map(function(t){ return t.bytes; }) // Transferable — zero-copy handoff
+        );
+      });
+    }).catch(function(err){
+      return { built: false, reason: 'exception: ' + ((err && err.message) || err) };
     });
   }
 
@@ -17425,7 +17808,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           .map(function(id){ return DOWNLOAD_LAYERS[id] ? DOWNLOAD_LAYERS[id].label : id; }).join(', ');
         var layerLabels = [baseLabel, overlayLabel].filter(function(s){ return s; }).join(', ');
         var sizeLabel = area.sizeMB >= 1024 ? (area.sizeMB/1024).toFixed(1) + ' GB' : Math.round(area.sizeMB) + ' MB';
-        metaEl.textContent = 'Z' + area.minZoom + '–' + area.maxZoom + ' · ' + layerLabels + ' · ' + sizeLabel + ' · ' + new Date(area.createdAt).toLocaleDateString();
+        metaEl.textContent = 'Z' + area.minZoom + '–' + area.maxZoom + ' · ' + layerLabels + ' · ' + sizeLabel + ' · ' + new Date(area.createdAt).toLocaleDateString() +
+          (area.hasTrailNetwork ? ' · offline route-following' : '');
         info.appendChild(nameEl); info.appendChild(metaEl);
         var delBtn = document.createElement('button');
         delBtn.className = 'btn btn-small btn-danger'; delBtn.textContent = 'Delete';
@@ -17433,7 +17817,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           if (!confirm('Delete offline area "' + area.name + '"? This cannot be undone.')) return;
           var bounds = boundsFromArea(area);
           var tileList = computeTileList(bounds, area.minZoom, area.maxZoom, area.layerIds);
-          deleteTileList(tileList).then(function(){
+          Promise.all([
+            deleteTileList(tileList),
+            FieldMapLocalDB.remove(TRAIL_GRAPH_KEY_PREFIX + area.id)
+          ]).then(function(){
             return loadOfflineAreas();
           }).then(function(current){
             var updated = current.filter(function(a){ return a.id !== area.id; });
@@ -17511,47 +17898,76 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       bar.style.width = pct + '%';
       text.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles';
     }, function(){ return offlineDownloadCancelled; }).then(function(result){
-      offlineDownloadInProgress = false;
-      document.getElementById('offline-cancel-download-btn').classList.add('hidden');
-      document.getElementById('offline-download-btn').classList.remove('hidden');
-
       if (result.cancelled){
+        offlineDownloadInProgress = false;
+        document.getElementById('offline-cancel-download-btn').classList.add('hidden');
+        document.getElementById('offline-download-btn').classList.remove('hidden');
         showToast('Download cancelled — ' + result.completed.toLocaleString() + ' tiles already saved before stopping');
         document.getElementById('offline-progress-wrap').classList.add('hidden');
         return result;
       }
 
+      // Network fetching itself is done, but the download is not yet fully "finished" from the
+      // user's own perspective — the one-time offline trail-network build below (real,
+      // potentially multi-second CPU work; see buildOfflineTrailGraph's own comment) still has to
+      // run. Cancel's own cooperative-cancellation flag only ever affected the tile-fetch loop
+      // above (already finished either way), so it's hidden now — but Download stays hidden and
+      // the progress UI stays visible through this next phase too, deliberately, rather than
+      // re-enabling Download while "Building offline route network…" is still genuinely in
+      // flight (offlineDownloadInProgress/the button visibility toggle move to inside the
+      // deferred block below, once the WHOLE pipeline — not just network fetching — is done).
+      document.getElementById('offline-cancel-download-btn').classList.add('hidden');
+
       setTimeout(function(){
-        var defaultName = 'Area near ' + offlineCaptureBounds.getCenter().lat.toFixed(3) + ', ' + offlineCaptureBounds.getCenter().lng.toFixed(3);
-        var name = prompt('Name this offline area:', defaultName) || defaultName;
-        var areaEntry = {
-          id: uid(),
-          name: name,
-          boundsSW: [offlineCaptureBounds.getSouth(), offlineCaptureBounds.getWest()],
-          boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
-          minZoom: minZ, maxZoom: maxZ,
-          layerIds: layerIds,
-          // The actual base-layer checkbox id(s) selected (e.g. ['topo'], not ['vectorbase']) —
-          // layerIds alone can't reconstruct this for display, since Topo/Topo Dark/Aerial+Topo
-          // all dedupe to the SAME 'vectorbase' source id (and Aerial/Aerial+Topo both dedupe to
-          // 'satellite'), so DOWNLOAD_LAYERS[id].label is necessarily a shared-group description
-          // ("Topo map data (Topo / Topo Dark / Aerial + Topo)"), not the one checkbox actually
-          // ticked. renderOfflineAreasList() uses this instead of layerIds for the base-layer
-          // portion of the label; layerIds itself is untouched and still what actually drives
-          // tile computation/redownload/delete.
-          baseLayerIds: baseLayerIds,
-          sizeMB: sizeMB,
-          createdAt: Date.now()
-        };
-        loadOfflineAreas().then(function(areas){
-          areas.push(areaEntry);
-          saveOfflineAreas(areas);
-          renderOfflineAreasList();
-          renderOfflineBoundaries();
-          updateOverlayOfflineAvailability();
-          document.getElementById('offline-progress-wrap').classList.add('hidden');
-          var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
-          showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote);
+        var areaId = uid();
+        text.textContent = 'Building offline route network…';
+        buildOfflineTrailGraph({ id: areaId, maxZoom: maxZ }, tileList, function(phase, done, total){
+          if (phase === 'decode'){
+            var pct = total ? Math.round(done/total*100) : 100;
+            bar.style.width = pct + '%';
+            text.textContent = 'Building offline route network — reading trail data ' + done + ' / ' + total;
+          }
+        }).then(function(graphResult){
+          var defaultName = 'Area near ' + offlineCaptureBounds.getCenter().lat.toFixed(3) + ', ' + offlineCaptureBounds.getCenter().lng.toFixed(3);
+          var name = prompt('Name this offline area:', defaultName) || defaultName;
+          var areaEntry = {
+            id: areaId,
+            name: name,
+            boundsSW: [offlineCaptureBounds.getSouth(), offlineCaptureBounds.getWest()],
+            boundsNE: [offlineCaptureBounds.getNorth(), offlineCaptureBounds.getEast()],
+            minZoom: minZ, maxZoom: maxZ,
+            layerIds: layerIds,
+            // The actual base-layer checkbox id(s) selected (e.g. ['topo'], not ['vectorbase']) —
+            // layerIds alone can't reconstruct this for display, since Topo/Topo Dark/Aerial+Topo
+            // all dedupe to the SAME 'vectorbase' source id (and Aerial/Aerial+Topo both dedupe to
+            // 'satellite'), so DOWNLOAD_LAYERS[id].label is necessarily a shared-group description
+            // ("Topo map data (Topo / Topo Dark / Aerial + Topo)"), not the one checkbox actually
+            // ticked. renderOfflineAreasList() uses this instead of layerIds for the base-layer
+            // portion of the label; layerIds itself is untouched and still what actually drives
+            // tile computation/redownload/delete.
+            baseLayerIds: baseLayerIds,
+            sizeMB: sizeMB,
+            createdAt: Date.now(),
+            // Offline route Phase 2 — whether a real trail-network graph was successfully built
+            // for this area (buildOfflineTrailGraph), read at draw time by
+            // offlinePathFinderForRoute to decide whether real trail-following is even possible
+            // here at all before it bothers doing anything else.
+            hasTrailNetwork: !!graphResult.built,
+            trailNetworkFeatureCount: graphResult.built ? (graphResult.featureCount || 0) : 0
+          };
+          loadOfflineAreas().then(function(areas){
+            areas.push(areaEntry);
+            saveOfflineAreas(areas);
+            renderOfflineAreasList();
+            renderOfflineBoundaries();
+            updateOverlayOfflineAvailability();
+            offlineDownloadInProgress = false;
+            document.getElementById('offline-download-btn').classList.remove('hidden');
+            document.getElementById('offline-progress-wrap').classList.add('hidden');
+            var failNote = result.failed > 0 ? (' (' + result.failed + ' tiles failed — likely no data at that zoom in this area)') : '';
+            var trailNote = graphResult.built ? ' · offline route-following ready' : '';
+            showToast('Saved "' + name + '" — ' + result.completed.toLocaleString() + ' tiles' + failNote + trailNote);
+          });
         });
       }, 0);
 

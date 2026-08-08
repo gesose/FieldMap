@@ -763,6 +763,22 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Oregon data, confirm the stale message persists even after explicitly picking New Mexico) and fixed. See
   Architecture notes' "New Mexico Fish State Data (NMDGF Fish Management Plan Waters)" entry for the full
   mechanism and verification detail.
+- Offline routing Phase 2: Draw Route/Buffer's "Snap to trail" and the vertex-edit "Snap to trail" flow both
+  now trace a REAL path through real trail/road geometry when offline, instead of Phase 1's straight-line-
+  between-snapped-points fallback (which still exists, and is still what's used when no usable offline trail
+  network is available for the route being drawn). A one-time, per-downloaded-area processing step
+  (`buildOfflineTrailGraph`, run from `startOfflineDownload()` right after tile download finishes — never
+  during in-field drawing) decodes the cached vectorbase vector tiles at the single highest zoom level
+  actually downloaded, extracts real trail/road LineString geometry via the same real-world class allowlist
+  `TRAIL_SNAP_LAYERS` already implies, and feeds it into `geojson-path-finder`'s own internal `preprocess()`
+  step (topology + graph compaction) in a dedicated Web Worker (`trail-network-worker.js`). The resulting
+  graph is stored in a new, genuinely general-purpose IndexedDB key-value store (`FieldMapLocalDB` — this
+  app's first IndexedDB usage at all) and reconstituted at draw time via a near-zero-cost object-reuse trick
+  that skips `preprocess()` entirely (confirmed live: 2.1ms end to end for a real cross-tile-boundary route).
+  See Architecture notes' "Offline routing Phase 2: real trail-following" entry for the full design,
+  including the 3 new vendored libraries this required (`pbf`/`@mapbox/vector-tile`/`geojson-path-finder`,
+  bundled with esbuild since this repo has no build step of its own) and exactly how the whole pipeline was
+  verified given this sandbox's own long-standing Mapbox v4 block.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -5666,6 +5682,199 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     errors across the entire test session. `node --check` confirmed clean syntax on all 4 extracted inline
     `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.62.1 → 2.63.0 (minor — new state source),
     SHELL_CACHE bumped v180 → v181.
+- Offline routing Phase 2: real trail-following through a downloaded area's own trail network — builds
+  directly on Phase 1 (`nearestTrailPointOffline`/`snapDrawnRouteOffline`/`TRAIL_SNAP_LAYERS`, still present
+  and still the graceful fallback for a route with no usable graph), not a replacement for it.
+  - **Why 3 new vendored libraries, and why bundled this way**: this repo has no build step or npm project
+    of its own (single-file app by design, confirmed via a fresh check — no `package.json`, no
+    `node_modules`), so `pbf` (5.1.2, BSD-3-Clause) + `@mapbox/vector-tile` (3.0.0, BSD-3-Clause) +
+    `geojson-path-finder` (2.1.0, ISC) were each `npm install`ed in a scratch directory and bundled into 2
+    browser-usable, self-contained IIFE files via `esbuild` — `vector-tile-bundle.js` (10KB, exposing
+    `window.FieldMapVectorTile = {PbfReader, VectorTile}`) and `path-finder-bundle.js` (30KB, exposing
+    `window.FieldMapPathFinder = {PathFinder, pathToGeoJSON, preprocess}`) — matching this project's own
+    existing vendoring convention for `maplibre-gl.js` (a one-line license-attribution comment at the top of
+    each minified file). `pbf` 5.x turned out to be a real, non-obvious version trap: its own `PbfReader`
+    class (confirmed via reading its source) is API-compatible with what `@mapbox/vector-tile` expects from
+    the OLD, pre-5.x default `Pbf` export, but 5.x is ESM-only with NO default export at all (`import Pbf
+    from 'pbf'` fails to bundle) — fixed by importing the real named export, `{ PbfReader }`, instead.
+    `preprocess` — `geojson-path-finder`'s own internal topology/graph-build function, normally hidden behind
+    the `PathFinder` constructor and not part of its published public API — is deliberately exposed as its
+    own bundle export too, specifically because it's the ONE expensive step this whole feature exists to pay
+    only once (see "the reuse trick" below).
+  - **Trail extraction — which vector-tile features count as a trail/road**: every `TRAIL_SNAP_LAYERS` style
+    layer (confirmed live against the real `topo-style.json` filters before writing this, not guessed) reads
+    the SAME single source-layer, `'road'`, differentiated only by `class`/`type`/`structure` properties —
+    `TRAIL_NETWORK_CLASSES` (in `trail-network-worker.js`) is the union of every real `class` value those
+    style layers' filters cover (motorway/trunk/primary/secondary/tertiary/street/street_limited/track/
+    service/motorway_link/trunk_link/primary_link/secondary_link/tertiary_link/path/pedestrian), used as an
+    ALLOWLIST rather than a denylist so rail (`major_rail`/`minor_rail`), `aerialway`, and ferry (none of
+    which appear in the list) are automatically excluded with no separate exclusion needed — matching
+    `TRAIL_SNAP_LAYERS`' own "deliberately excludes... rail/aerialway/ferry" doc comment exactly.
+    `service`/`track` are included unconditionally, unlike the "road-minor" STYLE layer's own zoom-gated
+    DISPLAY filter (`service` only paints at zoom≥14 there) — a real forest service road is a genuinely
+    traversable network edge at any zoom; that gate is a pure rendering-density concern with nothing to do
+    with whether the road exists for routing. A decoded MVT LineString-type feature can come back as GeoJSON
+    `MultiLineString` (multiple disjoint line parts in one feature) — `geojson-path-finder`'s own topology
+    builder only ever reads `LineString` features (confirmed via its source: a `MultiLineString` would be
+    silently dropped from the network entirely, not an error) — so each part is split into its own
+    independent `LineString` feature before being added to the network.
+  - **One-time processing, run at download time, in a Worker**: `buildOfflineTrailGraph(areaEntry, tileList,
+    onProgress)` (index.html, right after `deleteTileList`) filters the already-computed `tileList` down to
+    just the `vectorbase` entries at the single highest zoom actually requested (`Math.max(minNZ,
+    Math.min(maxNZ, areaEntry.maxZoom))`, the exact same native-zoom clamp formula `computeTileList` itself
+    uses) — a LOWER zoom's tiles cover the identical real-world roads at coarser geometry, so decoding those
+    too would be pure duplicate work for strictly worse detail. Reads each qualifying tile's bytes straight
+    from `TILE_CACHE_NAME` (the cache `downloadTileList` just finished writing to — no network re-fetch),
+    hands them to a dedicated `trail-network-worker.js` via `postMessage` with the ArrayBuffers passed as
+    Transferables (zero-copy), and the worker does decode + class-filter + `preprocess()` entirely off the
+    main thread — real, potentially multi-second CPU work that must never block UI updates, per the task's
+    own hard requirement. The worker's `importScripts('./vector-tile-bundle.js', './path-finder-bundle.js')`
+    needed one small trick to work: both bundles assign to `window.X`, but a classic (non-module) Worker's
+    own global scope has no `window` — fixed with `self.window = self;` right before the `importScripts`
+    calls, which makes a bare `window` identifier resolve correctly inside that same global scope (the same
+    "global object property === bare global variable" relationship that already makes `window.foo` work as
+    plain `foo` on the main thread). The resulting graph is a plain, JSON-serializable object (no functions,
+    no Maps, no circular references — confirmed by reading `geojson-path-finder`'s own preprocessor source
+    before relying on this) stored as-is (no `JSON.stringify`) under `'trailgraph:' + areaEntry.id` in the
+    new `FieldMapLocalDB` store, alongside `featureCount`/`zMax`/`builtAt`. If the area has no vectorbase
+    tiles at all (raster-only download), or those tiles fetched but the extraction found zero real trail
+    features, `buildOfflineTrailGraph` resolves `{built:false, reason:...}` — not an error; the area is
+    simply saved with `hasTrailNetwork:false`, and draw-time snapping for it falls straight to Phase 1 exactly
+    as it did before this feature existed.
+  - **UI feedback during the build, and the promise-timing contract this had to preserve**: `startOfflineDownload()`'s
+    own returned promise has an existing, explicitly documented contract (Session 34) — it must resolve "the
+    moment network fetching is actually done," so `window.FieldMapDebug.captureRealDownloadTotal` (and any
+    future caller) can await real tile-download completion without being blocked by the deferred naming
+    `prompt()`. The new trail-graph-build phase runs entirely INSIDE that same pre-existing deferred
+    `setTimeout(fn, 0)` block, after the tile-download promise has already resolved and returned — so it adds
+    zero risk to that contract. What DID change: `offlineDownloadInProgress`/the Download button's re-enable
+    were moved from immediately-after-tile-fetch to only-after-the-whole-pipeline-finishes (previously, the
+    Download button would reappear while progress text was still showing "0%"/tile counts for that one-tick
+    gap before the deferred prompt — with a real multi-hundred-ms-or-more graph-build phase now inserted
+    there instead of a single tick, leaving the button re-enabled through it would have looked like two
+    downloads were simultaneously available). The progress bar/text are reused for a second phase rather than
+    hidden and reopened — "Building offline route network — reading trail data N / M" — confirmed live via
+    real DOM snapshots taken at 300ms intervals through a real (if very fast, thanks to localhost + a tiny
+    2-tile synthetic dataset) run of the whole pipeline.
+  - **Draw-time lookup — the reuse trick that makes it feel instant**: `offlinePathFinderForRoute(points)`
+    resolves which downloaded area (if any, `hasTrailNetwork:true`, bounds containing the route's own
+    starting point) applies, reads that area's stored graph from `FieldMapLocalDB`, and reconstructs a real,
+    fully-functional `PathFinder` instance via `Object.create(window.FieldMapPathFinder.PathFinder.prototype)`
+    then directly assigning `.graph`/`.options` — skipping the constructor's own `preprocess()` call
+    entirely. Confirmed, via a direct Node comparison against a normal `new PathFinder(network)` construction
+    on the identical network, that this produces BYTE-IDENTICAL `findPath()` results (`JSON.stringify`
+    equality on both `.path` and `.weight`) — the trick reuses the library's own tested `findPath`/
+    `_createPhantom`/`_removePhantom` prototype methods unchanged, it just skips redoing the one genuinely
+    expensive step that already ran once at download time. `nearestGraphVertexFeature(graph, latlng,
+    radiusFt)` — a NEW, separate nearest-neighbor search, not a reuse of Phase 1's pixel/rendered-feature-
+    based `nearestTrailPointOffline` — is needed because `PathFinder.findPath()` only ever treats a point as
+    routable if its rounded coordinate exactly matches a vertex the topology builder already knows about
+    (confirmed via its source), which the currently-rendered-pixel nearest point Phase 1 finds is very
+    unlikely to land on; it does a plain linear scan over the graph's own `sourceCoordinates` (real lng/lat,
+    not tied to what's currently rendered or zoomed/panned to) with a cheap, deliberately loose non-latitude-
+    corrected bbox pre-filter before the real `haversineMiles` (already existed in this file, reused rather
+    than reimplemented) decides the actual winner — confirmed live to be comfortably sub-millisecond even
+    though a genuinely dense real downloaded area's vertex count could reach a few thousand.
+    `traceOfflineTrailPath(pf, points)` walks the drawn route one CONSECUTIVE WAYPOINT PAIR at a time, tracing
+    a real path for each pair independently — a pair with no findable path (either endpoint too far from any
+    known vertex, or genuinely disconnected trail segments — `findPath()` itself returns `undefined` for
+    either case) falls back to a plain straight line for JUST that one segment, rather than failing the whole
+    route, matching the same "partial success over total failure" philosophy Phase 1's own per-point snap
+    already established. The traced result goes into `snappedPoints` (the SAME slot/shape the online ORS path
+    already uses, since path-tracing can add real intermediate vertices the way Phase 1's per-point-only snap
+    never did) — `draw-finish-btn`'s existing `snappedPoints || drawPoints` fallback already picks this up
+    with zero changes needed there.
+  - **One shared resolver for both call sites**: `resolveOfflineSnap(points)` tries Phase 2 first and falls
+    back to Phase 1's per-point nearest-line snap only when no usable graph exists at all OR a graph exists
+    but genuinely couldn't trace even one real segment — used identically by both `snapDrawnRouteOffline()`
+    (Draw Route/Buffer's own "Snap to trail" button — Buffer needs no separate wiring at all, since it already
+    reuses Draw Route's own `drawPoints`/`handleDrawClick`/`snapDrawnRouteToTrail` machinery directly, per an
+    earlier session's own established precedent) and the vertex-edit "Snap to trail" flow's `snapBtn` handler,
+    which previously had NO offline fallback of any kind (a plain fetch failure while offline just showed a
+    generic "check connection" error) — now shares the identical Phase-2-then-Phase-1 logic, with its own
+    button-reset now tied to actual completion (`.then(resetBtn)` after either success or failure) rather than
+    the original's blind, completion-independent 100ms timer.
+  - **`FieldMapLocalDB`** (index.html, right after the existing `store` localStorage/window.storage
+    abstraction) — a genuinely general-purpose IndexedDB key-value wrapper (`put`/`get`/`remove`/
+    `keysWithPrefix`, one object store, values stored as-is via structured clone rather than JSON-stringified
+    first), this app's first IndexedDB usage at all (confirmed via a full-file grep before building it).
+    Deliberately NOT hardcoded to only understand trail-network graphs, and deliberately NOT over-engineered
+    with a schema/versioning system either — just enough surface for this real first consumer, general enough
+    that a later feature needing local storage of some other downloaded/derived dataset can reuse it directly.
+    Wired into offline-area deletion too (`Promise.all([deleteTileList(tileList),
+    FieldMapLocalDB.remove(TRAIL_GRAPH_KEY_PREFIX + area.id)])`) so a deleted area's stored graph doesn't
+    linger orphaned in IndexedDB.
+  - **Debug hooks** (matching this file's own established `window.FieldMapDebug.*` convention — real
+    production functions, not parallel test-only implementations): `resolveOfflineSnap`,
+    `offlinePathFinderForRoute`, `buildOfflineTrailGraph`, `nearestGraphVertexFeature`, `traceOfflineTrailPath`,
+    `FieldMapLocalDB`, `TRAIL_GRAPH_KEY_PREFIX`, `hasOfflineTrailGraph(areaId)`, plus `tileUrlForLayer`/
+    `TILE_CACHE_NAME` (added specifically so a test can pre-seed `TILE_CACHE_NAME` at the exact real URL the
+    downloader itself would use, entirely in-page, without the Mapbox-token-embedding URL ever needing to
+    leave the page).
+  - **Verification — real, layered, and explicit about what each layer actually proves**: this sandbox's own
+    Mapbox v4 access is confirmed 403-blocked (direct `curl` against the real vectorbase tile endpoint, same
+    standing limitation as every prior session touching DEM/vectorbase), so no REAL Mapbox road tile bytes
+    could be fetched here — worked around by constructing genuinely valid, standard MVT-encoded bytes with a
+    real encoder (`vt-pbf`) rather than approximating the format.
+    1. A standalone Node test (`test_trail_pipeline.js`, 5 test groups) built two real, adjacent MVT tiles at
+       a real zoom-14 tile pair with a synthetic trail crossing their shared boundary (including a deliberate
+       tile-buffer overlap, matching how real tilesets are built), plus a rail line and an unknown-class line
+       in the mix — fed through the REAL, unmodified `vector-tile-bundle.js`/`path-finder-bundle.js` and the
+       REAL extraction logic copied verbatim from `trail-network-worker.js`. Confirmed: rail/unknown-class
+       correctly excluded (2 of 4 features extracted); all decoded coordinates are real, sane lng/lat; both
+       tiles' independently-decoded copies of the shared boundary vertex land within `geojson-path-finder`'s
+       default 1e-5° tolerance of each other (drift ~5×10⁻⁷°, consistent with MVT's own extent-4096
+       quantization at zoom 14) — meaning tile-boundary reconciliation is handled correctly by the library's
+       own existing vertex-snapping tolerance, with NO custom stitching code needed; a real path traced from
+       deep in tile A to deep in tile B correctly crosses the boundary (confirmed the traced path's own
+       coordinates genuinely pass through the boundary region, not a coincidental direct result); and the
+       `Object.create(PathFinder.prototype)` reuse trick produces a byte-identical result to a normal
+       constructor call on the identical network.
+    2. The same synthetic tiles, re-encoded to base64 and injected into a REAL browser tab running the REAL
+       app: the REAL `trail-network-worker.js` (via `importScripts`, in an actual Worker) decoded and
+       preprocessed them in 48ms, producing the identical vertex/feature counts as the Node test.
+    3. That real graph, stored under a real seeded offline-area entry via the REAL `FieldMapLocalDB`: calling
+       the REAL, unmodified `resolveOfflineSnap()` directly (not a reimplementation) with 2 waypoints near the
+       synthetic trail produced a correct 7-point trail-following result crossing the tile boundary in
+       **2.1ms** — the actual "instant at draw time" proof the task required. A route far from any downloaded
+       area correctly fell back to Phase 1 in 0.3ms with points left unchanged, confirming the graceful
+       fallback.
+    4. The REAL end-user UI, driven by real DOM events (not the `computer` tool's OS-level click simulation,
+       which repeatedly failed to register on the MapLibre canvas in this environment — a native
+       `MouseEvent('mousedown'/'mouseup'/'click', {clientX,clientY,...})` sequence dispatched directly on
+       `.maplibregl-canvas` proved reliable instead, and is what let the live `Map` instance itself finally be
+       captured via the established `Map.prototype` monkey-patch technique): opened Draw Route, dropped 2
+       waypoints via real synthetic clicks at `map.project()`-computed pixel positions spanning the synthetic
+       tile boundary, forced `navigator.onLine = false`, and clicked the REAL "Snap to trail" button —
+       confirmed the real rendered `draw-preview-source` grew to the correct 7 coordinates, the draw bar text
+       read "2 points · 1.85 mi (snapped)", and the toast read "Snapped to trail (offline)". Repeated with
+       `navigator.onLine = true` but `window.fetch` forced to reject any `openrouteservice` URL (confirming
+       the live ORS path genuinely was attempted first — `orsCallCount:1` — before correctly falling through
+       to the identical offline result via the SEPARATE `.catch()` path) — same result. Separately confirmed
+       the vertex-edit "Snap to trail" flow on a real injected test track (via the same localStorage-injection
+       testing pattern this project already uses elsewhere): the real button correctly produced a 7-vertex
+       result (confirmed both via the live marker count — 7 vertex + 6 midpoint = 13 total DOM markers — and,
+       after accounting for `scheduleSave`'s own documented 700ms debounce, via the actually-persisted
+       `track.points` in `localStorage`). Confirmed the graceful "undownloaded area" fallback through the real
+       UI too (a route drawn far from anywhere with any data at all correctly showed "Couldn't snap — no
+       downloaded trail/road data near these points", no crash).
+    5. The REAL `startOfflineDownload()` pipeline end to end: pre-seeded `TILE_CACHE_NAME` (via the real
+       `caches.open`/`cache.put` API, at the exact real URL `tileUrlForLayer` itself computes — confirmed via
+       the new debug hook, so the Mapbox-token-embedding URL never needed to leave the page) with the 2
+       synthetic tiles at exactly the zoom/x/y `computeTileList` would request for a real small test area/
+       zoom range, then clicked the REAL "Download this area" button. Confirmed via real DOM snapshots: 21+ of
+       24 real tile fetches correctly failed (403, the same standing sandbox limitation, unrelated to and
+       unaffected by this fix) while the 2 pre-seeded ones were correctly picked up as already-cached; the
+       progress UI correctly transitioned to "Building offline route network — reading trail data 2 / 2"
+       (confirming `buildOfflineTrailGraph` correctly filtered the full 24-tile/6-zoom-level list down to just
+       the 2 real max-zoom vectorbase tiles); the saved area entry correctly got `hasTrailNetwork:true,
+       trailNetworkFeatureCount:2`; the areas-list UI row correctly showed "· offline route-following"; and
+       the closing toast correctly combined both the tile-failure note and the new trail-network-ready note.
+       Confirmed the real Delete button also correctly removes the stored graph from `FieldMapLocalDB`, not
+       just the area entry (`hasOfflineTrailGraph` correctly read `false` immediately after a real delete).
+    Zero console errors across the entire, extensive live-browser test session. `node --check` confirmed clean
+    syntax on all 4 extracted inline `<script>` blocks, `trail-network-worker.js`, and `service-worker.js`.
+    APP_VERSION bumped 2.63.0 → 2.64.0 (minor — significant new feature), SHELL_CACHE bumped v181 → v182.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -7731,3 +7940,58 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   state, not a real bug, resolved by a clean reload). Zero console errors throughout. `node --check` confirmed
   clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
   2.62.1 → 2.63.0 (minor — new state source), SHELL_CACHE bumped v180 → v181.
+- Session (Offline routing Phase 2 — real trail-following): built on the confirmed-working Phase 1 offline
+  point-snap (Session 48) without touching it — see Architecture notes' "Offline routing Phase 2: real
+  trail-following through a downloaded area's own trail network" entry for the complete design; this is what
+  it took to get there. This repo has no build step of its own, so the 3 needed libraries (`pbf`, `@mapbox/
+  vector-tile`, `geojson-path-finder`) were `npm install`ed in a scratch directory and bundled into 2
+  self-contained browser IIFEs via `esbuild`, matching the existing `maplibre-gl.js` vendoring convention.
+  Hit and fixed a real, non-obvious version trap along the way: `pbf` 5.x is ESM-only with no default export,
+  API-incompatible with the old `Pbf` default export `@mapbox/vector-tile` was written against — fixed by
+  importing the real named export, `PbfReader`, which turned out to still be fully API-compatible where it
+  actually matters. Built a one-time, per-downloaded-area processing step (`buildOfflineTrailGraph`, wired
+  into `startOfflineDownload()` right after tile download finishes) that decodes ONLY the vectorbase tiles at
+  the single highest zoom actually downloaded, extracts real trail/road geometry via a class allowlist
+  derived from `TRAIL_SNAP_LAYERS`' own real style filters (confirmed live against `topo-style.json` before
+  writing it, not guessed), and feeds the network into `geojson-path-finder`'s own internal `preprocess()` —
+  normally hidden behind its constructor, deliberately exposed separately here — inside a dedicated Web
+  Worker so this real, potentially multi-second CPU cost never blocks the download's own UI feedback. Built a
+  genuinely general-purpose IndexedDB key-value store (`FieldMapLocalDB`, this repo's first IndexedDB usage
+  at all, confirmed via a full-file grep before building it) to persist the resulting graph, per explicit
+  instruction not to hardcode it narrowly to trail-network graphs specifically nor over-engineer it into a
+  speculative generic system beyond what this one real consumer needs. The actual "feels instant" mechanism
+  at draw time is a reuse trick — `Object.create(PathFinder.prototype)` plus directly assigning the already-
+  computed `.graph`, skipping the constructor's own `preprocess()` call entirely — confirmed via a direct
+  Node comparison to produce byte-identical `findPath()` results to a normal constructor call, and confirmed
+  live to complete a real cross-tile-boundary route trace in 2.1ms. One shared resolver
+  (`resolveOfflineSnap`) tries real trail-following first and falls back to Phase 1's simpler per-point snap
+  only when no usable graph exists — wired into BOTH Draw Route/Buffer's existing "Snap to trail" button
+  (Buffer needed no separate wiring, since it already reuses Draw Route's own mechanism directly, per an
+  earlier session's established precedent) AND the vertex-edit "Snap to trail" flow, which previously had NO
+  offline fallback of any kind — a plain fetch failure while offline just showed a generic error; it now
+  shares the identical Phase-2-then-Phase-1 logic. Verified in layers, explicit throughout about what each
+  layer actually proves given this sandbox's own standing Mapbox v4 block (confirmed still 403 via direct
+  `curl`): a rigorous standalone Node test built REAL MVT-encoded bytes with a real encoder (`vt-pbf`) for a
+  synthetic trail deliberately crossing a real zoom-14 tile boundary (with a realistic tile-buffer overlap),
+  fed through the real unmodified bundles and the real extraction logic, and confirmed — among other things —
+  that tile-boundary reconciliation works correctly via `geojson-path-finder`'s own existing vertex-snapping
+  tolerance (drift ~5×10⁻⁷°, well within its 1e-5° default) with zero custom stitching code needed; the same
+  synthetic tiles were then injected into a real running browser tab and decoded by the real
+  `trail-network-worker.js` in 48ms; the real, unmodified `resolveOfflineSnap()` was then called directly
+  against a real seeded graph and produced a correct real trail-following result in 2.1ms, with a graceful
+  0.3ms fallback confirmed for a route nowhere near any downloaded area. Real UI-level verification needed a
+  different click mechanism than usual — the `computer` tool's OS-level clicks repeatedly failed to register
+  on the MapLibre canvas in this environment, but dispatching real `MouseEvent` sequences directly on
+  `.maplibregl-canvas` worked reliably — and with that, drove the actual "Draw Route → drop 2 points → Snap
+  to trail" interaction for real, both while genuinely offline and while online-but-with-ORS-fetch-forced-to-
+  fail (confirming both fallback trigger paths independently), confirmed the vertex-edit flow the same way
+  against a real injected test track (with `scheduleSave`'s own documented 700ms debounce accounted for, not
+  read around), and confirmed the graceful "undownloaded area" fallback shows the correct message with no
+  crash. Finally, drove the REAL `startOfflineDownload()` button end to end with the tile cache pre-seeded at
+  the exact real URLs the downloader itself computes (via a new debug hook, so the Mapbox-token-embedding URL
+  never needed to leave the page) — confirmed the progress UI correctly transitions through the new "Building
+  offline route network" phase, the saved area correctly gets `hasTrailNetwork:true`, and the real Delete
+  button correctly removes the stored graph too, not just the area entry. Zero console errors across the
+  entire, extensive live-browser session. `node --check` confirmed clean syntax on all 4 extracted inline
+  `<script>` blocks, the new `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.63.0 →
+  2.64.0 (minor — significant new feature), SHELL_CACHE bumped v181 → v182.
