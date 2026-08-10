@@ -183,6 +183,55 @@ function haversineMetersLocal(a, b){
   return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 }
 
+// Standard compass bearing (0-360, clockwise from north) from point `a` to point `b`, both
+// [lng, lat] arrays.
+function bearingDegLocal(a, b){
+  function toRad(d){ return d * Math.PI / 180; }
+  var y = Math.sin(toRad(b[0]-a[0])) * Math.cos(toRad(b[1]));
+  var x = Math.cos(toRad(a[1])) * Math.sin(toRad(b[1])) - Math.sin(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.cos(toRad(b[0]-a[0]));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+// A first attempt at this check required the OTHER candidate to lie "ahead of" this one's own
+// forward direction of travel — plausible-sounding, but wrong: real per-tile buffering means the
+// SAME road's own 2 clipped fragments typically CROSS PAST each other (each tile's own buffer
+// extends into the neighbor's territory), so the fragment on the far side of the gap often sits
+// slightly BEHIND, not ahead of, the near fragment's own forward direction — confirmed directly
+// against this file's own realistic-gap construction, where the "ahead of" check rejected the
+// exact same-road pair it needed to accept. The correct test is COLLINEARITY, not "ahead-of": does
+// the OTHER candidate's point lie ON (or very near) the INFINITE line this fragment's own
+// direction defines, regardless of which literal end sits nearer which way along it — this is
+// naturally tolerant of the fragments crossing past each other, since a point on either side of
+// another point on the same straight line still has ~0 perpendicular distance from it.
+var PERP_DISTANCE_TOLERANCE_METERS = 30; // how far off a road's own straight-line (or gently
+                                          // curving) path the other candidate may sit and still be
+                                          // considered a plausible continuation — tight enough to
+                                          // reject a real, differently-angled cross street at a
+                                          // real intersection (verified empirically) and a
+                                          // same-direction but genuinely different parallel street
+                                          // one real city block away (also verified empirically —
+                                          // a parallel street's own perpendicular offset from this
+                                          // one's line is the FULL inter-street spacing, tens of
+                                          // meters, far outside this tolerance), while still
+                                          // comfortably covering realistic MVT clipping wobble and
+                                          // gentle real-world road curvature across one clip gap.
+
+function perpDistanceToLineMeters(anchor, dirDeg, point){
+  var bearingToPoint = bearingDegLocal(anchor, point);
+  var dist = haversineMetersLocal(anchor, point);
+  return Math.abs(dist * Math.sin((bearingToPoint - dirDeg) * Math.PI / 180));
+}
+
+// Is `cj` directionally plausible as `ci`'s own continuation (and vice versa)? Checked from BOTH
+// candidates' own perspective — cj's point must lie near the infinite line ci's own direction
+// defines, AND ci's point must lie near the infinite line cj's own direction defines — since
+// either candidate could be a line's first or last coordinate (MVT doesn't guarantee consistent
+// point ordering) and a single-sided check could pass for a road crossing at a shallow enough
+// angle even when it's genuinely a different road.
+function directionallyConsistent(ci, cj){
+  return perpDistanceToLineMeters(ci.coord, ci.dir, cj.coord) <= PERP_DISTANCE_TOLERANCE_METERS &&
+         perpDistanceToLineMeters(cj.coord, cj.dir, ci.coord) <= PERP_DISTANCE_TOLERANCE_METERS;
+}
+
 // Mutates `features` in place, snapping matched cross-tile-boundary endpoint pairs to a shared
 // coordinate. `tiles` is the same { z, x, y, bytes } list the caller decoded — used only for its
 // z/x/y identity here, to compute the real internal boundary lines between adjacent tiles.
@@ -208,44 +257,123 @@ function stitchTileBoundaries(features, tiles){
   var METERS_PER_DEG_LAT = 111320;
 
   // Every LineString's OPEN endpoints only (index 0 and the last index) — a mid-line vertex was
-  // never touched by tile clipping and must never be treated as a stitch candidate.
+  // never touched by tile clipping and must never be treated as a stitch candidate. `dir` is the
+  // fragment's own local direction of travel AS it reaches this open end (from its second-
+  // outermost point to the open end itself, regardless of whether this is the line's first or
+  // last coordinate) — used below to tell "this fragment is likely continuing the same real road"
+  // apart from "this fragment just happens to be geometrically nearby" (see the directional-
+  // consistency check's own comment for why raw distance alone isn't enough).
   var candidates = [];
   features.forEach(function(f, fi){
     var coords = f.geometry.coordinates;
     if (!coords || coords.length < 2) return;
-    candidates.push({ fi: fi, end: 0, coord: coords[0], tileKey: f._srcTileKey });
-    candidates.push({ fi: fi, end: coords.length - 1, coord: coords[coords.length - 1], tileKey: f._srcTileKey });
+    candidates.push({ fi: fi, end: 0, coord: coords[0], tileKey: f._srcTileKey, dir: bearingDegLocal(coords[1], coords[0]) });
+    var last = coords.length - 1;
+    candidates.push({ fi: fi, end: last, coord: coords[last], tileKey: f._srcTileKey, dir: bearingDegLocal(coords[last-1], coords[last]) });
   });
 
   boundaries.forEach(function(b){
-    var nearA = [], nearB = [];
+    // Every open endpoint from EITHER side of this specific boundary, within snap range of the
+    // boundary LINE itself — a cheap first-pass filter before the real pairwise clustering below.
+    // IMPORTANT: this distance is measured along the boundary's own AXIS only (longitude for a
+    // vertical boundary, latitude for a horizontal one) — it says nothing about how far a point
+    // is ALONG the boundary line itself. A road crossing at a shallow/steep angle can have its
+    // far, deep-interior endpoint still read as "near" in pure axis terms purely from lateral
+    // drift, even though it's genuinely hundreds of meters from the real crossing — found via a
+    // real intersection-near-a-boundary reproduction (2 non-parallel Portland streets): one road's
+    // own FAR endpoint qualified as a second near-boundary candidate for the very same feature,
+    // and because it's trivially collinear with that feature's own real near-boundary end (they
+    // define the same line), it could still get transitively pulled into the same cluster as that
+    // real end via an unrelated third candidate genuinely near the boundary — collapsing the
+    // feature into a degenerate zero-length line even with same-feature DIRECT unions blocked
+    // below. Fixed at the root here: a feature can only ever have ONE real boundary-crossing
+    // endpoint per boundary — so for each feature, keep only its CLOSER end as a candidate for
+    // this boundary, discarding a farther same-feature "near" reading entirely rather than trying
+    // to filter it out later in the clustering logic.
+    var nearByFi = {};
     candidates.forEach(function(c){
+      if (c.tileKey !== b.keyA && c.tileKey !== b.keyB) return;
       var distM = (b.axis === 'lng')
         ? Math.abs(c.coord[0] - b.value) * metersPerDegLng(c.coord[1])
         : Math.abs(c.coord[1] - b.value) * METERS_PER_DEG_LAT;
       if (distM > BOUNDARY_SNAP_METERS) return;
-      if (c.tileKey === b.keyA) nearA.push(c);
-      else if (c.tileKey === b.keyB) nearB.push(c);
+      var existing = nearByFi[c.fi];
+      if (!existing || distM < existing.distM) nearByFi[c.fi] = { c: c, distM: distM };
     });
-    if (!nearA.length || !nearB.length) return;
-    // Nearest-neighbor match, real haversine distance (robust regardless of how shallow an angle
-    // the road crosses the boundary at — no along-line projection needed). Each B candidate is
-    // used at most once, so 2 distinct A-side roads near the same boundary can't both snap to the
-    // same B-side endpoint.
-    var usedB = {};
-    nearA.forEach(function(ca){
-      var best = null, bestDist = Infinity, bestBi = -1;
-      nearB.forEach(function(cb, bi){
-        if (usedB[bi]) return;
-        var d = haversineMetersLocal(ca.coord, cb.coord);
-        if (d < bestDist){ bestDist = d; best = cb; bestBi = bi; }
-      });
-      if (best && bestDist <= BOUNDARY_SNAP_METERS){
-        usedB[bestBi] = true;
-        var shared = [ (ca.coord[0] + best.coord[0]) / 2, (ca.coord[1] + best.coord[1]) / 2 ];
-        features[ca.fi].geometry.coordinates[ca.end] = shared;
-        features[best.fi].geometry.coordinates[best.end] = shared;
+    var near = Object.keys(nearByFi).map(function(fi){ return nearByFi[fi].c; });
+    if (near.length < 2) return;
+
+    // Union-find over real haversine proximity between EVERY near-boundary endpoint (both tiles
+    // together, not matched pairwise A-to-B) — correctly handles a real multi-road JUNCTION near
+    // the boundary, where 2+ DIFFERENT roads each get independently clipped and all need to
+    // converge on ONE shared point, not just two roads crossing cleanly in isolation. A pure
+    // nearest-neighbor pairwise match (the original version of this function) assumed every
+    // boundary crossing was exactly one road's own two fragments finding each other — proven
+    // wrong by a real reproduction using an intersection near a tile boundary (2 non-parallel
+    // roads meeting close to the boundary): whichever fragment got matched FIRST could claim the
+    // WRONG partner (a genuinely closer cross-road fragment, not its own true continuation),
+    // which — because each match consumed one "slot" — then forced the SECOND road's own
+    // fragments into an equally wrong pairing too, leaving BOTH roads disconnected from their own
+    // true continuation even though a graph existed that could have connected them correctly.
+    // Clustering fixes this at the root: rather than deciding "which single point is my best
+    // match," every endpoint within BOUNDARY_SNAP_METERS of any OTHER near-boundary endpoint
+    // joins the same cluster, and the ENTIRE cluster (however many roads/fragments it contains)
+    // converges on one shared coordinate — correct whether the cluster is a simple 2-endpoint
+    // crossing or a real multi-road junction.
+    var parent = near.map(function(_, i){ return i; });
+    function find(i){ while (parent[i] !== i){ parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+    function union(i, j){ var ri = find(i), rj = find(j); if (ri !== rj) parent[ri] = rj; }
+    // Distance ALONE is not enough to decide whether two near-boundary endpoints should union —
+    // confirmed via a real synthetic reproduction (an intersection of 2 non-parallel roads near a
+    // boundary): an unrelated CROSS street's clipped fragment can legitimately sit closer, in raw
+    // distance, than a road's own true continuation on the other tile, and — separately, found via
+    // a real Portland-grid reproduction of 2 PARALLEL streets a normal city block apart — a large
+    // enough BOUNDARY_SNAP_METERS radius can transitively chain multiple genuinely-unrelated
+    // crossings into one bogus merged cluster even when each one individually has an obviously
+    // correct nearest match. directionallyConsistent() adds the discriminating signal a distance-
+    // only check can't provide: a single road's own 2 clipped halves are roughly collinear
+    // (continuing in the same direction of travel across the boundary), while two DIFFERENT roads
+    // crossing near the same point generally approach from different directions even when their
+    // raw distance is small, and 2 unrelated parallel streets never lie along each other's own
+    // forward direction at all (each fragment's own true continuation is what actually lies ahead
+    // of it, not a neighboring street offset to the side).
+    // Note: `near` can never contain two candidates from the same feature (fi) at this point —
+    // the per-fi dedup above already reduced each feature to at most its one closer end for this
+    // boundary — so no same-feature guard is needed here. An earlier version of this fix tried
+    // guarding against same-fi unions directly in this loop instead of deduping at collection
+    // time, and it wasn't enough on its own: a feature's own far endpoint could still get pulled
+    // into the same cluster as its own near endpoint TRANSITIVELY through an unrelated third
+    // candidate (the far and near endpoints of one straight line are always "directionally
+    // consistent" with each other, since a line trivially lies on its own line) — collapsing the
+    // feature into a degenerate zero-length line. Removing the false candidate before it ever
+    // reaches this loop, rather than trying to filter its unions back out afterward, is what
+    // actually closes this.
+    for (var i = 0; i < near.length; i++){
+      for (var j = i + 1; j < near.length; j++){
+        if (haversineMetersLocal(near[i].coord, near[j].coord) <= BOUNDARY_SNAP_METERS &&
+            directionallyConsistent(near[i], near[j])) union(i, j);
       }
+    }
+
+    var clusters = {};
+    near.forEach(function(c, i){
+      var root = find(i);
+      (clusters[root] = clusters[root] || []).push(c);
+    });
+
+    Object.keys(clusters).forEach(function(root){
+      var members = clusters[root];
+      if (members.length < 2) return;
+      // Only worth reconciling if the cluster actually spans BOTH tiles — a cluster that's
+      // entirely from one tile needs no cross-tile stitching at all (its own topology, if any,
+      // is already correct as decoded).
+      var hasA = members.some(function(m){ return m.tileKey === b.keyA; });
+      var hasB = members.some(function(m){ return m.tileKey === b.keyB; });
+      if (!hasA || !hasB) return;
+      var sumLng = 0, sumLat = 0;
+      members.forEach(function(m){ sumLng += m.coord[0]; sumLat += m.coord[1]; });
+      var shared = [ sumLng / members.length, sumLat / members.length ];
+      members.forEach(function(m){ features[m.fi].geometry.coordinates[m.end] = shared; });
     });
   });
 }

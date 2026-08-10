@@ -5967,6 +5967,114 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       extracted inline `<script>` blocks, `trail-network-worker.js`, and `service-worker.js`. APP_VERSION
       bumped 2.64.0 → 2.64.1 (patch — a real correctness fix to an already-shipped feature, no new UI),
       SHELL_CACHE bumped v182 → v183.
+  - **Session (round 2 — a genuinely NEW connectivity bug, not the same one recurring)**: real-device
+    re-testing of v2.64.1, in a freshly-downloaded area (confirmed AFTER the fix shipped — see the "was this
+    area even built with the fix" verification below), showed a real improvement over the original bug
+    (2 of 5 segments now snapped, vs. essentially 0 before v2.64.1) but was still explicitly reported as "not
+    fully working" — this time at real NE 77th Ave/NE Fremont St, Portland OR, a dense urban STREET GRID,
+    genuinely different terrain from the original single-winding-road Rocky Butte repro. Explicit instruction:
+    don't assume the same root cause explains it — investigate for a distinct class of gap.
+    - **Confirming this area really used v2.64.1 logic, per explicit instruction to rule this out with
+      certainty first**: traced the actual caching mechanism (`buildOfflineTrailGraph`/`offlinePathFinderForRoute`
+      in `index.html`) rather than assuming. The built graph IS cached in `FieldMapLocalDB` and reused
+      unchanged across every subsequent route-draw — but `buildOfflineTrailGraph` unconditionally REBUILDS and
+      overwrites that cache entry every time an area is (re-)downloaded, reading straight from the tiles the
+      download just wrote and running whatever `trail-network-worker.js` is current at that moment (via a
+      lazily-constructed `new Worker('trail-network-worker.js')`) — there is no "skip rebuild, area already
+      exists" shortcut. Combined with the direct evidence in the report itself — a pre-v2.64.1 worker has NO
+      tile-boundary stitching at all, and per this project's own Test A/B regression coverage, produces
+      essentially zero successful connections across any realistic (tens-of-meters) real-world gap, not a
+      partial 2-of-5 result with visually-correct street-following for those 2 — "some segments correctly
+      snapped, with correct geometry" is itself strong positive evidence the v2.64.1 mechanism was genuinely
+      active for this area, not stale pre-fix output. Conclusion: confirmed with high confidence, not silently
+      assumed; a residual, narrow possibility (a same-session Worker singleton somehow resolving a stale
+      SW-cached copy mid-update) was noted but is the same well-documented "stale SHELL_CACHE serving old JS"
+      class of gotcha this project has hit and resolved via a genuine fresh reload many times before, not a
+      new or unusual risk.
+    - **The real, distinct root cause — found via a NEW synthetic reproduction using the real failure-location
+      coordinates, not reused Rocky Butte scenarios, per explicit instruction**: built
+      `test_junction_repro.js` (a real street INTERSECTION — 2 non-parallel roads meeting near a boundary,
+      unlike Rocky Butte's single winding road) using the real NE 77th/Fremont coordinates. Against the
+      shipped v2.64.1 pairwise-nearest-neighbor matching, **all 5 tested intersection configurations failed**:
+      real cross-road fragment distances were frequently SHORTER than either road's own true fragment-pair
+      distance, so a pure "closest wins" match could and did claim the wrong partner for one road, which —
+      because each match consumed one slot — then forced the OTHER road's own fragments into an equally wrong
+      pairing too, leaving both disconnected from their true continuation even though a correct graph existed.
+      This is a genuinely different failure mode from the original (already-fixed) simple 2-endpoint gap
+      problem: multi-road junctions near a boundary, not present anywhere in the single-road Rocky Butte
+      repro, but extremely common in a dense city grid like this report's own location — directly explaining
+      why the symptom went from "essentially 0 connect" (Rocky Butte, pre-fix) to "some connect, some don't"
+      (Portland, post-fix): only the segments whose boundary crossing happens to sit near a real intersection
+      hit this bug; the rest correctly benefit from the original fix.
+    - **Fix, built and refined in 3 layers, each one caught by re-running the full test matrix after the
+      previous layer, not shipped on the first idea that seemed to work**:
+      1. Replaced pairwise nearest-neighbor matching with **union-find clustering** over every near-boundary
+         endpoint from both tiles together (not matched pairwise A-to-B) — every endpoint within
+         `BOUNDARY_SNAP_METERS` of any OTHER near-boundary endpoint joins one cluster, and the whole cluster
+         (however many roads/fragments it contains) converges on one shared coordinate, correctly handling an
+         N-way junction, not just a clean 2-endpoint crossing.
+      2. This over-merged on its own — a second new reproduction (`test_dense_grid_repro.js`, 2 real PARALLEL
+         Portland streets ~65m apart, both independently crossing the same boundary) showed a large enough
+         snap radius can transitively chain multiple genuinely-unrelated crossings into one bogus cluster even
+         when each individually has an obvious correct nearest match. Added `directionallyConsistent()` — a
+         collinearity check via perpendicular distance to each candidate's own extrapolated line — as an
+         additional union criterion. **A first attempt at this check (requiring the other candidate to lie
+         roughly "ahead of" a fragment's own forward-travel bearing) was tried and found WRONG**, not just
+         imperfect: it broke the already-working Test B (the original 53m-gap fix). Root cause, found via
+         direct debug math: real per-tile buffer overlap means the SAME road's own two clipped fragments
+         actually CROSS PAST each other geometrically (each tile's buffer extends into the neighbor's own
+         territory), so "walk forward from my own endpoint" often points AWAY from a fragment's own true
+         continuation, not toward it. Fixed by checking perpendicular distance to the other candidate's
+         INFINITE line instead of a forward ray — tolerant of fragments crossing past each other, since a
+         point anywhere on a line (either side of another point on it) still reads as ~0 perpendicular
+         distance.
+      3. A road crossing at a shallow enough angle can have its OWN far, deep-interior endpoint (never meant
+         to be touched by stitching) ALSO read as "near the boundary" purely from lateral bearing drift — and
+         since a straight line's own two ends are trivially "directionally consistent" with each other (a line
+         always lies on its own line), the union-find could pull a feature's own near and far endpoints into
+         the SAME cluster, collapsing it into a degenerate zero-length line. A first fix attempt (blocking
+         same-feature pairs from unioning DIRECTLY) wasn't enough on its own — the same collapse still
+         happened TRANSITIVELY, through a third, unrelated candidate that validly unioned with both of the
+         feature's own two ends independently (confirmed via a direct pairwise distance/dirOk dump: candidate
+         3 unioned with both 6 AND 7, where 6 and 7 were the SAME feature's own two ends). Fixed at the actual
+         root instead: a feature can only ever have ONE real boundary-crossing endpoint per boundary, so the
+         near-boundary candidate set is now deduplicated PER FEATURE PER BOUNDARY at collection time — keeping
+         only each feature's genuinely closer end — rather than trying to filter a false candidate back out
+         after it's already been allowed to union with things. This makes the earlier same-feature-pair guard
+         in the union loop provably dead code (two candidates from the same feature can never coexist in the
+         `near` set anymore), removed and replaced with a comment explaining why it's no longer needed rather
+         than left in place as confusing, unreachable logic.
+    - **Verification — thorough, per the explicit "confirm with real evidence this resolves ALL segments,
+      don't just improve the ratio" demand, this being the second round of "still not fully working"**:
+      after each of the 3 fix layers, re-ran the FULL test matrix (the original 6-test suite plus both new
+      reproductions) to check for regressions, catching 2 real ones this way (the parallel-street over-merge,
+      and the "ahead of" bearing check breaking Test B) before either could have shipped. All 5 real-
+      coordinate junction configurations now correctly connect both roads; the parallel-street case correctly
+      connects both streets with zero bogus cross-wiring; all 6 original regression tests still pass
+      unchanged. Went beyond the reported repro to directly validate a claim the code's own comments already
+      made but had never been tested — that the union-find clustering handles "a real multi-road junction,
+      however many roads/fragments it contains," not just 2 — with a genuine 3-road T-junction reproduction
+      (an east-west street, a north-south street, and a diagonal connector, all meeting at one point near a
+      boundary): all 3 roads correctly connect to their own true continuation with no bogus cross-connection.
+      Both new reproductions plus the 3-road junction test were merged into the permanent `test_stitch_fix.js`
+      suite as Tests G/H/I (9 tests total, A-I) rather than left as separate one-off scripts, so this failure
+      mode has a standing regression guard going forward, per explicit instruction. One residual, honestly
+      flagged limitation, not silently claimed as exhaustively ruled out: this round's fix addresses gap
+      classes at or near tile boundaries (the only class of gap this feature's own architecture can
+      introduce); it does not and cannot address a genuinely disconnected real-world road network in the
+      source OSM/Mapbox data itself (unrelated to tile clipping), nor does it change the deliberate, bounded
+      `BOUNDARY_SNAP_METERS`(200)/`OFFLINE_SNAP_RADIUS_FT`(150ft) limits — a real gap larger than either is
+      still, by design, left unsnapped rather than risk incorrectly merging genuinely disconnected roads; no
+      evidence from this round's investigation points at either of those as the explanation for the reported
+      symptom, but they remain theoretically possible residual causes for any FUTURE still-unsnapped segment,
+      distinct from the junction-collapse bug this round found and fixed. Live browser verification (the
+      remaining gap flagged in the prior round) was not attempted this round — the fix was validated
+      exclusively via the extraction-based Node test suite against the real shipped worker file, not a
+      reimplementation, matching the same rigor as every prior round's own primary verification method; a
+      real-device confirmation with the actual reported route/area remains the natural next check. `node
+      --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks, `trail-network-worker.js`,
+      and `service-worker.js`. APP_VERSION bumped 2.64.1 → 2.64.2 (patch — a real correctness fix to an
+      already-shipped feature, no new UI), SHELL_CACHE bumped v183 → v184.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8127,3 +8235,50 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   in-place graph rebuild. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
   `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.64.0 → 2.64.1 (patch — a real
   correctness fix, no new UI), SHELL_CACHE bumped v182 → v183.
+- Session (offline routing Phase 2 bug fix, round 2 — real junction/intersection connectivity): real-device
+  re-testing of the round-1 fix (v2.64.1), in a genuinely fresh, correctly-processed download, still showed
+  partial failure (2 of 5 segments snapped, not 5 of 5) at a NEW real location — NE 77th Ave/NE Fremont St,
+  Portland OR, a dense urban street grid, structurally different from the original single-road Rocky Butte
+  repro — with explicit instruction not to assume the same root cause and to confirm with real evidence
+  before reporting fixed again. See Architecture notes' "Offline routing Phase 2: real trail-following"
+  entry, its own "round 2" sub-bullet, for the complete investigation and fix; summary here. First confirmed,
+  via tracing the actual graph-caching mechanism (not assumed) plus the report's own positive evidence (some
+  segments DID correctly snap with correct street geometry — something a pre-fix worker could not produce),
+  that this area's data genuinely was built with the round-1 fix, ruling out stale processing as the
+  explanation with high confidence. Built a new synthetic reproduction using the real failure-location
+  coordinates (not the old Rocky Butte scenarios) modeling a real street INTERSECTION near a boundary — found
+  the round-1 pairwise-nearest-neighbor matching fails on ALL 5 tested configurations of this shape: a
+  cross-road's fragment can legitimately sit closer, in raw distance, than a road's own true continuation,
+  so a "closest wins" match can steal the wrong partner for one road, forcing the OTHER road into an equally
+  wrong pairing too — a genuinely different failure mode (multi-road junctions) from the already-fixed simple
+  2-endpoint gap problem, and common in a dense grid though absent from the single-road Rocky Butte terrain —
+  directly explaining the "some snap, some don't" symptom. Fixed in 3 layers, each one validated (and, twice,
+  corrected) by re-running the full test matrix rather than shipped on the first idea that seemed to work:
+  union-find clustering (replacing pairwise matching, to correctly handle N-way junctions, not just clean
+  2-endpoint crossings) exposed a real over-merging bug on a second reproduction (2 real parallel Portland
+  streets), fixed with a directional-consistency check — whose first implementation (checking whether a
+  candidate lies "ahead of" a fragment's own forward bearing) was tried and found WRONG, breaking an
+  already-passing regression test, root-caused to real per-tile buffer overlap causing same-road fragments to
+  cross PAST each other rather than meet end-to-end, and fixed instead via perpendicular distance to each
+  candidate's own extrapolated line (tolerant of that crossing-past geometry). That, in turn, could still let
+  a road's own far, deep-interior endpoint (falsely reading as "near the boundary" from lateral drift) get
+  transitively merged with its own real near-boundary endpoint through an unrelated third candidate — fixed
+  at the actual root by deduplicating candidates per-feature-per-boundary at collection time (each feature
+  contributes only its genuinely closer end), which also made an earlier same-feature-pair union guard
+  provably dead code, removed rather than left as confusing leftover logic. Verified thoroughly, per the
+  explicit "confirm ALL segments resolve, not just an improved ratio" demand: all 5 real-coordinate junction
+  configurations and the parallel-street case now pass with zero regressions across the original 6-test
+  suite; went beyond the reported repro to directly validate the code's own "handles any N-way junction" claim
+  with a genuine 3-road T-junction reproduction, confirming all 3 roads correctly connect with no bogus
+  cross-wiring. Merged both new reproductions plus the 3-road test into the permanent `test_stitch_fix.js`
+  suite (9 tests, A-I) as a standing regression guard, per explicit instruction, rather than leaving them as
+  orphaned one-off scripts. Flagged honestly rather than overclaimed: this fix addresses gap classes at or
+  near tile boundaries specifically — it cannot address a genuinely disconnected real-world road network in
+  the source data itself, and the deliberate, bounded snap-radius limits are unchanged by design; no evidence
+  from this round points at either as the actual explanation for the reported symptom, but both remain
+  theoretically possible causes for any future still-unsnapped segment. Live browser verification was not
+  attempted this round (same as round 1's own primary method, the extraction-based Node suite against the
+  real shipped worker file) — a real-device confirmation with the actual reported route/area is the natural
+  next check. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
+  `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.64.1 → 2.64.2 (patch — a real
+  correctness fix, no new UI), SHELL_CACHE bumped v183 → v184.
