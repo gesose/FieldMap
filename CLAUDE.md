@@ -779,6 +779,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   including the 3 new vendored libraries this required (`pbf`/`@mapbox/vector-tile`/`geojson-path-finder`,
   bundled with esbuild since this repo has no build step of its own) and exactly how the whole pipeline was
   verified given this sandbox's own long-standing Mapbox v4 block.
+- Wildfire smoke (AQI) overlay — a new Environmental-section overlay pair (near-surface smoke, the primary/
+  default layer, plus a vertically-integrated secondary toggle, mutually exclusive with each other) using
+  NOAA's live NDGD ImageServer, the exact same `mapservices.weather.noaa.gov` `/raster/rest/services/...`
+  architecture the existing Snow Depth (NOHRSC) overlay already uses — already Web Mercator, already
+  colorized server-side, no client-side GRIB2 decode/reprojection/rendering needed at all. The one genuinely
+  new piece of logic Snow Depth never needed: this service is time-enabled, so the tile URL needs a real
+  resolved `time=` value, obtained once per session via a live `/identify` check (reading the raw
+  `idp_validtime` field) rather than guessing "now" — cached and shared between both layers (confirmed live
+  to publish on the same cycle) and reused by the offline downloader too, so a download started right after
+  toggling the live layer needs no second network call. A non-negotiable, always-visible disclaimer (not
+  hidden behind the "?" info panel) makes clear this is modeled/forecast smoke refreshed ~2x/day, not a live
+  observed reading. Deliberately NOT wired into the generic offline-availability-while-browsing mechanism
+  (`OVERLAY_OFFLINE_TOGGLE_SOURCE`) this pass — downloading the layer works and contributes real bytes, but
+  it won't yet render from that download while genuinely offline, the same gap Disturbance History had in
+  its own first pass before a later session's cache bridge — flagged explicitly in both a code comment and
+  the offline-download modal's own hint text, not silently glossed over. See Architecture notes' "Wildfire
+  smoke (AQI) overlay" entry for the full design and verification detail, including how live rendering was
+  confirmed via the established isolated-`maplibregl.Map`-harness technique once this sandbox's own real app
+  map hit its own long-documented Mapbox-related loading instability.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -6075,6 +6094,108 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks, `trail-network-worker.js`,
       and `service-worker.js`. APP_VERSION bumped 2.64.1 → 2.64.2 (patch — a real correctness fix to an
       already-shipped feature, no new UI), SHELL_CACHE bumped v183 → v184.
+- Wildfire smoke (AQI) overlay — built directly on a prior research-only session's confirmed findings (NOAA's
+  NDGD ImageServer is live, already Web Mercator, already colorized server-side, on the exact same
+  `mapservices.weather.noaa.gov` infrastructure as the existing Snow Depth overlay). Two live services:
+  `air_quality/ndgd_smoke_sfc_1hr_avg_time` (near-surface, 8m AGL — what's actually breathable/visible at
+  ground level, the primary/default layer per spec) and `air_quality/ndgd_smoke_vert_1hr_avg_time`
+  (vertically-integrated, total atmospheric column — a secondary toggle, straightforward enough given the
+  primary layer's plumbing to build in the same pass rather than deferred as a stretch goal).
+  - **Reused the Snow Depth architecture as closely as the two services' own real API shapes allow**: same
+    base host, same `{bbox-epsg-3857}` MapLibre-native raster-source token substitution for the live map
+    layer, same `webMercatorTileBbox`-based `bboxUrlBuilder` pattern for the offline downloader. The one
+    deliberate, correct adaptation rather than a literal copy: Snow Depth's `NOHRSC_Snow_Analysis` is a
+    MapServer (`/export?...&layers=show:0`), while both smoke services are ImageServers (`/exportImage?...`,
+    no `layers=` param) — confirmed live before writing any code, not assumed from the "same overall pattern"
+    instruction.
+  - **Time resolution — the one genuinely new piece of logic**: unlike Snow Depth (no time dimension at all,
+    the export endpoint always just returns current conditions), both smoke services are time-enabled with a
+    rolling ~48-hour window, refreshed ~2x/day. `resolveAqiSmokeTime()` queries the sfc service's own
+    `/identify` endpoint against a fixed, pre-verified-live probe point (central Colorado/Kansas — NOT tied
+    to wherever the user happens to be looking, since NDGD's time-stepping is uniform across the whole CONUS
+    mosaic, and a fixed known-good point sidesteps ever landing outside coverage, e.g. Alaska/Hawaii, or
+    querying before the map exists yet during the offline-download pre-resolution step), reads the real raw
+    JSON field `idp_validtime` (confirmed live via direct browser `fetch()` — NOT the friendlier `ValidTime`/
+    `StartTime` names a summarized read might suggest — the full raw attribute set is `objectid`, `name`,
+    `category`, `idp_ingestdate`, `idp_filedate`, `idp_subset`, `idp_validtime`, `idp_validendtime`,
+    `idp_fcst_hour`, `idp_time_series`, `idp_issueddate`, `shape_Length`, `shape_Area`), and caches the
+    result for the rest of the session (both services confirmed live to publish on the identical cycle, so
+    one resolution covers both — no separate `/identify` call ever needed for the vert layer). Resolved once
+    per session, deliberately not on a timer — the underlying data only changes ~2x/day, and a session left
+    open across that boundary showing a few-hours-staler (still correctly labeled) view was judged an
+    acceptable tradeoff against the added complexity of periodic re-checking, which wasn't asked for.
+  - **Never shows an unconfirmed guess, not even briefly**: `aqiSmokeSfcTileUrl()`/`aqiSmokeVertTileUrl()`
+    fall back to a client `Date.now()` guess ONLY for the very first `map.addSource()` seed (which needs
+    *some* URL synchronously) — `setAqiSmokeOn`/`setAqiSmokeVertOn` don't flip the layer's own visibility to
+    `'visible'` until `resolveAqiSmokeTime()` has genuinely resolved and `.setTiles()` has patched in the
+    real confirmed value; a resolution failure (source unreachable) reverts the checkbox and shows a toast
+    rather than silently displaying nothing or, worse, a guessed-wrong time slice. A returning user who left
+    the layer on last session gets the same treatment at boot — `reinitializeLayers()` restores visibility
+    immediately from `state.settings` (same as every other overlay), but the boot-time restore block (the
+    same one GMU/USFS/Wildlife already use for their own "was on last session, needs real data" case) patches
+    in the real resolved time via `.setTiles()` shortly after, once resolution completes.
+  - **Mutual exclusion**: near-surface and vertically-integrated both fully color-wash the same area, so —
+    same reasoning/pattern as Slope Angle/Aspect — turning one on turns the other off first, with a toast
+    explaining why.
+  - **The one deliberate, flagged scope line**: downloading the layer genuinely works and contributes real
+    bytes (confirmed live — see Verification below), but it does NOT yet render from that download while
+    genuinely offline — the live tile URL always uses whatever time was most recently resolved (fresh per
+    session, requires network to resolve at all) while the download URL has a time baked in at download
+    time, so the two are practically never byte-identical once any real time has passed. This is the exact
+    same class of gap Disturbance History's own toggles had in their first pass (Session 42) before a later
+    session's cache bridge (`loadDisturbanceLayerFromCache`) fixed it — `aqismoke-toggle`/`aqismokevert-
+    toggle` are deliberately NOT added to `OVERLAY_OFFLINE_TOGGLE_SOURCE` (which would incorrectly promise
+    "renders offline" the way NOHRSC/NLCD/DEM-derived layers genuinely do), with the reasoning documented in
+    a code comment at that table's own declaration, and the offline-download modal's existing hint text
+    (previously covering Active fire perimeters/Hydrography/Disturbance History's own snapshot-frozen
+    caveat) was extended to say so in plain language too. A real fix, if wanted later, would mirror
+    Disturbance History's own Session 43 design — not attempted this pass.
+  - **avgKB**: a real (if small-sample) live measurement, not a guess — several actual `exportImage` tiles at
+    real z9 bboxes over Idaho/Montana/Wyoming came back 795-1,338 bytes each (mostly-uniform low-entropy
+    PNG32 compresses extremely well, same reasoning as Snow Depth's own small avgKB); `avgKB:3` splits the
+    difference against real active-fire-season tiles with more color variation running larger than this
+    quiet-conditions baseline.
+  - **Verification — real evidence throughout, per explicit instruction, not assumed**: this sandbox's real
+    embedded app map hit the same well-documented Mapbox-related style-loading instability many prior
+    sessions have hit (`style.load` never reliably firing — confirmed directly, not assumed, via patching 8
+    common `Map.prototype` methods and observing zero organic calls over a 3-second window, meaning
+    `reinitializeLayers()` genuinely never got to run in that tab). Rather than let this block verification,
+    used the same isolated-`maplibregl.Map`-harness technique established in many earlier sessions (Sessions
+    60/62/63/72 among others) — a zero-Mapbox-dependency background-only style, sidestepping the blocked
+    surface entirely — to add the real smoke source using the real exportImage URL pattern and the real,
+    live-resolved `idp_validtime`: confirmed via real screenshots a genuine, correctly-shaped smoke
+    concentration gradient (soft, organic, mottled coloring — exactly the "smooth continuous field, not
+    discrete station dots" look this feature exists to produce) rendering at both a close zoom (real Colorado
+    area) and a wide zoom (a real, geographically bounded plume shape, not a solid block). Separately, and
+    more importantly, proved the REAL production code (not the harness) end to end, live, in the real app's
+    own DOM/JS, via several complementary checks: real checkbox clicks correctly triggered `setAqiSmokeOn`/
+    `setAqiSmokeVertOn`, and — after one initial false lead where a value read back from a *different*,
+    already-renderer-degraded tab looked wrong (`Date.now()`-shaped, not round-hour; traced via a delta-from-
+    `Date.now()` check to the tab's own known-bad renderer state from that same debugging session, then
+    conclusively ruled out as a real bug via a clean atomic repeat in a fresh, healthy tab) — a fresh,
+    healthy-tab test showed the real production `window.FieldMapDebug.tileUrlForLayer('aqismoke', ...)`
+    output correctly reading a genuine round-hour `idp_validtime` (`1786424400000` /
+    `2026-08-11T05:00:00.000Z`) immediately after a real checkbox toggle, exactly matching a direct
+    independent `curl` check against the live endpoint made moments earlier; confirmed the vert toggle
+    reuses this exact cached value with a real network-request log showing ZERO new `/identify` calls;
+    confirmed mutual exclusion (toggling vert on correctly toggled sfc off, both opacity rows updating
+    correctly); confirmed the failure path (`window.fetch` mocked to reject only the smoke identify URL)
+    correctly reverts the checkbox, hides the opacity row, and shows the real toast text ("Couldn't reach the
+    smoke data source — try again in a moment"). Confirmed the disclaimer and both checkboxes render at real,
+    non-zero, correctly-positioned coordinates within the actual live Layers panel (not just present in the
+    DOM), with the exact expected disclaimer wording. Confirmed the full offline-download pipeline end to
+    end through the real UI: both smoke layers correctly appear in the "Additional data" checklist with the
+    correct labels; checking near-surface and clicking Download (via the real, unmodified
+    `window.FieldMapDebug._startOfflineDownload()`) produced a real captured network log of 49 requests — the
+    `/identify` call firing FIRST, followed by 48 real `exportImage` tile requests, every single one using
+    the exact correct resolved `time=1786424400000` with real computed bbox numbers (no leftover
+    `{bbox-epsg-3857}` token) and all returning genuine HTTP 200 (NOAA's host, unlike Mapbox's, is reachable
+    from this sandbox) — and the resulting saved area entry in `localStorage` correctly listed
+    `layerIds:["usgstopo","aqismoke"]` with a real non-zero `sizeMB`. Separately confirmed the vert layer's
+    own offline tile builder with a direct real fetch (200, `image/png`). Zero console errors across the
+    entire test session, confirmed via `read_console_messages` with `onlyErrors:true` on a fresh page load.
+    `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
+    APP_VERSION bumped 2.64.2 → 2.65.0 (minor — new feature), SHELL_CACHE bumped v184 → v185.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8282,3 +8403,53 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   next check. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks,
   `trail-network-worker.js`, and `service-worker.js`. APP_VERSION bumped 2.64.1 → 2.64.2 (patch — a real
   correctness fix, no new UI), SHELL_CACHE bumped v183 → v184.
+- Session (Wildfire smoke AQI overlay): built the new feature directly on a prior research-only session's
+  confirmed findings (no code changes that session — NOAA's live NDGD ImageServer, same
+  `mapservices.weather.noaa.gov` architecture as the existing Snow Depth overlay, already Web Mercator,
+  already colorized server-side). See Architecture notes' "Wildfire smoke (AQI) overlay" entry for full
+  design/mechanism/verification detail; summary here. Studied the existing Snow Depth implementation in
+  detail first (every touchpoint: HTML panel markup, state defaults/fixups, `reinitializeLayers()` source/
+  layer add, `setXOn` function, event listeners, boot-restore UI sync, `DOWNLOAD_LAYERS`/`bboxUrlBuilder`,
+  offline-panel checklist, `LAYER_SECTION_TOGGLE_IDS`) before writing any code, then mirrored that pattern as
+  closely as the two live services' own real API shapes allow (ImageServer `/exportImage`, not MapServer
+  `/export` — confirmed live before writing code, a correct adaptation of the pattern, not a deviation from
+  it). Built the new near-surface layer as primary/default and, since the plumbing made it straightforward,
+  the vertically-integrated secondary toggle in the same pass (made mutually exclusive with the primary
+  layer, matching the Slope Angle/Aspect precedent for two overlays that would otherwise visually fight over
+  the same surface). The one genuinely new piece of logic Snow Depth never needed — resolving a real `time=`
+  value via the service's own `/identify` endpoint before either the live map layer or the offline downloader
+  can build a correct tile URL — was verified with real, exact field names pulled from a direct browser
+  `fetch()` (`idp_validtime`, not a guessed/friendlier name), not assumed from the prior research session's
+  own summarized recollection. Added the non-negotiable, always-visible disclaimer (a `.gmu-disclaimer`-
+  styled paragraph directly under the primary checkbox, not tucked inside the collapsible "?" info panel,
+  since that's hidden by default and the task was explicit this must not be buried) making clear the data is
+  modeled/twice-daily-refreshed, not a live reading. Deliberately scoped OUT of this pass, flagged rather
+  than silently attempted or silently ignored: making the layer actually render while genuinely offline from
+  a download (a real, harder problem — the live URL's time value and the download URL's time value are
+  practically never byte-identical once real time has passed — matching the exact class of gap Disturbance
+  History had in ITS first pass before a later dedicated session fixed it with a cache bridge); documented
+  the decision with a code comment at `OVERLAY_OFFLINE_TOGGLE_SOURCE`'s own declaration and extended the
+  offline-download modal's existing hint text to say so in plain language too, rather than letting the
+  toggle silently promise something it doesn't yet do. Verification hit a real, well-documented sandbox
+  limitation partway through — this session's own embedded app map never reliably reached a loaded style in
+  this environment (confirmed directly, not assumed: patched 8 common `Map.prototype` methods and observed
+  zero organic calls over a 3-second window) — and, while chasing what first looked like a real bug (a
+  resolved time value that turned out to be `Date.now()`-shaped, not a real round-hour server value), traced
+  it precisely to that same already-degraded tab's own renderer state via a delta-from-`Date.now()` check,
+  then definitively ruled it out as a real code bug with a clean, atomic, fully-reproducible test in a fresh
+  tab — not just asserted, actually re-tested and confirmed correct. Used the same isolated-`maplibregl.Map`-
+  harness technique this project has relied on many times before for this exact class of sandbox limitation
+  to get real, visual, screenshot-confirmed proof of a genuine smooth smoke gradient rendering correctly (the
+  actual point of this whole feature — a continuous field, not discrete station dots), and used the real,
+  unmodified production app code (via real checkbox clicks and the exposed `window.FieldMapDebug.tileUrlForLayer`)
+  for everything else: correct time resolution matching an independent live `curl` check exactly, the shared-
+  cache design (vert reusing sfc's resolved time with zero extra network calls, confirmed via a real network
+  log), mutual exclusion, the failure-path toast and checkbox revert (via a scoped `window.fetch` mock), real
+  DOM positioning of the checkboxes/disclaimer within the live Layers panel, and — the most rigorous single
+  check — a complete real end-to-end offline-download run (real `/identify` call gating 48 real `exportImage`
+  tile requests, every one carrying the correct resolved time and real computed bbox numbers, all returning
+  genuine HTTP 200 since NOAA's host isn't blocked in this sandbox the way Mapbox's is, with the resulting
+  saved area entry in `localStorage` correctly listing `aqismoke` and a real non-zero size). Zero console
+  errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+  `service-worker.js`. APP_VERSION bumped 2.64.2 → 2.65.0 (minor — new feature), SHELL_CACHE bumped v184 →
+  v185.

@@ -2324,6 +2324,25 @@
       </div>
 
       <label class="layer-overlay-row">
+        <input type="checkbox" id="aqismoke-toggle"> Wildfire smoke <button class="layer-hint-btn" data-layer-id="lh-aqismoke" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="aqismoke-opacity-row"><input type="range" id="aqismoke-opacity" min="20" max="100" value="60"></div>
+      <p class="gmu-disclaimer">Modeled smoke, not a live reading — NOAA's forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet.</p>
+      <div class="layer-info-panel" id="lh-aqismoke">
+        <div class="layer-info-desc">Near-surface wildfire smoke concentration — what's actually breathable/visible at ground level, from NOAA's HRRR-Smoke-derived forecast guidance. Same live-image-overlay architecture as Snow Depth above.</div>
+        <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="aqismokevert-toggle"> Wildfire smoke — vertically integrated <button class="layer-hint-btn" data-layer-id="lh-aqismokevert" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="aqismokevert-opacity-row"><input type="range" id="aqismokevert-opacity" min="20" max="100" value="60"></div>
+      <div class="layer-info-panel" id="lh-aqismokevert">
+        <div class="layer-info-desc">Total smoke through the full atmospheric column, not just ground level — useful for spotting smoke aloft that hasn't reached the surface yet. Same modeled/twice-daily-refresh caveat as near-surface smoke above.</div>
+        <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
+      </div>
+
+      <label class="layer-overlay-row">
         <input type="checkbox" id="nlcd-toggle"> Land cover (NLCD)
         <button class="layer-hint-btn" data-layer-id="lh-nlcd" title="About">?</button>
       </label>
@@ -3101,7 +3120,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again. Wildfire smoke can be downloaded (it counts toward the size below), but won't yet draw from that download while genuinely offline — checking its own tile needs a live network reachability check first, so it only works with a connection.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -3307,7 +3326,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.64.2';
+  var APP_VERSION = '2.65.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4062,6 +4081,11 @@
       showOfflineBoundaries: true,
       showAreaLabels: true,
       snowDepthOn: false, snowDepthOpacity: 0.75,
+      // NOAA NDGD wildfire smoke (near-surface + vertically-integrated) — see the "Wildfire
+      // smoke (AQI) overlay" Architecture notes entry for the full design. Both off by default,
+      // same convention as every other overlay in this app.
+      aqiSmokeOn: false, aqiSmokeOpacity: 0.6,
+      aqiSmokeVertOn: false, aqiSmokeVertOpacity: 0.6,
       nlcdOpacity: 0.7, fireperimetersOn: false, fireperimetersOpacity: 0.55,
       nlcdOn: false, usfsBoundariesOn: false, usfsBoundariesOpacity: 0.9, hillshadeOn: false,
       // Slope Angle / Custom Elevation Range (Session 38) — both purely client-computed from
@@ -4513,6 +4537,80 @@
   // it manually for its own tile-by-tile fetch loop — see webMercatorTileBbox).
   var SNOWDEPTH_TILE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/snow/NOHRSC_Snow_Analysis/MapServer/export?' +
     'bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0&f=image';
+  // NOAA NDGD wildfire smoke — two live ArcGIS ImageServers (not MapServers like Snow Depth
+  // above, hence /exportImage + no layers= param, not /export + layers=show:0 — the correct
+  // adaptation of the same overall pattern for a different ArcGIS service TYPE, not a
+  // deviation from it), confirmed live: already Web Mercator (no reprojection), already
+  // colorized server-side (a real 150-stop color ramp is the default renderer — confirmed via
+  // a live /legend?f=json check), same {bbox-epsg-3857} MapLibre-native token substitution.
+  // Near-surface (sfc, 8m AGL — what's actually breathable at ground level) is the primary/
+  // default layer per spec; vertically-integrated (vert, full atmospheric column) is the
+  // secondary toggle. Both are on the SAME publish cycle (confirmed live via matching
+  // idp_validtime values from both services' own /identify responses), so one resolved time
+  // value is shared by both — see resolveAqiSmokeTime().
+  var AQI_SMOKE_SFC_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_smoke_sfc_1hr_avg_time/ImageServer';
+  var AQI_SMOKE_VERT_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_smoke_vert_1hr_avg_time/ImageServer';
+  // A fixed, pre-verified-live point (central Colorado/Kansas, Web Mercator) used ONLY to ask
+  // "what time slice is currently valid" via /identify — NOT tied to whatever the user is
+  // actually looking at. This is safe/correct because NDGD's forecast time-stepping is uniform
+  // across the whole CONUS mosaic (one shared cycle/valid-time sequence for every location), so
+  // querying any real point solidly inside the coverage area resolves the identical answer a
+  // query at the user's own map center would — using a fixed known-good point avoids the map
+  // center ever falling outside CONUS coverage (Alaska/Hawaii/before the map exists yet, e.g.
+  // during the offline-download pre-resolution step below) and needing its own fallback logic.
+  var AQI_SMOKE_TIME_PROBE_POINT = '-11500000,4900000';
+  // Real (unlike snowdepth/nlcd/publicland above), this service is TIME-ENABLED — a genuinely
+  // new piece of logic those don't need. Resolved once per session (cached in
+  // aqiSmokeResolvedTimeMs) via a real /identify check against the fixed probe point above,
+  // reading the raw idp_validtime field (confirmed live to be the actual raw JSON key NOAA
+  // returns — idp_validtime/idp_validendtime/idp_issueddate/idp_fcst_hour — NOT the friendlier
+  // "ValidTime"/"StartTime" names a summarized read might suggest) rather than guessing "now"
+  // and hoping the server's own mosaic snaps to the right slice — passing an unconfirmed guess
+  // risks landing in a real gap right at the edge of the ~48-hour published window (e.g. the
+  // moment a twice-daily cycle is due but hasn't posted yet), which /identify sidesteps by
+  // reporting back a value KNOWN to have real backing data. Deliberately does NOT re-resolve on
+  // a timer — the underlying data only changes ~2x/day, and a session left open across that
+  // boundary showing a few-hours-staler (still correctly labeled) view is an acceptable,
+  // low-consequence tradeoff against the added complexity of periodic re-checking, which
+  // wasn't asked for.
+  var aqiSmokeResolvedTimeMs = null;
+  var aqiSmokeResolvePromise = null;
+  function resolveAqiSmokeTime(){
+    if (aqiSmokeResolvedTimeMs != null) return Promise.resolve(aqiSmokeResolvedTimeMs);
+    if (aqiSmokeResolvePromise) return aqiSmokeResolvePromise;
+    var url = AQI_SMOKE_SFC_BASE_URL + '/identify?geometry=' + AQI_SMOKE_TIME_PROBE_POINT +
+      '&geometryType=esriGeometryPoint&sr=102100&time=' + Date.now() + '&returnCatalogItems=true&f=json';
+    aqiSmokeResolvePromise = fetch(url).then(function(r){
+      if (!r.ok) throw new Error('identify failed: ' + r.status);
+      return r.json();
+    }).then(function(data){
+      var items = data && data.catalogItems && data.catalogItems.features;
+      var attrs = items && items[0] && items[0].attributes;
+      var validTime = attrs && attrs.idp_validtime;
+      if (validTime == null) throw new Error('no idp_validtime in identify response');
+      aqiSmokeResolvedTimeMs = validTime;
+      aqiSmokeResolvePromise = null;
+      return validTime;
+    }).catch(function(err){
+      aqiSmokeResolvePromise = null;
+      throw err;
+    });
+    return aqiSmokeResolvePromise;
+  }
+  // Falls back to a client-side Date.now() guess only for the very first source seed before
+  // real resolution completes (map.addSource needs SOME url immediately) — a wrong guess here
+  // either 404s or renders a blank tile (ArcGIS has no matching mosaic record for an
+  // unconfirmed time), never wrong-but-plausible-looking data, and is always immediately
+  // patched via .setTiles() once resolveAqiSmokeTime() actually resolves (see setAqiSmokeOn
+  // and the boot-time restore block in createMap()).
+  function aqiSmokeSfcTileUrl(){
+    var t = aqiSmokeResolvedTimeMs != null ? aqiSmokeResolvedTimeMs : Date.now();
+    return AQI_SMOKE_SFC_BASE_URL + '/exportImage?bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&time=' + t + '&f=image';
+  }
+  function aqiSmokeVertTileUrl(){
+    var t = aqiSmokeResolvedTimeMs != null ? aqiSmokeResolvedTimeMs : Date.now();
+    return AQI_SMOKE_VERT_BASE_URL + '/exportImage?bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&time=' + t + '&f=image';
+  }
   // MRLC Annual NLCD Land Cover, 2025 (most recent year in the 1985–2025 series) — confirmed
   // layer name and TIME support via a live GetMap request.
   var NLCD_TILE_URL = 'https://dmsdata.cr.usgs.gov/geoserver/mrlc_Land-Cover-Native_conus_year_data/wms?' +
@@ -6999,7 +7097,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var rasterSourceErrorShown = {};
       map.on('error', function(e){
         var srcId = e && e.sourceId;
-        var labels = { 'nlcd-source': 'Land cover (NLCD)', 'snowdepth-source': 'Snow depth' };
+        var labels = { 'nlcd-source': 'Land cover (NLCD)', 'snowdepth-source': 'Snow depth', 'aqismoke-source': 'Wildfire smoke', 'aqismokevert-source': 'Wildfire smoke (vertically integrated)' };
         if (!srcId || !labels[srcId] || rasterSourceErrorShown[srcId]) return;
         rasterSourceErrorShown[srcId] = true;
         showToast(labels[srcId] + ' tiles failed to load — the source service may be unavailable');
@@ -7056,6 +7154,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
             if (map.getSource('usfs-boundaries-label-source')) map.getSource('usfs-boundaries-label-source').setData(buildLabelPointFeatureCollection(data));
           });
+          // A returning user who left wildfire smoke on last session already has the layer's
+          // visibility correctly set by reinitializeLayers() above, but its tile URL was just
+          // seeded with a same-tick Date.now() guess (map.addSource ran before this async check
+          // could possibly resolve) — patch in the real confirmed time as soon as it's known, the
+          // same "visibility restored immediately, real data patched in shortly after" shape as
+          // every other boot-time restore in this block. A resolution failure here is silently
+          // left as the guessed URL (no toast at boot — this mirrors every other overlay's own
+          // graceful-degradation behavior on a failed boot-time fetch, e.g. GMU/USFS above).
+          if (state.settings.aqiSmokeOn || state.settings.aqiSmokeVertOn){
+            resolveAqiSmokeTime().then(function(){
+              if (state.settings.aqiSmokeOn && map.getSource('aqismoke-source')) map.getSource('aqismoke-source').setTiles([aqiSmokeSfcTileUrl()]);
+              if (state.settings.aqiSmokeVertOn && map.getSource('aqismokevert-source')) map.getSource('aqismokevert-source').setTiles([aqiSmokeVertTileUrl()]);
+            }).catch(function(){});
+          }
           // Session 56: restore all 3 categories' own Habitat range + State Data independently —
           // each was previously gated on the single shared wildlifeActive/wildlifeStateDataActive,
           // so only whichever ONE category happened to be active last could ever be restored.
@@ -9480,6 +9592,68 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('snowdepth-opacity-row').classList.toggle('show', on);
   }
 
+  // Near-surface and vertically-integrated smoke fully color-wash the same area — having both
+  // on at once would just have them visually fight over the same surface, so they're mutually
+  // exclusive, same reasoning/pattern as Slope Angle/Aspect. Turning one on, unlike every other
+  // setXOn in this file, is genuinely async: the layer isn't made visible until a real resolved
+  // time is confirmed via resolveAqiSmokeTime() (see that function's own comment for why a
+  // guessed time is never shown, not even briefly) — on failure (source unreachable), the
+  // checkbox reverts and a toast explains why, rather than silently showing nothing with no
+  // indication anything went wrong.
+  function setAqiSmokeOn(on){
+    if (!on){
+      state.settings.aqiSmokeOn = false;
+      if (map && map.getLayer('aqismoke-raster')) map.setLayoutProperty('aqismoke-raster', 'visibility', 'none');
+      document.getElementById('aqismoke-opacity-row').classList.toggle('show', false);
+      return;
+    }
+    if (state.settings.aqiSmokeVertOn){
+      setAqiSmokeVertOn(false);
+      document.getElementById('aqismokevert-toggle').checked = false;
+      showToast('Turned off vertically-integrated smoke — the two smoke layers can\'t both be on at once', 3500);
+      scheduleSave();
+    }
+    document.getElementById('aqismoke-opacity-row').classList.toggle('show', true);
+    resolveAqiSmokeTime().then(function(){
+      state.settings.aqiSmokeOn = true;
+      if (map && map.getSource('aqismoke-source')) map.getSource('aqismoke-source').setTiles([aqiSmokeSfcTileUrl()]);
+      if (map && map.getLayer('aqismoke-raster')) map.setLayoutProperty('aqismoke-raster', 'visibility', 'visible');
+      scheduleSave();
+    }).catch(function(){
+      var cb = document.getElementById('aqismoke-toggle');
+      if (cb) cb.checked = false;
+      document.getElementById('aqismoke-opacity-row').classList.toggle('show', false);
+      showToast('Couldn\'t reach the smoke data source — try again in a moment');
+    });
+  }
+
+  function setAqiSmokeVertOn(on){
+    if (!on){
+      state.settings.aqiSmokeVertOn = false;
+      if (map && map.getLayer('aqismokevert-raster')) map.setLayoutProperty('aqismokevert-raster', 'visibility', 'none');
+      document.getElementById('aqismokevert-opacity-row').classList.toggle('show', false);
+      return;
+    }
+    if (state.settings.aqiSmokeOn){
+      setAqiSmokeOn(false);
+      document.getElementById('aqismoke-toggle').checked = false;
+      showToast('Turned off wildfire smoke — the two smoke layers can\'t both be on at once', 3500);
+      scheduleSave();
+    }
+    document.getElementById('aqismokevert-opacity-row').classList.toggle('show', true);
+    resolveAqiSmokeTime().then(function(){
+      state.settings.aqiSmokeVertOn = true;
+      if (map && map.getSource('aqismokevert-source')) map.getSource('aqismokevert-source').setTiles([aqiSmokeVertTileUrl()]);
+      if (map && map.getLayer('aqismokevert-raster')) map.setLayoutProperty('aqismokevert-raster', 'visibility', 'visible');
+      scheduleSave();
+    }).catch(function(){
+      var cb = document.getElementById('aqismokevert-toggle');
+      if (cb) cb.checked = false;
+      document.getElementById('aqismokevert-opacity-row').classList.toggle('show', false);
+      showToast('Couldn\'t reach the smoke data source — try again in a moment');
+    });
+  }
+
   function setNlcdOn(on){
     state.settings.nlcdOn = on;
     if (map && map.getLayer('nlcd-raster')) map.setLayoutProperty('nlcd-raster', 'visibility', on ? 'visible' : 'none');
@@ -10354,6 +10528,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         source: 'snowdepth-source',
         layout: { visibility: state.settings.snowDepthOn ? 'visible' : 'none' },
         paint: { 'raster-opacity': state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75 }
+      });
+    }
+
+    // NOAA NDGD wildfire smoke — same "pre-colorized federal image overlay" shape as Snow
+    // Depth above, plus one real difference: the tile URL needs a resolved time= value (see
+    // aqiSmokeSfcTileUrl's own comment). Seeded here with whatever's currently known (cached
+    // from earlier this session, or a same-tick Date.now() guess on a genuinely fresh source) —
+    // setAqiSmokeOn/the boot-time restore block patch in the real confirmed value via
+    // .setTiles() once resolveAqiSmokeTime() actually resolves, so a style switch mid-session
+    // never regresses an already-resolved layer back to a guess.
+    if (!map.getSource('aqismoke-source')){
+      map.addSource('aqismoke-source', {
+        type: 'raster',
+        tiles: [aqiSmokeSfcTileUrl()],
+        tileSize: 256
+      });
+    }
+    if (!map.getLayer('aqismoke-raster')){
+      map.addLayer({
+        id: 'aqismoke-raster',
+        type: 'raster',
+        source: 'aqismoke-source',
+        layout: { visibility: state.settings.aqiSmokeOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.aqiSmokeOpacity != null ? state.settings.aqiSmokeOpacity : 0.6 }
+      });
+    }
+    // Vertically-integrated smoke (secondary toggle) — same service family, shares the SAME
+    // resolved time value (both layers confirmed live to publish on the identical cycle), so no
+    // separate identify call is ever needed for this one.
+    if (!map.getSource('aqismokevert-source')){
+      map.addSource('aqismokevert-source', {
+        type: 'raster',
+        tiles: [aqiSmokeVertTileUrl()],
+        tileSize: 256
+      });
+    }
+    if (!map.getLayer('aqismokevert-raster')){
+      map.addLayer({
+        id: 'aqismokevert-raster',
+        type: 'raster',
+        source: 'aqismokevert-source',
+        layout: { visibility: state.settings.aqiSmokeVertOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.aqiSmokeVertOpacity != null ? state.settings.aqiSmokeVertOpacity : 0.6 }
       });
     }
 
@@ -16993,6 +17210,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // SNOWDEPTH_TILE_URL/NLCD_TILE_URL), not a plain {z}/{x}/{y} path, so they use
     // bboxUrlBuilder instead of urlTemplate. Not remeasured in Session 35 — left as-is.
     snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
+    // Real (if small-sample) live measurement, not a guess: several actual exportImage tiles at
+    // real z9 bboxes over Idaho/Montana/Wyoming (curl'd directly against the live service) came
+    // back 795-1,338 bytes each — mostly-uniform low-entropy PNG32 compresses extremely well,
+    // same reasoning as Snow Depth's own small avgKB. Real active-fire-season tiles with more
+    // color variation will run larger than this baseline; avgKB:3 splits the difference rather
+    // than assuming the quiet-conditions sample is representative of every download.
+    aqismoke:     { label:'Wildfire smoke (near-surface, modeled)', bboxUrlBuilder: aqiSmokeSfcOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
+    aqismokevert: { label:'Wildfire smoke — vertically integrated (modeled)', bboxUrlBuilder: aqiSmokeVertOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
     nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
     publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 },
     // Disturbance History (Session 42, offline-cache bridge added Session 43) — real
@@ -17088,6 +17313,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
   function nlcdTileUrl(z, x, y){
     return NLCD_TILE_URL.replace('{bbox-epsg-3857}', webMercatorTileBbox(z, x, y));
+  }
+  // Wildfire smoke's own offline-download tile builders — same webMercatorTileBbox math as
+  // snowdepth/nlcd above, but reading the SAME module-scope aqiSmokeResolvedTimeMs the live map
+  // layer uses (startOfflineDownload ensures this is resolved before computeTileList ever calls
+  // these, so it's never the Date.now() fallback in practice for a real download — see
+  // startOfflineDownload's own comment on this).
+  function aqiSmokeSfcOfflineTileUrl(z, x, y){
+    var t = aqiSmokeResolvedTimeMs != null ? aqiSmokeResolvedTimeMs : Date.now();
+    return AQI_SMOKE_SFC_BASE_URL + '/exportImage?bbox=' + webMercatorTileBbox(z, x, y) + '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&time=' + t + '&f=image';
+  }
+  function aqiSmokeVertOfflineTileUrl(z, x, y){
+    var t = aqiSmokeResolvedTimeMs != null ? aqiSmokeResolvedTimeMs : Date.now();
+    return AQI_SMOKE_VERT_BASE_URL + '/exportImage?bbox=' + webMercatorTileBbox(z, x, y) + '&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&time=' + t + '&f=image';
   }
 
   // Plain lat/lng (EPSG:4326) tile bounds — standard XYZ tile math, the inverse of
@@ -17620,7 +17858,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function renderOfflineOverlayChecks(){
     var wrap = document.getElementById('offline-overlay-checks');
     wrap.innerHTML = '';
-    ['dem', 'snowdepth', 'nlcd', 'publicland', 'wildfirerecent', 'wildfireolder', 'wildfireevenolder', 'timberharvest', 'timberthinning'].forEach(function(id){
+    ['dem', 'snowdepth', 'aqismoke', 'aqismokevert', 'nlcd', 'publicland', 'wildfirerecent', 'wildfireolder', 'wildfireevenolder', 'timberharvest', 'timberthinning'].forEach(function(id){
       var def = DOWNLOAD_LAYERS[id];
       var label = document.createElement('label');
       label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
@@ -17751,6 +17989,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // the graying indicator exists to answer. Wildfire History's 3 time-tiers (Session 44) each
   // get their own entry here too, mapped to their own downloadLayerId — the same reasoning, one
   // level more granular now that Wildfire History itself is 3 independently-cached layers.
+  // Wildfire smoke (aqismoke-toggle/aqismokevert-toggle) is deliberately NOT in this table —
+  // same reasoning Disturbance History's own toggles were excluded for in their first pass
+  // (Session 42, before Session 43's later cache bridge): this generic mechanism only correctly
+  // grays a toggle when the LIVE tile URL and the DOWNLOAD tile URL are guaranteed to match, and
+  // smoke's live URL always uses whatever time was most recently resolved (fresh per session,
+  // requires network) while its download URL has a time baked in at download time — the two
+  // will practically never be byte-identical once any real time has passed. Adding it here would
+  // incorrectly promise "this will render while offline" the same way NOHRSC/NLCD/DEM-derived
+  // layers genuinely do. A real fix, if wanted later, would mirror Disturbance History's own
+  // Session 43 cache-bridge design (loadDisturbanceLayerFromCache) — check Cache Storage for the
+  // downloaded tile first, using the SAME time value that download used, before a live request —
+  // not attempted this pass; see the offline-download modal's own hint text for the user-facing
+  // version of this same gap.
   var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
   var DISTURBANCE_OFFLINE_TOGGLE_IDS = {
     'wildfire-recent-toggle': 'wildfirerecent',
@@ -17893,6 +18144,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // why this is stored separately from layerIds at all.
     var baseLayerIds = selectedOfflineBaseLayerIds();
 
+    // Wildfire smoke's own tile URLs need a real resolved time= value baked in BEFORE
+    // computeTileList runs below (it calls tileUrlForLayer/aqiSmokeSfcOfflineTileUrl
+    // synchronously for every tile in the list, with no async step of its own) — resolve it
+    // first, only when actually needed. Shares the exact same cache/in-flight promise
+    // resolveAqiSmokeTime() already uses for the live map layer, so clicking Download right
+    // after toggling the live layer on reuses the already-resolved value with zero extra
+    // network calls; a genuinely fresh resolution (no live layer touched this session) is
+    // usually well under a second based on live testing. On failure, abort this one download
+    // cleanly with a toast rather than silently proceeding with a guessed/unconfirmed time —
+    // every OTHER selected layer in the same click is skipped too, not partially downloaded,
+    // since a real point-of-failure like this is rare enough that "try again" is simpler and
+    // more honest than a partial-success UI this feature never needed before.
+    var needsSmokeTime = layerIds.indexOf('aqismoke') !== -1 || layerIds.indexOf('aqismokevert') !== -1;
+    var timeReady = needsSmokeTime ? resolveAqiSmokeTime() : Promise.resolve();
+
+    return timeReady.then(function(){
     var tileList = computeTileList(offlineCaptureBounds, minZ, maxZ, layerIds);
     var sizeMB = estimateSizeMB(tileList);
 
@@ -17995,6 +18262,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }, 0);
 
       return result;
+    });
+    }, function(){
+      // resolveAqiSmokeTime() failed — its own toast convention (matching setAqiSmokeOn's) is
+      // shown here rather than inside that shared function, since only this caller knows the
+      // failure happened specifically in the context of starting a download, not toggling the
+      // live layer. Resolves cleanly (rather than leaving an unhandled rejection) with the same
+      // shape downloadTileList's own cancelled result has, since nothing was ever downloaded.
+      showToast('Couldn\'t reach the smoke data source — try again in a moment');
+      return { completed: 0, failed: 0, cancelled: true };
     });
   }
   // Debug-only raw reference to the real production download function (Session 34) — lets
@@ -20704,6 +20980,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.showZoomButtons === undefined) state.settings.showZoomButtons = true;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
+            if (state.settings.aqiSmokeOn === undefined) state.settings.aqiSmokeOn = false;
+            if (state.settings.aqiSmokeOpacity === undefined) state.settings.aqiSmokeOpacity = 0.6;
+            if (state.settings.aqiSmokeVertOn === undefined) state.settings.aqiSmokeVertOn = false;
+            if (state.settings.aqiSmokeVertOpacity === undefined) state.settings.aqiSmokeVertOpacity = 0.6;
             if (state.settings.nlcdOn === undefined) state.settings.nlcdOn = false;
             if (state.settings.nlcdOpacity === undefined) state.settings.nlcdOpacity = 0.7;
             if (state.settings.fireperimetersOn === undefined) state.settings.fireperimetersOn = false;
@@ -20898,7 +21178,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
-    environmental: ['snowdepth-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
+    environmental: ['snowdepth-toggle', 'aqismoke-toggle', 'aqismokevert-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['wildlife-biggame-quick-toggle', 'wildlife-uplandgame-quick-toggle', 'wildlife-fish-quick-toggle']
   };
@@ -21206,6 +21486,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('snowdepth-raster')) map.setPaintProperty('snowdepth-raster', 'raster-opacity', state.settings.snowDepthOpacity);
       scheduleSave();
     });
+    document.getElementById('aqismoke-toggle').addEventListener('change', function(){
+      setAqiSmokeOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('aqismoke-opacity').addEventListener('input', function(){
+      state.settings.aqiSmokeOpacity = this.value / 100;
+      if (map.getLayer('aqismoke-raster')) map.setPaintProperty('aqismoke-raster', 'raster-opacity', state.settings.aqiSmokeOpacity);
+      scheduleSave();
+    });
+    document.getElementById('aqismokevert-toggle').addEventListener('change', function(){
+      setAqiSmokeVertOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('aqismokevert-opacity').addEventListener('input', function(){
+      state.settings.aqiSmokeVertOpacity = this.value / 100;
+      if (map.getLayer('aqismokevert-raster')) map.setPaintProperty('aqismokevert-raster', 'raster-opacity', state.settings.aqiSmokeVertOpacity);
+      scheduleSave();
+    });
     document.getElementById('nlcd-toggle').addEventListener('change', function(){
       setNlcdOn(this.checked);
       scheduleSave();
@@ -21381,6 +21679,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('snowdepth-opacity').value = Math.round((state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75) * 100);
     document.getElementById('snowdepth-opacity-row').classList.toggle('show', !!state.settings.snowDepthOn);
+    document.getElementById('aqismoke-toggle').checked = !!state.settings.aqiSmokeOn;
+    document.getElementById('aqismoke-opacity').value = Math.round((state.settings.aqiSmokeOpacity != null ? state.settings.aqiSmokeOpacity : 0.6) * 100);
+    document.getElementById('aqismoke-opacity-row').classList.toggle('show', !!state.settings.aqiSmokeOn);
+    document.getElementById('aqismokevert-toggle').checked = !!state.settings.aqiSmokeVertOn;
+    document.getElementById('aqismokevert-opacity').value = Math.round((state.settings.aqiSmokeVertOpacity != null ? state.settings.aqiSmokeVertOpacity : 0.6) * 100);
+    document.getElementById('aqismokevert-opacity-row').classList.toggle('show', !!state.settings.aqiSmokeVertOn);
     document.getElementById('nlcd-toggle').checked = !!state.settings.nlcdOn;
     document.getElementById('nlcd-opacity').value = Math.round((state.settings.nlcdOpacity != null ? state.settings.nlcdOpacity : 0.7) * 100);
     document.getElementById('nlcd-opacity-row').classList.toggle('show', !!state.settings.nlcdOn);
