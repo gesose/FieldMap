@@ -2327,9 +2327,10 @@
         <input type="checkbox" id="aqismoke-toggle"> Wildfire smoke (AQI) <button class="layer-hint-btn" data-layer-id="lh-aqismoke" title="About">?</button>
       </label>
       <div class="opacity-row" id="aqismoke-opacity-row"><input type="range" id="aqismoke-opacity" min="20" max="100" value="60"></div>
-      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet. Viewing this from a downloaded offline area shows data as of download time — it won't update again until you're back online or re-download.</p>
+      <p class="hint" id="aqismoke-asof" style="margin:-4px 0 4px;display:none;"></p>
+      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's bias-corrected PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet. Viewing this from a downloaded offline area shows data as of download time — it won't update again until you're back online or re-download.</p>
       <div class="layer-info-panel" id="lh-aqismoke">
-        <div class="layer-info-desc">Near-surface PM2.5 concentration — the standard basis for wildfire-smoke air quality — colored on the real, standard EPA AQI scale (green/yellow/orange/red/purple/maroon). Same live-image-overlay architecture as Snow Depth above.</div>
+        <div class="layer-info-desc">Near-surface PM2.5 concentration — the standard basis for wildfire-smoke air quality — colored on the real, standard EPA AQI scale (green/yellow/orange/red/purple/maroon), using NOAA's bias-corrected guidance (calibrated against real ground-station readings for better accuracy). Same live-image-overlay architecture as Snow Depth above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
       </div>
 
@@ -2337,6 +2338,7 @@
         <input type="checkbox" id="aqismokevert-toggle"> Smoke — vertically integrated (not AQI) <button class="layer-hint-btn" data-layer-id="lh-aqismokevert" title="About">?</button>
       </label>
       <div class="opacity-row" id="aqismokevert-opacity-row"><input type="range" id="aqismokevert-opacity" min="20" max="100" value="60"></div>
+      <p class="hint" id="aqismokevert-asof" style="margin:-4px 0 4px;display:none;"></p>
       <div class="layer-info-panel" id="lh-aqismokevert">
         <div class="layer-info-desc">Total smoke through the full atmospheric column, not just ground level — useful for spotting smoke aloft that hasn't reached the surface yet. This is a different measurement than the AQI layer above (total smoke mass, not a health-based air-quality value), which is why its own color scale looks different — there's no standard AQI-style palette for column smoke. Same modeled/twice-daily-refresh caveat as the AQI layer above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
@@ -3326,7 +3328,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.65.2';
+  var APP_VERSION = '2.65.3';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4542,8 +4544,11 @@
   // of the same overall pattern for a different ArcGIS service TYPE, not a deviation from it),
   // confirmed live: already Web Mercator (no reprojection), already colorized server-side, same
   // {bbox-epsg-3857} MapLibre-native token substitution.
-  // SFC (primary/default) is `ndgd_apm25_hr01` — Hourly PM2.5 concentration forecast guidance —
-  // deliberately NOT `ndgd_smoke_sfc_1hr_avg_time` (raw smoke MASS DENSITY) despite the near-
+  // SFC (primary/default) is Hourly PM2.5 concentration forecast guidance (now the Bias-
+  // Corrected `ndgd_apm25_hr01_bc` variant — see this block's own later comment for that swap;
+  // this paragraph's own history below refers to the plain `ndgd_apm25_hr01` this originally
+  // shipped as, still accurate for why THAT family of product was chosen over smoke mass in the
+  // first place) — deliberately NOT `ndgd_smoke_sfc_1hr_avg_time` (raw smoke MASS DENSITY) despite the near-
   // identical name/shape: a real color-rendering bug report (confirmed on a real device against
   // Apple Weather's AQI map showing the standard palette for the same area) traced to the smoke
   // service's own default renderer (`smoke_don_0921`) genuinely being a brown/rust/tan intensity
@@ -4570,7 +4575,31 @@
   // color convention of its own. Both are still on the SAME publish cycle (confirmed live via
   // matching idp_validtime values from both services' own /identify responses even after this
   // swap), so one resolved time value is still shared by both — see resolveAqiSmokeTime().
-  var AQI_SMOKE_SFC_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_apm25_hr01/ImageServer';
+  // SFC now uses `ndgd_apm25_hr01_bc` (Bias-Corrected), not plain `ndgd_apm25_hr01` — confirmed
+  // live, in a follow-up session, that the "_bc" variant genuinely exists in the same air_quality
+  // folder (18 services listed there include an hr01/hr01_bc pair and an hr24/hr24_bc pair) and
+  // exposes the SAME `apm25_color` render function (confirmed via that service's own /ImageServer
+  // metadata), so this swap needed no new rendering logic. NOAA's own service description text
+  // for hr01_bc is genuinely wrong/misleading — it says "24 hour average PM2.5" (apparently
+  // copy-pasted from the hr24_bc service's own description) despite being named "hr01" and, in
+  // the very same paragraph, itself saying "Forecast information is provided in one hour
+  // intervals" — resolved this discrepancy empirically rather than trusting either piece of text:
+  // a live /query sorted by idp_validtime confirmed idp_fcst_hour steps 1,2,3,4... with each
+  // consecutive validtime exactly 1 hour apart, genuinely hourly data, matching the "hr01" name
+  // and contradicting the description's "24 hour average" claim. Bias correction is a real
+  // accuracy improvement (NOAA's own description: "created after post-processing to reduce biases
+  // in numerical model guidance," i.e. calibrated against real ground-station observations) with
+  // a real, measurable effect confirmed via each service's own reported statistics: hr01's
+  // real max value (278.78 µg/m³) EXCEEDS the top AQI breakpoint (250.4); hr01_bc's real max
+  // (144.55 µg/m³) does not — bias correction genuinely pulls in the most extreme model
+  // overestimates, which also modestly reduces (though does not eliminate — see the "AQI overlay
+  // colorless-gap investigation" Architecture notes entry) how often the real, separately-
+  // confirmed NOAA-side ">250 renders transparent instead of clamping to maroon" bug is
+  // triggered. Both hr01 and hr01_bc were independently confirmed, via live /identify calls made
+  // moments apart, to be on the IDENTICAL publish cycle (same idp_issueddate, same idp_validtime
+  // resolved for the same query time) — the swap changes nothing about resolveAqiSmokeTime()'s
+  // own mechanism or the vert layer's own shared-time assumption.
+  var AQI_SMOKE_SFC_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_apm25_hr01_bc/ImageServer';
   var AQI_SMOKE_VERT_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_smoke_vert_1hr_avg_time/ImageServer';
   // A fixed, pre-verified-live point (central Colorado/Kansas, Web Mercator) used ONLY to ask
   // "what time slice is currently valid" via /identify — NOT tied to whatever the user is
@@ -4597,6 +4626,10 @@
   // wasn't asked for.
   var aqiSmokeResolvedTimeMs = null;
   var aqiSmokeResolvePromise = null;
+  // Whether the currently-cached aqiSmokeResolvedTimeMs came from a live /identify (false) or the
+  // offline fallback below (true) — surfaced in the "as of" label (updateAqiSmokeAsOfLabel) so a
+  // genuinely offline/cached view is visibly distinguishable from a live one, not just internally.
+  var aqiSmokeResolvedViaFallback = false;
   // Offline rendering fallback (added after Disturbance History's own offline-rendering gap was
   // fixed with a Cache-Storage-checking bridge, loadDisturbanceLayerFromCache — investigated
   // first whether that same bridge applies here, and it doesn't, for a real structural reason,
@@ -4664,7 +4697,9 @@
       var validTime = attrs && attrs.idp_validtime;
       if (validTime == null) throw new Error('no idp_validtime in identify response');
       aqiSmokeResolvedTimeMs = validTime;
+      aqiSmokeResolvedViaFallback = false;
       aqiSmokeResolvePromise = null;
+      updateAqiSmokeAsOfLabel();
       return validTime;
     }).catch(function(){
       // Live /identify failed — most commonly genuinely offline, no network at all. Fall back to
@@ -4676,11 +4711,44 @@
           throw new Error('identify failed and no offline fallback time available');
         }
         aqiSmokeResolvedTimeMs = fallbackMs;
+        aqiSmokeResolvedViaFallback = true;
         aqiSmokeResolvePromise = null;
+        updateAqiSmokeAsOfLabel();
         return fallbackMs;
       });
     });
     return aqiSmokeResolvePromise;
+  }
+  // Surfaces the same resolved valid-time the tile URLs themselves use (see aqiSmokeSfcTileUrl/
+  // aqiSmokeVertTileUrl) as a small, always-visible label next to each toggle's own disclaimer —
+  // real field-use value: lets someone confirm how current the data actually is without digging
+  // into Settings or trusting the generic "~2x/day" disclaimer text alone. Deliberately reads
+  // straight from the same module-scope aqiSmokeResolvedTimeMs every other consumer already
+  // uses (never a separate fetch/resolution of its own), so it can never show a DIFFERENT time
+  // than what's actually rendering. Called from every place aqiSmokeResolvedTimeMs can change
+  // (both branches of resolveAqiSmokeTime() above) and from both on/off setters below, so it
+  // stays correct through every real state transition — first resolution, offline fallback,
+  // and turning either toggle off (hides immediately, no stale label left showing).
+  function formatAqiAsOfTime(ms){
+    var d = new Date(ms), now = new Date();
+    var sameDay = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+    var timeStr = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    return sameDay ? timeStr : (d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + timeStr);
+  }
+  function updateAqiSmokeAsOfLabel(){
+    var elSfc = document.getElementById('aqismoke-asof');
+    var elVert = document.getElementById('aqismokevert-asof');
+    var haveResolved = aqiSmokeResolvedTimeMs != null;
+    var text = haveResolved ? ('Data as of ' + formatAqiAsOfTime(aqiSmokeResolvedTimeMs) +
+      (aqiSmokeResolvedViaFallback ? ' (from downloaded area)' : '')) : '';
+    if (elSfc){
+      if (haveResolved && state.settings.aqiSmokeOn){ elSfc.textContent = text; elSfc.style.display = ''; }
+      else { elSfc.style.display = 'none'; }
+    }
+    if (elVert){
+      if (haveResolved && state.settings.aqiSmokeVertOn){ elVert.textContent = text; elVert.style.display = ''; }
+      else { elVert.style.display = 'none'; }
+    }
   }
   // Falls back to a client-side Date.now() guess only for the very first source seed before
   // real resolution completes (map.addSource needs SOME url immediately) — a wrong guess here
@@ -7251,6 +7319,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             resolveAqiSmokeTime().then(function(){
               if (state.settings.aqiSmokeOn && map.getSource('aqismoke-source')) map.getSource('aqismoke-source').setTiles([aqiSmokeSfcTileUrl()]);
               if (state.settings.aqiSmokeVertOn && map.getSource('aqismokevert-source')) map.getSource('aqismokevert-source').setTiles([aqiSmokeVertTileUrl()]);
+              updateAqiSmokeAsOfLabel();
             }).catch(function(){});
           }
           // Session 56: restore all 3 categories' own Habitat range + State Data independently —
@@ -9690,6 +9759,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.aqiSmokeOn = false;
       if (map && map.getLayer('aqismoke-raster')) map.setLayoutProperty('aqismoke-raster', 'visibility', 'none');
       document.getElementById('aqismoke-opacity-row').classList.toggle('show', false);
+      updateAqiSmokeAsOfLabel();
       return;
     }
     if (state.settings.aqiSmokeVertOn){
@@ -9703,6 +9773,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.aqiSmokeOn = true;
       if (map && map.getSource('aqismoke-source')) map.getSource('aqismoke-source').setTiles([aqiSmokeSfcTileUrl()]);
       if (map && map.getLayer('aqismoke-raster')) map.setLayoutProperty('aqismoke-raster', 'visibility', 'visible');
+      updateAqiSmokeAsOfLabel();
       scheduleSave();
     }).catch(function(){
       var cb = document.getElementById('aqismoke-toggle');
@@ -9717,6 +9788,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.aqiSmokeVertOn = false;
       if (map && map.getLayer('aqismokevert-raster')) map.setLayoutProperty('aqismokevert-raster', 'visibility', 'none');
       document.getElementById('aqismokevert-opacity-row').classList.toggle('show', false);
+      updateAqiSmokeAsOfLabel();
       return;
     }
     if (state.settings.aqiSmokeOn){
@@ -9730,6 +9802,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       state.settings.aqiSmokeVertOn = true;
       if (map && map.getSource('aqismokevert-source')) map.getSource('aqismokevert-source').setTiles([aqiSmokeVertTileUrl()]);
       if (map && map.getLayer('aqismokevert-raster')) map.setLayoutProperty('aqismokevert-raster', 'visibility', 'visible');
+      updateAqiSmokeAsOfLabel();
       scheduleSave();
     }).catch(function(){
       var cb = document.getElementById('aqismokevert-toggle');

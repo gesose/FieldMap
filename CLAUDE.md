@@ -785,11 +785,21 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   architecture the existing Snow Depth (NOHRSC) overlay already uses — already Web Mercator, already
   colorized server-side, no client-side GRIB2 decode/reprojection/rendering needed at all. The primary layer's
   real data source was corrected in a follow-up session after a real-device report caught it rendering a
-  monochrome brown wash instead of the standard EPA AQI scale — it now uses NOAA's `ndgd_apm25_hr01` (real
-  PM2.5 concentration, real green→yellow→orange→red→purple→maroon EPA colors, pixel-confirmed against the
-  real EPA breakpoints), not the raw smoke-mass-density product the vert toggle still uses (which has no
-  standard AQI-style palette of its own — see Architecture notes' own "Session (real color-rendering bug...)"
-  sub-bullet for the full investigation). The one genuinely
+  monochrome brown wash instead of the standard EPA AQI scale — it now uses NOAA's PM2.5 concentration
+  guidance (real green→yellow→orange→red→purple→maroon EPA colors, pixel-confirmed against the real EPA
+  breakpoints), not the raw smoke-mass-density product the vert toggle still uses (which has no standard
+  AQI-style palette of its own — see Architecture notes' own "Session (real color-rendering bug...)"
+  sub-bullet for the full investigation). A still-later session swapped the specific PM2.5 service from plain
+  `ndgd_apm25_hr01` to the Bias-Corrected `ndgd_apm25_hr01_bc` variant (calibrated against real ground-station
+  readings, more accurate) and, investigating two separately reported real-device symptoms, found and
+  documented — but could not practically client-side-fix — two genuine NOAA-server-side rendering defects:
+  real concentration values above ~250 µg/m³ (the top of the AQI color scale) render fully transparent
+  instead of clamping to the maximum "Hazardous" color, and a rarer tile-boundary-specific artifact at some
+  (not all) adjacent-tile seams — see that session's own Architecture-notes sub-bullet for the full evidence
+  and why a client-side mitigation isn't practical. The resolved forecast-valid time is now also surfaced
+  directly in the UI (a small "Data as of [time]" label next to each toggle's own opacity slider, reading
+  "(from downloaded area)" when showing an offline-fallback-resolved time rather than a live one) — real
+  field-use value, not just an internal caching detail. The one genuinely
   new piece of logic Snow Depth never needed: this service is time-enabled, so the tile URL needs a real
   resolved `time=` value, obtained once per session via a live `/identify` check (reading the raw
   `idp_validtime` field) rather than guessing "now" — cached and shared between both layers (confirmed live
@@ -6386,6 +6396,129 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       Zero console errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline
       `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.65.1 → 2.65.2 (patch — a real fix to an
       already-shipped feature, no new UI), SHELL_CACHE bumped v186 → v187.
+  - **Session (colorless-gap investigation, bias-corrected product switch, resolved-time UI label)**: two real
+    reported issues (colorless gaps in a real Klamath Falls/Modoc-region plume; unverified update-cadence
+    claims) plus two explicit improvements (confirm/switch to NOAA's bias-corrected PM2.5 product; surface
+    the resolved valid time in the UI), all investigated/built in one pass, per explicit instruction not to
+    assume causes.
+    - **Colorless-gap investigation — two distinct, both confirmed real NOAA-server-side rendering defects,
+      neither a FieldMap bug**: FieldMap performs zero client-side color processing (it requests NOAA's own
+      already-colorized `exportImage` PNG tiles and displays them as-is), so any real coloring defect has to
+      originate server-side — confirmed by fetching the raw NOAA PNG directly (bypassing FieldMap's own
+      rendering entirely, exactly as instructed) and decoding real pixel data via `createImageBitmap`/canvas,
+      not assumed from a screenshot alone.
+      1. **Dominant cause — values above the top color-stop breakpoint render fully transparent instead of
+         clamping to the max color**: found by directly cross-referencing real `/identify` VALUES against
+         real rendered pixel ALPHA at the same coordinates in the real Klamath Falls/Modoc plume. A real,
+         confirmed `/identify` value of 173.9 µg/m³ (well below the 250.4 top breakpoint) rendered correctly
+         as opaque purple; a real, confirmed value of 263.46 µg/m³ (found via a live grid search — the
+         service's own reported statistics already hinted at this: the plain `hr01` product's real max value,
+         278.78 µg/m³, exceeds the 250.4 breakpoint) rendered **fully transparent** at its center pixel, with
+         87.5% of an 8m-per-pixel test crop around it also transparent. A finer bisection along a real value
+         gradient confirmed a clean transition: 179.83 → opaque; 263.46 → fully transparent — directly
+         confirming the task's own second named hypothesis (values above the highest configured breakpoint
+         rendering transparent instead of clamping to max color). This is the more consequential of the two
+         causes, since it means the MOST hazardous real readings are the ones LEAST likely to show any color
+         at all — a genuine safety-relevant gap in NOAA's own rendering, not a coverage gap.
+      2. **Secondary cause — a real tile-boundary-specific artifact at some (not all) adjacent-tile seams**:
+         found by requesting FieldMap's own real 256×256 tile shape at multiple zoom levels (4-14) centered
+         on the same real plume location — transparency stayed under 1% at every zoom except z9-z10 (0.90%,
+         3.50%), with a real zoomed screenshot showing a clean AQI color gradient with a distinct vertical
+         checkered stripe along one tile's right edge. Confirmed this is a genuine SHARED-boundary defect, not
+         random noise: the adjacent (east) tile independently showed the exact same 82-transparent-pixel count
+         on ITS OWN left edge (the same real-world boundary, viewed from the other side), while that same
+         tile's north/south/west neighbors showed ZERO transparency at ANY of their own edges. Confirmed both
+         products (plain `hr01` and bias-corrected `hr01_bc`) show the byte-identical artifact at this exact
+         boundary — not specific to either product.
+      3. **Client-side mitigation attempts — both tested and confirmed NOT to work, ruling them out with
+         evidence rather than assuming a fix exists**: an overfetch-15%-buffer-then-crop approach (a standard
+         GIS technique for edge-resampling artifacts) was tested against the tile-boundary artifact and left
+         it completely unchanged (83 vs. 82 transparent pixels — no real improvement). A custom `renderingRule`
+         Colormap override attempting to clamp values above 250 was tested against the >250 clipping bug — the
+         server was confirmed to genuinely honor `renderingRule` in general (a `rasterFunction:'None'` sanity
+         check produced a visibly different real result, and a bogus rule name correctly 400'd), but the
+         custom Colormap override still rendered fully transparent at the same tested hotspot, suggesting the
+         underlying NoData/masking happens at an earlier stage in NOAA's own function chain than a client-
+         supplied Colormap override can reach. A full client-side fix (fetch raw per-pixel values, reimplement
+         the EPA AQI color-mapping locally with a proper clamp) would require a much larger architecture
+         change — replacing NOAA's convenient pre-colorized image service with raw-value tiles plus a custom
+         decode/color pipeline — judged disproportionate to this task's scope and not attempted; both defects
+         are documented here as known, real, evidence-backed upstream limitations rather than silently
+         accepted or left unexplained.
+    - **Update-cadence/freshness verification — done via real live checks, not by trusting old research or
+      NOAA's own (partly incorrect) service description text**: confirmed via a real `/query` sorted by
+      `idp_validtime` that NDGD PM2.5 guidance is issued 2x/day (6Z and 12Z model runs — matches NOAA's own
+      description) with each run producing genuinely HOURLY forecast steps (`idp_fcst_hour` 1, 2, 3, ...,
+      confirmed via consecutive `idp_validtime` values exactly 3,600,000ms apart) out to forecast hour 72 (not
+      the 48 hours NOAA's own description claims — a second real, empirically-caught discrepancy between the
+      description text and the actual data). Confirmed, via a live `/identify` call matching FieldMap's own
+      exact request shape (not a synthetic approximation), that the freshness logic genuinely works as
+      designed: querying at a real timestamp (19:26:56 UTC) resolved `idp_fcst_hour:7`,
+      `idp_validtime:2026-08-11T19:00:00Z` — the forecast step closest to "now," not a stale early-run step —
+      confirming FieldMap's `/identify`-based resolution correctly picks the freshest available real-world
+      hour. **Real answer to the task's own question**: under normal operation, resolved data lags "now" by
+      0 to just under 1 hour (typically ~30 minutes), governed purely by the underlying hourly forecast-step
+      granularity — this is as fresh as an hourly-stepped forecast product can be, with no staleness bug in
+      FieldMap's own resolution logic.
+    - **Bias-corrected product switch**: confirmed live, via a full listing of the `air_quality` service
+      folder, that `ndgd_apm25_hr01_bc` genuinely exists (18 real services total, including an hr01/hr01_bc
+      pair and an hr24/hr24_bc pair) and exposes the same `apm25_color` render function the plain product
+      uses (confirmed via that service's own `/ImageServer` metadata), so the swap needed no new rendering
+      logic — `AQI_SMOKE_SFC_BASE_URL` now points at `ndgd_apm25_hr01_bc`. NOAA's own service description
+      text for `hr01_bc` is genuinely wrong (says "24 hour average PM2.5," apparently copy-pasted from the
+      `hr24_bc` service's own description, despite being named "hr01" and, in the very same paragraph, itself
+      saying "Forecast information is provided in one hour intervals") — resolved this discrepancy
+      empirically, per explicit instruction not to trust either piece of text at face value: a live `/query`
+      confirmed genuinely hourly `idp_fcst_hour` stepping, matching the "hr01" name and contradicting the
+      description. Confirmed both `hr01` and `hr01_bc` are on the IDENTICAL publish cycle (same
+      `idp_issueddate`/`idp_validtime` resolved for the same live query, made moments apart) — the swap
+      changes nothing about `resolveAqiSmokeTime()`'s own mechanism or the vert layer's shared-time
+      assumption. A real, measurable accuracy benefit, confirmed via each service's own reported statistics:
+      `hr01`'s real max value (278.78 µg/m³) exceeds the 250.4 AQI breakpoint; `hr01_bc`'s real max (144.55
+      µg/m³) does not — bias correction genuinely pulls in the most extreme model overestimates, which also
+      modestly (not completely — the boundary artifact is unrelated to product choice, and `hr01_bc` can
+      still exceed 250.4 elsewhere/at other times, as seen in the Klamath/Modoc investigation above) reduces
+      how often the separately-confirmed ">250 renders transparent" defect gets triggered. The Layers-panel
+      disclaimer and info-panel description were both updated to say "bias-corrected."
+    - **Resolved-time UI label ("as of")**: `updateAqiSmokeAsOfLabel()`, a small `.hint`-styled `<p>` next to
+      each toggle's own opacity slider (`#aqismoke-asof`/`#aqismokevert-asof`), reads directly from the SAME
+      module-scope `aqiSmokeResolvedTimeMs` every tile-URL builder already uses — never a separate
+      fetch/resolution of its own, so it can never show a different time than what's actually rendering.
+      Called from both success branches of `resolveAqiSmokeTime()` itself (so it updates correctly regardless
+      of which of the 4 call sites — either toggle's on-setter, the boot-time restore block, or
+      `startOfflineDownload`'s own pre-resolution — triggered the actual resolution) and from both toggles'
+      own off-setters (hides immediately, no stale text left showing). A new `aqiSmokeResolvedViaFallback`
+      flag (set `false` on a live `/identify` success, `true` on an offline-fallback success) drives a visible
+      "(from downloaded area)" suffix, so a genuinely offline/cached view is distinguishable from a live one
+      at a glance, not just internally. `formatAqiAsOfTime()` shows a bare local time for today's date, or
+      date+time for anything older (relevant for a downloaded area's fallback time, which could be days old).
+    - **Verification — live, covering every claim above**: re-ran this session's own full investigation
+      pipeline live in a fresh browser tab (after restarting this sandbox's local dev server, discovered
+      killed by the PRIOR session's own end-of-session cleanup step) — confirmed via
+      `window.FieldMapDebug.tileUrlForLayer('aqismoke',...)` that both the LIVE map layer's tile URL and the
+      OFFLINE-DOWNLOAD tile builder's own URL now genuinely resolve to `ndgd_apm25_hr01_bc`, not the old plain
+      product. Confirmed live, via real UI clicks (not synthetic JS dispatch) through the real Layers panel:
+      turning `aqismoke-toggle` on (real `/identify` succeeding) correctly showed "Data as of 12:00 PM" right
+      below the opacity slider, in the correct position/style, screenshot-confirmed; turning on
+      `aqismokevert-toggle` correctly triggered mutual exclusion (turned `aqismoke-toggle` off, hiding ITS
+      label) while showing the identical resolved time under vert's own label (same shared resolved time,
+      zero extra network calls); turning `aqismokevert-toggle` back off correctly hid BOTH labels immediately,
+      confirmed via `getComputedStyle(...).display`, not stale DOM text. Confirmed the offline-fallback path
+      end to end with `window.fetch` mocked to reject `/identify` (simulating genuinely offline) against a
+      real previously-downloaded area already present in this browser profile's own `localStorage`: the
+      checkbox correctly stayed checked (fallback succeeded, didn't revert) and the label correctly read "Data
+      as of 7:00 AM (from downloaded area)" — confirmed for BOTH toggles independently, satisfying the task's
+      own explicit "updates appropriately between online/offline states" requirement. One real test-timing
+      gotcha hit again this session, the same class already documented in the immediately preceding session's
+      own entry: a fresh-navigation test with an initial 2.5s settle wait was insufficient for the offline-
+      fallback path specifically (both a failed live fetch AND a `loadOfflineAreas()` read need to complete),
+      showing the checkbox incorrectly reverting; resolved by extending the settle wait to a full 4 seconds
+      before mocking fetch and clicking, after which the fallback path worked correctly and repeatably. Zero
+      console errors throughout, confirmed via `read_console_messages` with `onlyErrors:true` at multiple
+      points. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+      `service-worker.js`. APP_VERSION bumped 2.65.2 → 2.65.3 (patch — real bug investigation/fix plus two
+      small UI/data-accuracy improvements to an already-shipped feature, no new layer), SHELL_CACHE bumped
+      v187 → v188.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8716,3 +8849,60 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
   APP_VERSION bumped 2.65.1 → 2.65.2 (patch — a real fix to an already-shipped feature, no new UI),
   SHELL_CACHE bumped v186 → v187.
+- Session (AQI colorless-gap investigation, bias-corrected product switch, resolved-time UI label): two real
+  bug reports (colorless gaps in a real high-pollution plume near Klamath Falls/Modoc; unverified freshness/
+  cadence claims) plus two explicit improvements (confirm/switch to NOAA's bias-corrected PM2.5 product;
+  surface the resolved valid time in the UI), all investigated and built in one pass per explicit instruction
+  not to assume causes. See Architecture notes' "Wildfire smoke (AQI) overlay" entry, its own "Session
+  (colorless-gap investigation...)" sub-bullet, for full mechanism/evidence detail — summary here.
+  Colorless-gap investigation found TWO distinct, both confirmed real, NOAA-server-side rendering defects
+  (FieldMap does zero client-side color processing, so any real coloring defect has to be upstream) — not
+  guessed, but confirmed by fetching the raw NOAA PNG directly and decoding real pixel data, cross-referenced
+  against real `/identify` values at the same coordinates: (1) the dominant cause — real concentration values
+  above the top AQI color-stop breakpoint (~250 µg/m³) render fully transparent instead of clamping to the
+  maximum "Hazardous" color, confirmed via a clean value/alpha transition (179.83 µg/m³ → opaque; 263.46
+  µg/m³, found via a live grid search in the real plume → fully transparent) — meaning the MOST hazardous
+  real readings are the ones least likely to show any color at all, a genuine safety-relevant gap; (2) a
+  rarer, secondary tile-boundary-specific artifact confirmed at one real shared tile seam (both adjacent
+  tiles independently showed the identical 82-pixel transparent stripe on their own shared edge, while every
+  OTHER edge of every tile tested showed zero transparency) — present identically in both the plain and
+  bias-corrected products. Two client-side mitigation attempts (an overfetch-and-crop buffer for the boundary
+  artifact; a custom `renderingRule` Colormap override attempting to clamp values above 250) were both tested
+  directly against real NOAA endpoints and confirmed NOT to fix either defect — a full client-side fix would
+  need a much larger architecture change (raw-value fetching + a reimplemented color-mapping pipeline),
+  judged disproportionate to this task's scope and not attempted; both defects are documented as real,
+  evidence-backed upstream NOAA limitations, not silently accepted or glossed over. Freshness/cadence
+  verification used real live checks, not old research: confirmed via a real `/query` that NDGD PM2.5
+  guidance is issued 2x/day (6Z/12Z) with genuinely hourly forecast steps out to hour 72 (not the "48-hour"
+  NOAA's own description text claims — a second real, empirically-caught discrepancy in NOAA's own
+  documentation); confirmed via a live `/identify` call matching FieldMap's exact request shape that the
+  freshness logic correctly resolves the forecast step nearest to "now" (a real query at 19:26:56 UTC
+  resolved a 19:00:00 UTC valid time — the closest available hourly step, not a stale one). Real answer to
+  the task's own question: under normal operation, resolved data lags "now" by 0 to just under an hour
+  (typically ~30 minutes), governed purely by hourly forecast granularity, with no staleness bug in
+  FieldMap's own resolution logic. Switched `AQI_SMOKE_SFC_BASE_URL` to NOAA's real Bias-Corrected variant
+  (`ndgd_apm25_hr01_bc`, confirmed to exist and expose the identical `apm25_color` render function, confirmed
+  on the same publish cycle as the plain product) — NOAA's own service description for this variant is
+  genuinely wrong ("24 hour average," apparently copy-pasted from a different service's description, despite
+  being named "hr01" and the SAME paragraph itself saying "one hour intervals") — resolved this discrepancy
+  empirically via a real `/query` rather than trusting either piece of text, confirming genuinely hourly data.
+  Bias correction has a real, measurable accuracy benefit (calibrated against real ground-station readings)
+  and a real secondary side-benefit confirmed via each service's own reported statistics: the plain product's
+  real max value (278.78 µg/m³) exceeds the AQI scale's top breakpoint while the bias-corrected product's
+  real max (144.55 µg/m³) does not, modestly reducing (not eliminating) how often the separately-confirmed
+  clipping defect triggers. Added a small "Data as of [time]" label next to each toggle's own opacity slider,
+  reading directly from the same resolved time every tile URL already uses (never a separate resolution),
+  with a "(from downloaded area)" suffix distinguishing an offline-fallback-resolved time from a live one.
+  Verified live end to end via real UI clicks through the real Layers panel (after discovering and restarting
+  this sandbox's own local dev server, found killed by the prior session's own end-of-session cleanup step):
+  confirmed both the live map layer's and the offline-download builder's tile URLs now resolve to the
+  bias-corrected product; confirmed the "as of" label displays correctly for both toggles in the live-
+  resolved case (with correct mutual-exclusion hide/show behavior) and, with `/identify` mocked to fail
+  against a real previously-downloaded area already present in this browser profile, confirmed the offline-
+  fallback case correctly shows the "(from downloaded area)" suffix for both toggles — directly satisfying
+  the task's own "updates appropriately between online/offline states" requirement. One real test-timing
+  gotcha (the same class already documented in the immediately preceding session): the offline-fallback path
+  needed a longer settle wait after a fresh navigation (4s, not 2.5s) before it worked reliably, since it
+  chains a failed live fetch AND a `loadOfflineAreas()` read. Zero console errors throughout. `node --check`
+  confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION
+  bumped 2.65.2 → 2.65.3, SHELL_CACHE bumped v187 → v188.
