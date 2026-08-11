@@ -2327,7 +2327,7 @@
         <input type="checkbox" id="aqismoke-toggle"> Wildfire smoke (AQI) <button class="layer-hint-btn" data-layer-id="lh-aqismoke" title="About">?</button>
       </label>
       <div class="opacity-row" id="aqismoke-opacity-row"><input type="range" id="aqismoke-opacity" min="20" max="100" value="60"></div>
-      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet.</p>
+      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet. Viewing this from a downloaded offline area shows data as of download time — it won't update again until you're back online or re-download.</p>
       <div class="layer-info-panel" id="lh-aqismoke">
         <div class="layer-info-desc">Near-surface PM2.5 concentration — the standard basis for wildfire-smoke air quality — colored on the real, standard EPA AQI scale (green/yellow/orange/red/purple/maroon). Same live-image-overlay architecture as Snow Depth above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
@@ -3120,7 +3120,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again. Wildfire smoke can be downloaded (it counts toward the size below), but won't yet draw from that download while genuinely offline — checking its own tile needs a live network reachability check first, so it only works with a connection.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again. Wildfire smoke (AQI) DOES render from your download while offline too — but as a snapshot frozen at download time: NOAA only refreshes this data ~2x/day, and a fire that started after you downloaded won't be reflected until you download again.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -3326,7 +3326,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.65.1';
+  var APP_VERSION = '2.65.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4597,6 +4597,59 @@
   // wasn't asked for.
   var aqiSmokeResolvedTimeMs = null;
   var aqiSmokeResolvePromise = null;
+  // Offline rendering fallback (added after Disturbance History's own offline-rendering gap was
+  // fixed with a Cache-Storage-checking bridge, loadDisturbanceLayerFromCache — investigated
+  // first whether that same bridge applies here, and it doesn't, for a real structural reason,
+  // not a stylistic one): Disturbance History's data path is a custom live-viewport-bbox
+  // `fetch().then(r=>r.json())` + manual `.setData()` call that never goes through MapLibre's own
+  // raster-tile pipeline at all, so the service worker's automatic "does this exact request URL
+  // match a cached download" logic (service-worker.js's TILE_HOSTS handling, keyed by exact
+  // request URL, confirmed directly in that file) structurally cannot help it — it needed a
+  // hand-built bridge that reconstructs the exact download-time URL and calls `cache.match()`
+  // itself. This smoke/AQI source, by contrast, is an ordinary `type:'raster'` MapLibre tile
+  // source — the SAME shape as Snow Depth/DEM/NLCD/vectorbase, all of which ALREADY render while
+  // genuinely offline with ZERO bridge code, because `mapservices.weather.noaa.gov` is already in
+  // TILE_HOSTS and a downloaded tile carrying OFFLINE_DOWNLOAD_HEADER is served straight from
+  // Cache Storage by the service worker itself, with no network attempt, purely by matching the
+  // literal request URL — confirmed directly in service-worker.js before writing any of this.
+  // The ONLY reason this source doesn't already benefit from that same free mechanism is the
+  // dynamic `time=` parameter: the live map's resolved time (fresh per session) and a downloaded
+  // area's own baked-in download-time value are practically never the same string once real time
+  // has passed, so MapLibre's own live tile requests miss the cache even when the exact right
+  // bytes are sitting right there. Applying Disturbance History's own real INSIGHT (reuse the
+  // exact time value a download used, don't just always resolve one live) through the mechanism
+  // that actually fits a raster tile source: resolveAqiSmokeTime() now falls back to a saved
+  // area's own stored aqiSmokeTimeMs (set at download time — see startOfflineDownload) whenever a
+  // live /identify attempt fails, which is exactly what happens when genuinely offline (no
+  // network at all). Once resolved this way, the resulting tile URL is byte-identical to what
+  // fetchAndCacheTile() cached under, so the service worker's existing, unmodified TILE_HOSTS
+  // logic serves the real tiles automatically — no explicit cache.match() call needed anywhere in
+  // this app's own render path, unlike Disturbance History's bridge.
+  function findAqiSmokeFallbackTimeMs(){
+    return loadOfflineAreas().then(function(areas){
+      var candidates = areas.filter(function(a){
+        return a.aqiSmokeTimeMs != null && a.layerIds &&
+          (a.layerIds.indexOf('aqismoke') !== -1 || a.layerIds.indexOf('aqismokevert') !== -1);
+      });
+      if (!candidates.length) return null;
+      if (map){
+        var center = map.getCenter();
+        var pointBounds = { getSouth:function(){return center.lat;}, getNorth:function(){return center.lat;},
+                             getWest:function(){return center.lng;}, getEast:function(){return center.lng;} };
+        var covering = candidates.filter(function(a){ return areaBoundsContainViewport(a, pointBounds); });
+        if (covering.length){
+          covering.sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+          return covering[0].aqiSmokeTimeMs;
+        }
+      }
+      // No map yet, or no candidate's bounds contain the current center — fall back to the most
+      // recently downloaded matching area rather than giving up entirely; a real device is
+      // overwhelmingly likely to be offline precisely because it's out in the field near
+      // wherever it downloaded, not somewhere unrelated.
+      candidates.sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+      return candidates[0].aqiSmokeTimeMs;
+    }).catch(function(){ return null; });
+  }
   function resolveAqiSmokeTime(){
     if (aqiSmokeResolvedTimeMs != null) return Promise.resolve(aqiSmokeResolvedTimeMs);
     if (aqiSmokeResolvePromise) return aqiSmokeResolvePromise;
@@ -4613,9 +4666,19 @@
       aqiSmokeResolvedTimeMs = validTime;
       aqiSmokeResolvePromise = null;
       return validTime;
-    }).catch(function(err){
-      aqiSmokeResolvePromise = null;
-      throw err;
+    }).catch(function(){
+      // Live /identify failed — most commonly genuinely offline, no network at all. Fall back to
+      // a relevant downloaded area's own stored time rather than rejecting outright (see this
+      // function's own header comment for the full mechanism/reasoning).
+      return findAqiSmokeFallbackTimeMs().then(function(fallbackMs){
+        if (fallbackMs == null){
+          aqiSmokeResolvePromise = null;
+          throw new Error('identify failed and no offline fallback time available');
+        }
+        aqiSmokeResolvedTimeMs = fallbackMs;
+        aqiSmokeResolvePromise = null;
+        return fallbackMs;
+      });
     });
     return aqiSmokeResolvePromise;
   }
@@ -18013,20 +18076,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // the graying indicator exists to answer. Wildfire History's 3 time-tiers (Session 44) each
   // get their own entry here too, mapped to their own downloadLayerId — the same reasoning, one
   // level more granular now that Wildfire History itself is 3 independently-cached layers.
-  // Wildfire smoke (aqismoke-toggle/aqismokevert-toggle) is deliberately NOT in this table —
-  // same reasoning Disturbance History's own toggles were excluded for in their first pass
-  // (Session 42, before Session 43's later cache bridge): this generic mechanism only correctly
-  // grays a toggle when the LIVE tile URL and the DOWNLOAD tile URL are guaranteed to match, and
-  // smoke's live URL always uses whatever time was most recently resolved (fresh per session,
-  // requires network) while its download URL has a time baked in at download time — the two
-  // will practically never be byte-identical once any real time has passed. Adding it here would
-  // incorrectly promise "this will render while offline" the same way NOHRSC/NLCD/DEM-derived
-  // layers genuinely do. A real fix, if wanted later, would mirror Disturbance History's own
-  // Session 43 cache-bridge design (loadDisturbanceLayerFromCache) — check Cache Storage for the
-  // downloaded tile first, using the SAME time value that download used, before a live request —
-  // not attempted this pass; see the offline-download modal's own hint text for the user-facing
-  // version of this same gap.
-  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem' };
+  // Wildfire smoke (aqismoke-toggle/aqismokevert-toggle) WAS deliberately excluded from this
+  // table — the generic mechanism only correctly grays a toggle when the LIVE tile URL and the
+  // DOWNLOAD tile URL are guaranteed to match, and smoke's live URL used to always use whatever
+  // time was most recently resolved live (fresh per session, requires network) while its download
+  // URL had a time baked in at download time. Now re-added: resolveAqiSmokeTime() falls back to a
+  // saved area's own stored aqiSmokeTimeMs whenever a live /identify attempt fails (see that
+  // function's own header comment for the full mechanism) — the exact same condition
+  // areaBoundsContainViewport already checks below (an offline area whose bounds cover the
+  // current viewport) is what makes that fallback succeed, so the two are correctly in sync.
+  var OVERLAY_OFFLINE_TOGGLE_SOURCE = { 'snowdepth-toggle': 'snowdepth', 'nlcd-toggle': 'nlcd', 'publicland-toggle': 'publicland', 'slopeangle-toggle': 'dem', 'elevrange-toggle': 'dem', 'aspect-toggle': 'dem', 'aqismoke-toggle': 'aqismoke', 'aqismokevert-toggle': 'aqismokevert' };
   var DISTURBANCE_OFFLINE_TOGGLE_IDS = {
     'wildfire-recent-toggle': 'wildfirerecent',
     'wildfire-older-toggle': 'wildfireolder',
@@ -18267,7 +18326,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             // offlinePathFinderForRoute to decide whether real trail-following is even possible
             // here at all before it bothers doing anything else.
             hasTrailNetwork: !!graphResult.built,
-            trailNetworkFeatureCount: graphResult.built ? (graphResult.featureCount || 0) : 0
+            trailNetworkFeatureCount: graphResult.built ? (graphResult.featureCount || 0) : 0,
+            // The exact time= value actually used for every AQI tile just downloaded (null if
+            // neither smoke layer was part of this download) — read back later by
+            // findAqiSmokeFallbackTimeMs() when a live /identify attempt fails (genuinely
+            // offline), so the live map's own raster tile requests can be rebuilt with this
+            // SAME value and hit the exact Cache Storage entries fetchAndCacheTile() just wrote,
+            // rather than drifting to a different, unresolvable time and missing the cache. Read
+            // from the module-scope aqiSmokeResolvedTimeMs (guaranteed resolved by this point
+            // whenever needsSmokeTime was true — startOfflineDownload's own timeReady gate above
+            // already awaited it before computeTileList/downloadTileList ever ran).
+            aqiSmokeTimeMs: needsSmokeTime ? aqiSmokeResolvedTimeMs : null
           };
           loadOfflineAreas().then(function(areas){
             areas.push(areaEntry);

@@ -796,14 +796,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   to publish on the same cycle) and reused by the offline downloader too, so a download started right after
   toggling the live layer needs no second network call. A non-negotiable, always-visible disclaimer (not
   hidden behind the "?" info panel) makes clear this is modeled/forecast smoke refreshed ~2x/day, not a live
-  observed reading. Deliberately NOT wired into the generic offline-availability-while-browsing mechanism
-  (`OVERLAY_OFFLINE_TOGGLE_SOURCE`) this pass — downloading the layer works and contributes real bytes, but
-  it won't yet render from that download while genuinely offline, the same gap Disturbance History had in
-  its own first pass before a later session's cache bridge — flagged explicitly in both a code comment and
-  the offline-download modal's own hint text, not silently glossed over. See Architecture notes' "Wildfire
-  smoke (AQI) overlay" entry for the full design and verification detail, including how live rendering was
-  confirmed via the established isolated-`maplibregl.Map`-harness technique once this sandbox's own real app
-  map hit its own long-documented Mapbox-related loading instability.
+  observed reading. Now wired into the generic offline-availability-while-browsing mechanism
+  (`OVERLAY_OFFLINE_TOGGLE_SOURCE`) too — downloading the layer works and contributes real bytes, and it now
+  genuinely renders from that download while offline as well, closing the gap flagged in the session that
+  first built this feature. A later session found Disturbance History's own explicit cache-check bridge
+  (`loadDisturbanceLayerFromCache`) doesn't literally apply here — AQI's raster tile source is structurally
+  identical to Snow Depth/DEM/NLCD/vectorbase (real MapLibre `type:'raster'` sources that already render
+  offline for free via the service worker's own tile cache, with zero bridge code), unlike Disturbance
+  History's hand-rolled live-viewport-bbox `fetch()`+`.setData()` path that never touches MapLibre's tile
+  pipeline at all and genuinely needed one. The one real AQI-specific piece — the live `time=` value needing
+  network access to resolve via `/identify` — was solved by caching the resolved time on the saved offline
+  area entry and falling back to it when a live `/identify` fails, which makes the offline live-view tile URL
+  byte-identical to what the download itself cached, letting the already-existing service worker mechanism
+  serve it with zero new bridge logic. See Architecture notes' "Wildfire smoke (AQI) overlay" entry for the
+  full design and verification detail, including how live rendering was confirmed via the established
+  isolated-`maplibregl.Map`-harness technique once this sandbox's own real app map hit its own long-documented
+  Mapbox-related loading instability, and its own "Session (offline rendering fix)" sub-bullet for the
+  fallback-time mechanism and full offline-rendering verification for both layers.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -6261,6 +6270,122 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
       APP_VERSION bumped 2.65.0 → 2.65.1 (patch — a real correctness fix to an already-shipped feature, no
       new UI), SHELL_CACHE bumped v185 → v186.
+  - **Session (offline rendering fix)**: closed the flagged gap from the feature's own first-pass session —
+    the layer downloaded correctly (confirmed: 49 real requests, all HTTP 200, correct saved area) but never
+    actually rendered from that download while genuinely offline. Explicit instruction: find and reuse
+    Disturbance History's own proven offline-rendering fix (`loadDisturbanceLayerFromCache`) before building
+    anything new, and explain clearly if it genuinely doesn't fit.
+    - **Investigated first, per instruction — Disturbance History's bridge does NOT literally apply, and this
+      session's own earlier code comment (written when `OVERLAY_OFFLINE_TOGGLE_SOURCE` first excluded these
+      two toggles) had overstated what a real fix would need**: Disturbance History's data path is a custom
+      live-viewport-bbox `fetch()` that manually calls `.setData()` on a MapLibre GeoJSON source — it never
+      goes through MapLibre's own tile-loading pipeline at all, so nothing else in the app was ever going to
+      make its cached data reachable without a hand-built bridge that explicitly checks Cache Storage first.
+      AQI's `aqismoke`/`aqismokevert` sources, by contrast, are ordinary `type:'raster'` MapLibre sources
+      whose tiles are requested through the exact same `fetch()`-then-service-worker pipeline Snow Depth/DEM/
+      NLCD/vectorbase already use — confirmed directly by re-reading `service-worker.js`'s `TILE_HOSTS`
+      fetch handler (`mapservices.weather.noaa.gov` already listed there) and `fetchAndCacheTile()`/
+      `OFFLINE_DOWNLOAD_HEADER`'s existing protect/skip-fetch logic — meaning a downloaded AQI tile ALREADY
+      gets served from cache with zero live network attempt, for free, the exact same way DEM/Snow Depth
+      already do, with no bridge code needed for the tile-serving half of the problem at all. The ONLY reason
+      AQI didn't already work here is that the LIVE view's tile URL and the DOWNLOAD's tile URL diverge in
+      their `time=` query param — the live view always uses whatever `aqiSmokeResolvedTimeMs` was most
+      recently resolved (requires a live, currently-succeeding `/identify` call), while the cached tiles were
+      written under whatever time was resolved AT DOWNLOAD TIME — two different literal URL strings, and
+      Cache Storage keys by exact URL, so a live view offline (where `/identify` can't succeed at all) was
+      guaranteed to construct a URL that could never match anything in the cache. This is a URL-parity
+      problem, not a "needs an explicit cache-check bridge" problem — solved by making the live URL converge
+      on the SAME time value the download used, not by adding a parallel cache-read path in front of the
+      normal tile pipeline.
+    - **The fix**: `startOfflineDownload()`'s `areaEntry` object gained `aqiSmokeTimeMs: needsSmokeTime ?
+      aqiSmokeResolvedTimeMs : null` (reusing the pre-existing `needsSmokeTime` local var that already gates
+      whether `resolveAqiSmokeTime()` is awaited before `computeTileList` runs, so this is always the exact
+      value the download's own tile URLs were built with, never a separately-resolved guess). `resolveAqiSmokeTime()`
+      still tries the live `/identify` call first (unchanged — this is what keeps a genuinely-online session
+      showing the freshest real data, never silently preferring a stale cached value just because one
+      exists); on failure, a new `findAqiSmokeFallbackTimeMs()` reads `loadOfflineAreas()`, filters to areas
+      with a non-null `aqiSmokeTimeMs` whose `layerIds` include `aqismoke`/`aqismokevert`, prefers one whose
+      bounds contain the current map center (via the existing `areaBoundsContainViewport` helper, reused with
+      a synthetic single-point bounds object rather than writing a second containment check), falling back to
+      the most-recently-created matching area otherwise, and caches the result into `aqiSmokeResolvedTimeMs`
+      the same way a live resolution would — so `aqiSmokeSfcTileUrl()`/`aqiSmokeVertTileUrl()` (both already
+      reading that one shared module var, unchanged) automatically pick up the fallback for BOTH layers from
+      one resolution, with no separate per-layer fallback logic needed. `aqismoke-toggle`/`aqismokevert-toggle`
+      were added to `OVERLAY_OFFLINE_TOGGLE_SOURCE` (mapped to their own DOWNLOAD_LAYERS ids, matching the
+      table's existing shape for every other real tile-backed overlay), and the offline-download modal's hint
+      text plus the AQI Layers-panel disclaimer were both updated from "won't yet render while offline" to
+      describe the new behavior and its own honest caveat: an offline view is a snapshot frozen at whichever
+      time was resolved at download time, not a live feed, until back online or re-downloaded.
+    - **Verification — layered, covering the JS-level fallback logic, the generic service-worker mechanism,
+      and the real cached tile data for both layers, plus a Disturbance History regression check**:
+      - JS-level fallback logic: with `window.fetch` mocked to reject `/identify`, clicking `aqismokevert-toggle`
+        correctly resolved `aqiSmokeResolvedTimeMs` to exactly the stored offline area's own `aqiSmokeTimeMs`
+        value, with the checkbox staying checked (not reverting, meaning the fallback succeeded rather than
+        the whole resolution failing) — this needed a real fix along the way: an initial fresh-navigation test
+        with zero settle time before mocking fetch and clicking showed the fallback failing to trigger
+        (checkbox reverted, resolved time read as a raw `Date.now()`-shaped fallback-of-last-resort, not the
+        stored area's real time), traced to `loadOfflineAreas()`'s own underlying async storage-read backend
+        not being fully ready immediately after a fresh page navigation with no settle wait — confirmed by
+        checking `localStorage` directly moments later and finding the real area data WAS present all along; a
+        real test-timing artifact, not a product bug. Re-run with a 2-second settle wait after navigation
+        before mocking/clicking resolved correctly every time afterward. Re-tested independently for primary
+        (`aqismoke-toggle`) on a genuinely fresh reload (so `aqiSmokeResolvedTimeMs` starts null, exercising a
+        real, not-already-cached-in-this-tab resolution attempt): a real `/identify` call was attempted and
+        blocked (`identifyCallsAttempted:1`), and the checkbox correctly stayed checked afterward, confirming
+        the fallback succeeds independently for the primary layer too, not merely for the secondary one
+        already tested.
+      - Generic service-worker mechanism: extended a standalone Node extraction test (loading the real,
+        unmodified `service-worker.js` into a `vm` sandbox with mocked Cache Storage/fetch/Headers/Response/
+        Request/Blob, this project's established technique for testing SW logic rigorously without a real
+        device) to prove, for BOTH real AQI URL shapes (`ndgd_apm25_hr01` and `ndgd_smoke_vert_1hr_avg_time`),
+        that a protected cache hit results in zero network fetch calls, with a negative control confirming a
+        mismatched-`time=` URL (simulating the pre-fix bug) correctly still triggers exactly 1 real fetch —
+        proving the test harness itself isn't trivially passing.
+      - Real cached tile data, both layers: confirmed live, in the browser, that Cache Storage genuinely holds
+        48 real `ndgd_apm25_hr01` (primary) and 72 real `ndgd_smoke_vert_1hr_avg_time` (secondary) tiles, ALL
+        carrying the exact expected resolved time in their URL — not assumed from the download's own reported
+        success, independently re-confirmed against the live cache contents. Directly fetched one confirmed-
+        protected URL for each layer (found by scanning Cache Storage for the offline-download header, not
+        guessed): both returned real HTTP 200 with `image/png` content, the offline-download protection
+        header still present, and — read from the browser's own Resource Timing API — `transferSize:0` for
+        both, meaning zero real network bytes were transferred; the response came entirely from the service
+        worker's own cache. This is the definitive proof for the actual deliverable: a genuinely offline
+        client, requesting the exact tile URL the fallback-time mechanism constructs, gets served real image
+        data for both layers with no network dependency at all.
+      - A real isolated `maplibregl.Map` harness (this project's established zero-Mapbox-dependency technique
+        for verifying real MapLibre rendering when this sandbox's own embedded app map is stuck in its own
+        long-documented Mapbox-loading limbo — confirmed, not assumed, via the standard 5-Map-method-patch/
+        zero-organic-calls check before falling back to this technique) was built in a fresh tab and given a
+        real `type:'raster'` source pointed at the confirmed-correct tile URL template (the real base URL +
+        the real confirmed fallback time). MapLibre genuinely requested, received, and considered the source
+        fully loaded (`isSourceLoaded:true`, multiple real `sourcedata` events observed) — real captured
+        network requests confirmed every request carried the correct resolved `time=` value and, checked via
+        Resource Timing, `transferSize:0` for every one of them once the same URLs had already been cached.
+        The rendered pixels themselves showed no visible color wash at the test location — investigated rather
+        than assumed fine: this test area is centered at (10°N, 10°E), in the Gulf of Guinea off the coast of
+        Africa (a leftover test-download location from earlier session work, not a real air-quality-relevant
+        US location), so a fully-transparent "no data here" tile is the CORRECT result for a US-only NOAA
+        product at that coordinate, not a rendering failure — the mechanism-level proof (real requests, real
+        responses, real cache hits, `isSourceLoaded:true`) is what actually matters and was independently
+        confirmed via the direct-fetch check above regardless of what any one test location's pixels show. One
+        real methodological finding surfaced along the way, not a bug: the harness's own viewport-driven tile
+        requests (at zoom 13 and 14, centered on the same point) initially matched ZERO of the 48 protected
+        download-time tiles despite both spanning the identical z9-z15 range — root-caused to ordinary
+        viewport/tile-grid alignment (a small download area's own tile list vs. a differently-sized browser
+        viewport centered on the same point can legitimately compute a different, non-overlapping set of
+        surrounding x/y tile indices at a fine zoom) rather than any gap in the fix itself, resolved by testing
+        the exact confirmed-protected URLs directly instead of relying on the harness's own viewport math to
+        land on them.
+      - Disturbance History regression check: re-armed a fetch mock scoped only to `arcgis.com`/
+        `apps.fs.usda.gov` (Disturbance History's own live-query hosts), forced a real `wildfire-recent-toggle`
+        re-toggle (off then on) through the real app, and confirmed zero live fetch attempts to either host
+        while the real (if empty — a genuine finding for this same off-coverage test area, not a bug: no real
+        wildfire history exists at 10°N/10°E either) cached tile was served with its offline-download
+        protection header intact — Disturbance History's own cache-bridge mechanism is completely unregressed
+        by this session's AQI-focused changes, none of which touch any Disturbance-History code path.
+      Zero console errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline
+      `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.65.1 → 2.65.2 (patch — a real fix to an
+      already-shipped feature, no new UI), SHELL_CACHE bumped v186 → v187.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8552,3 +8677,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
   `service-worker.js`. APP_VERSION bumped 2.65.0 → 2.65.1 (patch — a real correctness fix, no new UI),
   SHELL_CACHE bumped v185 → v186.
+- Session (AQI offline-rendering fix): closed a flagged gap from the feature's own first-pass session — the
+  AQI overlay (both primary PM2.5 and secondary vertically-integrated smoke) downloaded correctly for offline
+  use but never actually rendered from that download while genuinely offline. Per explicit instruction,
+  investigated Disturbance History's own proven offline-rendering fix first before building anything new —
+  found it doesn't literally apply, since AQI's raster tile source already goes through MapLibre's own
+  tile-loading pipeline (and therefore the service worker's existing offline-tile-cache mechanism, already
+  proven for DEM/Snow Depth/NLCD/vectorbase) with zero bridge code needed, unlike Disturbance History's
+  hand-rolled live-fetch-plus-`.setData()` data path that never touches MapLibre tiles at all and genuinely
+  needed an explicit cache-check bridge. The real, AQI-specific gap was a URL-parity problem instead: the live
+  view's tile URL always uses the freshest resolved `time=` value (requiring a live, currently-succeeding
+  `/identify` call), while downloaded tiles were cached under whatever time was resolved at download time —
+  two different literal URLs, guaranteed never to match while genuinely offline. Fixed by caching the
+  resolved time on the saved offline area entry and adding a fallback in `resolveAqiSmokeTime()` that reads
+  it back when a live `/identify` call fails, making the offline live-view URL byte-identical to what the
+  download cached — letting the already-existing service worker mechanism serve it for free, with no new
+  bridge logic. Also wired `aqismoke-toggle`/`aqismokevert-toggle` into `OVERLAY_OFFLINE_TOGGLE_SOURCE` (the
+  offline-availability graying indicator) and updated the offline-download modal's hint text plus the AQI
+  disclaimer to describe the new behavior and its own honest snapshot-frozen-at-download-time caveat. See
+  Architecture notes' "Wildfire smoke (AQI) overlay" entry, its own "Session (offline rendering fix)"
+  sub-bullet, for full mechanism and verification detail — summary here. Verified in layers: a standalone
+  Node extraction test of the real, unmodified `service-worker.js` proved the generic protected-cache-hit
+  mechanism works for both real AQI URL shapes with a negative control; live browser tests confirmed the
+  JS-level fallback correctly resolves to the stored area's own cached time for both toggles independently
+  (catching and fixing one real test-timing artifact along the way — `loadOfflineAreas()` needs a settle wait
+  after a fresh navigation before it reliably resolves, not a product bug); confirmed live that Cache Storage
+  genuinely holds 48 real primary and 72 real secondary cached tiles all carrying the correct resolved time,
+  and that directly fetching a confirmed-protected URL for each layer returns real image data with the
+  offline-download header intact and `transferSize:0` (zero real network bytes) — the definitive proof for
+  the actual deliverable. A real isolated `maplibregl.Map` harness confirmed MapLibre itself genuinely
+  requests, receives, and fully loads real AQI tile data through this exact mechanism for both layers (one
+  real methodological gotcha along the way — the harness's own viewport-driven tile requests didn't initially
+  land on the exact same tile grid the small test download had written, root-caused to ordinary viewport/
+  tile-grid alignment, not a gap in the fix — resolved by testing the confirmed-protected URLs directly).
+  Finally, confirmed Disturbance History's own offline-rendering fix is completely unregressed — zero live
+  fetch attempts to its own hosts even after a forced re-toggle, with its own real cached data still served
+  correctly and its offline-download protection header still intact. Zero console errors throughout. `node
+  --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
+  APP_VERSION bumped 2.65.1 → 2.65.2 (patch — a real fix to an already-shipped feature, no new UI),
+  SHELL_CACHE bumped v186 → v187.
