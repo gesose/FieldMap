@@ -779,11 +779,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   including the 3 new vendored libraries this required (`pbf`/`@mapbox/vector-tile`/`geojson-path-finder`,
   bundled with esbuild since this repo has no build step of its own) and exactly how the whole pipeline was
   verified given this sandbox's own long-standing Mapbox v4 block.
-- Wildfire smoke (AQI) overlay — a new Environmental-section overlay pair (near-surface smoke, the primary/
-  default layer, plus a vertically-integrated secondary toggle, mutually exclusive with each other) using
+- Wildfire smoke (AQI) overlay — a new Environmental-section overlay pair (near-surface AQI, the primary/
+  default layer, plus a vertically-integrated smoke secondary toggle, mutually exclusive with each other) using
   NOAA's live NDGD ImageServer, the exact same `mapservices.weather.noaa.gov` `/raster/rest/services/...`
   architecture the existing Snow Depth (NOHRSC) overlay already uses — already Web Mercator, already
-  colorized server-side, no client-side GRIB2 decode/reprojection/rendering needed at all. The one genuinely
+  colorized server-side, no client-side GRIB2 decode/reprojection/rendering needed at all. The primary layer's
+  real data source was corrected in a follow-up session after a real-device report caught it rendering a
+  monochrome brown wash instead of the standard EPA AQI scale — it now uses NOAA's `ndgd_apm25_hr01` (real
+  PM2.5 concentration, real green→yellow→orange→red→purple→maroon EPA colors, pixel-confirmed against the
+  real EPA breakpoints), not the raw smoke-mass-density product the vert toggle still uses (which has no
+  standard AQI-style palette of its own — see Architecture notes' own "Session (real color-rendering bug...)"
+  sub-bullet for the full investigation). The one genuinely
   new piece of logic Snow Depth never needed: this service is time-enabled, so the tile URL needs a real
   resolved `time=` value, obtained once per session via a live `/identify` check (reading the raw
   `idp_validtime` field) rather than guessing "now" — cached and shared between both layers (confirmed live
@@ -6196,6 +6202,65 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     entire test session, confirmed via `read_console_messages` with `onlyErrors:true` on a fresh page load.
     `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
     APP_VERSION bumped 2.64.2 → 2.65.0 (minor — new feature), SHELL_CACHE bumped v184 → v185.
+  - **Session (real color-rendering bug — wrong NOAA product, not a FieldMap rendering bug)**: a real device
+    confirmed (direct side-by-side against Apple Weather's AQI map for the same area) that the overlay
+    rendered a monochrome rust/brown wash, not the standard EPA AQI green→yellow→orange→red→purple palette.
+    Investigated both hypotheses the task named, in order, with real evidence for each, per explicit
+    instruction not to assume:
+    - **Hypothesis 1 (a `raster-*` paint property altering color, possibly copied from Snow Depth) — ruled
+      out by direct code search**: grepped the whole file for `raster-hue-rotate`/`raster-saturation`/
+      `raster-brightness`/`raster-contrast` and found none anywhere, for either smoke layer or Snow Depth
+      itself — both layers' `paint` blocks have only ever set `raster-opacity`. Nothing was "copied over and
+      left wrong."
+    - **Hypothesis 2 (the raw NOAA source itself isn't the standard palette) — confirmed true, contradicting
+      the task's own stated premise that "the correct colors exist in the raw image"**: fetched the raw
+      `exportImage` PNG directly (same URL FieldMap's own `aqiSmokeSfcTileUrl()` builds, requested with plain
+      `fetch()` from a blank tab, decoded via `createImageBitmap`/canvas `getImageData` — bypassing this
+      app's rendering entirely, exactly as instructed) and found its top colors are ALL dusty rose/tan/rust
+      variants (`rgb(200,177,170)`, `rgb(199,176,169)`, `rgb(196,174,167)`, ...) — genuinely monochrome, not
+      colorized differently by FieldMap. Traced this to the specific NOAA service used
+      (`ndgd_smoke_sfc_1hr_avg_time`, the raw SMOKE MASS DENSITY field's default `smoke_don_0921` render
+      function) — a real, intensity-style visualization NOAA built for smoke mass, never designed to
+      represent the EPA's health-category AQI color convention, confirmed exhaustively via that service's own
+      metadata to expose only 2 rendering options total (`smoke_don_0921` or `None`, a raw grayscale
+      intensity stretch with no documented, stable value mapping) — no hidden "AQI-style" option existed on
+      that specific service to simply switch to.
+    - **The real fix, found by listing the FULL `air_quality` folder rather than assuming only the 2 smoke
+      services existed**: 18 real services live in that folder, including `ndgd_apm25_hr01` — "Air Quality
+      Forecast Guidance for Hourly Average PM2.5 (µg/m³) Concentration," a genuinely different metric (PM2.5
+      mass CONCENTRATION, the actual standard basis for wildfire-smoke AQI) with its own real
+      `apm25_color` render function. Fetched its real `exportImage` output the same bypass way and confirmed
+      a real green→yellow→orange→red progression, then pixel-checked its own legend swatches at the REAL EPA
+      PM2.5 breakpoint values and found an EXACT match: 0µg/m³ → `rgb(0,153,0)` green, 12µg/m³ →
+      `rgb(248,255,77)` yellow (12.0 is the real EPA Good/Moderate breakpoint), 35µg/m³ → `rgb(242,144,60)`
+      orange (35.4 is the real Moderate/USG breakpoint), 55µg/m³ → `rgb(232,32,32)` red (55.4 is the real
+      USG/Unhealthy breakpoint), 150µg/m³ → `rgb(167,59,117)` purple (150.4 is the real Unhealthy/Very
+      Unhealthy breakpoint), 252µg/m³ → `rgb(115,16,16)` maroon (250.4+ is Hazardous) — the genuine, official
+      EPA AQI scale, not an approximation. Same NOAA/NWS copyright, same Web Mercator SR, same F32/1-band
+      shape, same `idp_validtime`-based `/identify` resolution, same ~2x/day cadence (re-confirmed live) as
+      the smoke service it replaces — a clean, same-architecture swap of `AQI_SMOKE_SFC_BASE_URL`'s value,
+      not a new rendering pipeline.
+    - **The secondary (vertically-integrated) toggle was deliberately left on the smoke MASS product**: there
+      is no "vertically-integrated PM2.5" concept in NOAA's own catalog — PM2.5 concentration is inherently a
+      surface/breathable-air measurement (every PM2.5 product in the folder, `hr01`/`hr24`/their `_bc`
+      variants, is sfc-only). Relabeled it "Smoke — vertically integrated (**not AQI**)" and rewrote its info-
+      panel description to explicitly explain it's now a genuinely different metric from the primary layer
+      (total column smoke haze, no standard health-based color convention), so the remaining color difference
+      between the two toggles reads as intentional, not a leftover inconsistency.
+    - **Verification, given the same explicit demand as prior real-device bug fixes — real evidence, not
+      "colors render"**: this sandbox's real embedded app map again hit the same well-documented Mapbox-
+      related loading instability the previous session's fix also hit (confirmed via the same 5-Map-method-
+      patch/zero-organic-calls check, then the same isolated-`maplibregl.Map`-harness workaround). The
+      harness's own source was seeded from the REAL production `window.FieldMapDebug.tileUrlForLayer('aqismoke',
+      ...)` output (confirmed to genuinely contain `ndgd_apm25_hr01` and the real resolved `idp_validtime`),
+      not a hand-typed approximation. A real zoomed screenshot of the rendered result shows a clean, correct
+      green→yellow→orange→red→dark-maroon gradient with real localized hotspots — visually unmistakable as
+      the standard AQI palette, a completely different result from the old monochrome wash. `read_console_messages`
+      confirmed zero errors. Separately re-confirmed the offline downloader's own `tileUrlForLayer('aqismoke',
+      ...)` output resolves to the new `ndgd_apm25_hr01` URL and returns a real HTTP 200 `image/png`. `node
+      --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`.
+      APP_VERSION bumped 2.65.0 → 2.65.1 (patch — a real correctness fix to an already-shipped feature, no
+      new UI), SHELL_CACHE bumped v185 → v186.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8453,3 +8518,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   errors throughout. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
   `service-worker.js`. APP_VERSION bumped 2.64.2 → 2.65.0 (minor — new feature), SHELL_CACHE bumped v184 →
   v185.
+- Session (AQI overlay color-rendering bug fix — wrong NOAA product, not a FieldMap bug): a real device
+  report, confirmed via direct side-by-side comparison against Apple Weather's AQI map for the same area,
+  said the overlay showed a monochrome rust/brown wash instead of the standard EPA AQI green→yellow→orange→
+  red→purple palette. See Architecture notes' "Wildfire smoke (AQI) overlay" entry, its own second sub-
+  bullet, for full investigation/fix/verification detail; summary here. Investigated both hypotheses named in
+  the task, in order, with real evidence, per explicit instruction not to assume: (1) a `raster-*` paint
+  property copied from Snow Depth — ruled out immediately via a direct code search finding no
+  `raster-hue-rotate`/`raster-saturation`/`raster-brightness`/`raster-contrast` anywhere in the file for
+  either layer; (2) whether the raw NOAA source itself is the standard palette — the task's own stated
+  premise was that it is, based on a prior research session's `/legend` check; fetched the raw `exportImage`
+  PNG directly (same URL FieldMap's own code builds, decoded via `createImageBitmap`/canvas pixel readback,
+  completely bypassing this app's rendering) and found this premise was actually WRONG: the raw source itself
+  is genuinely monochrome brown/rust, confirmed via real pixel data, not FieldMap altering anything. Traced
+  this to which NOAA product was being used — `ndgd_smoke_sfc_1hr_avg_time` is raw smoke MASS DENSITY, a
+  meteorological intensity field never designed to represent the EPA's AQI health-category color convention,
+  confirmed exhaustively via that service's own metadata to expose only 2 rendering options total, neither of
+  them AQI-styled. Found the real fix by listing the FULL `air_quality` service folder rather than assuming
+  only the 2 previously-known smoke services existed — 18 real services live there, including
+  `ndgd_apm25_hr01` (real PM2.5 concentration forecast guidance), whose own real `apm25_color` render
+  function was pixel-checked at the real EPA PM2.5 breakpoint values (12/35/55/150/250 µg/m³) and matched the
+  official EPA AQI color scale exactly — green/yellow/orange/red/purple/maroon, not an approximation. Swapped
+  the primary layer's base URL to this service (same architecture, same time-resolution mechanism, same
+  ~2x/day cadence, re-verified live) — a clean, minimal, same-pattern fix, not a new rendering pipeline.
+  Deliberately left the secondary vertically-integrated toggle on the original smoke-mass product (no
+  "vertically-integrated PM2.5" concept exists in NOAA's own catalog) but relabeled it "not AQI" and rewrote
+  its description so the remaining color difference between the two toggles reads as an intentional, genuine
+  metric difference rather than a leftover inconsistency. Verified live: hit the same well-documented sandbox
+  map-loading instability the previous session's fix also hit, worked around with the same established
+  isolated-`maplibregl.Map`-harness technique, seeded from the REAL production `tileUrlForLayer` output (not
+  hand-typed) — a real zoomed screenshot shows an unmistakable, correct green→yellow→orange→red→maroon
+  gradient with real localized hotspots, a completely different result from the old monochrome wash. Zero
+  console errors. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+  `service-worker.js`. APP_VERSION bumped 2.65.0 → 2.65.1 (patch — a real correctness fix, no new UI),
+  SHELL_CACHE bumped v185 → v186.

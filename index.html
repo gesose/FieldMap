@@ -2324,21 +2324,21 @@
       </div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="aqismoke-toggle"> Wildfire smoke <button class="layer-hint-btn" data-layer-id="lh-aqismoke" title="About">?</button>
+        <input type="checkbox" id="aqismoke-toggle"> Wildfire smoke (AQI) <button class="layer-hint-btn" data-layer-id="lh-aqismoke" title="About">?</button>
       </label>
       <div class="opacity-row" id="aqismoke-opacity-row"><input type="range" id="aqismoke-opacity" min="20" max="100" value="60"></div>
-      <p class="gmu-disclaimer">Modeled smoke, not a live reading — NOAA's forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet.</p>
+      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet.</p>
       <div class="layer-info-panel" id="lh-aqismoke">
-        <div class="layer-info-desc">Near-surface wildfire smoke concentration — what's actually breathable/visible at ground level, from NOAA's HRRR-Smoke-derived forecast guidance. Same live-image-overlay architecture as Snow Depth above.</div>
+        <div class="layer-info-desc">Near-surface PM2.5 concentration — the standard basis for wildfire-smoke air quality — colored on the real, standard EPA AQI scale (green/yellow/orange/red/purple/maroon). Same live-image-overlay architecture as Snow Depth above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
       </div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="aqismokevert-toggle"> Wildfire smoke — vertically integrated <button class="layer-hint-btn" data-layer-id="lh-aqismokevert" title="About">?</button>
+        <input type="checkbox" id="aqismokevert-toggle"> Smoke — vertically integrated (not AQI) <button class="layer-hint-btn" data-layer-id="lh-aqismokevert" title="About">?</button>
       </label>
       <div class="opacity-row" id="aqismokevert-opacity-row"><input type="range" id="aqismokevert-opacity" min="20" max="100" value="60"></div>
       <div class="layer-info-panel" id="lh-aqismokevert">
-        <div class="layer-info-desc">Total smoke through the full atmospheric column, not just ground level — useful for spotting smoke aloft that hasn't reached the surface yet. Same modeled/twice-daily-refresh caveat as near-surface smoke above.</div>
+        <div class="layer-info-desc">Total smoke through the full atmospheric column, not just ground level — useful for spotting smoke aloft that hasn't reached the surface yet. This is a different measurement than the AQI layer above (total smoke mass, not a health-based air-quality value), which is why its own color scale looks different — there's no standard AQI-style palette for column smoke. Same modeled/twice-daily-refresh caveat as the AQI layer above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
       </div>
 
@@ -3326,7 +3326,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.65.0';
+  var APP_VERSION = '2.65.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4537,18 +4537,40 @@
   // it manually for its own tile-by-tile fetch loop — see webMercatorTileBbox).
   var SNOWDEPTH_TILE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/snow/NOHRSC_Snow_Analysis/MapServer/export?' +
     'bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0&f=image';
-  // NOAA NDGD wildfire smoke — two live ArcGIS ImageServers (not MapServers like Snow Depth
-  // above, hence /exportImage + no layers= param, not /export + layers=show:0 — the correct
-  // adaptation of the same overall pattern for a different ArcGIS service TYPE, not a
-  // deviation from it), confirmed live: already Web Mercator (no reprojection), already
-  // colorized server-side (a real 150-stop color ramp is the default renderer — confirmed via
-  // a live /legend?f=json check), same {bbox-epsg-3857} MapLibre-native token substitution.
-  // Near-surface (sfc, 8m AGL — what's actually breathable at ground level) is the primary/
-  // default layer per spec; vertically-integrated (vert, full atmospheric column) is the
-  // secondary toggle. Both are on the SAME publish cycle (confirmed live via matching
-  // idp_validtime values from both services' own /identify responses), so one resolved time
-  // value is shared by both — see resolveAqiSmokeTime().
-  var AQI_SMOKE_SFC_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_smoke_sfc_1hr_avg_time/ImageServer';
+  // NOAA NDGD air quality — two live ArcGIS ImageServers (not MapServers like Snow Depth above,
+  // hence /exportImage + no layers= param, not /export + layers=show:0 — the correct adaptation
+  // of the same overall pattern for a different ArcGIS service TYPE, not a deviation from it),
+  // confirmed live: already Web Mercator (no reprojection), already colorized server-side, same
+  // {bbox-epsg-3857} MapLibre-native token substitution.
+  // SFC (primary/default) is `ndgd_apm25_hr01` — Hourly PM2.5 concentration forecast guidance —
+  // deliberately NOT `ndgd_smoke_sfc_1hr_avg_time` (raw smoke MASS DENSITY) despite the near-
+  // identical name/shape: a real color-rendering bug report (confirmed on a real device against
+  // Apple Weather's AQI map showing the standard palette for the same area) traced to the smoke
+  // service's own default renderer (`smoke_don_0921`) genuinely being a brown/rust/tan intensity
+  // ramp, NOT the EPA's AQI health-category scale — confirmed directly via canvas pixel
+  // inspection of the RAW PNG fetched straight from NOAA (bypassing this app's rendering
+  // entirely): its top colors are all dusty rose/tan/rust variants, e.g. rgb(200,177,170),
+  // rgb(196,174,167) — genuinely monochrome, not a bug in how this app draws it. `ndgd_apm25_hr01`
+  // (found via a full listing of every service in the same `air_quality` folder — 18 total,
+  // including several this app never previously investigated) uses a real `apm25_color` render
+  // function whose legend swatches were independently pixel-checked at the REAL EPA PM2.5
+  // breakpoint values and match EXACTLY: 0µg/m³ rgb(0,153,0) green, 12µg/m³ rgb(248,255,77)
+  // yellow, 35µg/m³ rgb(242,144,60) orange, 55µg/m³ rgb(232,32,32) red, 150µg/m³ rgb(167,59,117)
+  // purple, 252µg/m³ rgb(115,16,16) maroon — the genuine, standard, widely-recognized AQI scale,
+  // not an approximation. Same NOAA/NWS copyright, same Web Mercator SR, same F32/1-band raster
+  // shape, same `idp_validtime`-based /identify time resolution, same ~2x/day refresh cadence
+  // (confirmed live) as the smoke service it replaces — a clean swap, not a new architecture.
+  // VERT (secondary toggle) stays on `ndgd_smoke_vert_1hr_avg_time` (vertically-integrated smoke
+  // MASS, still the brown/rust ramp) deliberately — there is no "vertically-integrated PM2.5"
+  // concept in this NOAA catalog (PM2.5 concentration is inherently a surface/breathable-air
+  // measurement; NOAA's own PM2.5 products are all sfc-only: hr01/hr24, each with a "_bc"
+  // bias-corrected variant). The two toggles are now genuinely different METRICS, not just two
+  // views of the same one — SFC is real EPA-scale air quality; VERT is total-column smoke haze,
+  // useful for spotting smoke aloft before it reaches the ground, with no standard health-based
+  // color convention of its own. Both are still on the SAME publish cycle (confirmed live via
+  // matching idp_validtime values from both services' own /identify responses even after this
+  // swap), so one resolved time value is still shared by both — see resolveAqiSmokeTime().
+  var AQI_SMOKE_SFC_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_apm25_hr01/ImageServer';
   var AQI_SMOKE_VERT_BASE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/air_quality/ndgd_smoke_vert_1hr_avg_time/ImageServer';
   // A fixed, pre-verified-live point (central Colorado/Kansas, Web Mercator) used ONLY to ask
   // "what time slice is currently valid" via /identify — NOT tied to whatever the user is
@@ -7097,7 +7119,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var rasterSourceErrorShown = {};
       map.on('error', function(e){
         var srcId = e && e.sourceId;
-        var labels = { 'nlcd-source': 'Land cover (NLCD)', 'snowdepth-source': 'Snow depth', 'aqismoke-source': 'Wildfire smoke', 'aqismokevert-source': 'Wildfire smoke (vertically integrated)' };
+        var labels = { 'nlcd-source': 'Land cover (NLCD)', 'snowdepth-source': 'Snow depth', 'aqismoke-source': 'Wildfire smoke (AQI)', 'aqismokevert-source': 'Smoke (vertically integrated)' };
         if (!srcId || !labels[srcId] || rasterSourceErrorShown[srcId]) return;
         rasterSourceErrorShown[srcId] = true;
         showToast(labels[srcId] + ' tiles failed to load — the source service may be unavailable');
@@ -17212,12 +17234,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     snowdepth:  { label:'Snow depth', bboxUrlBuilder: snowdepthTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:6 },
     // Real (if small-sample) live measurement, not a guess: several actual exportImage tiles at
     // real z9 bboxes over Idaho/Montana/Wyoming (curl'd directly against the live service) came
-    // back 795-1,338 bytes each — mostly-uniform low-entropy PNG32 compresses extremely well,
-    // same reasoning as Snow Depth's own small avgKB. Real active-fire-season tiles with more
-    // color variation will run larger than this baseline; avgKB:3 splits the difference rather
-    // than assuming the quiet-conditions sample is representative of every download.
-    aqismoke:     { label:'Wildfire smoke (near-surface, modeled)', bboxUrlBuilder: aqiSmokeSfcOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
-    aqismokevert: { label:'Wildfire smoke — vertically integrated (modeled)', bboxUrlBuilder: aqiSmokeVertOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
+    // back 795-1,338 bytes each for the smoke service and 962-1,402 bytes for the PM2.5 service
+    // that replaced it as the primary layer's source (re-measured after the color-rendering fix,
+    // not carried forward from the pre-fix source) — mostly-uniform low-entropy PNG32 compresses
+    // extremely well either way, same reasoning as Snow Depth's own small avgKB. Real active-
+    // fire-season tiles with more color variation will run larger than this quiet-conditions
+    // baseline; avgKB:3 splits the difference rather than assuming the sample is representative.
+    aqismoke:     { label:'Wildfire smoke / AQI (PM2.5, modeled)', bboxUrlBuilder: aqiSmokeSfcOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
+    aqismokevert: { label:'Smoke — vertically integrated (modeled, not AQI)', bboxUrlBuilder: aqiSmokeVertOfflineTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:3 },
     nlcd:       { label:'Land cover (NLCD)', bboxUrlBuilder: nlcdTileUrl, minNativeZoom:1, maxNativeZoom:19, avgKB:10 },
     publicland: { label:'Public / private land', urlTemplate:'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:14, avgKB:2 },
     // Disturbance History (Session 42, offline-cache bridge added Session 43) — real
