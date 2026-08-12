@@ -9138,3 +9138,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   proven correct at the other 2, fully live-confirmed render sites. `node --check` confirmed clean syntax on
   all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.65.3 → 2.66.0
   (minor — real, if UI-scoped, restructuring across many existing features), SHELL_CACHE bumped v188 → v189.
+- Session (Wildfire History tier label rename): renamed the 3 Disturbance History wildfire time-tier labels
+  ("Wildfire — Recent (0-20 yrs)" / "Older (20-50 yrs)" / "Even Older (50+ yrs)" → "Wildfire: Recent
+  (<20 yrs)" / "Wildfire: Old (20-50 yrs)" / "Wildfire: Oldest (>50 yrs)") — a pure display-text change,
+  confirmed safe before editing per explicit instruction: grepped every reference to the old strings and
+  confirmed all internal logic (the `WILDFIRE_TIERS`-driven toggle wiring, `DOWNLOAD_LAYERS` keys
+  `wildfirerecent`/`wildfireolder`/`wildfireevenolder`, DOM ids `wildfire-recent-toggle` etc., and the
+  `LAYER_SECTION_TOGGLE_IDS`/offline-toggle-source maps) all key off stable internal ids, never the label
+  text itself — the `label:` string on each `DOWNLOAD_LAYERS` entry is read only for display (via
+  `document.createTextNode`/`.textContent`, confirmed at both of its real consumer sites — the offline-
+  download checklist and the saved-offline-areas list — so a literal `<`/`>` character renders safely as
+  plain text with no markup-breaking risk). Updated both the 3 Layers-panel checkbox labels (HTML, using
+  `&lt;`/`&gt;` entities since that's markup, not a JS string) and the matching `DOWNLOAD_LAYERS[...].label`
+  values (literal `<`/`>`, since those are plain JS strings later inserted as safe text nodes) so the same
+  layer shows one consistent name across both UI surfaces rather than drifting apart the way an earlier
+  session (36) once had to fix for a different mismatch. Deliberately left the "?" tooltip's own internal
+  legend sub-headers ("Recent (0-20 yrs)"/"Older (20-50 yrs)"/"Even Older (50+ yrs)", inside `lh-wildfire`'s
+  age-band color-key) untouched — they weren't named in the request and are a different sub-concept (age-
+  range group headers within the color legend, not the layer's own display name), flagged rather than
+  silently also renamed. Verified live via the already-connected Chrome browser extension against a local
+  `python -m http.server` (after clearing a stale `fieldmap-shell-v188` service-worker cache and restarting
+  the dev server, both killed by the prior session's own end-of-session cleanup, per this project's own
+  recurring pattern): confirmed all 3 new labels render exactly as specified in the real Layers panel;
+  confirmed all 3 toggles still function correctly — captured the live `Map` instance via the established
+  `Map.prototype.getLayer` monkey-patch and confirmed real clicks on each checkbox correctly flip both the
+  checkbox/opacity-row UI state AND the actual MapLibre layer visibility (`wildfire-{tier}-fill`/`-line`,
+  'none'↔'visible') for all 3 tiers independently, restoring the original persisted on/off state (Recent on,
+  Older/Even Older off) afterward; confirmed zero console errors across a full toggle cycle. Also confirmed,
+  beyond what was strictly asked, that the offline-download modal's real checklist shows the identical new
+  labels, and — a genuinely useful incidental finding — that a real, pre-existing saved offline area from an
+  earlier session (with `wildfirerecent` in its stored `layerIds`) immediately displayed the NEW label in
+  the saved-areas list with zero migration needed, confirming the label is resolved live from
+  `DOWNLOAD_LAYERS` at render time rather than baked into any persisted data. `node --check` confirmed clean
+  syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.66.0 →
+  2.66.1 (patch — cosmetic label rename, no behavior change), SHELL_CACHE bumped v189 → v190.

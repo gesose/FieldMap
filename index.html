@@ -2413,17 +2413,17 @@
       <div class="layer-subsection-title">Disturbance History</div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-recent-toggle"> Wildfire — Recent (0-20 yrs)
+        <input type="checkbox" id="wildfire-recent-toggle"> Wildfire: Recent (&lt;20 yrs)
       </label>
       <div class="opacity-row" id="wildfire-recent-opacity-row"><input type="range" id="wildfire-recent-opacity" min="20" max="100" value="55"></div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-older-toggle"> Wildfire — Older (20-50 yrs)
+        <input type="checkbox" id="wildfire-older-toggle"> Wildfire: Old (20-50 yrs)
       </label>
       <div class="opacity-row" id="wildfire-older-opacity-row"><input type="range" id="wildfire-older-opacity" min="20" max="100" value="55"></div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="wildfire-evenolder-toggle"> Wildfire — Even Older (50+ yrs)
+        <input type="checkbox" id="wildfire-evenolder-toggle"> Wildfire: Oldest (&gt;50 yrs)
       </label>
       <div class="opacity-row" id="wildfire-evenolder-opacity-row"><input type="range" id="wildfire-evenolder-opacity" min="20" max="100" value="55"></div>
       <!-- Session 47: the "?" used to sit inline on the Recent row's own label, but its ~20px
@@ -3367,7 +3367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.66.0';
+  var APP_VERSION = '2.66.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -17496,9 +17496,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // tier's own fraction of the full dataset, matching the live-query efficiency win this
     // 3-tier split exists for in the first place — a single shared entry covering all years
     // would have defeated that entirely for the offline-download path.
-    wildfirerecent:    { label:'Wildfire — Recent (0-20 yrs)', bboxUrlBuilder: wildfireRecentTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
-    wildfireolder:     { label:'Wildfire — Older (20-50 yrs)', bboxUrlBuilder: wildfireOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
-    wildfireevenolder: { label:'Wildfire — Even Older (50+ yrs)', bboxUrlBuilder: wildfireEvenOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfirerecent:    { label:'Wildfire: Recent (<20 yrs)', bboxUrlBuilder: wildfireRecentTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireolder:     { label:'Wildfire: Old (20-50 yrs)', bboxUrlBuilder: wildfireOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
+    wildfireevenolder: { label:'Wildfire: Oldest (>50 yrs)', bboxUrlBuilder: wildfireEvenOlderTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:180 },
     timberharvest:  { label:'Timber harvest history', bboxUrlBuilder: timberHarvestTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 },
     timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 }
   };
