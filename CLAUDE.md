@@ -838,6 +838,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   opening a modal, expanding a section, selecting a specific state — rather than persistent ambient clutter)
   and needed no change. See Architecture notes' "UI consolidation: audit fixes, mobile legends, accordion
   tooltips, always-visible rule" entry for the complete design and verification detail.
+- Fixed a real Buffer corridor rendering bug reported from a real device — a wide corridor's stroke rendered
+  as a tangled web of crossing lines instead of a clean boundary. Root cause was a genuine geometry bug in
+  `bufferPolygonCoords()` (Range Ring/Buffer's own from-scratch offset-polygon math, Session 21), not a
+  rendering/paint issue: the original join construction arced BOTH sides of every interior vertex
+  unconditionally, which is only correct on the convex/outer side of a turn — on the concave/inner side, an
+  arc between the two untrimmed, full-radius offset endpoints creates a loop that folds back across the
+  ring, reproducible at literally any buffer width (confirmed down to 0.1mi) for any drawn line with a real
+  turn. Fixed with a proper convex/concave-aware join (arc on convex, a mitered corner with a bevel fallback
+  on concave) plus a final bounded self-intersection cleanup pass that makes the function's own contract
+  ("returns a simple polygon") hold universally, including for the separate, harder case where the buffer
+  width is large relative to the drawn line's own leg lengths. See Architecture notes' "Buffer corridor
+  self-intersection fix" entry for the complete investigation, the two wrong intermediate fixes found and
+  corrected along the way, and full verification detail (a 750-trial randomized stress test plus live,
+  visual, screenshot-confirmed proof at 2 different bearings/widths).
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -6681,6 +6695,96 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
     2.65.3 → 2.66.0 (minor — real, if UI-scoped, restructuring across many existing features), SHELL_CACHE
     bumped v188 → v189.
+- Buffer corridor self-intersection fix — a real-device bug report described a wide corridor's stroke
+  rendering as "multiple orange lines fanning out and crossing each other in an X/web pattern" instead of a
+  clean boundary, on a "Chukar Country" object with `Width: 60 mi`. Investigated before touching any code,
+  per explicit instruction: confirmed the object type is Buffer, not a bearing-with-width corridor (the
+  "Width: N mi" text is `bufferPopupHtml`'s own meta line — bearings have no width field at all); confirmed
+  the actual geometry construction lives in `bufferPolygonCoords()` (Range Ring/Buffer's own from-scratch
+  offset-polygon math, Session 21 — see that entry's own "Geo-math" bullet for the original design); and
+  confirmed, via a real numeric reproduction (a hand-rolled Node port of the exact algorithm, not a guess),
+  that the GEOMETRY ITSELF is genuinely malformed (a self-intersecting ring), not a MapLibre paint/line-join
+  rendering artifact — `line-join`/`line-cap` were never touched, since there was never anything wrong to
+  adjust there.
+  - **Root cause, confirmed via a controlled reproduction, not assumed**: the original join construction
+    added a rounded ARC on BOTH sides (left and right) of every interior vertex unconditionally. An arc
+    between the two untrimmed, full-radius (`r` = the buffer's own width) offset endpoints is only
+    geometrically correct on the CONVEX/outer side of a turn — it bulges outward exactly as intended. On the
+    CONCAVE/inner side of the SAME turn, the exact same arc construction folds back across the ring, because
+    both endpoints are still displaced the FULL width `r` from the vertex, and an arc between two points that
+    far out, on the inner side of a bend, sweeps through territory that's actually on the wrong side of the
+    path. This is NOT a "wide buffer" or "pathological input" problem — a standalone Node reproduction proved
+    it's reproducible for ANY interior turn at literally any width, confirmed down to 0.1mi, contradicting
+    this function's own original doc comment ("Minkowski-sum robustness for pathological self-intersecting
+    input is out of scope" — that framing undersold how commonly the bug actually fired, since every turn's
+    concave side hit it regardless of scale). A SEPARATE, harder issue was also found and confirmed real: when
+    the buffer width is comparable to or exceeds the drawn line's own individual leg lengths (very plausible
+    for the real reported 60-mile-wide corridor), even a CORRECTLY mitered/trimmed concave join can still
+    reach far enough to cross a non-adjacent part of the ring (an end cap, or another segment's own offset
+    line) — this is the well-known "requires a true polygon union to solve completely" limitation any
+    per-vertex offset algorithm hits without a full boolean-geometry step.
+  - **The fix, in two layers, both needed**: (1) determine, per interior vertex per side, whether that side is
+    convex or concave for the turn there (`turnDelta(i)`, the signed bearing change at that vertex — positive/
+    right-turn means LEFT is convex and RIGHT is concave, negative means the reverse) — the convex side keeps
+    the existing arc unchanged; the concave side instead computes the real line-line intersection of the two
+    ADJACENT SEGMENTS' OWN offset lines (`concaveCornerPoint`, a local planar-approximation line intersection
+    — valid at the scale of a single join, negligible curvature error at any width this app's UI allows) and
+    replaces BOTH the incoming and outgoing offset endpoints with that single mitered point, falling back to a
+    plain bevel (a straight line directly between the two untrimmed endpoints) when the lines are too close to
+    parallel or the miter point would exceed a sane limit (`MITER_LIMIT_MULTIPLIER`, the same "miter limit"
+    concept SVG/Canvas stroke rendering already uses for the identical join-shape problem). (2) a final,
+    bounded `removeRingSelfIntersections()` cleanup pass runs on the completed ring before it's returned —
+    repeatedly finds the first pair of genuinely-crossing non-adjacent edges, splices out the smaller local
+    excursion between them by replacing both with their real intersection point, and repeats until none
+    remain (capped at 50 iterations as a hard safety net, never expected to be approached by a real input).
+    This second layer is what closes the separate, harder "width exceeds segment length" gap layer (1) alone
+    can't fully solve — it makes `bufferPolygonCoords()`'s own contract ("returns a simple, non-self-crossing
+    polygon") hold universally, regardless of cause, rather than only for the specific concave-join bug that
+    motivated the investigation.
+  - **Two wrong intermediate fixes, found and corrected before shipping, not silently smoothed over**: a first
+    attempt computed the miter/intersection using the PERPENDICULAR offset bearing as each line's own
+    direction of travel, rather than the original segment's own bearing — this placed the "miter point"
+    almost exactly back at the vertex itself (0.43mi from a vertex, for a 60mi-radius join), nowhere near a
+    real corner, and didn't fix anything; corrected by passing the original segment bearings
+    (`segs[i-1].brng`/`segs[i].brng`) as the line directions, distinct from the perpendicular bearings used
+    only to place the offset points. A second attempt, after fixing the direction bug, kept BOTH the
+    untrimmed `p`/`q` endpoints alongside the newly-inserted miter point (`[p, miter, q]`) rather than
+    replacing them outright — this still left the full-length, untrimmed adjacent offset LINES crossing each
+    other elsewhere in the ring, since the "join region" was fixed but the lines' own far, untouched extents
+    weren't; corrected by replacing p and q with ONLY the miter point (`[miter]`), which is what actually
+    trims the tail of one adjacent line and the head of the other back to where they truly meet.
+  - **Verification**: a standalone Node port of the ORIGINAL (pre-fix) algorithm first confirmed the bug
+    itself — a zigzag 5-point route (13-16mi legs) at 60mi width produced 7 real self-intersections, and
+    critically, still produced 3 self-intersections even at a 0.1mi width on the identical route, proving the
+    bug is a pure join-treatment defect independent of scale, not a "width too large" artifact alone. After
+    the fix (both layers), re-verified against 7 hand-picked cases (the original zigzag repro at both 60mi
+    and 0.1mi, a straight 2-point control, a 90° turn, a ~150° near-U-turn, an alternating S-curve, and a
+    "Chukar-country style" 5-point/60mi-width case directly modeling the real report) — all 7 clean, 0
+    self-intersections. Went further than the reported case with a 750-trial randomized stress test (5 seeds
+    × 150 trials, 2-15 points, 1-50mi legs, 0.2-120mi widths, covering both realistic and deliberately extreme
+    parameter combinations) — 0 failures, max ring size 258 vertices, no case exceeding 200ms. This same
+    stress suite was then re-run against the REAL code EXTRACTED FROM THE SHIPPED `index.html` (not the
+    standalone prototype) via the exact same `function bearingDegrees(` → `function compassLabel(` marker
+    slice this codebase already uses for this kind of verification — confirming the port itself introduced no
+    regressions, not just that the prototype algorithm was theoretically sound. Live, visual verification used
+    the established isolated-`maplibregl.Map`-harness technique (this sandbox's own embedded app map never
+    reliably reached `style.load` this session, the same long-documented Mapbox-loading limitation hit by
+    essentially every prior session touching DEM/vectorbase/wildlife layers): a zero-Mapbox-dependency
+    background-only style rendered the REAL, live-fetched `bufferPolygonCoords()` output (extracted from the
+    actually-served `index.html` at request time, not a hand-copied version) for 2 real test corridors
+    matching the task's own explicit "at least 2 different bearing angles and widths" requirement — a
+    "Chukar Country"-style 60mi-wide, 5-point, multi-turn corridor (E-W-ish orientation, directly modeling the
+    real report) and a separate 8mi-wide, 3-point, sharp near-U-turn corridor (N-S orientation) — both
+    confirmed rendering as clean, smooth, non-self-crossing boundaries via a real screenshot (a scalloped
+    multi-lobe shape for the wide corridor, a clean rounded boomerang shape for the sharp narrow one), with
+    zero crossing lines of any kind, a stark visual contrast from the reported "web" pattern. The same 2 test
+    corridors were also injected into and cleaned up from the real app's own `state.buffers`/localStorage
+    (the app's own real object shape — `{id,name,points,width,unit,status,tags,notes,tripId,created,
+    updatedAt}` — confirmed via `saveBufferFromModal`'s own code, not guessed) as part of this verification,
+    confirming the fix integrates correctly with the real persisted-object shape, not just a synthetic
+    points array. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
+    `service-worker.js`. APP_VERSION bumped 2.66.1 → 2.67.0 (minor — significant correctness fix to existing
+    geometry, a full algorithmic rewrite of the affected function), SHELL_CACHE bumped v190 → v191.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -9172,3 +9276,52 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `DOWNLOAD_LAYERS` at render time rather than baked into any persisted data. `node --check` confirmed clean
   syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.66.0 →
   2.66.1 (patch — cosmetic label rename, no behavior change), SHELL_CACHE bumped v189 → v190.
+- Session (Buffer corridor self-intersection fix): investigated a real-device bug report — a wide Buffer
+  corridor's stroke rendering as a tangled web of crossing lines instead of a clean boundary — before
+  touching any code, per explicit instruction. Confirmed the object type (Buffer, via `bufferPopupHtml`'s own
+  "Width: N mi" meta line — bearings have no width field), confirmed the geometry construction lives in
+  `bufferPolygonCoords()` (Session 21's own from-scratch offset-polygon math), and confirmed via a real
+  numeric reproduction — a hand-rolled Node port of the exact algorithm, not a guess — that the underlying
+  GEOMETRY is genuinely self-intersecting, not a MapLibre paint/line-join rendering artifact; `line-join`/
+  `line-cap` were never touched. See Architecture notes' "Buffer corridor self-intersection fix" entry for
+  the complete investigation and fix design; summary here. Root-caused the bug to the original join
+  construction using a rounded arc unconditionally on BOTH sides of every interior vertex — correct on the
+  convex/outer side of a turn, but geometrically wrong on the concave/inner side, where an arc between the
+  two untrimmed, full-radius offset endpoints folds back across the ring — confirmed via a standalone Node
+  test to be reproducible at literally ANY buffer width (down to 0.1mi) for any drawn line with a real turn,
+  not a "wide corridor" or "pathological input" problem as the function's own prior doc comment implied.
+  Also found and confirmed real, via the same reproduction: a separate, harder issue where a buffer width
+  comparable to or exceeding the drawn line's own leg lengths (plausible for the real reported 60-mile-wide
+  corridor) can make even a correctly-mitered concave join reach far enough to cross non-adjacent parts of
+  the ring — the well-known "needs a true polygon union to fully solve" limitation any per-vertex offset
+  algorithm hits without a full boolean-geometry step. Fixed with two layers: a convex/concave-aware join
+  (unchanged arc on convex; a real mitered-corner line intersection with a bevel fallback on concave, using a
+  local planar approximation valid at single-join scale) closes the primary bug; a final bounded
+  `removeRingSelfIntersections()` cleanup pass, run on the completed ring before returning, closes the
+  separate harder gap by making the function's own contract ("returns a simple polygon") hold universally
+  regardless of cause. Found and corrected two of my own wrong intermediate fixes before shipping, not
+  silently smoothed over: a first miter attempt used the wrong bearing (the perpendicular OFFSET bearing
+  instead of the original SEGMENT's own bearing) as each line's direction of travel, placing the "miter
+  point" almost exactly back at the vertex itself, fixing nothing; a second attempt, after fixing the
+  direction bug, kept both the untrimmed p/q endpoints alongside the new miter point rather than replacing
+  them outright, which still left the full-length untrimmed offset LINES crossing elsewhere in the ring —
+  both caught and fixed via the same standalone reproduction before ever touching the real app code.
+  Verified via a standalone Node port confirming the bug (7 self-intersections on a realistic zigzag route at
+  60mi width, still 3 even at 0.1mi width — proving the bug is scale-independent), then re-verified the fix
+  against 7 hand-picked cases (all clean) plus a 750-trial randomized stress test (5 seeds × 150 trials,
+  2-15 points, 1-50mi legs, 0.2-120mi widths) — 0 failures. This same stress suite was then re-run against
+  the REAL code extracted directly from the shipped `index.html` (not the standalone prototype), confirming
+  the port introduced no regressions. Live, visual verification used the established isolated-
+  `maplibregl.Map`-harness technique (this sandbox's own embedded app map never reliably reached
+  `style.load` this session, the same long-documented Mapbox limitation hit by essentially every prior
+  session touching DEM/vectorbase/wildlife layers): rendered the real, live-fetched `bufferPolygonCoords()`
+  output for 2 test corridors matching the task's own explicit "at least 2 different bearing angles and
+  widths" requirement — a "Chukar Country"-style 60mi-wide, 5-point, multi-turn corridor (E-W-ish, directly
+  modeling the real report) and a separate 8mi-wide, 3-point, sharp near-U-turn corridor (N-S) — both
+  confirmed rendering as clean, smooth, non-self-crossing boundaries via a real screenshot, a stark contrast
+  from the reported "web" pattern. The same 2 test corridors were also injected into and cleaned up from the
+  real app's own `state.buffers`/localStorage using the app's own real object shape (confirmed via
+  `saveBufferFromModal`'s own code, not guessed), confirming the fix integrates correctly with real
+  persisted data, not just a synthetic points array. `node --check` confirmed clean syntax on all 4 extracted
+  inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.66.1 → 2.67.0 (minor — significant
+  correctness fix, a full algorithmic rewrite of the affected function), SHELL_CACHE bumped v190 → v191.
