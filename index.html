@@ -1100,6 +1100,19 @@
     position:absolute;font-size:10px;font-weight:700;color:#fff;
     text-shadow:0 1px 2px rgba(0,0,0,0.85);pointer-events:none;
   }
+  /* Real mobile versions of Public Land's swatch legend and Aspect's compass wheel (both
+     force-hidden on mobile via #publicland-legend/#aspect-legend below) — content genuinely
+     hidden by default and shown ONLY inside the mobile breakpoint, never both a class-level
+     display AND an inline display on the same element (that would let the inline value win
+     regardless of this class, silently defeating the toggle) — layout styling always lives on
+     a nested child instead. Slope Angle needed no mobile-only twin here: its own "?" panel
+     already carries the identical swatches unconditionally, which is why its floating legend
+     was the one removed as the redundant copy, not duplicated further. */
+  .legend-mobile-only{display:none;}
+  /* Same 72px wheel, sized down for the narrower panel context rather than reused unchanged —
+     border/border-radius/box-shadow inherited from .aspect-legend-wheel's own base rule above by
+     applying both classes to the same element. */
+  .aspect-legend-wheel-mobile{width:56px;height:56px;}
 
   /* Elevation Range's paired slider+number min/max rows, plus its own opacity row — same
      .opacity-row show/hide convention (hidden until the toggle is checked), just wrapping more
@@ -1385,14 +1398,23 @@
     }
     #tap-stack-panel-list{max-height:200px;}
 
-    /* Public land legend: hide on mobile (legend is in layers panel) */
+    /* Public land legend: hide on mobile — a genuine, equivalent 9-swatch copy now renders
+       inside the layers panel's own "?" tooltip instead (see .legend-mobile-only below), not
+       just a text mention of a few of the colors. */
     #publicland-legend{display:none !important;}
     /* Same reasoning as Public Land's legend above — Slope Angle's color-band key is also
        available in the layers panel (its own info popover), so it's not needed as a second
        floating panel competing for mobile's limited vertical space. */
     #slope-legend{display:none !important;}
-    /* Same reasoning again — Aspect's compass wheel is also reachable via its own "?" popover. */
+    /* Aspect's compass wheel: hidden here too, but — unlike when this comment was first written —
+       its own "?" popover now carries a real, appropriately-sized wheel graphic of its own
+       (see .legend-mobile-only below), not just a text description of what the wheel would show. */
     #aspect-legend{display:none !important;}
+    /* Real mobile versions of Public Land's swatches / Aspect's wheel, living inside each
+       layer's own "?" tooltip panel (see the shared .legend-mobile-only rule near
+       .aspect-legend-label for why visibility and layout are split across a parent/child pair
+       rather than one element carrying both). */
+    .legend-mobile-only{display:block;}
     /* On mobile the sidebar is a bottom sheet, not a left column, so there's no sidebar-width
        offset to account for — but it still needs to clear the collapsed bottom bar/sheet
        handle, and to be pushed further up while the sheet is expanded (same treatment as
@@ -2289,10 +2311,26 @@
       </div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" onclick="var h=document.getElementById('lh-publand');h.classList.toggle('show')" title="Info">?</button>
+        <input type="checkbox" id="publicland-toggle"> Public / private land <button class="layer-hint-btn" data-layer-id="lh-publicland" title="About">?</button>
       </label>
       <div class="opacity-row" id="publicland-opacity-row"><input type="range" id="publicland-opacity" min="10" max="100" value="55"></div>
-      <div class="layer-hint-text" id="lh-publand">Color-coded by agency (BLM, USFS, NPS, state, etc.) — nationwide BLM Surface Management Agency data.</div>
+      <div class="layer-info-panel" id="lh-publicland">
+        <div class="layer-info-desc">Color-coded by land-managing agency — nationwide BLM Surface Management Agency data.</div>
+        <div class="layer-info-legend legend-mobile-only">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#FEE679;color:#5c4b00;">BLM</span>
+            <span class="legend-swatch" style="background:#6FCF52;color:#0d3a08;">USFS</span>
+            <span class="legend-swatch" style="background:#A8B83F;color:#2d3208;">NPS</span>
+            <span class="legend-swatch" style="background:#4DD9D9;color:#04403d;">FWS</span>
+            <span class="legend-swatch" style="background:#5B9BD5;color:#fff;">BOR</span>
+            <span class="legend-swatch" style="background:#9B6FD1;color:#fff;">Tribal</span>
+            <span class="legend-swatch" style="background:#E0645A;color:#fff;">DOD</span>
+            <span class="legend-swatch" style="background:#4A7FC9;color:#fff;">State</span>
+            <span class="legend-swatch" style="background:#C0C0C0;color:#222;">Local</span>
+          </div>
+        </div>
+        <a class="layer-info-src" href="https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer" target="_blank">Source: BLM Surface Management Agency</a>
+      </div>
 
       <div class="layer-compact-row">
         <input type="checkbox" id="gmu-quick-toggle">
@@ -2302,7 +2340,7 @@
           <span class="layer-compact-chevron">›</span>
         </button>
       </div>
-      <p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>
+      <p class="gmu-disclaimer" id="gmu-disclaimer-landboundaries"></p>
     </div>
   </div>
 
@@ -2427,6 +2465,7 @@
       <div class="opacity-row" id="timberharvest-opacity-row"><input type="range" id="timberharvest-opacity" min="20" max="100" value="70"></div>
       <div class="layer-info-panel" id="lh-timberharvest">
         <div class="layer-info-desc">Reported timber harvest activity from the last 15 years. Tap an area for its completion year.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="timberharvest-disclaimer"></div>
         <a class="layer-info-src" href="https://data.fs.usda.gov/geodata/edw/edw_resources/meta/S_USA.Activity_TimberHarvest.xml" target="_blank">Source: USDA Forest Service EDW (FACTS)</a>
       </div>
 
@@ -2436,26 +2475,16 @@
       <div class="opacity-row" id="timberthinning-opacity-row"><input type="range" id="timberthinning-opacity" min="20" max="100" value="70"></div>
       <div class="layer-info-panel" id="lh-timberthinning">
         <div class="layer-info-desc">Reported timber stand improvement / thinning activity from the last 15 years. Tap an area for its completion year.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="timberthinning-disclaimer"></div>
         <a class="layer-info-src" href="https://data.fs.usda.gov/geodata/edw/edw_resources/meta/S_USA.Activity_SilvTSI.xml" target="_blank">Source: USDA Forest Service EDW (FACTS)</a>
       </div>
-      <p class="gmu-disclaimer">Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn't historically required, so both layers are known to be incomplete. Viewing any of the 3 Disturbance History layers from a downloaded offline area shows data as of download day — newly-reported fires/treatments won't appear until you re-download (Timber's 15-year window still correctly drops treatments that age past it in the meantime, even from that same frozen download).</p>
 
       <label class="layer-overlay-row">
         <input type="checkbox" id="slopeangle-toggle"> Slope angle <button class="layer-hint-btn" data-layer-id="lh-slopeangle" title="About">?</button>
       </label>
       <div class="opacity-row" id="slopeangle-opacity-row"><input type="range" id="slopeangle-opacity" min="20" max="100" value="60"></div>
       <div class="layer-info-panel" id="lh-slopeangle">
-        <div class="layer-info-desc">Per-pixel slope steepness, color-banded starting at 20° — terrain gentler than that isn't shaded.</div>
-        <div class="layer-info-legend">
-          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
-            <span class="legend-swatch" style="background:#43A047;color:#fff;">20-25°</span>
-            <span class="legend-swatch" style="background:#FDD835;color:#000;">25-30°</span>
-            <span class="legend-swatch" style="background:#FB8C00;color:#fff;">30-35°</span>
-            <span class="legend-swatch" style="background:#E53935;color:#fff;">35-40°</span>
-            <span class="legend-swatch" style="background:#8E24AA;color:#fff;">40-45°</span>
-            <span class="legend-swatch" style="background:#1E88E5;color:#fff;">45°+</span>
-          </div>
-        </div>
+        <div class="layer-info-desc">Per-pixel slope steepness, color-banded starting at 20° — terrain gentler than that isn't shaded. Color key shown on the map itself while this layer is on.</div>
         <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">Computed on your device from the same elevation data as Elevation (DEM), in a background thread — no extra download, and it stops rendering past the same max zoom DEM itself has.</div>
       </div>
 
@@ -2475,8 +2504,18 @@
       </div>
       <div class="opacity-row" id="aspect-opacity-row"><input type="range" id="aspect-opacity" min="20" max="100" value="60"></div>
       <div class="layer-info-panel" id="lh-aspect">
-        <div class="layer-info-desc">Which way each slope faces, color-mapped around temperature and sun exposure: blue (north) is coldest and holds snow/moisture longest; green-yellow (east) gets morning sun; orange-red (south) is warmest, with earliest snowmelt and green-up; purple (west) gets the afternoon heat. Flat ground isn't shaded.</div>
-        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;">4 independent N/E/S/W toggles, each showing its own cardinal plus its 2 adjacent intercardinals (e.g. N shows N, NE, and NW) — pick just the directions you care about, or check all 4 for the full wheel. The main checkbox above is a master switch: it hides/shows your current N/E/S/W picks without losing them, so you can quickly toggle the whole overlay off and back on. Shares Slope Angle's own underlying gradient calculation, just keeping direction instead of steepness — so the two can't both be on at once (turning one on turns the other off). Computed on your device, in a background thread — no extra download, same max zoom as Elevation (DEM).</div>
+        <div class="layer-info-desc">Which way each slope faces, color-mapped by temperature: blue (north) is coldest, green-yellow (east) gets morning sun, orange-red (south) is warmest, purple (west) gets afternoon heat. Flat ground isn't shaded.</div>
+        <div class="legend-mobile-only" style="margin-top:8px;">
+          <div style="display:flex;justify-content:center;">
+            <div class="aspect-legend-wheel aspect-legend-wheel-mobile" id="aspect-legend-wheel-mobile">
+              <span class="aspect-legend-label" style="top:2px;left:50%;transform:translateX(-50%);">N</span>
+              <span class="aspect-legend-label" style="top:50%;right:2px;transform:translateY(-50%);">E</span>
+              <span class="aspect-legend-label" style="bottom:2px;left:50%;transform:translateX(-50%);">S</span>
+              <span class="aspect-legend-label" style="top:50%;left:2px;transform:translateY(-50%);">W</span>
+            </div>
+          </div>
+        </div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:8px;">The 4 N/E/S/W checkboxes show just the directions you pick; the main checkbox is a master switch that hides/shows your picks without losing them. Can't be on with Slope Angle at once. Computed on-device, in the background — no extra download.</div>
       </div>
 
       <label class="layer-overlay-row">
@@ -2508,7 +2547,7 @@
     </button>
     <div class="layer-section-body collapsed" id="layer-section-body-water">
       <label class="layer-overlay-row">
-        <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About this layer">?</button>
+        <input type="checkbox" id="hydro-toggle"> Hydrography <button class="layer-hint-btn" data-layer-id="lh-hydro" title="About">?</button>
       </label>
       <div class="layer-info-panel" id="lh-hydro">
         <div class="layer-info-desc">USGS rivers, streams &amp; lakes from the National Hydrography Dataset (NHDPlus HR) — live queried for the visible map area, zoom in past Z10 to load. Tap a river, stream, or lake to see its name.</div>
@@ -2517,7 +2556,7 @@
       </div>
 
       <label class="layer-overlay-row">
-        <input type="checkbox" id="gauge-toggle"> Stream gauges <button class="layer-hint-btn" data-layer-id="lh-gauge" title="About this layer">?</button>
+        <input type="checkbox" id="gauge-toggle"> Stream gauges <button class="layer-hint-btn" data-layer-id="lh-gauge" title="About">?</button>
       </label>
       <div class="layer-info-panel" id="lh-gauge">
         <div class="layer-info-desc">USGS stream gauge stations — live queried for the visible map area, zoom in past Z8 to load. Tap a station for its most recent streamflow, gage height, and water temperature readings.</div>
@@ -2589,7 +2628,7 @@
     <button type="button" class="link-btn" id="gmu-refresh-btn" style="flex-shrink:0;white-space:nowrap;">Refresh</button>
   </div>
   <p class="hint" style="margin-top:10px;">Only one state's GMU boundaries can be shown at a time.</p>
-  <p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>
+  <p class="gmu-disclaimer" id="gmu-disclaimer-statepanel"></p>
 </div>
 
 <div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
@@ -3122,7 +3161,7 @@
 
     <div class="filter-label">Additional data</div>
     <div id="offline-overlay-checks" style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;"></div>
-    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast, and a cached fire boundary shown while offline could be dangerously out of date. Hydrography and stream gauges also aren't included here (they're live queries, not static files) — those two will only show whatever you've recently browsed. Wildfire History/Timber harvest/Timber thinning DO render from your download while offline — but as a snapshot frozen at download time: fires/treatments reported after you downloaded won't appear until you download again. Wildfire smoke (AQI) DOES render from your download while offline too — but as a snapshot frozen at download time: NOAA only refreshes this data ~2x/day, and a fire that started after you downloaded won't be reflected until you download again.</p>
+    <p class="hint" style="margin:-8px 0 14px;">Active fire perimeters can't be downloaded — that data goes stale fast and could be dangerous if shown out of date offline. Hydrography and stream gauges aren't included either (live queries only — you'll only see what you've recently browsed). Wildfire History, Timber, and AQI smoke DO download and work offline, but as a snapshot frozen at download time.</p>
 
     <div id="offline-estimate" style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;"></div>
     <div id="offline-warning" class="hint hidden" style="color:#d98a3f;margin-bottom:10px;"></div>
@@ -3328,7 +3367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.65.3';
+  var APP_VERSION = '2.66.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -5568,6 +5607,27 @@
   var editingBufferId = null, selectedBufferStatus = 'escout';
 
   var RANGE_BUFFER_DISCLAIMER = 'Reference only — confirm any applicable distance requirements for your activity and location before relying on this.';
+  // GMU boundaries disclaimer — was 3 independently-hardcoded copies of the identical sentence
+  // (Land & Boundaries panel row, GMU state panel, every GMU tap-popup via gmuPopupHtml) before
+  // a UI audit flagged it; now a single constant, matching RANGE_BUFFER_DISCLAIMER's own already-
+  // established pattern above. The 2 static HTML locations start as empty <p class="gmu-
+  // disclaimer" id="...">  elements and get their textContent set from this constant once at
+  // boot (see bindUI); gmuPopupHtml() references it directly in its own template string, the
+  // same way Range Ring/Buffer's popup builders already reference RANGE_BUFFER_DISCLAIMER. This
+  // one stays always-visible (not moved behind a "?") — GMU/tag requirements are a real legal
+  // question with real consequences for hunting in the wrong unit, not just a data-accuracy
+  // caveat, so it clears the "could meaningfully mislead about safety" bar the always-visible
+  // exception list is scoped to.
+  var GMU_DISCLAIMER = 'Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.';
+  // Timber harvest/thinning disclaimer — previously its own always-visible paragraph in the
+  // Layers panel; moved behind both layers' own "?" tooltips (a UI audit's always-visible-vs-
+  // behind-"?" review found this doesn't meet the same "user could be meaningfully misled about
+  // safety" bar the GMU/AQI exceptions above do — it's a data-completeness caveat, not a legal or
+  // health-and-safety one). Shown identically in both lh-timberharvest and lh-timberthinning
+  // (a user is very unlikely to open both, and the accordion tooltip behavior means at most one
+  // is ever visible on screen at once anyway) via this one shared constant rather than two
+  // separately-typed copies.
+  var TIMBER_DISCLAIMER = 'Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn\'t historically required, so both layers are known to be incomplete. Viewing any of the 3 Disturbance History layers from a downloaded offline area shows data as of download day — newly-reported fires/treatments won\'t appear until you re-download (Timber\'s 15-year window still correctly drops treatments that age past it in the meantime, even from that same frozen download).';
   var activeTagFilters = {};
   var activeStateFilters = {};
   var activeTripFilters = {};
@@ -8596,9 +8656,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // stops render as a flat muted gray instead of their real hue, so the legend visually shows
   // exactly which quarter of the circle is/isn't currently contributing to the map.
   var ASPECT_INACTIVE_COLOR = 'rgba(255,255,255,0.08)';
+  // Drives BOTH wheel elements — the floating desktop legend (#aspect-legend-wheel) and the
+  // real mobile version now living inside the "?" tooltip (#aspect-legend-wheel-mobile, only
+  // ever visible on mobile via .legend-mobile-only, never at the same time as the floating one)
+  // — from one computed gradient string, rather than duplicating this loop per element.
   function renderAspectLegendWheel(){
-    var wheel = document.getElementById('aspect-legend-wheel');
-    if (!wheel) return;
     var active = state.settings.aspectCardinals || { N: true, E: true, S: true, W: true };
     var stops = [];
     for (var deg = 0; deg <= 360; deg += 10){
@@ -8612,7 +8674,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
       stops.push(css + ' ' + deg + 'deg');
     }
-    wheel.style.background = 'conic-gradient(from 0deg, ' + stops.join(', ') + ')';
+    var gradient = 'conic-gradient(from 0deg, ' + stops.join(', ') + ')';
+    ['aspect-legend-wheel', 'aspect-legend-wheel-mobile'].forEach(function(id){
+      var wheel = document.getElementById(id);
+      if (wheel) wheel.style.background = gradient;
+    });
   }
 
   // ── Shared label-point generation (GMU AZ/OR, USFS boundaries) ──
@@ -9106,7 +9172,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       metaHtml +
       '</div>' +
       actionsHtml +
-      '<p class="gmu-disclaimer">Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.</p>';
+      '<p class="gmu-disclaimer">' + escapeHtml(GMU_DISCLAIMER) + '</p>';
   }
 
   function openGmuPopupAt(stateKey, props){
@@ -21396,6 +21462,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ---------- Panels ----------
   // ---------- Wire up UI ----------
   function bindUI(){
+    // One-time static-text population for shared-constant disclaimers (GMU_DISCLAIMER,
+    // TIMBER_DISCLAIMER — see their own declarations for why each is a single constant now
+    // instead of separately-hardcoded copies). These 4 elements are part of the always-present
+    // page markup (not rebuilt per-open like a modal), so a single textContent set here at boot
+    // is sufficient — no per-open re-population needed the way Range Ring/Buffer's own
+    // RANGE_BUFFER_DISCLAIMER needs (those live inside a modal that's fully rebuilt every time
+    // it opens for a new/different item).
+    document.getElementById('gmu-disclaimer-landboundaries').textContent = GMU_DISCLAIMER;
+    document.getElementById('gmu-disclaimer-statepanel').textContent = GMU_DISCLAIMER;
+    document.getElementById('timberharvest-disclaimer').textContent = TIMBER_DISCLAIMER;
+    document.getElementById('timberthinning-disclaimer').textContent = TIMBER_DISCLAIMER;
+    // Pre-render the Aspect wheel(s) unconditionally, not just when the layer itself is turned
+    // on: the floating desktop wheel is only ever visible while the layer is on (so it's always
+    // populated by the time it's seen), but the new mobile wheel lives inside the "?" tooltip,
+    // which can be opened at any time independent of the layer's own on/off state — without this
+    // call, a user opening the tooltip before ever enabling Aspect this session would see a
+    // blank circle with no color mapping at all.
+    renderAspectLegendWheel();
+
     // Restore each of the 3 categories' own wildlife selection from settings independently
     // (Session 56) before anything else touches wildlifeActiveByCategory/wildlifeOnByCategory —
     // this only needs the plain per-category objects already in state.settings, not the map
@@ -22021,13 +22106,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // already set at the top of bindUI().
     updateWildlifeQuickToggleUI();
 
-    // Layer info panel ? buttons — use event delegation
+    // Layer info panel ? buttons — use event delegation. Accordion behavior (a UI audit's own
+    // explicit ask): opening one closes every other currently-open one first, rather than
+    // letting all 15 independently pile up open at once in the same scrollable panel. Closing
+    // every OTHER panel before toggling the clicked one (not "close all, then always open the
+    // clicked one") is what keeps the toggle-to-close-the-one-you-already-had-open behavior
+    // working correctly — re-clicking an already-open panel's own "?" still closes it, it just
+    // doesn't reopen anything.
     document.getElementById('layers-panel').addEventListener('click', function(e){
       var btn = e.target.closest('.layer-hint-btn[data-layer-id]');
       if (!btn) return;
       var panelId = btn.dataset.layerId;
       var panel = document.getElementById(panelId);
-      if (panel) panel.classList.toggle('show');
+      if (!panel) return;
+      document.querySelectorAll('.layer-info-panel.show').forEach(function(open){
+        if (open !== panel) open.classList.remove('show');
+      });
+      panel.classList.toggle('show');
     });
     document.getElementById('sheet-about-btn').addEventListener('click', function(){
       document.getElementById('tools-sheet').classList.add('hidden');

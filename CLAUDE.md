@@ -823,6 +823,21 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   isolated-`maplibregl.Map`-harness technique once this sandbox's own real app map hit its own long-documented
   Mapbox-related loading instability, and its own "Session (offline rendering fix)" sub-bullet for the
   fallback-time mechanism and full offline-rendering verification for both layers.
+- UI consolidation, acting on the findings of a dedicated UI-surface audit run the session before this one —
+  fixed 4 real bugs/inconsistencies the audit found (Slope Angle's legend rendering twice at once; the GMU
+  disclaimer hardcoded as 3 separately-typed copies; 3 different words used for the same "?" tooltip
+  affordance; Public Land's "?" wired through a different mechanism than the other 14), built 2 new pieces
+  of real functionality (genuine mobile-appropriate versions of Public Land's and Aspect's floating legends,
+  not just longer text — real swatches, a real scaled-down wheel graphic; accordion behavior so opening one
+  "?" tooltip closes any other that's open), trimmed the app's 2 length-outlier disclaimers by roughly half
+  each, and designed + applied a real, deliberately narrow always-visible-vs-behind-"?" rule per Geoff's own
+  explicit minimize-clutter preference — of the app's 11 real disclaimers, only 2 (GMU boundaries, AQI) meet
+  the "could meaningfully mislead about safety/legal compliance" bar and stay always-visible; Timber's own
+  disclaimer moved behind its two "?" tooltips as the one real always-visible-Layers-panel-disclaimer that
+  didn't clear the bar; the other 8 were already appropriately scoped (conditional on a deliberate action —
+  opening a modal, expanding a section, selecting a specific state — rather than persistent ambient clutter)
+  and needed no change. See Architecture notes' "UI consolidation: audit fixes, mobile legends, accordion
+  tooltips, always-visible rule" entry for the complete design and verification detail.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -6519,6 +6534,153 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       `service-worker.js`. APP_VERSION bumped 2.65.2 → 2.65.3 (patch — real bug investigation/fix plus two
       small UI/data-accuracy improvements to an already-shipped feature, no new layer), SHELL_CACHE bumped
       v187 → v188.
+- UI consolidation: audit fixes, mobile legends, accordion tooltips, always-visible rule — implements the
+  findings of the "FieldMap — UI Surface Audit" (a dedicated inventory of every legend/disclaimer/tooltip/
+  chip in the app, done as its own research-only session immediately before this one). Every fix below maps
+  directly to a specific finding that audit reported.
+  - **Slope Angle legend de-duplication**: the audit found the identical 6-swatch steepness legend rendering
+    both as a standalone floating element AND inside the layer's own "?" tooltip, simultaneously, whenever
+    both the layer was on and the tooltip was opened. Removed the swatches from the tooltip panel (kept the
+    floating one) — the floating legend is the one already consistent with Public Land's and Aspect's own
+    treatment (their color keys ALSO only ever live in the floating element, not duplicated into the
+    tooltip), so removing the tooltip's copy, not the floating one, is what actually brings Slope Angle in
+    line with its own siblings rather than creating a third, different pattern. Added one clarifying sentence
+    to the tooltip's own remaining text ("Color key shown on the map itself while this layer is on") since a
+    user opening the tooltip before ever turning the layer on would otherwise have no way to see what the
+    colors mean until they do — a small, deliberate addition to avoid a real usability regression the removal
+    would otherwise have introduced.
+  - **GMU disclaimer — shared constant**: the identical 119-character sentence was hardcoded as 3 separate
+    string literals (the Layers panel's Land & Boundaries row, the GMU state picker panel, and every GMU
+    boundary's own tap-popup via `gmuPopupHtml()`). Now a single `GMU_DISCLAIMER` constant, matching
+    `RANGE_BUFFER_DISCLAIMER`'s own already-established pattern exactly (declared right next to it). The two
+    STATIC HTML locations (`#gmu-disclaimer-landboundaries`, `#gmu-disclaimer-statepanel`) start as empty
+    `<p>` elements and get their `textContent` set from the constant once, in `bindUI()`, at boot — sufficient
+    since neither element is ever rebuilt after that (unlike Range Ring/Buffer's own disclaimer, which needs
+    re-population on every modal open since that modal IS rebuilt per-item). `gmuPopupHtml()` — a real,
+    dynamically-built popup string — references the constant directly in its own template, the same way
+    Range Ring/Buffer's popup builders already reference `RANGE_BUFFER_DISCLAIMER`.
+  - **"?" tooltip wording standardized on "About"**: the audit found 3 different hover-title words for the
+    identical affordance — "About" (11 of 14), "About this layer" (Hydrography, Stream Gauges), "Info"
+    (Public Land). Picked "About" since it was already the overwhelming majority, and applied it to all 15
+    (Public Land's own title change came along with its wiring fix below).
+  - **Public Land's "?" brought onto the standard mechanism**: was the one tooltip wired via an inline
+    `onclick` toggling a bare `.layer-hint-text` div directly, instead of the `data-layer-id` attribute plus
+    the shared delegated click handler (on `#layers-panel`) every other tooltip uses, and instead of the
+    standard `.layer-info-panel` → `.layer-info-desc` / `.layer-info-legend` / `.layer-info-src` structure —
+    meaning it also never had a real, clickable source-attribution link the way all 14 others do. Rewired to
+    `data-layer-id="lh-publicland"` (renamed from the old, differently-spelled `lh-publand` id — matching
+    every other layer's own `lh-<layername>` convention) and rebuilt as a real `.layer-info-panel` with a
+    real source link. The link target (`https://gis.blm.gov/arcgis/rest/services/lands/
+    BLM_Natl_SMA_Cached_without_PriUnk/MapServer`) is the real ArcGIS REST service's own landing page —
+    derived directly from the exact tile URL `DOWNLOAD_LAYERS.publicland` already uses (same host/path, just
+    without the `/tile/{z}/{y}/{x}` suffix, a structurally-guaranteed-valid ArcGIS REST service root), not a
+    guessed or fabricated URL — confirmed live via a direct `curl` request returning HTTP 200 before shipping.
+  - **Real mobile legends for Public Land and Aspect**: both previously lost real content on mobile (Public
+    Land: 9 real colors became a plain sentence naming ~4 of them; Aspect: a compass-wheel graphic became
+    pure prose with no visual at all) — the audit's own "mobile parity is inconsistent" finding, contrasted
+    against Slope Angle's own tooltip, which already carried its full legend on both platforms. Fixed by
+    adding the SAME real content to both tooltips (9 real `.legend-swatch` chips for Public Land, using the
+    identical hex colors `#publicland-legend`'s own floating version already uses; a real, appropriately-
+    sized 56px `.aspect-legend-wheel-mobile` — the same conic-gradient-driven wheel as the 72px floating one,
+    just smaller for the narrower tooltip context) — but gated to show ONLY on mobile via a new
+    `.legend-mobile-only` class (`display:none` by default, `display:block` inside the existing
+    `@media(max-width:760px)` block), specifically so this doesn't recreate the exact Slope-Angle-style
+    simultaneous-duplication bug being fixed elsewhere in this same pass. Visibility and layout are
+    deliberately split across a parent/child pair (the `.legend-mobile-only` element carries ONLY the
+    visibility toggle, a nested child carries any flex/centering layout) — putting both on the same element
+    would let an inline `display:flex` style silently outrank the class-level `display:none`, defeating the
+    toggle regardless of viewport width, a real specificity trap reasoned through and avoided before writing
+    any markup. `renderAspectLegendWheel()` (the function that computes the conic-gradient from
+    `state.settings.aspectCardinals`) was refactored to apply the SAME computed gradient string to BOTH wheel
+    elements by id, rather than duplicating the color-math loop — and is now also called once, unconditionally,
+    from `bindUI()` at boot (not just from the layer's own on/off setters), since the mobile wheel — unlike
+    the floating one, which is only ever visible while the layer itself is on — lives inside the tooltip and
+    can be opened independent of whether Aspect has ever been turned on this session; without this extra call
+    a user opening the tooltip cold would see a blank, ungraded circle until they actually enabled the layer.
+  - **Accordion behavior for all 15 "?" tooltips**: the audit found every tooltip independently toggling its
+    own panel's `show` class with zero coordination, so all 15 could pile up open simultaneously in the same
+    scrollable panel. The shared delegated click handler now closes every OTHER currently-`.show`n panel
+    before toggling the clicked one — deliberately "close others, then toggle the target" rather than "close
+    everything, then always open the target," since the latter would break the existing re-click-to-close
+    behavior (clicking an already-open tooltip's own "?" must still close it, not force it back open).
+  - **Trimmed the 2 length-outlier texts**: the offline-download modal's "Additional data" hint (776 → 357
+    characters, −54%) and Aspect's combined 2-paragraph tooltip text (956 → 453 characters, −53%) — both
+    roughly halved, landing in the same general range as the app's other disclaimers (AQI 317, Timber 485)
+    rather than standing out as 2-8× longer. Every essential fact was preserved in both: the offline hint
+    still names exactly which layers can't be downloaded and why (fire perimeters — safety), which are
+    live-query-only (hydrography/gauges), and which download as frozen snapshots (Wildfire History/Timber/
+    AQI) — only the repeated "won't appear/be reflected until you download again" phrasing (stated once per
+    layer group in the original) was consolidated into one shared closing clause. Aspect's trim kept the full
+    N/E/S/W color mapping (the genuinely useful domain content — which color means which direction and its
+    real-world implication) while cutting the more decorative elaborations ("holds snow/moisture longest",
+    "earliest snowmelt and green-up"), and kept every mechanical fact (4 independent toggles, master-switch
+    behavior, mutual exclusion with Slope Angle, on-device computation) in a single denser paragraph instead
+    of two.
+  - **Always-visible vs. behind-"?" rule — designed and applied, not just proposed**: per explicit instruction,
+    the rule's job was to MINIMIZE always-visible clutter — default to behind "?", with a small, deliberate
+    exception list only for disclaimers where missing the caveat entirely could meaningfully mislead a user
+    about real-world safety or legal compliance (the bar AQI's own "this is modeled, not live" caveat already
+    represents). Reviewed all 11 real disclaimers found by the audit against this bar individually, not by
+    category:
+    - **GMU boundaries** (stays always-visible): wrong-unit/wrong-tag hunting has real legal consequences —
+      clears the bar.
+    - **AQI (Wildfire smoke)** (stays always-visible): the literal exemplar the rule was calibrated against —
+      unmodified.
+    - **Timber harvest/thinning** (moved behind "?"): a genuine data-COMPLETENESS caveat ("known to be
+      incomplete", "self-reported") with no comparable safety/legal stakes — the one real "persistent,
+      always-visible-in-the-Layers-panel" disclaimer that did NOT clear the bar. Now lives as a secondary
+      paragraph inside BOTH `lh-timberharvest` and `lh-timberthinning` (via the new shared `TIMBER_DISCLAIMER`
+      constant, so it's one source of truth even though it now renders in two places) — a deliberate, minor
+      exception to "avoid duplication," justified because there's no single shared "?" home for two
+      independently-toggleable layers that used to share one disclaimer paragraph, and because the new
+      accordion behavior (this same session) guarantees at most one of the two is ever actually visible on
+      screen at once regardless.
+    - **The other 8 were reviewed and found already appropriately scoped, needing no change**: Range Ring/
+      Buffer's disclaimer (116 chars, legal/setback-compliance stakes comparable to GMU's — but already only
+      shown inside a deliberate-action modal/popup for that specific drawn object, never ambient Layers-panel
+      clutter, so it was never a candidate for moving in the first place). The offline-download modal's 2
+      hints (already scoped to a deliberate "I'm about to download" action screen, not persistent map-view
+      clutter — the modal itself already functions as the "gate" a "?" would otherwise provide). Wildlife
+      State Data's 2 per-source notes and its dynamic "no data" message (only ever shown when that exact
+      state/species combination is actively selected — already conditional on a deliberate pick, not
+      ambient). The migration attribution/link hint (only visible once the Migrations section is manually
+      expanded — already gated behind a real interaction, not shown by default). The GMU panel's own "only
+      one state at a time" hint and its dynamic freshness line (functional/operational help text describing a
+      real UI constraint or live data status, not a data-accuracy caveat the new rule was ever meant to
+      govern). Net result: exactly 2 of 11 disclaimers ended up in the always-visible exception list (GMU,
+      AQI) — the "small, deliberate exception list" the task asked for, not a default state.
+  - **Verification**: live, via the already-connected Chrome browser extension against a local `python -m
+    http.server` (after discovering and restarting the local dev server, found killed by an earlier session's
+    own end-of-session cleanup step, and after the browser extension itself needed a reconnect mid-session —
+    both real environment hiccups, not code issues, and both resolved before any claim below was made).
+    Confirmed via direct DOM inspection: `GMU_DISCLAIMER`'s text is byte-identical across both static render
+    sites; `TIMBER_DISCLAIMER` populates both tooltip panels identically and the OLD always-visible paragraph
+    is confirmed gone (with AQI's own, deliberately-untouched always-visible paragraph confirmed still present
+    and correctly distinguished from Timber's removal, ruling out a test false-positive caught along the
+    way); all 15 tooltip buttons read `title="About"`; Public Land's tooltip opens via the standard
+    `data-layer-id` mechanism with a real working source link (confirmed via a live `curl`, HTTP 200); Slope
+    Angle's tooltip has zero swatches while its floating legend, confirmed by actually turning the layer on,
+    still renders all 6 correctly. Accordion behavior confirmed directly: opening Public Land's tooltip
+    closed USFS's (which was open), opening Snow's then AQI's confirmed the pattern generalizes across a 3rd
+    tooltip, and re-clicking an already-open tooltip's own "?" confirmed it still closes (not just cycles to
+    always-reopen). Real mobile viewport verification used this project's own established technique (a
+    genuine 390×844 `<iframe>` navigation, triggering the real `@media` query, not a hand-simulated override):
+    confirmed live and via a real zoomed screenshot that Public Land's tooltip shows a real, legible 9-swatch
+    color legend (not text) at that width, and that Aspect's tooltip shows a real, correctly color-mapped
+    56px compass wheel (not text) — both with the trimmed description text rendering cleanly around them.
+    Zero console errors throughout, confirmed via `read_console_messages` with `onlyErrors:true`. One real
+    verification gap, flagged rather than silently claimed: `gmuPopupHtml()` — the third GMU-disclaimer render
+    site — could not be independently exercised via a genuine map tap this session (real GMU boundary data
+    loaded correctly, 85 real Arizona features confirmed via the live map source, but every naive polygon-
+    centroid tried across all 85 features missed its own shape — the same concave-polygon gotcha this
+    project's own history already documents from an earlier session's GMU testing); accepted as code-review
+    plus `node --check` verified instead, given the change itself is a minimal, mechanical, low-risk swap
+    (a literal string replaced by an already-proven-correct variable reference, using the exact same
+    `escapeHtml(...)` pattern already applied to neighboring dynamic content in the same function) and the
+    other two render sites using the identical constant are fully, live confirmed. `node --check` confirmed
+    clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped
+    2.65.3 → 2.66.0 (minor — real, if UI-scoped, restructuring across many existing features), SHELL_CACHE
+    bumped v188 → v189.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -8906,3 +9068,73 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   chains a failed live fetch AND a `loadOfflineAreas()` read. Zero console errors throughout. `node --check`
   confirmed clean syntax on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION
   bumped 2.65.2 → 2.65.3, SHELL_CACHE bumped v187 → v188.
+- Session (UI audit, research-only, no code changes): a full inventory pass across the entire app —
+  every legend, disclaimer/caveat, "?" info tooltip, and persistent UI chip — published as a standalone
+  artifact ("FieldMap — UI Surface Audit") rather than folded into CLAUDE.md, per the task's own explicit
+  "inventory only, don't propose changes yet" scope. Found, among other things: Slope Angle's legend
+  rendering twice at once (floating element + tooltip, simultaneously); the GMU disclaimer hardcoded as 3
+  separately-typed copies of the same sentence; 3 different words used for the same "?" tooltip affordance
+  across 14 layers ("About"/"About this layer"/"Info"); Public Land's "?" wired through a bespoke inline
+  `onclick` instead of the shared `data-layer-id` mechanism every other tooltip uses (and with no source
+  link as a result); Public Land's and Aspect's mobile tooltips both losing their real graphic (color
+  swatches, compass wheel) in favor of plain prose, unlike Slope Angle's own mobile-parity tooltip; the
+  offline-download hint and Aspect's tooltip both running 2-8× longer than the app's other disclaimers; and
+  no consistent rule anywhere for which of 11 real disclaimers get always-visible treatment vs. live behind
+  a "?". No application code was touched this session — investigation and reporting only, matching the
+  task's explicit scope; no APP_VERSION/SHELL_CACHE bump.
+- Session (UI consolidation): implemented all 8 items from the UI audit's own findings in one pass — see
+  Architecture notes' "UI consolidation: audit fixes, mobile legends, accordion tooltips, always-visible
+  rule" entry for the complete design and verification detail on every item; summary here. Fixed Slope
+  Angle's legend duplication by removing the tooltip's own copy (kept the floating one, matching Public
+  Land's/Aspect's existing pattern), with one added sentence pointing a cold-tooltip-opener at the floating
+  legend instead. Converted the GMU disclaimer's 3 hardcoded copies into a single `GMU_DISCLAIMER` constant
+  — matching the pre-existing `RANGE_BUFFER_DISCLAIMER` pattern exactly — populated into the 2 static panel
+  locations via `bindUI()` at boot and referenced directly inside `gmuPopupHtml()`'s own template for the
+  3rd, dynamically-rebuilt location. Standardized every "?" tooltip's hover title on "About" (the existing
+  11-of-14 majority) and rewired Public Land's onto the same `data-layer-id` + delegated-click-handler
+  mechanism every other tooltip already used, giving it a real source-attribution link for the first time —
+  derived, not fabricated, by truncating the exact ArcGIS tile URL already used elsewhere in the codebase
+  down to its REST service root, confirmed live via `curl` returning HTTP 200 before shipping. Built real
+  mobile legends for Public Land (9 real `.legend-swatch` chips, the same hex colors the floating version
+  already uses) and Aspect (a real 56px conic-gradient compass wheel, the same math as the 72px floating
+  one) — gated behind a new `.legend-mobile-only` class, deliberately split across a visibility-only parent
+  and a layout-only child to avoid a real CSS-specificity trap (an inline `display` on the same element
+  would silently defeat the class-based toggle) reasoned through and avoided before writing any markup;
+  `renderAspectLegendWheel()` was refactored to drive both wheel elements from one computed gradient and is
+  now also called once at boot (not just from the layer's own on/off setters), since the mobile wheel, unlike
+  the floating one, can be opened before the layer has ever been turned on this session. Built accordion
+  behavior for all 15 tooltips via one small change to the existing shared delegated click handler (close
+  every other open `.layer-info-panel` before toggling the clicked one), deliberately preserving the existing
+  re-click-to-close behavior rather than forcing every click to always (re)open. Trimmed the 2 length-outlier
+  texts roughly in half each (offline-download hint 776→357 chars, Aspect's tooltip 956→453 chars),
+  landing both in the same general range as the app's other disclaimers, verified via small Node one-liners
+  before applying either edit, with every essential fact (which layers can't download and why; the full
+  N/E/S/W color mapping; mutual exclusion with Slope Angle) deliberately preserved. Designed and applied the
+  always-visible-vs-behind-"?" rule per Geoff's own explicit minimize-clutter preference, reviewing all 11
+  real disclaimers individually against the "could meaningfully mislead about safety/legal compliance" bar
+  rather than by category — landed on a genuinely small exception list (GMU boundaries, AQI) with Timber's
+  own disclaimer (a data-completeness caveat, not a safety one) moved behind its two "?" tooltips via a new
+  shared `TIMBER_DISCLAIMER` constant, and confirmed the other 8 disclaimers were already appropriately
+  scoped (conditional on a deliberate action — opening a modal, expanding a section, picking a specific
+  state — rather than persistent ambient clutter) and needed no change. Verified live via the already-
+  connected Chrome browser extension against a local `python -m http.server` (after restarting the dev
+  server, found killed by the prior session's own cleanup, and reconnecting the browser extension, which
+  had disconnected mid-session — both real environment hiccups, not code issues): confirmed the shared
+  disclaimer constants render byte-identically at every static location, with Timber's old always-visible
+  paragraph confirmed genuinely gone (and AQI's own untouched always-visible paragraph confirmed still
+  present and correctly distinguished from it, ruling out a test false-positive caught along the way);
+  confirmed all 15 tooltips read "About" and Public Land's opens correctly with a real working link;
+  confirmed Slope Angle's tooltip has zero swatches while its floating legend still renders all 6 correctly
+  once the layer is on; confirmed accordion behavior directly across 3 different tooltips, including the
+  re-click-still-closes case; confirmed via a genuine 390×844 `<iframe>` (real `@media` matching, not a
+  hand-simulated override) and real zoomed screenshots that Public Land's and Aspect's mobile tooltips now
+  show real graphics, not text. Zero console errors throughout. One real, explicitly flagged verification
+  gap: `gmuPopupHtml()`'s own use of `GMU_DISCLAIMER` — the third of 3 render sites — could not be exercised
+  via a genuine live map tap this session; real GMU boundary data loaded correctly (85 real Arizona
+  features confirmed via the live map source), but every naive polygon-centroid computed across all 85
+  features missed its own concave shape, the same gotcha this project's own history already documents from
+  an earlier GMU-testing session. Accepted as verified via code review plus `node --check` instead, given
+  the change is a minimal, mechanical string-to-variable swap using a pattern (`escapeHtml(CONST)`) already
+  proven correct at the other 2, fully live-confirmed render sites. `node --check` confirmed clean syntax on
+  all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.65.3 → 2.66.0
+  (minor — real, if UI-scoped, restructuring across many existing features), SHELL_CACHE bumped v188 → v189.
