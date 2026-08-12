@@ -3367,7 +3367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.67.0';
+  var APP_VERSION = '2.67.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -20196,7 +20196,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var features = (data && data.features) || [];
     if (src && (src.type === 'localFile' || src.type === 'unified')){
       srcObj.setData({ type: 'FeatureCollection', features: [] });
-      srcObj.updateData({ add: features });
+      // updateData()'s diff mechanism requires MapLibre's worker-side _dataUpdateable Map to
+      // already be valid — built fresh by the setData() call directly above, but genuinely can
+      // throw ("Cannot update existing geojson data in <source>") if that worker-side state ever
+      // gets left invalid for any reason. Previously uncaught, this would silently abort the
+      // whole load right here with zero visible sign anything went wrong — exactly the "no error/
+      // toast/console error, renders zero features" shape reported for Oregon. Falls back to a
+      // plain setData() with the complete feature list (safe here specifically because Oregon's
+      // 'localFile' files are always well under the setData()/JSON.stringify() size ceiling that
+      // motivated using updateData() for Washington's much larger 'unified' fetch in the first
+      // place) rather than leaving the source silently empty.
+      try {
+        srcObj.updateData({ add: features });
+      } catch (err) {
+        console.error('[FieldMap] State Data updateData() failed, falling back to setData():', tc, stateKey, err);
+        srcObj.setData({ type: 'FeatureCollection', features: features });
+      }
     } else {
       srcObj.setData(data || { type: 'FeatureCollection', features: [] });
     }

@@ -852,6 +852,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   self-intersection fix" entry for the complete investigation, the two wrong intermediate fixes found and
   corrected along the way, and full verification detail (a 750-trial randomized stress test plus live,
   visual, screenshot-confirmed proof at 2 different bearings/widths).
+- Session A (Firestore rules audit, Oregon Fish State Data investigation, AQI offline-label investigation) —
+  added `firestore.rules` to the repo, version-controlled and matching the real live deployed rules exactly
+  (own-uid-only read/write, confirmed both by direct empirical Firebase SDK testing against the real database
+  from this sandbox and by the user independently pasting the literal Firebase Console text — the two matched
+  exactly) — a real security audit that found the existing rules already correct, not a fix. Investigated two
+  previously-reported bugs (Oregon Fish State Data rendering zero features with no error; AQI's offline-
+  fallback label missing its "(from downloaded area)" suffix) at length, live, across many clean single-
+  interaction test cycles — could not reproduce either as a permanent, real-code bug; both mechanisms worked
+  correctly (real species data rendering, correctly species-matching, at real coordinates; the offline label
+  correctly appending its suffix) every time they were tested from a genuinely fresh, uncontaminated page
+  load. See Architecture notes' "Session A: local dev-server HTTP-cache staleness trap" entry for the most
+  likely explanation of the original reports — a real, serious dev-server-testing-only gotcha this session
+  found and root-caused, unrelated to the app's own shipped code, that can make ANY already-fixed bug look
+  like it's still broken when tested against `localhost:8080`. One real, defensible hardening fix was still
+  shipped despite not being able to force a repro: `applyStateDataToSource()`'s `updateData()` call is now
+  wrapped in a try/catch with a `setData()` fallback, closing the one documented, real way this exact
+  MapLibre mechanism (`_dataUpdateable` needing to be valid) can fail completely silently.
 
 ## What's broken (expected, to be fixed in later sessions)
 - Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
@@ -6785,6 +6802,78 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     points array. `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks and
     `service-worker.js`. APP_VERSION bumped 2.66.1 → 2.67.0 (minor — significant correctness fix to existing
     geometry, a full algorithmic rewrite of the affected function), SHELL_CACHE bumped v190 → v191.
+- Session A: local dev-server HTTP-cache staleness trap — a real, reusable finding for any future session
+  testing against `localhost:8080`, discovered while chasing what turned out to be two non-reproducible bug
+  reports (Oregon Fish State Data, AQI's offline label). Not an app bug; a property of how this project's dev
+  workflow (`python -m http.server` + this app's own service worker) interacts with the browser's own HTTP
+  cache layer, distinct from and layered underneath the already-documented "stale Cache Storage" gotcha this
+  file has warned about for many sessions.
+  - **The mechanism**: `service-worker.js`'s `install` handler calls `cache.addAll(SHELL_FILES)`, which
+    internally does a plain `fetch(request)` per file using DEFAULT fetch caching semantics — NOT
+    `{cache:'reload'}` or `{cache:'no-store'}`. `python -m http.server` sends no strong `Cache-Control`
+    header, so the browser's own HTTP cache (a layer entirely separate from, and invisible to, Cache Storage)
+    is free to serve an OLD cached response to that fetch — including a response cached hours or even
+    sessions earlier, well before a same-session code edit landed on disk. The result: a freshly-registering
+    service worker's own `install` step can precache genuinely STALE JavaScript into a BRAND-NEW,
+    correctly-named Cache Storage entry, even immediately after an explicit `caches.delete()` +
+    `serviceWorker.unregister()` cleanup cycle — because that cleanup only ever addresses Cache Storage, never
+    the separate HTTP cache the new install's own fetch then silently falls back to.
+  - **Why this was so disorienting to debug, and easy to miss**: a plain `curl` (used throughout this
+    project's own established verification habit) or a page-context `fetch(url, {cache:'no-store'})` call
+    both correctly bypass this and see the real, current file on disk — so "confirm the server is serving the
+    fixed file" checks kept passing even while the ACTUAL PAGE, once a service worker started controlling it,
+    kept executing old code. Worse, this app's own `service-worker.js` has a deliberate "reload the page
+    transparently when a new SW takes control" mechanism (`controllerchange`, added for exactly the opposite
+    reason — to get users onto fixed code faster) — which means a session could look like debug instrumentation
+    just vanished from a running page with NO explicit reload ever issued, because one happened automatically,
+    into a service worker that had ALREADY precached stale content via this exact path.
+  - **The fix, for testing purposes only, not an app-code change**: `fetch(url, {cache:'reload'})` on `/` and
+    `/index.html` from page context — `cache:'reload'` (unlike `no-store`) forces a real network round-trip
+    AND writes the fresh response back into the browser's own HTTP cache, so any LATER `cache.addAll()` call
+    (from a subsequently-installing service worker) reads the now-genuinely-fresh cached response instead of
+    an old one. Confirmed this closes the loop: after priming this way, a full reload cycle (unregister old SW
+    + delete all Cache Storage entries + prime HTTP cache + navigate) reliably produced a page running the
+    real, current, edited code, verified by directly reading `document.querySelectorAll('script')[i]
+    .textContent` for a known marker string rather than trusting any indirect signal.
+  - **Consequence for THIS session's own two investigations**: both "confirmed" bugs from the prior session
+    were re-tested, repeatedly, in a genuinely fresh (HTTP-cache-primed) page state, and both worked correctly
+    every single time — real Oregon fish species data loading and rendering with correct species names at
+    real coordinates (verified via `queryRenderedFeatures`, not the less reliable `querySourceFeatures`, which
+    was separately found to return misleadingly stale results — see below); the AQI offline-fallback label
+    correctly appending "(from downloaded area)" the moment a mocked `/identify` failure forced the fallback
+    path. The most likely explanation, though not provable after the fact: the PRIOR session's own testing
+    against this same dev-server setup hit this identical trap, tested against stale pre-fix (or never-broken)
+    code, and reported real symptoms that were genuinely observed but not actually caused by the shipped
+    application code.
+  - **A second, narrower pitfall found along the way, worth flagging separately**: `map.querySourceFeatures()`
+    was repeatedly observed returning STALE results — including, in one deliberate test, showing old Oregon-
+    range feature ids at a `jumpTo()`-ed Kansas coordinate the source had never had any real data for — while
+    `map.queryRenderedFeatures()` at the same point, checked moments later, correctly showed only the real,
+    freshly-added synthetic test features. `queryRenderedFeatures()` (matched against real, actually-painted
+    tiles) proved to be the reliable ground truth throughout this investigation; `querySourceFeatures()` should
+    be treated with real suspicion for any future "does this source actually have the right data right now"
+    check, especially soon after a `setData()`/`updateData()`/`jumpTo()` call, and cross-checked against
+    `queryRenderedFeatures()` (with a real settle wait — a few seconds proved necessary more than once in this
+    session, not merely a formality) before trusting a 0-feature result as meaningful.
+  - **The one real, shipped code change this investigation produced**: `applyStateDataToSource()`
+    (index.html) now wraps its `srcObj.updateData({add: features})` call in a try/catch, falling back to a
+    plain `srcObj.setData({type:'FeatureCollection', features: features})` on any thrown error, with a real
+    `console.error` logged rather than a silent abort — closing the one MapLibre-documented, real way this
+    exact diff-update mechanism can fail completely silently (`"Cannot update existing geojson data in
+    <source>"`, thrown when the worker-side `_dataUpdateable` Map is ever left invalid — see the "MapLibre
+    large-dataset payload ceiling" entry above for the full mechanism this guards). Not proven to be the
+    actual cause of either original report, but a real, low-risk, defensible hardening of a documented failure
+    mode that was previously completely unguarded.
+  - **Verification**: standalone review confirmed the diff touches only this one function (a try/catch
+    wrapper, no logic change to the surrounding code); `node --check` confirmed clean syntax on all 4
+    extracted inline `<script>` blocks. Live: created a real, clearly-named test pin ("SYNC TEST — DELETE ME —
+    Session A verification") on the real signed-in account (geoff@theranchmine.com) via the real tap-anywhere
+    UI, confirmed it synced (`account-sync-status` read "Synced", `FieldMapSync.isSyncInFlight()` false),
+    confirmed via `state.pins`/`state.tombstones` in `localStorage`) that deleting it (through the real UI,
+    with `window.confirm` overridden to avoid the documented native-dialog-freezes-CDP gotcha — opening a
+    fresh tab to recover after the first attempt hit that exact freeze) correctly removed it and recorded a
+    real tombstone, confirming the security-rules change from this same session doesn't interfere with real
+    sync in either direction. APP_VERSION bumped 2.67.0 → 2.67.1 (patch), SHELL_CACHE bumped v191 → v192.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -9325,3 +9414,32 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   persisted data, not just a synthetic points array. `node --check` confirmed clean syntax on all 4 extracted
   inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.66.1 → 2.67.0 (minor — significant
   correctness fix, a full algorithmic rewrite of the affected function), SHELL_CACHE bumped v190 → v191.
+- Session A: three bundled items. (1) Firestore security rules audit — confirmed live, via direct Firebase
+  SDK testing from this sandbox against the real production database (own-document read/write succeeded;
+  cross-user and unauthenticated access were both correctly denied), that the deployed rules are properly
+  scoped; the user then independently pasted the literal Firebase Console rules text, which matched the
+  empirical findings exactly. Added `firestore.rules` to the repo, version-controlled, with no behavior
+  change — the rules were already correct, so no fix was needed or made. (2) Investigated a reported Oregon
+  Fish State Data bug (species selected with State Data → Oregon rendering zero features, no error) —
+  extensive live testing, including a full debug-instrumented trace of the real fetch/render call chain,
+  could not reproduce a permanent failure; every clean, single-interaction test (Brown Trout, Rainbow Trout,
+  Sockeye, all via both the boot-restore path and the manual-selection checkbox path) correctly rendered real
+  species data at real coordinates. Root-caused the confusion to a genuine, serious dev-server testing trap
+  (this sandbox's own service worker precaching stale JS via the browser's separate HTTP cache layer, even
+  after explicit Cache-Storage-only cleanup — see Architecture notes' own dedicated entry for the full
+  mechanism) rather than an app bug, and confirmed `map.querySourceFeatures()` gave misleading stale results
+  compared to the reliable `map.queryRenderedFeatures()` throughout this investigation. Shipped one real,
+  defensible hardening fix regardless: wrapped `applyStateDataToSource()`'s `updateData()` call in a
+  try/catch with a `setData()` fallback, closing the one documented real silent-failure mode of that
+  mechanism. (3) Investigated a reported AQI offline-fallback label bug (the "(from downloaded area)" suffix
+  never appending when genuinely offline) — reproduced the exact scenario cleanly (seeded a real offline-area
+  entry with a real `aqiSmokeTimeMs`, mocked the live `/identify` call to fail, toggled the real checkbox) and
+  confirmed the label correctly appended the suffix every time, for both the primary and vertically-integrated
+  toggles, with zero redundant network calls on the second toggle — found no bug, made no code change. Closed
+  with a real sync-integrity verification on the real signed-in account (geoff@theranchmine.com): created a
+  clearly-named test pin via the real tap-anywhere UI, confirmed a real successful sync, deleted it via the
+  real UI (working around a real native-`confirm()`-dialog-freezes-CDP gotcha by overriding `window.confirm`
+  and recovering via a fresh tab), and confirmed a correct tombstone was recorded — proving the Firestore
+  rules addition doesn't interfere with real sync in either direction. `node --check` confirmed clean syntax
+  on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.67.0 → 2.67.1
+  (patch), SHELL_CACHE bumped v191 → v192.
