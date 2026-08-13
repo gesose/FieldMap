@@ -3367,7 +3367,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.67.1';
+  var APP_VERSION = '2.68.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -5063,7 +5063,17 @@
     // Other" behavior, which is correct and requires no new code.
     'Triploid Rainbow Trout': 'Coldwater', 'Cutthroat Trout': 'Coldwater', 'Rio Grande Cutthroat Trout': 'Coldwater',
     'Kokanee Salmon': 'Coldwater', 'Gila Trout': 'Coldwater',
-    'Northern Pike': 'Warmwater', 'White Bass': 'Warmwater', 'Sunfish': 'Warmwater'
+    'Northern Pike': 'Warmwater', 'White Bass': 'Warmwater', 'Sunfish': 'Warmwater',
+    // Washington (SWIFD, Session — Washington crash fix) — real species names confirmed live via
+    // the source's own groupBy statistics query, some genuinely distinct strings from what Oregon
+    // uses for the same fish (e.g. WA's own "Chinook Salmon" has no run-specific Fall/Spring split;
+    // "Coho Salmon"/"Chum Salmon" carry the "Salmon" suffix Oregon's "Coho"/"Chum" entries don't) —
+    // added as their own new entries rather than force-merged into an existing differently-named
+    // one, matching this map's own established precedent for New Mexico. 'Northern Pikeminnow' and
+    // 'Pygmy Whitefish' deliberately left ungrouped (fall through to "Other") rather than guessed —
+    // neither is a clean fit for either bucket.
+    'Burbot': 'Coldwater', 'Chinook Salmon': 'Coldwater', 'Chum Salmon': 'Coldwater', 'Coho Salmon': 'Coldwater',
+    'Eastern Brook Trout': 'Coldwater', 'Steelhead Trout': 'Coldwater', 'Westslope Cutthroat Trout': 'Coldwater'
   };
   var WILDLIFE_FISH_GROUP_ORDER = ['Coldwater', 'Warmwater'];
 
@@ -5097,26 +5107,61 @@
   var STATE_DATA_SOURCES = {
     fish: {
       wa: {
-        state: 'Washington', type: 'unified', geometryType: 'polyline',
+        state: 'Washington', type: 'attributeFiltered', geometryType: 'polyline',
         url: 'https://geodataservices.wdfw.wa.gov/arcgis/rest/services/MapServices/SWIFD/MapServer/0',
+        whereField: 'SPECIES',
         attribution: 'Washington Dept. of Fish & Wildlife — SWIFD (Statewide Washington Integrated Fish Distribution)',
-        // Genuinely not species-filterable at the source (species is one attribute among many on
-        // a single unified statewide layer, not a separate layer per species) — shown as an
-        // available State Data option for every fish species rather than omitted, since the
-        // layer DOES cover any species picked, just not in isolation. Made explicit in the picker
-        // UI (see renderStateDataOptions) rather than silently pretending it's species-specific.
-        note: 'Statewide layer — shows all mapped species together, not filtered to just this one.',
-        // Session 65 — temporarily removed from the SELECTABLE UI (stateDataOptionsFor skips any
-        // entry with disabled:true) after confirming live that WDFW's own server
-        // (geodataservices.wdfw.wa.gov) returns a 500 at every page size the adaptive-backoff
-        // pagination tries (2000/500/125) — the server itself is unavailable, not a bug in this
-        // app's request logic or in the Session 63/64 updateData()/immediate-clear fixes, both of
-        // which are confirmed correct and deliberately left untouched here. This entry, its real
-        // URL/attribution, and every loading/clearing code path that reads it (loadStateDataLayer,
-        // applyStateDataToSource, clearWildlifeStateDataSource) are all intentionally left fully
-        // intact — removing just this one flag is the entire re-enable path once WDFW's endpoint is
-        // reachable again, grouped with future Wyoming data work rather than chased further now.
-        disabled: true
+        // Session (Washington crash fix) — was `type: 'unified'` (fetch the FULL, unfiltered
+        // 73,373-feature statewide layer regardless of which species is picked), which is exactly
+        // what Session 57 confirmed crashes MapLibre's own setData()/updateData() internals with a
+        // real RangeError — live-bisected between 40,000 (renders) and 73,373 (crashes) features.
+        // Investigated whether Washington has an NHD-derived stream-order/prominence field like
+        // Oregon's own nhdStreamOrder (Session 71) before assuming a tiered-loading rewrite was
+        // needed — it doesn't: SWIFD's real schema (confirmed live via a direct /0?f=json query, not
+        // assumed) is OBJECTID/LLID/LLID_STRM_NAME/SPECIESRUN/SPECIES/RUNTIME_DESC/DISTTYPE_DESC/
+        // USETYPE_DESC/LIFEHIST_DESC/Shape/Length_m/Length_mi — no Strahler order, no drainage area,
+        // nothing usable as a size/prominence proxy, despite SWIFD itself being built on routed NHD
+        // reaches (LLID is WA's own internal linear-referencing id, not an exposed NHD ReachCode).
+        // Deriving one would need the same kind of real spatial join against live NHD flowline data
+        // Oregon's own Session 71 built (143 tiles, ~1.9GB raw data — a genuinely large standalone
+        // data-processing task) — NOT attempted here.
+        // A simpler fix, already proven elsewhere in this exact codebase, applies instead: SWIFD's
+        // own real SPECIES field (checked live via a groupBy statistics query, not assumed) splits
+        // the full 73,373 features across 22 real species with a MAXIMUM per-species count of
+        // 16,215 (Coho Salmon) — comfortably under the confirmed 40,000+ crash threshold, with real
+        // headroom to spare. Switched from 'unified' (fetch everything, ignore species) to
+        // 'attributeFiltered' — the exact source type/fetch mechanism already built and proven for
+        // New Mexico (STATE_DATA_SOURCES.fish.nm), which is architecturally the SAME real shape
+        // Washington actually has (one single shared layer, species selected via a WHERE clause on
+        // a species attribute, not a separate layer per species) — reused directly, not rebuilt.
+        // The original 'unified' design's own comment claimed species filtering wasn't possible "at
+        // the source" — confirmed live this was incorrect (a plain WHERE clause on SPECIES works
+        // exactly like every other ArcGIS FeatureServer query in this app). This also means
+        // Washington now correctly only offers the 22 species it genuinely has, rather than
+        // appearing (with no real data behind it) for every fish species in the whole app.
+        // useUpdateData (read by applyStateDataToSource, alongside its existing localFile/unified
+        // check) keeps Washington on the safer updateData()-with-setData()-fallback path even
+        // though 'attributeFiltered' sources normally use plain setData() (safe for New Mexico's own
+        // much smaller ~1,551-feature dataset) — Session 57's real crash was found specifically
+        // against THIS dataset's own geometry, and its exact byte-size mechanism was never fully
+        // pinned down, so staying on the already-proven-safe path for Washington specifically,
+        // rather than assuming 16,215 features is safe for a plain setData() call too, is the more
+        // conservative choice.
+        useUpdateData: true,
+        // Session 65's own disabled:true (WDFW's server returning HTTP 500 at every page size the
+        // adaptive-backoff pagination tries) was re-checked live before doing any of this, not
+        // assumed still true — multiple real query shapes, including the exact unfiltered
+        // where=1=1 repro at full 2000-record page size that originally triggered the 500, all
+        // return real HTTP 200 now. The outage has resolved; the flag is removed here rather than
+        // left in place alongside an otherwise-unrelated architecture fix.
+        species: {
+          'American Shad': {}, 'Brown Trout': {}, 'Bull Trout': {}, 'Burbot': {}, 'Chinook Salmon': {},
+          'Chum Salmon': {}, 'Coho Salmon': {}, 'Cutthroat Trout': {}, 'Eastern Brook Trout': {},
+          'Green Sturgeon': {}, 'Kokanee Salmon': {}, 'Largemouth Bass': {}, 'Mountain Whitefish': {},
+          'Northern Pikeminnow': {}, 'Pink Salmon': {}, 'Pygmy Whitefish': {}, 'Rainbow Trout': {},
+          'Smallmouth Bass': {}, 'Sockeye Salmon': {}, 'Steelhead Trout': {}, 'Walleye': {},
+          'Westslope Cutthroat Trout': {}, 'White Sturgeon': {}
+        }
       },
       or: {
         // Session 62 — switched from a live perSpecies ArcGIS fetch to a static, offline-
@@ -20194,7 +20239,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!srcObj) return;
     var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][stateKey];
     var features = (data && data.features) || [];
-    if (src && (src.type === 'localFile' || src.type === 'unified')){
+    // useUpdateData (Washington-specific, see STATE_DATA_SOURCES.fish.wa's own comment) keeps a
+    // source on this same safer path even when its fetch TYPE (here, 'attributeFiltered') would
+    // otherwise default to plain setData() below — a real per-source override, not a type check,
+    // since the crash risk is about a specific dataset's own real size/geometry, not its fetch shape.
+    if (src && (src.type === 'localFile' || src.type === 'unified' || src.useUpdateData)){
       srcObj.setData({ type: 'FeatureCollection', features: [] });
       // updateData()'s diff mechanism requires MapLibre's worker-side _dataUpdateable Map to
       // already be valid — built fresh by the setData() call directly above, but genuinely can

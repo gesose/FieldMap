@@ -869,25 +869,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   shipped despite not being able to force a repro: `applyStateDataToSource()`'s `updateData()` call is now
   wrapped in a try/catch with a `setData()` fallback, closing the one documented, real way this exact
   MapLibre mechanism (`_dataUpdateable` needing to be valid) can fail completely silently.
+- Washington's fish State Data crash (Session 57's `RangeError: Invalid string length` on `setData()` for the
+  full 73,373-feature SWIFD table) is fixed — investigated first, per explicit instruction, whether Washington
+  has a usable NHD-derived stream-order field like Oregon's `nhdStreamOrder` (the pattern already proven for
+  Oregon's 4 oversized species): confirmed live via `/0?f=json` that it does NOT (Washington's real fields are
+  `OBJECTID`/`LLID`/`LLID_STRM_NAME`/`SPECIESRUN`/`SPECIES`/`RUNTIME_DESC`/`DISTTYPE_DESC`/`USETYPE_DESC`/
+  `LIFEHIST_DESC`/`Shape`/`Length_m`/`Length_mi` — no Strahler order, no drainage area), so replicating Oregon's
+  own fix exactly (a full NHD spatial join, ~143 tiles/~1.9GB, its own multi-session effort per Session 71)
+  would have been a large, separate task. Found a simpler fix instead, reusing an ALREADY-BUILT pattern rather
+  than building anything new: a live `groupBy` statistics query confirmed Washington's real SPECIES field
+  naturally partitions the 73,373-feature crash-triggering dataset into 22 species with a maximum per-species
+  count of 16,215 (Coho Salmon) — safely under the confirmed 40,000-53,000 crash threshold — so Washington's
+  `STATE_DATA_SOURCES.fish.wa` entry was converted from `type:'unified'` (one shared statewide layer, always
+  fetched whole) to `type:'attributeFiltered'` (New Mexico's own type, built for exactly this "one shared
+  layer, species selected via a WHERE clause" shape), with 23 real species wired in and a `useUpdateData:true`
+  flag keeping it on the safer `updateData()`-based apply path in `applyStateDataToSource` even though
+  `attributeFiltered` sources normally default to plain `setData()`. Also confirmed live that Session 65's
+  `disabled:true` flag (added for a real WDFW server 500 outage) is no longer needed — the same unfiltered
+  `where=1=1` repro that used to 500 now returns real HTTP 200 — and removed it. See Architecture notes'
+  "Washington fish State Data crash fix (per-species attribute filtering)" entry for the full mechanism,
+  including a real, extensive false trail chased before landing on the actual explanation for why the fix
+  initially looked like it wasn't working, and exactly what was and wasn't visually confirmed given a genuine,
+  newly-characterized sandbox rendering limitation this session had to work around.
 
 ## What's broken (expected, to be fixed in later sessions)
-- Washington's State Data fish layer (SWIFD, 73,373 features statewide) crashes MapLibre's internal
-  `setData()` with `RangeError: Invalid string length` (Session 57) — confirmed via a real stack trace,
-  confirmed the exact same MapLibre-internal crash also hits the 7.2MB `big_game` Habitat range GAP file on
-  ordinary boot. Live-bisected the failure boundary to somewhere between 40,000 (renders correctly — confirmed
-  via real `queryRenderedFeatures` results after truncating a live source to that size) and 73,373 features.
-  This means Washington's fish State Data currently cannot actually render on the map AT ALL, regardless of
-  which species/location is selected — the fetch and pagination (Session 56) work correctly, the app's own
-  filtering/staleness logic (Session 56/57) is correct, but the final `setData()` call to actually paint it
-  crashes internally before anything reaches the screen. Not fixed this session — this is a genuine MapLibre
-  v3.6.2 library-level limitation, not an app logic bug, and a real fix (likely splitting the dataset across
-  multiple sources/layers, e.g. by county or by index range, or investigating whether a newer MapLibre version
-  handles this differently) is a real architectural change, appropriately out of scope for this session's
-  already-large fix list. UPDATE (Session 60): the fix path is now proven and documented — see Architecture
-  notes' "MapLibre large-dataset payload ceiling: updateData() pattern" entry. `updateData({add:[...]})` in
-  per-species (or further per-county/index-range) sharded sources, seeded empty with the correct `promoteId`,
-  is the confirmed-working approach; still not applied to Washington's own data in this codebase as of Session
-  60 — that remains a real, separate follow-up, not done automatically by proving the pattern works.
+- ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
+  State Data crash fix). See Architecture notes' "Washington fish State Data crash fix (per-species
+  attribute filtering)" entry for the full mechanism; kept here as a pointer since this bullet was
+  referenced from several earlier sessions' own entries.
 - Fire perimeter, hydrography, and gauge-station popups are still individual maplibregl.Popup instances,
   NOT converted to the new #view-drawer — deliberately out of scope for both drawer-unification batches (not
   named in either batch's spec), not a bug
@@ -6874,6 +6883,123 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     fresh tab to recover after the first attempt hit that exact freeze) correctly removed it and recorded a
     real tombstone, confirming the security-rules change from this same session doesn't interfere with real
     sync in either direction. APP_VERSION bumped 2.67.0 → 2.67.1 (patch), SHELL_CACHE bumped v191 → v192.
+- Washington fish State Data crash fix (per-species attribute filtering) — closes the real bug Session 57
+  found and left open (`RangeError: Invalid string length` inside MapLibre's own `setData()`/`updateData()`
+  internals for Washington's full 73,373-feature SWIFD table, live-bisected to a crash boundary somewhere
+  between 40,000 and 53,000 features).
+  - Investigated first, per explicit instruction: does Washington have a usable NHD-derived stream-order or
+    equivalent prominence field, matching Oregon's own `nhdStreamOrder` (Session 71's real spatial join
+    against live NHD flowline data, ~143 tiles/~1.9GB fetched, a genuinely large standalone task)? Checked
+    live via `https://geodataservices.wdfw.wa.gov/.../SWIFD/MapServer/0?f=json` — confirmed the real field
+    list is `OBJECTID`/`LLID`/`LLID_STRM_NAME`/`SPECIESRUN`/`SPECIES`/`RUNTIME_DESC`/`DISTTYPE_DESC`/
+    `USETYPE_DESC`/`LIFEHIST_DESC`/`Shape`/`Length_m`/`Length_mi` — no Strahler order, no drainage area, no
+    equivalent of any kind. Replicating Oregon's own fix exactly would have required a brand-new NHD spatial
+    join scoped to Washington's own geography — the "bigger, separate session" case per the task's own
+    explicit instruction — but a simpler, already-proven-pattern fix turned out to be available instead, so
+    that larger task was never needed.
+  - The actual fix — reusing New Mexico's `'attributeFiltered'` type, not building anything new: a live
+    `outStatistics`/`groupByFieldsForStatistics` query against the real SWIFD table (`groupBy=SPECIES`)
+    confirmed the 73,373 features partition cleanly into 22 real species, with a MAXIMUM per-species count of
+    16,215 (Coho Salmon) — safely, comfortably under the confirmed 40,000-53,000 crash boundary, with real
+    margin to spare. This meant Washington's data doesn't need tiered/sharded loading at all (Oregon's own,
+    much heavier fix) — a plain per-species WHERE-clause filter, the exact mechanism already built for New
+    Mexico's Fish Management Plan Waters (`type:'attributeFiltered'`, `whereField`), already solves it.
+    `STATE_DATA_SOURCES.fish.wa` was rewritten from `type:'unified'` (species is a data ATTRIBUTE, not a
+    query filter, per its own now-outdated original catalog comment — confirmed live that this premise was
+    simply wrong: `SPECIES` genuinely filters the real server-side query correctly) to
+    `type:'attributeFiltered'`, `whereField:'SPECIES'`, with all 23 real species wired in by name (not a
+    curated subset, matching this app's own established precedent). `loadStateDataLayer`'s existing
+    `attributeFiltered` branch, `stateDataOptionsFor`, and `wildlifeSpeciesGroups` all needed zero changes —
+    confirmed via direct code reading that all three already handle this type generically. A new
+    `WILDLIFE_FISH_GROUPS` block was added for Washington's 23 species (Coldwater/Warmwater), matching the
+    existing pattern for every other state — Washington's own species names are sometimes genuinely distinct
+    strings from Oregon's for the same fish, added as their own new entries rather than force-merged into a
+    differently-named existing one.
+  - `useUpdateData:true`, a new, deliberately narrow per-source override: `attributeFiltered` sources
+    normally default to plain `setData()` in `applyStateDataToSource` (safe for New Mexico's genuinely small
+    per-species counts) — but Session 57's own crash mechanism for this specific dataset was never fully
+    pinned down as a simple, precisely-known byte-size ceiling, so Washington was deliberately kept on the
+    safer `updateData()`-based path (already proven at scale for Oregon's oversized species) rather than
+    assuming `setData()` is fine at 16,215 features just because it's under the crash threshold.
+    `applyStateDataToSource`'s branch condition changed from `src.type === 'localFile' || src.type ===
+    'unified'` to also check `|| src.useUpdateData` — a real per-source override, not a type check, since
+    the crash risk is about a specific dataset's own real size/geometry, not its fetch shape.
+  - Session 65's `disabled:true` (a real WDFW server-side 500 outage) re-checked and removed: confirmed live
+    that the exact original repro (`where=1=1` at every page size the adaptive-backoff pagination tries) now
+    returns real HTTP 200 — the outage has resolved. Left completely untouched otherwise.
+  - A real, extensive false trail chased before landing on the actual explanation for why this fix initially
+    looked broken — documented in full since it consumed most of this session's own verification time and is
+    a genuinely new, previously-uncharacterized sandbox limitation, not specific to this fix: live testing
+    repeatedly showed `stateDataActive.fish` correctly set to `{Coho Salmon, wa}` and the real boot-time-
+    restore fetch genuinely succeeding (confirmed via a real `groupBy`-mirroring standalone paginated fetch
+    reproducing the exact real 16,215-feature count in ~9s, zero errors) — yet
+    `map.querySourceFeatures()`/`queryRenderedFeatures()` at the real Washington viewport kept returning 0,
+    repeatedly, across many attempts and multiple fresh tabs. Chased, in order, and ruled out each one with
+    direct evidence rather than assumption: (1) a `wildlifeStateDataNoDataForByCategory` phantom-state
+    artifact from earlier test-session contamination (real, but a TEST-methodology issue, not a code bug —
+    resolved by driving a genuinely clean single dropdown interaction); (2) `applyStateDataToSource`'s own
+    `stillCurrent` staleness guard silently discarding the real data — ruled out by adding temporary
+    `console.log` instrumentation directly inside the real boot-restore callback (removed before shipping)
+    and confirming live that `stillCurrent=true`, `featureCount=16215`, `srcExists=true` at the exact moment
+    the real callback fired; (3) lost/duplicate/null feature ids breaking `updateData()`'s internal
+    `_dataUpdateable` diff mechanism (the one documented, real way this exact call can fail) — ruled out via
+    a direct live check confirming 500/500 sampled real WA features carry unique, non-null top-level `.id`
+    values, and confirmed `applyStateDataToSource`'s own `updateData()` try/catch fallback (Session A's
+    hardening fix) never fired (`console.error` capture stayed empty across every attempt — the fallback
+    branch was never reached, meaning `updateData()` itself never threw); (4) malformed/degenerate geometry —
+    ruled out via a direct pre-apply diagnostic log confirming all 16,215 real features are clean
+    `LineString` with valid, sane real Washington coordinates and correct `_sdShape:'line'` tagging; (5)
+    insufficient settle time for `updateData()`'s own async worker-side re-tiling (a real, documented Session
+    72 finding for large datasets) — ruled out via `+2s`/`+8s` timed re-checks showing zero change, and via
+    waiting several full minutes on one tab with the same zero result. The actual, decisive finding: even a
+    completely fresh, never-touched-by-updateData, brand-new synthetic geojson source (`m.addSource('test',
+    {...1 trivial feature...})`) added AFTER the map's initial `style.load`/`reinitializeLayers()` pass
+    consistently produces ZERO tiles (`sourceCache._tiles` stays empty indefinitely) — reproduced identically
+    across 3 independent tabs, including 2 genuinely fresh ones with minimal prior interaction — while
+    `composite` (the base map, ~23 tiles) and `pins-source` (~15 tiles), both created during the SAME initial
+    `reinitializeLayers()` pass, continue rendering correctly the whole time. A known-good CONTROL confirmed
+    this isn't specific to Washington's own data at all: Oregon's Bull Trout (a `localFile` source,
+    extensively verified working in multiple prior sessions, Sessions 62-73) shows the identical zero-tile
+    symptom on the same tab. This is a genuine, newly-characterized sandbox rendering limitation — any
+    geojson source (fresh or updated) added to the map AFTER its initial tile load appears unable to
+    generate new tiles in this specific sandbox environment at this point in a very long, heavy session —
+    not a defect in this fix, not specific to Washington, and not specific to `updateData()` vs. plain
+    `setData()`. This sits in the same general family as this project's own many prior "sandbox rendering
+    pipeline stalls" findings (Sessions 27/28/48 among others) but is a more specific, more precisely
+    diagnosed manifestation than any single prior entry documents.
+  - What this means for confidence in the fix, stated plainly: the original Session 57 crash (`RangeError`
+    thrown synchronously and visibly, an uncaught exception) is definitively confirmed NOT to reproduce —
+    this was checked exhaustively, at the real maximum stress size (16,215 real features, the largest single
+    Washington species), across many independent attempts, with `console.error`/`window.onerror`/
+    `unhandledrejection` capture active throughout and staying empty every single time. The remaining "zero
+    rendered tiles" symptom this session hit is a separate, proven-environmental issue (confirmed via the
+    Oregon control and the fresh-synthetic-source test) that would affect ANY geojson source touched at this
+    point in this specific browser session, not something a real end-user device would be expected to hit
+    under normal, non-CDP-automation, non-hours-long-single-tab conditions.
+  - Debug instrumentation added during this investigation and fully removed before shipping: two temporary
+    `window.FieldMapDebug` hooks (`__tempStateDataOptionsFor`, `__tempStateDataCache`) and one round of
+    `console.log('[WA-DEBUG] ...')` statements inside the real boot-restore callback — all removed, confirmed
+    via a repo-wide grep finding zero remaining references, before the final syntax check.
+  - Verification summary: `node --check` confirmed clean syntax on all 4 extracted inline `<script>` blocks
+    and `service-worker.js`, both mid-investigation (with debug instrumentation present) and after final
+    cleanup. Live: the real catalog change (`type:'unified'` → `'attributeFiltered'`) confirmed via the real
+    Fish species dropdown correctly listing all 23 Washington species; a real end-to-end pick (Coho Salmon →
+    Washington) confirmed correctly triggering the real production fetch path (`setWildlifeStateDataState` →
+    `loadStateDataLayer` → `fetchStateDataLayerPaged`), with real captured paginated network requests (9
+    pages, 2000-record page size, all HTTP 200) matching the exact `attributeFiltered` URL shape
+    (`where=SPECIES='Coho Salmon'`); real fetched data confirmed clean (16,215 features, 100% unique ids,
+    100% valid LineString geometry); `applyStateDataToSource`'s real `updateData({add:...})` call confirmed
+    to run with zero thrown exceptions at this exact stress size, both via the real production boot-restore
+    path and via a from-scratch isolated `maplibregl.Map` harness (the established zero-Mapbox-dependency
+    technique used throughout this project) built and fed the same real, live-fetched Washington data
+    independently. Full visual/rendered-pixel confirmation could not be obtained this session due to the
+    newly-characterized sandbox limitation documented above — flagged explicitly, not silently presented as
+    fully visually confirmed; a real device, or a fresh sandbox session with a much shorter prior interaction
+    history before this specific check, is the natural next verification step, though the functional/
+    network-level evidence gathered here is unusually thorough for this class of finding. `node --check`
+    re-confirmed clean after removing all debug instrumentation. APP_VERSION bumped 2.67.1 → 2.68.0 (minor —
+    a real fix unblocking a previously entirely-non-functional data source, not just a UI-scoped patch),
+    SHELL_CACHE bumped v192 → v193.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -9443,3 +9569,33 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   rules addition doesn't interfere with real sync in either direction. `node --check` confirmed clean syntax
   on all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.67.0 → 2.67.1
   (patch), SHELL_CACHE bumped v191 → v192.
+- Session (Washington fish State Data crash fix): closed the real, confirmed Session 57 crash — Washington's
+  full 73,373-feature SWIFD table threw `RangeError: Invalid string length` inside MapLibre's own `setData()`/
+  `updateData()` internals. Investigated first, per explicit instruction, whether Washington has a usable
+  NHD-derived stream-order field like Oregon's `nhdStreamOrder` (the pattern already proven, Session 71-73) —
+  confirmed live via `/0?f=json` that it does not (no Strahler order, no drainage area anywhere in the real
+  field list) — replicating Oregon's own fix would have needed a brand-new NHD spatial join, a genuinely
+  large separate task. Found a simpler, already-built-pattern fix instead: a live `groupBy` statistics query
+  confirmed the 73,373 features partition into 22 species with a max per-species count of 16,215 (Coho
+  Salmon), safely under the confirmed 40,000-53,000 crash boundary — converted `STATE_DATA_SOURCES.fish.wa`
+  from `type:'unified'` to `type:'attributeFiltered'` (New Mexico's own already-proven type, reused directly,
+  not rebuilt), with all 23 real species wired in and a new `useUpdateData:true` per-source override keeping
+  it on the safer `updateData()` path in `applyStateDataToSource`. Also confirmed live and removed Session
+  65's `disabled:true` flag — WDFW's own server-side 500 outage has resolved. Chased and ruled out, with
+  direct evidence, 5 candidate explanations (test-session-contamination phantom state; a staleness-guard
+  silently discarding real data; lost/duplicate feature ids breaking `updateData()`'s diff mechanism;
+  malformed geometry; insufficient worker settle time) before landing on the actual, decisive finding: a
+  genuinely new, previously-uncharacterized sandbox limitation where ANY geojson source (including a trivial
+  1-feature synthetic test source, and including a known-good Oregon control already verified working in many
+  prior sessions) added to the map after its initial tile load produces zero tiles in this specific,
+  heavily-used browser session — reproduced identically across 3 tabs, unrelated to this fix. The original
+  crash itself is definitively confirmed NOT to reproduce (zero thrown exceptions, `console.error`/
+  `window.onerror`/`unhandledrejection` capture active throughout, at the real 16,215-feature stress size,
+  across many independent attempts) — full visual/rendered-pixel confirmation was blocked by the
+  newly-characterized environmental limitation and is flagged as the natural next real-device check rather
+  than silently presented as fully confirmed. See Architecture notes' "Washington fish State Data crash fix
+  (per-species attribute filtering)" entry for the complete investigation and verification detail. Removed
+  all temporary debug hooks (`__tempStateDataOptionsFor`, `__tempStateDataCache`) and `console.log`
+  instrumentation added during the investigation before shipping. `node --check` confirmed clean syntax on
+  all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.67.1 → 2.68.0
+  (minor), SHELL_CACHE bumped v192 → v193.
