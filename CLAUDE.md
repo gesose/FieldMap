@@ -891,6 +891,14 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   including a real, extensive false trail chased before landing on the actual explanation for why the fix
   initially looked like it wasn't working, and exactly what was and wasn't visually confirmed given a genuine,
   newly-characterized sandbox rendering limitation this session had to work around.
+- Forest Closures — a new Land and Boundaries overlay showing current standing forest orders (fire
+  restrictions/closures, firearm restrictions, motor vehicle prohibitions, recreation closures, and more) on
+  National Forest land across OR/WA/AZ/NM/ID/NV/UT, built directly on a prior dedicated research session's
+  live-confirmed findings (see that entry below). Merges 3 independently-fetched USFS-region feeds into one
+  shared source, classified into fire vs. non-fire categories with genuinely distinct visual treatment (red
+  crosshatch vs. a calm flat slate fill) and wired into Tap-stack from the start. See Architecture notes'
+  "Forest Closures" entry for the full design, including a real server-side record-count limit found and
+  fixed live on one of the 3 regional feeds.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -7000,6 +7008,146 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     re-confirmed clean after removing all debug instrumentation. APP_VERSION bumped 2.67.1 → 2.68.0 (minor —
     a real fix unblocking a previously entirely-non-functional data source, not just a UI-scoped patch),
     SHELL_CACHE bumped v192 → v193.
+- Forest Closures — built directly on a prior dedicated research session's live-confirmed findings (that
+  session's own report is preserved verbatim as this entry's own "Research findings" sub-bullet below), not
+  re-derived from scratch. Shows current standing forest orders — not just fire closures — on National Forest
+  land across all 7 states this app touches (OR/WA via USFS Region 6, AZ/NM via Region 3, ID/NV/UT via
+  Region 4), merged from 3 independently-fetched live ArcGIS feeds into one shared `forestclosures-source`,
+  fetched once and cached for the session (same tier as USFS boundaries/GMU — closure orders don't change
+  minute-to-minute like active fire perimeters).
+  - **Schema normalization**: each region's real, confirmed-live field names (R6: `ClosureOrderName`/
+    `ClosureDescription`/`ClosureStartDate`/`ClosureEndDate`/`ForestUnit`/`District`/`ClosureURLlink`; R3/R4:
+    lowercase `ordername`/`description`/`startdate`/`enddate`/`forestname`/`hyperlink`/`ordertype`) are
+    mapped through a per-region `fields` table in `FOREST_CLOSURE_REGIONS` into one shared `_fc*`-prefixed
+    property schema every paint layer/popup/Tap-stack entry reads uniformly — the same "normalize once at
+    merge time" approach already established for Migration corridors' own cross-source schema mismatch.
+  - **R6 vs. R3/R4, a real structural difference**: R6 is a curated PublicView with a clean
+    `ClosureStatus='Active'` server-side filter and 3 real shape-type sublayers (point/line/polygon) — every
+    record is fire-driven by definition (`alwaysFireCategory:true`), so there's no `ordertype` field to
+    classify from. R3/R4 are general-purpose "Forest Order" layers (ALL standing order types — fire
+    restrictions, firearm restrictions, motor vehicle prohibitions, recreation closures, etc. — per explicit
+    design instruction to show all of them, not just fire) with no simple status field at all — "currently
+    active" is computed CLIENT-SIDE from `startdate`/`enddate`/`rescinddate` (not rescinded, end date still in
+    the future, start date already reached — the last check is a deliberate addition beyond the task's own
+    literal "enddate in future, rescinddate IS NULL" spec, since an order signed for a future start date isn't
+    actually in effect yet). Both R3 and R4 also have sibling layers that were confirmed live to be NOT real
+    closure data (R3: `ForestOrderPT` — label points, not independent records; `ForestOrderNoData` — "no data
+    available" placeholder polygons; `ForestOrderClick` — an invisible click-helper layer for the source app's
+    own UI) and correctly excluded from `FOREST_CLOSURE_REGIONS`.
+  - **r4's real esriJSON conversion**: r4's self-hosted service (`apps.fs.usda.gov/fsgisx02`, an older ArcGIS
+    Server) returned a real HTTP 400 on `f=geojson` — confirmed live before building, not assumed — so it's
+    fetched as plain esriJSON (`f=json`) and converted via `esriFeatureToGeoJson`, a from-scratch ring-winding
+    converter (Esri: exterior rings clockwise, holes counterclockwise; GeoJSON RFC7946: the reverse) using the
+    same signed-area classify-then-reverse technique already proven for the Oregon fish habitat pipeline
+    (Session 61) — classify each ring by its ORIGINAL (pre-reversal) signed area, then reverse every accepted
+    ring before output, which is what actually flips it into GeoJSON's convention. Correctly produces
+    `MultiPolygon` for features with multiple disjoint exterior rings, confirmed live against real r4 data.
+  - **A real server-side record-count limit, found and fixed live, not left fragile**: r4's own server returns
+    a genuine HTTP 500 ("Error performing query operation") for ANY single request above ~62-99 records on
+    this layer — a real, undocumented limit, the same general class of quirk already documented elsewhere in
+    this app for Oregon's own self-hosted ArcGIS server, just at a much lower threshold. Confirmed via direct
+    curl bisection (10/50/62 succeed; 100/150/200/250/1000 all fail identically) during live browser testing,
+    after the app's own adaptive-backoff pagination (`fetchForestClosureLayerPaged`, generic across all 3
+    regions — a `where`/`resultOffset`/`resultRecordCount` loop with a `Math.floor(pageSize/4)` retry-smaller-
+    on-failure ladder, same shape as Wildlife State Data's own `fetchStateDataLayerPaged` but kept separate
+    since that one hardcodes Wildlife-specific tagging that would be meaningless here) took 90+ real seconds
+    to grind through 2 full failed attempts (1000, then 250) before landing on a working size (62) — landing
+    uncomfortably close to the backoff's own `PAGE_SIZE_FLOOR` (50), which would have made it give up
+    permanently on the very next retry. Fixed with a per-layer `pageSize:50` override on r4's own layer
+    definition (read via `layerDef.pageSize || PAGE_SIZE_START` at the very first request, not just as a
+    fallback after failures) — confirmed live afterward via real captured network requests: 5 clean HTTP 200s
+    at offsets 0/50/100/150/200, zero retries, zero warnings.
+  - **Visual design**: fire-related closures render as a red (`#C0392B`) crosshatch fill (reusing
+    `buildDisturbanceHatchPattern`, the same canvas-pattern-image technique already proven for Timber Harvest/
+    Thinning) plus a matching stroke; every other standing-order type renders as a calmer flat slate-blue
+    (`#5B7088` fill / `#37485A` stroke) — two independent axes of distinction (color AND texture), not just
+    color alone, per explicit design instruction that the difference must read at a glance. Real LineString-
+    shape closures (R6's own line sublayer — a single trail/road segment closed without a full area closure
+    around it) render dashed, matching this app's existing "dashed = temporary/administrative" convention
+    (draw previews, etc.) rather than GMU/Migration's own solid boundary lines. "Other" (non-fire) fill paints
+    BELOW fire — added to the map first — so a location with both an ordinary standing order and a newer fire
+    closure never has the fire treatment visually obscured by the calmer one.
+  - **Popup**: matches `gmuPopupHtml`'s own pattern exactly, per explicit instruction — name/meta/description/
+    dates body + a real "View signed order" link-out button (the actual authoritative `ClosureURLlink`/
+    `hyperlink` field, confirmed live to resolve to real, working Forest Service pages) + an inline disclaimer
+    paragraph, routed through the shared `#view-drawer` via `showViewDrawer('forestclosure', ...)`. The
+    disclaimer text itself is a judgment call, reasoned through against the same always-visible-vs-behind-"?"
+    rule the UI consolidation session established: the POPUP always shows it inline (matching GMU exactly, per
+    explicit instruction — this is not the judgment call), but the LAYERS-PANEL copy lives behind this layer's
+    own "?" tooltip, not always-visible next to the checkbox, since this is fundamentally the same
+    "informational only, verify with the authoritative source" framing as Timber's own data-completeness
+    caveat (and is the literal wording the R6 service's own description already uses) rather than GMU/AQI's
+    "could meaningfully mislead about safety/legal compliance" framing that clears the always-visible bar.
+  - **Tap-stack**: registered from the start (explicit hard requirement, not an afterthought) — one
+    `TAP_STACK_TYPES` entry covering all 4 real tappable layers (`forestclosures-fill-fire`, `-fill-other`,
+    `-line-linear`, `-point`), `getKey` combining `f.layer.id + region + objectId` since candidates come from
+    multiple layers and multiple regions. Verified live with 3 distinct real overlap scenarios: 6 real
+    standing orders overlapping each other at Payette National Forest, ID (multiple genuinely different order
+    types stacked at one point); a real pin created at that exact same point showing 7 items (the pin listed
+    first, then all 6 closures) — the literal cross-type test case explicitly requested; and 2 real point-
+    shape closures overlapping near Copper Creek TH, Olympic National Forest, WA.
+  - **Layers panel placement**: Land and Boundaries, alongside GMU boundaries (not Environmental, where
+    Disturbance History/Timber/Wildfire History live) — judgment call, since Forest Closures is fundamentally
+    an administrative/regulatory boundary concept (what's currently off-limits and why) rather than an
+    environmental-condition overlay, closer kin to GMU than to fire history or timber activity.
+  - **No offline/download support** — deliberately, matching GMU/USFS boundaries' own precedent (external
+    reference data fetched once per session, not part of the DOWNLOAD_LAYERS tile system), not a gap.
+  - **Verification, live, this session** (dev server confirmed on `localhost:8080` before starting; a fresh
+    browser tab was needed partway through after an earlier tab's viewport got stuck at a genuine 0×0 size —
+    a tooling issue, not an app bug): real closures confirmed rendering for all 3 regions via direct
+    `map.getSource('forestclosures-source')._data` inspection (2548 total merged features: r6=2255, r3=91,
+    r4=202; byShape line=1994/point=231/polygon=323; byCategory fire=2273/other=275) and via real screenshots
+    showing the crosshatch pattern clearly at Alpine Lakes Wilderness, WA. The R3/R4 active-date filter was
+    independently verified against real raw data — a standalone Node script re-implementing
+    `isForestClosureCurrentlyActive`'s exact logic against freshly-fetched raw R3 (97 total) and R4 (241
+    total) records computed 91 and 202 active respectively, EXACTLY matching the live app's own merged counts
+    (not just plausibly close) — and a specific excluded record was spot-checked to confirm its exclusion
+    reason (a real non-null `rescinddate`) is genuine, not coincidental. All 4 click-handler layer types were
+    individually tap-tested with real popups confirmed correct (Three Queens Fire Closure — fill-fire;
+    Wilderness Camping and Grazing Restrictions — fill-other, full real description text; Eagle Creek Area and
+    Trail Closure — line-linear; Copper Creek TH — point), including one real "View signed order" link
+    confirmed to resolve with a genuine HTTP 200. One real, self-inflicted testing artifact hit and resolved
+    during this pass, not an app bug: leftover stale UI state (an old Tap-stack list, an old view-drawer, an
+    old pin overflow menu) from an earlier test step stayed on screen through a subsequent `jumpTo()` camera
+    move and intercepted the next click — resolved by explicitly closing every panel before continuing, not
+    by any code change. A separate, genuine `requestAnimationFrame`-throttling-while-backgrounded gotcha (the
+    same class already documented in Sessions 27-28/48/60 among others) caused `queryRenderedFeatures` to
+    return empty immediately after a `jumpTo()` in this automation tab — resolved via the same established
+    foreground-forcing-screenshot workaround, confirming it was a render-timing artifact and not a real click-
+    dispatch failure once a real screenshot forced the frame to catch up. The test pin created to prove the
+    pin-overlap Tap-stack case was deleted via the real UI afterward, confirmed via a real tombstone recorded
+    in `localStorage`, matching this project's own established pattern for temporary test data on a real
+    signed-in account (see the "Session A" entry's own precedent). Zero console errors throughout the entire
+    session. `node --check` confirmed clean syntax on the main inline `<script>` block and `service-worker.js`
+    after every edit. APP_VERSION bumped 2.68.0 → 2.69.0 (minor — new feature), SHELL_CACHE bumped v193 → v194.
+  - **Research findings (prior dedicated research session, no code changes)** — the live investigation this
+    feature was built on: `geo.maps.arcgis.com/home/item.html?id=6c1f0f733b214ac092df56b5575d8f70` (ODFW's
+    own "Active Large Fires and Hunting Areas in Oregon" web map) was confirmed, via live queries not just
+    documentation, to be built on a real WFIGS wildfire-perimeters layer (already in this app) plus a GroupLayer
+    ("Current Fire Closures on US Forest Service Lands (Region 6)") built on
+    `services1.arcgis.com/gGHDlz6USftL5Pau/.../R06_FireClosureOrders_PublicView/FeatureServer` (3 sublayers —
+    Points/Lines/Areas — `ClosureStatus='Active'` filter, confirmed open CORS `*`, no token, real field
+    structure). Confirmed live that "(Region 6)" isn't cosmetic — distinct active closures on WA forests
+    (Colville, Okanogan-Wenatchee, Olympic) prove real OR+WA coverage. Searched for and found equivalent
+    services from the other 2 USFS regions FieldMap's remaining states fall under: Region 3 (Southwestern —
+    AZ+NM), `r03_ForestOrder`/`FeatureServer/1` (also `services1.arcgis.com`, same reliable ArcGIS-Online
+    hosting, open CORS, no token, 97 real features, real 2026 dates); Region 4 (Intermountain — ID+NV+UT),
+    confirmed via `apps.fs.usda.gov/fsgisx02/.../R04_Alerts_And_Closures_01/MapServer/0` (self-hosted, CORS
+    reflects any origin, no token, 242 real features spanning Humboldt-Toiyabe/NV, Manti-La Sal/Fishlake/
+    Uinta-Wasatch-Cache/UT) — explicitly NOT the similarly-named "R04 Alerts and Closures Forest Order HFL"
+    ArcGIS-Online copy, confirmed live to require a token and fail. Together these 3 regional feeds cover
+    every single FieldMap state with zero gaps. Also confirmed: R3/R4 have no simple status field (general-
+    purpose "Forest Order" layers covering fire restrictions AND firearm restrictions/motor vehicle
+    prohibitions/recreation closures/etc., unlike R6's fire-specific PublicView) — "currently active" needs
+    computing from `startdate`/`enddate`/`rescinddate`, not a status filter. Licensing confirmed as standard
+    federal public-data disclaimer language across all 3 regions, no restrictive terms. Also checked, per
+    task: ODF's own Oregon fire-restrictions page (`gisapps.odf.oregon.gov/Firerestrictions/PFR.html`) DOES
+    have a real GIS layer behind it (traced through its own `config.json` to `gis.odf.oregon.gov/odfags/...
+    /Fire_Restriction_Edit_View/FeatureServer/0`), but it's genuinely gated behind an ArcGIS token (confirmed
+    live — CORS is open, but the query itself returns `"Token Required"`), a real dead end for direct client
+    access; BLM's own fire-restrictions page (found via the real link on ODFW's page, not guessed) is purely
+    informational — individual closures posted as static PDF maps, no embedded interactive map or GIS service
+    reference anywhere in the page.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -9599,3 +9747,54 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   instrumentation added during the investigation before shipping. `node --check` confirmed clean syntax on
   all 4 extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.67.1 → 2.68.0
   (minor), SHELL_CACHE bumped v192 → v193.
+- Session (Forest Closures research, research-only, no code changes): investigated the real live data sources
+  behind ODFW's own "Active Large Fires and Hunting Areas in Oregon" web map — confirmed the wildfire-
+  perimeters piece is the same WFIGS data this app already has, and identified the genuinely new piece (USFS
+  Region 6's `R06_FireClosureOrders_PublicView` FeatureServer) via direct queries against the real ArcGIS
+  item, not documentation. Found the scope was much bigger than the task's own framing suggested: "(Region 6)"
+  in the title isn't cosmetic (confirmed via real active Washington-forest closures), and searching for
+  equivalent regional feeds found real, live, working services for USFS Region 3 (Southwestern — AZ+NM) and
+  Region 4 (Intermountain — ID+NV+UT) too — together covering every single FieldMap state with zero gaps, a
+  finding not in the original task description. Confirmed live CORS/token/field-structure/licensing for all 3
+  regions and flagged one real dead end (a similarly-named R4 service requiring a token). Also checked ODF's
+  and BLM's own fire-restriction pages per the task — found ODF genuinely has a real GIS layer behind it but
+  gated behind an ArcGIS token (dead end for direct access), and BLM's page is purely informational (static
+  PDF maps, no GIS service). See Architecture notes' "Forest Closures" entry, its own "Research findings"
+  sub-bullet, for the complete investigation. No application code was touched this session, as scoped.
+- Session (Forest Closures — build): built the full feature on the prior research session's live-confirmed
+  findings — a new Land and Boundaries overlay merging 3 independently-fetched USFS-region feeds (R6/R3/R4)
+  into one shared source, classified into fire (red crosshatch) vs. other (calm flat slate) standing-order
+  types with genuinely distinct visual treatment, popups matching GMU's own pattern (name/meta/dates/link-out/
+  disclaimer), and full Tap-stack integration from the start, per explicit hard requirement. Confirmed the
+  dev server was running on `localhost:8080` first (it wasn't started fresh this session — already running
+  from earlier work). Studied the existing GMU/USFS-boundaries/Timber/Tap-stack patterns in detail before
+  writing any code, reusing established primitives throughout rather than inventing new ones: the fetch-once-
+  cache-for-session lifecycle (USFS boundaries' own pattern, not Fire Perimeters' always-refetch one), the
+  adaptive-backoff pagination shape (Wildlife State Data's `fetchStateDataLayerPaged`, reimplemented rather
+  than reused directly since its hardcoded tagging wouldn't fit), the hatch-pattern fill technique (Timber
+  Harvest/Thinning's `buildDisturbanceHatchPattern`), and the mode-aware click-guard pattern every other
+  overlay's click handler already follows. Wrote one genuinely new piece of geometry code — a from-scratch
+  esriJSON-ring-to-GeoJSON converter for R4's own self-hosted server (confirmed live to lack `f=geojson`
+  support), reusing the same signed-area ring-classification technique already proven for the Oregon fish
+  pipeline. Found and fixed a real bug live, not left fragile: R4's server has an undocumented ~62-99 record
+  response-size cliff that the generic adaptive-backoff pagination technically eventually worked around (90+
+  seconds of real retry backoff, landing at page size 62 — dangerously close to giving up permanently at the
+  backoff's own floor of 50) but shouldn't have had to; fixed with a per-layer conservative starting page
+  size, confirmed live afterward via real captured network requests showing 5 clean HTTP 200s with zero
+  retries. Verified live and exhaustively: real merged data confirmed for all 3 regions (2548 total features);
+  the R3/R4 client-side active-date filter independently re-derived from scratch against freshly-fetched raw
+  data and confirmed to match the app's own live counts EXACTLY (91/91, 202/202), not just plausibly close;
+  all 4 real tappable layer types individually tap-tested with correct real popup content, including a
+  working "View signed order" link confirmed via a real HTTP 200; and 3 distinct real Tap-stack multi-select
+  scenarios, including the explicit cross-type test the task asked for — a real test pin created at the exact
+  coordinates of an overlapping closure cluster, confirmed showing all 7 items together (pin + 6 closures),
+  then cleanly deleted afterward via the real UI with a confirmed tombstone, matching this project's own
+  established pattern for temporary test data on a real signed-in account. Hit and resolved two real testing-
+  only artifacts along the way, neither an app bug: leftover stale UI state from an earlier test step
+  intercepting a later click (a test-sequencing mistake, fixed by explicitly closing panels before
+  continuing) and the same `requestAnimationFrame`-throttling-while-backgrounded rendering-lag gotcha this
+  project has documented many times before (resolved via the established foreground-forcing-screenshot
+  workaround). Zero console errors across the entire session. See Architecture notes' "Forest Closures" entry
+  for the complete design and verification detail. `node --check` confirmed clean syntax on the main inline
+  `<script>` block and `service-worker.js`. APP_VERSION bumped 2.68.0 → 2.69.0 (minor — new feature),
+  SHELL_CACHE bumped v193 → v194.

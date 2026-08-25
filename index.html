@@ -2341,6 +2341,22 @@
         </button>
       </div>
       <p class="gmu-disclaimer" id="gmu-disclaimer-landboundaries"></p>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="forestclosures-toggle"> Forest closures <button class="layer-hint-btn" data-layer-id="lh-forestclosures" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="forestclosures-opacity-row"><input type="range" id="forestclosures-opacity" min="20" max="100" value="55"></div>
+      <div class="layer-info-panel" id="lh-forestclosures">
+        <div class="layer-info-desc">Current standing forest orders on National Forest land in OR, WA, AZ, NM, ID, NV &amp; UT — fire restrictions/closures, firearm restrictions, motor vehicle prohibitions, recreation closures, and more. Fire-related closures show as a red crosshatch; every other order type shows as a calmer solid fill. Tap any closure for details and a link to the real signed order. Fetched once and cached for the session.</div>
+        <div class="layer-info-legend">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#C0392B;color:#fff;">Fire-related</span>
+            <span class="legend-swatch" style="background:#5B7088;color:#fff;">Other orders</span>
+          </div>
+        </div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="forestclosures-disclaimer"></div>
+        <a class="layer-info-src" href="https://www.fs.usda.gov/detailfull/r6/home/?cid=fseprd872984" target="_blank">Source: USDA Forest Service (Regions 3, 4 &amp; 6)</a>
+      </div>
     </div>
   </div>
 
@@ -3367,7 +3383,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.68.0';
+  var APP_VERSION = '2.69.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4129,6 +4145,7 @@
       aqiSmokeVertOn: false, aqiSmokeVertOpacity: 0.6,
       nlcdOpacity: 0.7, fireperimetersOn: false, fireperimetersOpacity: 0.55,
       nlcdOn: false, usfsBoundariesOn: false, usfsBoundariesOpacity: 0.9, hillshadeOn: false,
+      forestClosuresOn: false, forestClosuresOpacity: 0.55,
       // Slope Angle / Custom Elevation Range (Session 38) — both purely client-computed from
       // DEM data, see the "Slope Angle and Custom Elevation Range overlays" Architecture notes
       // entry for the full design. elevRangeMinFt/MaxFt default to a wide, non-suggestive
@@ -5673,6 +5690,82 @@
   // is ever visible on screen at once anyway) via this one shared constant rather than two
   // separately-typed copies.
   var TIMBER_DISCLAIMER = 'Timber harvest and thinning data is self-reported by individual Forest Service units — spatial reporting wasn\'t historically required, so both layers are known to be incomplete. Viewing any of the 3 Disturbance History layers from a downloaded offline area shows data as of download day — newly-reported fires/treatments won\'t appear until you re-download (Timber\'s 15-year window still correctly drops treatments that age past it in the meantime, even from that same frozen download).';
+  // Forest Closures — the per-feature popup includes this inline (matching gmuPopupHtml's own
+  // pattern, per explicit instruction), but the Layers-panel copy lives behind this layer's own
+  // "?" tooltip, not always-visible next to the checkbox — reviewed against the same always-
+  // visible-vs-behind-"?" bar GMU_DISCLAIMER/TIMBER_DISCLAIMER above were reviewed against: this
+  // is fundamentally the same "informational only, verify with the authoritative source" framing
+  // as Timber's own data-completeness caveat (and is the literal wording the R6 service's own
+  // description already uses), not the "wrong answer has direct legal/tag consequences" framing
+  // that keeps GMU always-visible, so it doesn't clear the bar for ambient Layers-panel clutter.
+  var FOREST_CLOSURE_DISCLAIMER = 'Informational only — the signed closure order (linked above) is the authoritative source. Closures can be issued, changed, or rescinded without notice; verify current status with the managing Forest Service unit before relying on this.';
+  // Fire-related closures render as a red crosshatch (fill-pattern, reusing
+  // buildDisturbanceHatchPattern — see the "Forest Closures" reinitializeLayers block); every
+  // other standing-order type (firearm restrictions, motor vehicle prohibitions, recreation
+  // closures, etc.) renders as a calmer flat slate-blue fill — two axes of distinction (color +
+  // texture), not just color alone, so the difference reads at a glance per explicit instruction.
+  var FOREST_CLOSURE_FIRE_COLOR = '#C0392B';
+  var FOREST_CLOSURE_OTHER_COLOR = '#5B7088';
+  var FOREST_CLOSURE_OTHER_STROKE = '#37485A';
+  // One entry per USFS region, each independently live-fetched and merged into one shared
+  // source/cache. Every URL/layer-number/field-name below was confirmed live (not assumed from
+  // documentation) in a dedicated prior research session — see CLAUDE.md's "active forest/fire
+  // closures overlay" research entry for the full investigation, including which sibling layers
+  // on each service are real data vs. label/no-data/click-helper layers to be skipped.
+  //   r6 (Oregon + Washington): a curated PublicView with 3 real shape-type sublayers (point/
+  //     line/polygon) and a clean ClosureStatus='Active' status field — every record here is
+  //     fire-driven by definition (the service's own title is "Current Fire Closures"), so there
+  //     is no ordertype field to classify from; alwaysFireCategory:true short-circuits both the
+  //     category classifier and the active-date-range check (already server-filtered to Active).
+  //   r3 (Arizona + New Mexico) / r4 (Idaho, Nevada + Utah): general-purpose "Forest Order"
+  //     layers covering every standing order type, not just fire — no simple status field, so
+  //     "currently active" is computed client-side from startdate/enddate/rescinddate (see
+  //     isForestClosureCurrentlyActive). r4's service (apps.fs.usda.gov, self-hosted, older
+  //     ArcGIS Server) returned a real 400 on f=geojson when this was researched — confirmed
+  //     live, not assumed — so it's fetched as plain esriJSON (format:'esrijson') and converted
+  //     via esriFeatureToGeoJson; r3 (ArcGIS-Online-hosted) supports f=geojson natively like r6.
+  var FOREST_CLOSURE_REGIONS = {
+    r6: {
+      label: 'Region 6 (Oregon & Washington)',
+      alwaysFireCategory: true,
+      fields: { name: 'ClosureOrderName', description: 'ClosureDescription', start: 'ClosureStartDate', end: 'ClosureEndDate', rescind: null, forest: 'ForestUnit', district: 'District', url: 'ClosureURLlink', orderType: null, objectId: 'OBJECTID' },
+      layers: [
+        { shape: 'point', url: 'https://services1.arcgis.com/gGHDlz6USftL5Pau/arcgis/rest/services/R06_FireClosureOrders_PublicView/FeatureServer/0', format: 'geojson', where: "ClosureStatus='Active'" },
+        { shape: 'line', url: 'https://services1.arcgis.com/gGHDlz6USftL5Pau/arcgis/rest/services/R06_FireClosureOrders_PublicView/FeatureServer/1', format: 'geojson', where: "ClosureStatus='Active'" },
+        { shape: 'polygon', url: 'https://services1.arcgis.com/gGHDlz6USftL5Pau/arcgis/rest/services/R06_FireClosureOrders_PublicView/FeatureServer/2', format: 'geojson', where: "ClosureStatus='Active'" }
+      ]
+    },
+    r3: {
+      label: 'Region 3 (Arizona & New Mexico)',
+      alwaysFireCategory: false,
+      fields: { name: 'ordername', description: 'description', start: 'startdate', end: 'enddate', rescind: 'rescinddate', forest: 'forestname', district: null, url: 'hyperlink', orderType: 'ordertype', objectId: 'objectid' },
+      layers: [
+        { shape: 'polygon', url: 'https://services1.arcgis.com/gGHDlz6USftL5Pau/arcgis/rest/services/r03_ForestOrder/FeatureServer/1', format: 'geojson', where: '1=1' }
+      ]
+    },
+    r4: {
+      label: 'Region 4 (Idaho, Nevada & Utah)',
+      alwaysFireCategory: false,
+      fields: { name: 'ordername', description: 'description', start: 'startdate', end: 'enddate', rescind: 'rescinddate', forest: 'forestname', district: null, url: 'hyperlink', orderType: 'ordertype', objectId: 'objectid' },
+      layers: [
+        // pageSize:50 — this specific self-hosted server, confirmed live via direct bisection
+        // (curl), returns a real HTTP 500 ("Error performing query operation") for ANY single
+        // request above ~62-99 records on this layer (a real, undocumented server-side response
+        // limit, the same general class of quirk already documented elsewhere in this app for
+        // Oregon's own self-hosted ArcGIS server) — well below the generic PAGE_SIZE_START
+        // (1000) fetchForestClosureLayerPaged otherwise defaults to. Without this override, a
+        // fresh fetch has to burn through 2 full failed attempts (1000, then 250) before its
+        // adaptive backoff happens to land on a working size, which cost 90+ real seconds and
+        // came uncomfortably close to giving up permanently (the backoff's own PAGE_SIZE_FLOOR
+        // is 50, just below the confirmed-working 62) the first time this was tested live.
+        // Starting directly at a conservative 50 — safely under the confirmed 62-99 cliff —
+        // skips both failed attempts and leaves real margin against the threshold shifting.
+        { shape: 'polygon', url: 'https://apps.fs.usda.gov/fsgisx02/rest/services/r04/R04_Alerts_And_Closures_01/MapServer/0', format: 'esrijson', where: '1=1', pageSize: 50 }
+      ]
+    }
+  };
+  var forestClosuresCache = null;
+  var forestClosuresLoadCallbacks = null;
   var activeTagFilters = {};
   var activeStateFilters = {};
   var activeTripFilters = {};
@@ -7412,6 +7505,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (map.getSource('usfs-boundaries-source')) map.getSource('usfs-boundaries-source').setData(data);
             if (map.getSource('usfs-boundaries-label-source')) map.getSource('usfs-boundaries-label-source').setData(buildLabelPointFeatureCollection(data));
           });
+          if (state.settings.forestClosuresOn) ensureForestClosuresLoaded(function(data){
+            if (map.getSource('forestclosures-source')) map.getSource('forestclosures-source').setData(data);
+            setForestClosuresLayersVisible(true);
+          });
           // A returning user who left wildfire smoke on last session already has the layer's
           // visibility correctly set by reinitializeLayers() above, but its tile URL was just
           // seeded with a same-tick Date.now() guess (map.addSource ran before this async check
@@ -8003,6 +8100,35 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('click', 'usfs-boundaries-fill', handleUsfsBoundaryFillClick);
       map.on('mouseenter', 'usfs-boundaries-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'usfs-boundaries-fill', function(){ map.getCanvas().style.cursor = ''; });
+
+      // Forest Closures click — same mode-aware pass-through guard as every other overlay type,
+      // registered on all 4 real tappable layers (2 category-split fill layers, the linear
+      // line-shape closures, and r6's point closures).
+      function handleForestClosureClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var fcFeature = e.features && e.features[0];
+        if (!fcFeature) return;
+        openForestClosurePopupAt(fcFeature.properties, e.lngLat);
+      }
+      ['forestclosures-fill-fire', 'forestclosures-fill-other', 'forestclosures-line-linear', 'forestclosures-point'].forEach(function(id){
+        map.on('click', id, handleForestClosureClick);
+        map.on('mouseenter', id, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', id, function(){ map.getCanvas().style.cursor = ''; });
+      });
 
       // Clicking the in-progress draw preview line inserts a new point at that spot
       map.on('click', 'draw-preview-line', function(e){
@@ -9325,6 +9451,220 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     'Wallowa-Whitman National Forest': 'https://www.fs.usda.gov/r06/wallowa-whitman',
     'Willamette National Forest': 'https://www.fs.usda.gov/r06/willamette'
   };
+
+  // ── Forest Closures ─────────────────────────────────────────────────────
+  // Esri JSON polygon rings → GeoJSON, needed only for r4 (see FOREST_CLOSURE_REGIONS' own
+  // comment on why f=geojson isn't available there). Esri's ring-winding convention is the
+  // opposite of GeoJSON/RFC7946's (Esri: exterior rings clockwise, holes counterclockwise;
+  // GeoJSON: the reverse) — the same real distinction the Oregon fish habitat pipeline had to
+  // handle (see CLAUDE.md's "Oregon fish habitat data processing pipeline" entry), applied here
+  // fresh in runtime JS rather than an offline Node script. Classification is done on each
+  // ring's ORIGINAL (pre-reversal) signed area — negative (clockwise) = exterior in Esri's own
+  // convention — then every accepted ring is reversed before being added to the output, which
+  // is what actually flips it into GeoJSON's own convention.
+  function esriRingSignedArea(ring){
+    var sum = 0;
+    for (var i = 0; i < ring.length - 1; i++){
+      sum += (ring[i][0] * ring[i + 1][1]) - (ring[i + 1][0] * ring[i][1]);
+    }
+    return sum / 2;
+  }
+  function esriFeatureToGeoJson(feat){
+    var geom = feat.geometry;
+    if (!geom || !geom.rings || !geom.rings.length) return null;
+    var polygons = []; // [{ exterior:[...], holes:[[...],...] }, ...]
+    geom.rings.forEach(function(ring){
+      if (ring.length < 4) return; // degenerate, not a real ring
+      var isExterior = esriRingSignedArea(ring) < 0;
+      var reversed = ring.slice().reverse();
+      if (isExterior || !polygons.length){
+        polygons.push({ exterior: reversed, holes: [] });
+      } else {
+        polygons[polygons.length - 1].holes.push(reversed);
+      }
+    });
+    if (!polygons.length) return null;
+    var coordsList = polygons.map(function(p){ return [p.exterior].concat(p.holes); });
+    var geometry = coordsList.length === 1
+      ? { type: 'Polygon', coordinates: coordsList[0] }
+      : { type: 'MultiPolygon', coordinates: coordsList };
+    return { type: 'Feature', properties: feat.attributes || {}, geometry: geometry };
+  }
+
+  // Real, adaptive-backoff pagination for one Forest Closure sublayer — same shape as
+  // fetchStateDataLayerPaged (Wildlife State Data's own paginated fetch), but kept as its own
+  // function rather than reused directly, since that one hardcodes Wildlife-specific
+  // _sdLayer/_sdShape/_sdSortKey tagging that would be meaningless here, and since r4 needs the
+  // esriJSON→GeoJSON conversion step fetchStateDataLayerPaged never has to do.
+  function fetchForestClosureLayerPaged(layerDef, cb){
+    var PAGE_SIZE_START = 1000, PAGE_SIZE_FLOOR = 50;
+    var accumulated = [];
+    var baseUrl = layerDef.url + '/query?where=' + encodeURIComponent(layerDef.where) +
+      '&outFields=*&outSR=4326' + (layerDef.format === 'geojson' ? '&f=geojson' : '&f=json');
+    function fetchPage(offset, pageSize){
+      var url = baseUrl + '&resultOffset=' + offset + '&resultRecordCount=' + pageSize;
+      fetch(url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(data){
+          if (data.error) throw new Error((data.error && data.error.message) || 'ArcGIS query error');
+          var features = layerDef.format === 'esrijson'
+            ? (data.features || []).map(esriFeatureToGeoJson).filter(Boolean)
+            : (data.features || []);
+          accumulated = accumulated.concat(features);
+          if (features.length === pageSize && features.length > 0){
+            fetchPage(offset + features.length, pageSize);
+          } else {
+            cb(accumulated, false);
+          }
+        })
+        .catch(function(err){
+          var smaller = Math.floor(pageSize / 4);
+          if (smaller >= PAGE_SIZE_FLOOR){
+            console.warn('[FieldMap] Forest Closure page failed at size ' + pageSize + ', retrying at ' + smaller + ':', url, err);
+            fetchPage(offset, smaller);
+          } else {
+            console.error('[FieldMap] Forest Closure page permanently failed (giving up on remainder of this layer):', url, err);
+            cb(accumulated, true);
+          }
+        });
+    }
+    fetchPage(0, layerDef.pageSize || PAGE_SIZE_START);
+  }
+
+  function classifyForestClosureCategory(regionDef, rawProps){
+    if (regionDef.alwaysFireCategory) return 'fire';
+    var ot = regionDef.fields.orderType ? rawProps[regionDef.fields.orderType] : null;
+    return (ot && /fire/i.test(ot)) ? 'fire' : 'other';
+  }
+
+  // r6 is already server-filtered to ClosureStatus='Active'; r3/r4 have no simple status field
+  // (confirmed live before building this — see FOREST_CLOSURE_REGIONS' own comment), so
+  // "currently active" is computed client-side: not rescinded, end date (if any) still in the
+  // future, and start date (if any) already reached — the last check is a deliberate addition
+  // beyond the task's own minimal "enddate in future, rescinddate IS NULL" spec, since an order
+  // signed for a future start date isn't actually a closure in effect yet.
+  function isForestClosureCurrentlyActive(regionDef, rawProps){
+    if (regionDef.alwaysFireCategory) return true;
+    var now = Date.now();
+    var f = regionDef.fields;
+    var rescind = f.rescind ? rawProps[f.rescind] : null;
+    if (rescind != null) return false;
+    var end = f.end ? rawProps[f.end] : null;
+    if (end != null && end <= now) return false;
+    var start = f.start ? rawProps[f.start] : null;
+    if (start != null && start > now) return false;
+    return true;
+  }
+
+  // Normalizes one raw feature (whatever its source region's own field names are) into one
+  // shared property schema every paint layer/popup/Tap-stack entry below reads uniformly —
+  // matching the same "normalize once at merge time" approach already established for Migration
+  // corridors' own cross-source schema mismatch (see CLAUDE.md).
+  function normalizeForestClosureFeature(regionKey, regionDef, shape, feat){
+    var p = feat.properties || {};
+    var f = regionDef.fields;
+    var objectId = f.objectId ? p[f.objectId] : null;
+    feat.properties = {
+      _fcRegion: regionKey,
+      _fcShape: shape,
+      _fcCategory: classifyForestClosureCategory(regionDef, p),
+      _fcObjectId: objectId,
+      _fcName: (f.name && p[f.name]) || 'Forest Order',
+      _fcDescription: (f.description && p[f.description]) || '',
+      _fcStart: f.start ? p[f.start] : null,
+      _fcEnd: f.end ? p[f.end] : null,
+      _fcForest: (f.forest && p[f.forest]) || '',
+      _fcDistrict: (f.district && p[f.district]) || '',
+      _fcUrl: (f.url && p[f.url]) || '',
+      _fcOrderType: (f.orderType && p[f.orderType]) || (regionDef.alwaysFireCategory ? 'Fire Closure' : '')
+    };
+    return feat;
+  }
+
+  // Fetched once (every region + every sublayer, in parallel) and cached for the session —
+  // same tier as ensureUsfsBoundariesLoaded above, not Fire Perimeters' own always-refetch-live
+  // pattern, since standing forest orders don't change minute-to-minute the way active fire
+  // perimeters do. A partial failure (one sublayer's fetch permanently failing) doesn't block
+  // the rest — the merge still completes with whatever loaded, plus one toast, rather than
+  // discarding everything because of one bad source.
+  function ensureForestClosuresLoaded(cb){
+    if (forestClosuresCache){ cb(forestClosuresCache); return; }
+    if (forestClosuresLoadCallbacks){ forestClosuresLoadCallbacks.push(cb); return; }
+    forestClosuresLoadCallbacks = [cb];
+    var allFeatures = [];
+    var anyFailed = false;
+    var pending = 0;
+    Object.keys(FOREST_CLOSURE_REGIONS).forEach(function(regionKey){
+      var regionDef = FOREST_CLOSURE_REGIONS[regionKey];
+      regionDef.layers.forEach(function(layerDef){
+        pending++;
+        fetchForestClosureLayerPaged(layerDef, function(features, failed){
+          if (failed) anyFailed = true;
+          features.forEach(function(feat){
+            if (!isForestClosureCurrentlyActive(regionDef, feat.properties)) return;
+            allFeatures.push(normalizeForestClosureFeature(regionKey, regionDef, layerDef.shape, feat));
+          });
+          pending--;
+          if (pending === 0){
+            var merged = { type: 'FeatureCollection', features: allFeatures };
+            forestClosuresCache = merged;
+            if (anyFailed) showToast('Some forest closure data may be incomplete — a source server didn’t fully respond.');
+            var cbs = forestClosuresLoadCallbacks; forestClosuresLoadCallbacks = null;
+            cbs.forEach(function(f){ f(merged); });
+          }
+        });
+      });
+    });
+  }
+
+  function setForestClosuresLayersVisible(on){
+    ['forestclosures-fill-other', 'forestclosures-fill-fire', 'forestclosures-line', 'forestclosures-line-linear', 'forestclosures-point'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+  }
+
+  function setForestClosuresOn(on){
+    state.settings.forestClosuresOn = on;
+    var row = document.getElementById('forestclosures-opacity-row');
+    if (row) row.classList.toggle('show', on);
+    if (!on){ setForestClosuresLayersVisible(false); return; }
+    ensureForestClosuresLoaded(function(data){
+      if (map && map.getSource('forestclosures-source')) map.getSource('forestclosures-source').setData(data);
+      setForestClosuresLayersVisible(true);
+    });
+  }
+
+  // Matches gmuPopupHtml's own pattern exactly, per explicit instruction (name/meta body +
+  // link-out action + an inline disclaimer paragraph — always shown here, unlike the Layers-
+  // panel's own copy of the same text, which lives behind this layer's "?" tooltip instead; see
+  // FOREST_CLOSURE_DISCLAIMER's own comment for why those two surfaces are treated differently).
+  function forestClosurePopupHtml(props){
+    var title = props._fcName || 'Forest Closure';
+    var metaParts = [];
+    if (props._fcOrderType) metaParts.push(props._fcOrderType);
+    if (props._fcForest) metaParts.push(props._fcForest);
+    if (props._fcDistrict) metaParts.push(props._fcDistrict);
+    var metaHtml = metaParts.length ? '<div class="pin-popup-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>' : '';
+    var descHtml = props._fcDescription ? '<div class="pin-popup-meta">' + escapeHtml(props._fcDescription) + '</div>' : '';
+    var dateBits = [];
+    if (props._fcStart) dateBits.push('Start ' + formatCreatedDate(props._fcStart));
+    if (props._fcEnd) dateBits.push('End ' + formatCreatedDate(props._fcEnd));
+    var dateHtml = dateBits.length ? '<div class="pin-popup-meta">' + escapeHtml(dateBits.join(' · ')) + '</div>' : '';
+    var actionsHtml = '';
+    if (props._fcUrl){
+      actionsHtml = '<div class="pin-popup-actions"><a class="btn btn-small" href="' + escapeHtml(props._fcUrl) + '" target="_blank" rel="noopener">View signed order</a></div>';
+    }
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(String(title)) + '</div>' +
+      metaHtml + descHtml + dateHtml +
+      '</div>' +
+      actionsHtml +
+      '<p class="gmu-disclaimer">' + escapeHtml(FOREST_CLOSURE_DISCLAIMER) + '</p>';
+  }
+
+  function openForestClosurePopupAt(props, lngLat){
+    var id = props._fcRegion + '|' + props._fcShape + '|' + (props._fcObjectId != null ? props._fcObjectId : Math.random());
+    showViewDrawer('forestclosure', id, forestClosurePopupHtml(props));
+  }
 
   function usfsBoundaryPopupHtml(props){
     var acres = props.gis_acres ? Number(props.gis_acres).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' acres' : '';
@@ -11550,6 +11890,94 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Forest Closures — see FOREST_CLOSURE_REGIONS' own comment for the 3 regions/URLs this
+    // merges. Fetched once and cached for the session (like USFS boundaries just above), not
+    // re-fetched per toggle — the boot-time trigger for an already-on toggle lives alongside
+    // USFS boundaries' own equivalent trigger, not here (see that comment for why). "Other"
+    // (non-fire) standing orders paint FIRST — fire-related closures always paint on top, so a
+    // location with both an ordinary standing order and a newer fire closure never has the fire
+    // treatment obscured by the calmer one.
+    if (!map.hasImage('forestclosure-fire-pattern')){
+      map.addImage('forestclosure-fire-pattern', buildDisturbanceHatchPattern(FOREST_CLOSURE_FIRE_COLOR));
+    }
+    if (!map.getSource('forestclosures-source')){
+      map.addSource('forestclosures-source', {
+        type: 'geojson',
+        data: forestClosuresCache || { type: 'FeatureCollection', features: [] }
+      });
+    }
+    var fcVisibility = state.settings.forestClosuresOn ? 'visible' : 'none';
+    var fcOpacity = state.settings.forestClosuresOpacity != null ? state.settings.forestClosuresOpacity : 0.55;
+    if (!map.getLayer('forestclosures-fill-other')){
+      map.addLayer({
+        id: 'forestclosures-fill-other',
+        type: 'fill',
+        source: 'forestclosures-source',
+        filter: ['all', ['==', ['get', '_fcShape'], 'polygon'], ['==', ['get', '_fcCategory'], 'other']],
+        layout: { visibility: fcVisibility },
+        paint: { 'fill-color': FOREST_CLOSURE_OTHER_COLOR, 'fill-opacity': fcOpacity }
+      });
+    }
+    if (!map.getLayer('forestclosures-fill-fire')){
+      map.addLayer({
+        id: 'forestclosures-fill-fire',
+        type: 'fill',
+        source: 'forestclosures-source',
+        filter: ['all', ['==', ['get', '_fcShape'], 'polygon'], ['==', ['get', '_fcCategory'], 'fire']],
+        layout: { visibility: fcVisibility },
+        paint: { 'fill-pattern': 'forestclosure-fire-pattern', 'fill-opacity': fcOpacity }
+      });
+    }
+    if (!map.getLayer('forestclosures-line')){
+      map.addLayer({
+        id: 'forestclosures-line',
+        type: 'line',
+        source: 'forestclosures-source',
+        filter: ['==', ['get', '_fcShape'], 'polygon'],
+        layout: { visibility: fcVisibility, 'line-join': 'round' },
+        paint: {
+          'line-color': ['case', ['==', ['get', '_fcCategory'], 'fire'], FOREST_CLOSURE_FIRE_COLOR, FOREST_CLOSURE_OTHER_STROKE],
+          'line-width': ['case', ['==', ['get', '_fcCategory'], 'fire'], 1.75, 1],
+          'line-opacity': 0.95
+        }
+      });
+    }
+    // Real LineString-shape closures (r6's own line sublayer — road/trail segment closures,
+    // e.g. a single trail closed for a fire without a full area closure around it). Dashed to
+    // read as "temporary/administrative," distinct from GMU/Migration's own solid boundary
+    // lines, matching every other draw-preview/administrative-line convention in this app.
+    if (!map.getLayer('forestclosures-line-linear')){
+      map.addLayer({
+        id: 'forestclosures-line-linear',
+        type: 'line',
+        source: 'forestclosures-source',
+        filter: ['==', ['get', '_fcShape'], 'line'],
+        layout: { visibility: fcVisibility, 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': ['case', ['==', ['get', '_fcCategory'], 'fire'], FOREST_CLOSURE_FIRE_COLOR, FOREST_CLOSURE_OTHER_STROKE],
+          'line-width': 2.5,
+          'line-dasharray': [2, 1.5],
+          'line-opacity': fcOpacity
+        }
+      });
+    }
+    if (!map.getLayer('forestclosures-point')){
+      map.addLayer({
+        id: 'forestclosures-point',
+        type: 'circle',
+        source: 'forestclosures-source',
+        filter: ['==', ['get', '_fcShape'], 'point'],
+        layout: { visibility: fcVisibility },
+        paint: {
+          'circle-radius': 6,
+          'circle-color': ['case', ['==', ['get', '_fcCategory'], 'fire'], FOREST_CLOSURE_FIRE_COLOR, FOREST_CLOSURE_OTHER_COLOR],
+          'circle-stroke-color': '#1a1a1a',
+          'circle-stroke-width': 1,
+          'circle-opacity': fcOpacity
+        }
+      });
+    }
+
     // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
     // every style change. Two layers on the same source: a wide invisible one purely
     // for easier click hit-testing on mobile, and the actual visible styled line.
@@ -12212,6 +12640,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       getKey: function(f){ return f.id; },
       label: function(f){ return { title: f.properties.forestname || 'National Forest', meta: 'USFS boundary' }; },
       open: function(f){ openUsfsBoundaryPopupAt(f.properties); }
+    },
+    {
+      type: 'forestclosure',
+      queryLayers: function(){ return ['forestclosures-fill-fire', 'forestclosures-fill-other', 'forestclosures-line-linear', 'forestclosures-point']; },
+      getKey: function(f){ return f.layer.id + '|' + f.properties._fcRegion + '|' + f.properties._fcObjectId; },
+      label: function(f){
+        var meta = (f.properties._fcCategory === 'fire' ? 'Fire closure' : 'Forest order') + (f.properties._fcForest ? ' · ' + f.properties._fcForest : '');
+        return { title: f.properties._fcName || 'Forest Closure', meta: meta };
+      },
+      open: function(f, lngLat){ openForestClosurePopupAt(f.properties, lngLat); }
     },
     {
       type: 'fireperimeter', queryLayers: function(){ return ['fireperimeters-fill']; },
@@ -21408,6 +21846,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.fireperimetersOpacity === undefined) state.settings.fireperimetersOpacity = 0.55;
             if (state.settings.usfsBoundariesOn === undefined) state.settings.usfsBoundariesOn = false;
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
+            if (state.settings.forestClosuresOn === undefined) state.settings.forestClosuresOn = false;
+            if (state.settings.forestClosuresOpacity === undefined) state.settings.forestClosuresOpacity = 0.55;
             if (state.settings.slopeAngleOn === undefined) state.settings.slopeAngleOn = false;
             if (state.settings.slopeAngleOpacity === undefined) state.settings.slopeAngleOpacity = 0.6;
             if (state.settings.elevRangeOpacity === undefined) state.settings.elevRangeOpacity = 0.65;
@@ -21595,7 +22035,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // inside their own separate panel). Base Layer is deliberately excluded — a single-select
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
-    landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle'],
+    landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle', 'forestclosures-toggle'],
     environmental: ['snowdepth-toggle', 'aqismoke-toggle', 'aqismokevert-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['wildlife-biggame-quick-toggle', 'wildlife-uplandgame-quick-toggle', 'wildlife-fish-quick-toggle']
@@ -21659,6 +22099,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('gmu-disclaimer-statepanel').textContent = GMU_DISCLAIMER;
     document.getElementById('timberharvest-disclaimer').textContent = TIMBER_DISCLAIMER;
     document.getElementById('timberthinning-disclaimer').textContent = TIMBER_DISCLAIMER;
+    document.getElementById('forestclosures-disclaimer').textContent = FOREST_CLOSURE_DISCLAIMER;
     // Pre-render the Aspect wheel(s) unconditionally, not just when the layer itself is turned
     // on: the floating desktop wheel is only ever visible while the layer is on (so it's always
     // populated by the time it's seen), but the new mobile wheel lives inside the "?" tooltip,
@@ -22025,6 +22466,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
+    // ── Forest Closures ──
+    document.getElementById('forestclosures-toggle').addEventListener('change', function(){
+      setForestClosuresOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('forestclosures-opacity').addEventListener('input', function(){
+      state.settings.forestClosuresOpacity = this.value / 100;
+      ['forestclosures-fill-fire', 'forestclosures-fill-other'].forEach(function(id){
+        if (map.getLayer(id)) map.setPaintProperty(id, 'fill-opacity', state.settings.forestClosuresOpacity);
+      });
+      if (map.getLayer('forestclosures-line-linear')) map.setPaintProperty('forestclosures-line-linear', 'line-opacity', state.settings.forestClosuresOpacity);
+      if (map.getLayer('forestclosures-point')) map.setPaintProperty('forestclosures-point', 'circle-opacity', state.settings.forestClosuresOpacity);
+      scheduleSave();
+    });
+
     // ── Active fire perimeters (NIFC WFIGS) ──
     document.getElementById('fireperimeters-toggle').addEventListener('change', function(){
       setFirePerimetersOn(this.checked);
@@ -22169,6 +22625,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('hydro-toggle').checked = !!state.settings.hydroOn;
     document.getElementById('gauge-toggle').checked = !!state.settings.gaugeStationsOn;
     document.getElementById('usfsboundaries-toggle').checked = !!state.settings.usfsBoundariesOn;
+    document.getElementById('forestclosures-toggle').checked = !!state.settings.forestClosuresOn;
+    document.getElementById('forestclosures-opacity').value = Math.round((state.settings.forestClosuresOpacity != null ? state.settings.forestClosuresOpacity : 0.55) * 100);
+    document.getElementById('forestclosures-opacity-row').classList.toggle('show', !!state.settings.forestClosuresOn);
     document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
     document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
     document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
