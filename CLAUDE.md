@@ -890,7 +890,15 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   "Washington fish State Data crash fix (per-species attribute filtering)" entry for the full mechanism,
   including a real, extensive false trail chased before landing on the actual explanation for why the fix
   initially looked like it wasn't working, and exactly what was and wasn't visually confirmed given a genuine,
-  newly-characterized sandbox rendering limitation this session had to work around.
+  newly-characterized sandbox rendering limitation this session had to work around. A real-device follow-up
+  found the crash-avoidance fix was genuinely correct but data still wasn't visibly appearing — root-caused,
+  after ruling out the fetch/pagination layer and a real self-inflicted `_data`-vs-`updateData()` verification
+  mistake, to a real color collision between the overlay's own stream-line color and the live basemap's own
+  water rendering (fish-habitat lines trace the same real rivers the basemap already draws, in an almost-
+  identical blue) — genuinely invisible to the naked eye despite rendering correctly the whole time. Fixed by
+  recoloring to a vivid, high-contrast orange; confirmed visible on a genuine fresh page boot for 2 species
+  (Chinook Salmon, Sockeye Salmon) via real screenshots. See that same Architecture notes entry's own
+  "Session (real-device follow-up...)" sub-bullet for the complete investigation.
 - Forest Closures — a new Land and Boundaries overlay showing current standing forest orders (fire
   restrictions/closures, firearm restrictions, motor vehicle prohibitions, recreation closures, and more) on
   National Forest land across OR/WA/AZ/NM/ID/NV/UT, built directly on a prior dedicated research session's
@@ -7008,6 +7016,63 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     re-confirmed clean after removing all debug instrumentation. APP_VERSION bumped 2.67.1 → 2.68.0 (minor —
     a real fix unblocking a previously entirely-non-functional data source, not just a UI-scoped patch),
     SHELL_CACHE bumped v192 → v193.
+  - **Session (real-device follow-up — the real reason nothing rendered)**: real-device testing across
+    several species confirmed the crash was genuinely gone but nothing visibly appeared on the map at all —
+    explicitly NOT the same bug as before, investigated fresh rather than re-confirming the crash-avoidance
+    already proven. Compared New Mexico's real field names/species-value format against Washington's own,
+    live, right now (not assumed to match just because the same `attributeFiltered` type was reused): New
+    Mexico uses `Species1_1`, Washington uses `SPECIES` — both correctly configured in
+    `STATE_DATA_SOURCES.fish.wa.whereField` already; a direct live query with the app's exact filter value
+    (`SPECIES='Bull Trout'`) via `returnCountOnly=true` confirmed real, correct, non-zero results (3,788),
+    ruling out a field-name/value-format mismatch as the cause. Investigated the actual geometry-returning
+    query next and found a real, genuine HTTP 500 from WDFW's own server at `resultRecordCount=2000` — but,
+    critically, NOT at any smaller size (confirmed via direct bisection: 2000 fails, 500 and below all
+    succeed) — meaning the app's OWN EXISTING adaptive-backoff pagination (`fetchStateDataLayerPaged`,
+    already built for exactly this class of server quirk) already recovers from it correctly: a from-scratch
+    Node simulation of the real function against the live endpoint confirmed a complete, correct fetch for
+    both Bull Trout (3,788/3,788 features, 9 real requests, backing off 2000→500 after one real 500) and Coho
+    Salmon (16,215/16,215 features, 9 requests, no backoff needed that time) — proving the fetch/pagination
+    layer was never actually broken. Confirmed this live too, in the real browser, with real network request
+    capture matching the Node simulation exactly. The real bug turned out to be one step further downstream,
+    and required correcting a real methodological mistake made mid-investigation before finding it: checking
+    `map.getSource(...)._data.features.length` after a real `updateData()` call reads `0` even when real data
+    was genuinely just added — confirmed directly by patching the live source's own `updateData`/`setData`
+    methods to log real calls, which showed a real `updateData({add: [8445 real features]})` call happening
+    right after two harmless empty `setData()` resets, contradicting the `_data`-based check's own `0` — this
+    is because `GeoJSONSource.updateData()` never assigns `this._data` at all (confirmed via the vendored
+    `maplibre-gl.js` source, matching this project's own Session 64 finding for a different feature — `_data`
+    is simply the wrong thing to check after a diff-based update, not a sign anything is broken). Switching
+    to the CORRECT verification method (`map.querySourceFeatures()`/`queryRenderedFeatures()`) confirmed real,
+    non-zero feature counts genuinely present and genuinely painting. The actual, final root cause: a real,
+    quantified color collision with the basemap's own hydrography, not a data-pipeline bug at all —
+    `WILDLIFE_STATEDATA_STREAM_COLOR` (`#4aa8e8`, a mid-blue) sits almost exactly between the live Topo
+    style's own real `waterway-perennial` line colors (`#6fa0c7` for rivers/canals, `#a8c8e0` for intermittent
+    streams), and since SWIFD fish-habitat data traces the SAME real rivers the basemap already draws, at a
+    similar width, the overlay was optically absorbed into the basemap's own water rendering — invisible to a
+    real user's naked eye despite being genuinely present and genuinely painting. Proved this rigorously, not
+    just by inspection: captured a real screenshot with the basemap's own water layers hidden and our overlay
+    shown (a clear, isolated blue line, confirming the data itself renders); captured another with BOTH
+    hidden (the line vanished completely, confirming it really was our layer and not a rendering artifact);
+    then restored both together and confirmed the result was visually indistinguishable from the basemap
+    alone — the objective, reproducible signature of a genuine color-legibility bug, not a "hard to tell if
+    it's broken" guess. `gl.readPixels()`-based pixel diffing was attempted first but abandoned as unreliable
+    for the same reason already documented elsewhere in this file (MapLibre's default
+    `preserveDrawingBuffer:false` clears the buffer before it can be read) — real screenshots were the
+    correct, established method, matching this project's own prior finding on this exact limitation. Fixed by
+    recoloring `WILDLIFE_STATEDATA_STREAM_COLOR` to a vivid, fully-saturated orange (`#FF6600` — the
+    complementary color to blue, chosen specifically to contrast against water rather than to stay within
+    State Data's own blue-family palette, and distinct enough from Habitat range's own more muted rust
+    `#c2622d` that the two don't read as the same color when both are shown for the same species) and bumping
+    the layer's own `line-width` from 2 to 3.5 so the overlay's color visibly "caps" the basemap's thinner
+    river line. Verified live, definitively, on a genuine fresh page boot (not just a manual re-trigger) for
+    2 species: Chinook Salmon, restored via the real boot-time restore code path (the actual real-world
+    scenario — reopening the app with Washington already configured from a prior session), rendered as an
+    unmistakable, high-contrast vivid-orange line tracing the real Miller River, WA, confirmed via a real
+    screenshot; Sockeye Salmon, reached via a live species switch, rendered equally clearly across real
+    Washington rivers near Ellensburg, confirmed via a second real screenshot. Zero console errors throughout
+    the entire investigation and fix. `node --check` confirmed clean syntax on the main inline `<script>`
+    block and `service-worker.js`. APP_VERSION bumped 2.69.0 → 2.69.1 (patch — a real correctness fix to an
+    already-shipped feature, no new UI), SHELL_CACHE bumped v194 → v195.
 - Forest Closures — built directly on a prior dedicated research session's live-confirmed findings (that
   session's own report is preserved verbatim as this entry's own "Research findings" sub-bullet below), not
   re-derived from scratch. Shows current standing forest orders — not just fire closures — on National Forest
@@ -9798,3 +9863,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   for the complete design and verification detail. `node --check` confirmed clean syntax on the main inline
   `<script>` block and `service-worker.js`. APP_VERSION bumped 2.68.0 → 2.69.0 (minor — new feature),
   SHELL_CACHE bumped v193 → v194.
+- Session (Washington fish State Data — real-device follow-up): the prior session's crash-avoidance fix
+  (`type: 'attributeFiltered'`) was confirmed genuinely correct, but real-device testing across several
+  species showed nothing rendering at all — investigated as a different, real problem, per explicit
+  instruction, not re-confirmed as "crash gone, ship it." Compared New Mexico's real field names/species-
+  value format against Washington's own, live, right now, per explicit instruction not to assume they match
+  just because the source type was reused — confirmed both correctly configured (`whereField:'SPECIES'`, a
+  real live count query for `SPECIES='Bull Trout'` returning 3,788, ruling out a field/value mismatch).
+  Tested the app's exact live query for 2 species and found a real HTTP 500 from WDFW's own server at
+  `resultRecordCount=2000`, but confirmed via direct bisection this ONLY happens at 2000 — 500 and below all
+  succeed — meaning the app's own existing adaptive-backoff pagination already recovers correctly; a
+  from-scratch Node simulation of the real fetch function against the live endpoint confirmed complete,
+  correct results for both Bull Trout (3,788/3,788) and Coho Salmon (16,215/16,215), later confirmed live in
+  the browser too with matching real network captures — the fetch layer was never actually broken. Found the
+  real bug one step further downstream, catching and correcting a real methodological mistake along the way:
+  checking `_data.features.length` after `updateData()` reads `0` even when real data was genuinely just
+  added, because `updateData()` never assigns `_data` at all (confirmed via the vendored MapLibre source,
+  matching this project's own Session 64 finding for a different feature) — switching to the correct
+  verification method (`querySourceFeatures()`/`queryRenderedFeatures()`) confirmed real, non-zero data
+  genuinely present and genuinely painting. The actual root cause: `WILDLIFE_STATEDATA_STREAM_COLOR`
+  (`#4aa8e8`) sits almost exactly between the live Topo basemap's own real water-line colors, and since
+  SWIFD data traces the same real rivers the basemap already draws, the overlay was optically absorbed into
+  the basemap and genuinely invisible to a real user despite rendering correctly — proved this rigorously via
+  real screenshots with the basemap's own water layers hidden vs. shown vs. both together (the objective
+  signature of a color-legibility bug, not a guess), after first trying and abandoning `gl.readPixels()`-based
+  pixel diffing as unreliable for the same reason already documented elsewhere in this file. Fixed by
+  recoloring to a vivid, high-contrast orange (`#FF6600`) and widening the line 2→3.5px. Verified live,
+  definitively, on a genuine fresh page boot (the real-world scenario) for 2 species — Chinook Salmon via the
+  actual boot-restore code path, Sockeye Salmon via a live species switch — both rendering as unmistakable
+  vivid-orange lines across real Washington rivers, confirmed via real screenshots. Zero console errors
+  throughout. See Architecture notes' "Washington fish State Data crash fix (per-species attribute filtering)"
+  entry, its own "Session (real-device follow-up...)" sub-bullet, for the complete investigation. `node
+  --check` confirmed clean syntax on the main inline `<script>` block and `service-worker.js`. APP_VERSION
+  bumped 2.69.0 → 2.69.1 (patch — a real correctness fix to an already-shipped feature, no new UI),
+  SHELL_CACHE bumped v194 → v195.

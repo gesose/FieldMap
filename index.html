@@ -3383,7 +3383,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.69.0';
+  var APP_VERSION = '2.69.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -11471,7 +11471,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           layout: { visibility: 'none', 'line-join': 'round' },
           paint: {
             'line-color': WILDLIFE_STATEDATA_STREAM_COLOR,
-            'line-width': 2,
+            'line-width': 3.5,
             'line-opacity': 0.95
           }
         });
@@ -21021,7 +21021,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // separate big-game movement-corridor lines — a connectivity path, not a boundary) keeps a
   // dashed line, distinct from streams' solid line.
   var WILDLIFE_STATEDATA_FILL = '#2d6ea8', WILDLIFE_STATEDATA_STROKE = '#153e63';
-  var WILDLIFE_STATEDATA_STREAM_COLOR = '#4aa8e8';
+  // Session (Washington fish "doesn't render" investigation) — WILDLIFE_STATEDATA_STREAM_COLOR was
+  // '#4aa8e8', a mid-blue picked to read as distinct from the polygon fill/stroke above (see this
+  // comment block's own original reasoning) — but never checked against the BASEMAP's own water
+  // rendering, which is the actual collision that matters for a LINE layer that traces real
+  // streams. Confirmed live via a real pixel-level test (basemap water layers hidden vs. shown,
+  // real screenshots compared) that the basemap's own `waterway-perennial` line color
+  // (`#6fa0c7` for rivers/canals, `#a8c8e0` for intermittent streams/ditches) sits almost exactly
+  // either side of '#4aa8e8' in hue — combined with fish habitat data tracing the SAME real rivers
+  // the basemap already draws, at a similar width, the overlay was optically absorbed into the
+  // basemap's own hydrography and read as "nothing rendering" to a real user, even though the data
+  // was genuinely present and genuinely painting (confirmed via querySourceFeatures/
+  // queryRenderedFeatures returning real non-zero counts the whole time — this was purely a
+  // legibility/contrast bug, not a data-pipeline bug). Fixed with a vivid, fully-saturated orange —
+  // the complementary color to blue, chosen specifically to contrast against water rather than to
+  // fit the rest of State Data's own blue-family palette — and distinct enough from Habitat
+  // range's own more muted rust (`#c2622d`) that the two don't read as the same color when both
+  // are shown for the same species. line-width bumped 2→3.5 alongside it so the overlay's own
+  // color visibly "caps" the basemap's thinner river line rather than just tracing inside it.
+  var WILDLIFE_STATEDATA_STREAM_COLOR = '#FF6600';
   // Session 67 — hoisted out of wildlifeStateDataPopupHtml (which still uses it, unchanged) so
   // the new Tap-stack entry for this type (see TAP_STACK_TYPES) can show the exact same kind
   // label in its disambiguation-list row without a second, driftable copy of this lookup.
