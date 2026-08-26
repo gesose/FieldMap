@@ -3437,7 +3437,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.70.0';
+  var APP_VERSION = '2.70.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -16655,6 +16655,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // exactly once, only right after a device completes that gate for the very first time (see
   // markOnboarded's isFirstTime check above), and always replayable afterward via "Replay app
   // tour" in Tools > About (replay-tour-btn).
+  // Step ORDER is deliberately position-driven, not narrative-driven — see the real desktop
+  // getBoundingClientRect() zones this was checked against: map-controls/layers-btn both sit
+  // bottom-right, add-sheet-btn/tools-sheet-btn both sit top-left (sidebar header). The
+  // original narrative order (Welcome → Add → Layers → Offline → Time-savers) interleaved
+  // those two zones twice, forcing two full corner-to-corner jumps on desktop. Reordered to
+  // Welcome → Layers → Add → Offline → Time-savers so BOTH bottom-right steps run back to
+  // back, then BOTH top-left steps run back to back — exactly one zone transition for the
+  // whole tour instead of two, the minimum possible given 2+2 real targets plus one centered
+  // step. Tradeoff: "here's where the depth lives" now comes before "here's how you add your
+  // own data", slightly less natural a hand-off than teaching the core create action first —
+  // judged a reasonable, not broken, alternative narrative, and the task's own instructions
+  // explicitly said to prioritize the smoother visual path when the two can't both be optimal.
+  // On mobile all 4 real targets already cluster within one ~80px band near the bottom of the
+  // screen (checked live via a real 390x844 viewport) — no corner-jump problem there either
+  // way, so this reorder is neutral for mobile, not just harmless for desktop.
   var FEATURE_TOUR_STEPS = [
     {
       title: 'Welcome to FieldMap',
@@ -16662,14 +16677,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       target: '#map-controls'
     },
     {
-      title: 'Add anything, anywhere',
-      body: 'Tap "+ Add" to drop a pin, or start a track, area, bearing, range ring, or buffer. This is the button you’ll use the most, day to day.',
-      target: '#add-sheet-btn'
-    },
-    {
       title: 'Layers are where the depth lives',
       body: 'Wildlife and fish data by state, environmental overlays, GMU boundaries, forest closures, and a lot more all live in here. Don’t worry about memorizing it all now — come back and explore whenever you need something.',
       target: '#layers-btn'
+    },
+    {
+      title: 'Add anything, anywhere',
+      body: 'Tap "+ Add" to drop a pin, or start a track, area, bearing, range ring, or buffer. This is the button you’ll use the most, day to day.',
+      target: '#add-sheet-btn'
     },
     {
       title: 'Go offline before you lose signal',
@@ -16705,9 +16720,23 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function closeFeatureTour(){
-    document.getElementById('feature-tour-spotlight').classList.add('hidden');
-    document.getElementById('feature-tour-scrim').classList.add('hidden');
-    document.getElementById('feature-tour-card').classList.add('hidden');
+    var spotlight = document.getElementById('feature-tour-spotlight');
+    var scrim = document.getElementById('feature-tour-scrim');
+    var card = document.getElementById('feature-tour-card');
+    spotlight.classList.add('hidden');
+    scrim.classList.add('hidden');
+    card.classList.add('hidden');
+    // BUG FIX: positionFeatureTour() sets spotlight/scrim.style.display directly (inline) to
+    // switch between the spotlight-hole and full-scrim-fallback look per step — an inline
+    // style always wins over the .hidden class's own `display:none` rule, so without clearing
+    // it here, closing while the last-rendered step had set display:block on either element
+    // (any target step for spotlight, any no-target step like the last one for scrim) left it
+    // visibly stuck open — classList still showed 'hidden' correctly added, but the computed
+    // style never changed, so the screen looked frozen/unclickable. Clearing the inline
+    // override lets the class rule govern display again, for every close path (Skip/Escape/
+    // Next-on-last-step) alike, since they all funnel through this one function.
+    spotlight.style.display = '';
+    scrim.style.display = '';
   }
 
   function renderFeatureTourStep(){
