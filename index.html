@@ -475,6 +475,32 @@
   .icon-pick-btn{width:30px;height:30px;border-radius:50%;background:var(--bg);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;}
   .icon-pick-btn:hover{background:var(--bg-elevated-2);}
 
+  /* Feature tour (first-run walkthrough) */
+  #feature-tour-scrim{
+    position:fixed;inset:0;background:rgba(8,10,8,0.72);z-index:3500;
+  }
+  #feature-tour-scrim.hidden{display:none;}
+  #feature-tour-spotlight{
+    position:fixed;border-radius:12px;border:2px solid var(--accent);
+    box-shadow:0 0 0 9999px rgba(8,10,8,0.72);
+    pointer-events:none;z-index:3500;transition:top .2s ease,left .2s ease,width .2s ease,height .2s ease;
+  }
+  #feature-tour-spotlight.hidden{display:none;}
+  #feature-tour-card{
+    position:fixed;z-index:3501;width:300px;max-width:calc(100vw - 28px);
+    background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;
+    padding:16px;box-shadow:0 8px 28px rgba(0,0,0,0.45);
+  }
+  #feature-tour-card.hidden{display:none;}
+  .feature-tour-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  #feature-tour-title{font-size:15px;font-weight:600;margin-bottom:6px;}
+  #feature-tour-body{font-size:13px;color:var(--text);line-height:1.5;margin-bottom:14px;}
+  .feature-tour-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  #feature-tour-dots{display:flex;gap:5px;}
+  .feature-tour-dot{width:6px;height:6px;border-radius:50%;background:var(--border);}
+  .feature-tour-dot.active{background:var(--accent);}
+  #feature-tour-back-btn{visibility:hidden;}
+
   /* Toast */
   #toast{
     position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(10px);
@@ -2200,6 +2226,7 @@
         <li>Route profile selector (Drive / Walk / Hike)</li>
       </ul>
     </div>
+    <button class="btn btn-ghost btn-block" id="replay-tour-btn" style="margin-bottom:8px;">Replay app tour</button>
     <button class="btn btn-ghost btn-block" id="check-update-btn" style="margin-bottom:8px;">Check for updates</button>
     <div id="check-update-status" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;min-height:16px;"></div>
     <button class="btn btn-ghost btn-block" id="about-close-btn">Close</button>
@@ -2218,6 +2245,33 @@
       <button class="btn btn-ghost" id="boot-timing-copy-btn" style="flex:1;">Copy</button>
       <button class="btn btn-ghost" id="boot-timing-close-btn" style="flex:1;">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- Feature tour (5-step first-run walkthrough) — a separate concept from the onboarding
+     sign-in gate below: that gate only asks "sign in or continue as guest", this walks
+     through what the app actually does. Shown once automatically right after a device
+     completes that gate for the very first time (see markOnboarded's isFirstTime check),
+     and can always be replayed later via "Replay app tour" in Tools > About (replay-tour-btn
+     above). #feature-tour-spotlight uses a single-element "hole punch" trick (a huge
+     box-shadow spread around a small rect exactly matching the real target element's own
+     live getBoundingClientRect()) so the rest of the screen dims while the real element
+     stays visible and highlighted — no separate scrim needed for that case.
+     #feature-tour-scrim is the plain full-screen dim fallback used only for the one step
+     (5) with no single element to point at. -->
+<div id="feature-tour-scrim" class="hidden"></div>
+<div id="feature-tour-spotlight" class="hidden"></div>
+<div id="feature-tour-card" class="hidden">
+  <div class="feature-tour-header">
+    <span id="feature-tour-step-label" class="hint" style="margin:0;"></span>
+    <button class="link-btn" id="feature-tour-skip-btn">Skip tour</button>
+  </div>
+  <div id="feature-tour-title"></div>
+  <div id="feature-tour-body"></div>
+  <div class="feature-tour-footer">
+    <button class="btn btn-ghost btn-small" id="feature-tour-back-btn">Back</button>
+    <div id="feature-tour-dots"></div>
+    <button class="btn btn-primary btn-small" id="feature-tour-next-btn">Next</button>
   </div>
 </div>
 
@@ -3383,7 +3437,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.69.1';
+  var APP_VERSION = '2.70.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -16584,7 +16638,140 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     catch(e){ return false; }
   }
   function markOnboarded(how){
+    var isFirstTime = shouldShowOnboarding();
     try { localStorage.setItem('fieldmap-onboarded', how); } catch(e){}
+    // Only a device that is JUST NOW completing this gate for the very first time (guest,
+    // Google, or email) gets the feature tour auto-shown — an already-onboarded device
+    // upgrading to a version that ships this never has it forced on it (see the "Feature
+    // tour" section below for the deliberately separate shouldShowFeatureTour() flag/gate).
+    if (isFirstTime && shouldShowFeatureTour()){
+      setTimeout(startFeatureTour, 1000);
+    }
+  }
+
+  // ---------- Feature tour (first-run walkthrough) ----------
+  // A separate concept from the onboarding sign-in gate above (which only ever asks "sign in
+  // or continue as guest") — this is a 5-step tour of what the app actually does, auto-shown
+  // exactly once, only right after a device completes that gate for the very first time (see
+  // markOnboarded's isFirstTime check above), and always replayable afterward via "Replay app
+  // tour" in Tools > About (replay-tour-btn).
+  var FEATURE_TOUR_STEPS = [
+    {
+      title: 'Welcome to FieldMap',
+      body: 'One map for hunting, fishing, and scouting — instead of juggling several separate apps. This cluster handles zoom, your location, layers, search, and resetting north.',
+      target: '#map-controls'
+    },
+    {
+      title: 'Add anything, anywhere',
+      body: 'Tap "+ Add" to drop a pin, or start a track, area, bearing, range ring, or buffer. This is the button you’ll use the most, day to day.',
+      target: '#add-sheet-btn'
+    },
+    {
+      title: 'Layers are where the depth lives',
+      body: 'Wildlife and fish data by state, environmental overlays, GMU boundaries, forest closures, and a lot more all live in here. Don’t worry about memorizing it all now — come back and explore whenever you need something.',
+      target: '#layers-btn'
+    },
+    {
+      title: 'Go offline before you lose signal',
+      body: 'Open Tools → Download and grab the area you’re heading into before you lose signal. This is one of the most important things to know about FieldMap — easy to forget until you actually need it.',
+      target: '#tools-sheet-btn'
+    },
+    {
+      title: 'A couple of time-savers',
+      body: 'Tap any pin and choose "Navigate to" for a live bearing and distance reading. And if you tap a spot where a few things overlap, FieldMap shows a quick picker instead of guessing which one you meant.',
+      target: null
+    }
+  ];
+  var featureTourStepIndex = 0;
+
+  function shouldShowFeatureTour(){
+    try { return !localStorage.getItem('fieldmap-tour-shown'); } catch(e){ return false; }
+  }
+  function markFeatureTourShown(){
+    try { localStorage.setItem('fieldmap-tour-shown', '1'); } catch(e){}
+  }
+
+  function startFeatureTour(){
+    // Marked the instant the tour actually starts, not only on an explicit Skip/Done — this
+    // way even an unusual exit (closing the tab mid-tour) still can't cause it to nag the
+    // user again on their very next open; the always-available replay button covers intent.
+    markFeatureTourShown();
+    featureTourStepIndex = 0;
+    closeAllPanels();
+    document.getElementById('feature-tour-spotlight').classList.remove('hidden');
+    document.getElementById('feature-tour-scrim').classList.remove('hidden');
+    document.getElementById('feature-tour-card').classList.remove('hidden');
+    renderFeatureTourStep();
+  }
+
+  function closeFeatureTour(){
+    document.getElementById('feature-tour-spotlight').classList.add('hidden');
+    document.getElementById('feature-tour-scrim').classList.add('hidden');
+    document.getElementById('feature-tour-card').classList.add('hidden');
+  }
+
+  function renderFeatureTourStep(){
+    var i = featureTourStepIndex;
+    var step = FEATURE_TOUR_STEPS[i];
+    document.getElementById('feature-tour-step-label').textContent = 'Step ' + (i + 1) + ' of ' + FEATURE_TOUR_STEPS.length;
+    document.getElementById('feature-tour-title').textContent = step.title;
+    document.getElementById('feature-tour-body').textContent = step.body;
+    document.getElementById('feature-tour-back-btn').style.visibility = (i === 0) ? 'hidden' : 'visible';
+    document.getElementById('feature-tour-next-btn').textContent = (i === FEATURE_TOUR_STEPS.length - 1) ? 'Done' : 'Next';
+    var dotsWrap = document.getElementById('feature-tour-dots');
+    dotsWrap.innerHTML = '';
+    FEATURE_TOUR_STEPS.forEach(function(s, idx){
+      var dot = document.createElement('span');
+      dot.className = 'feature-tour-dot' + (idx === i ? ' active' : '');
+      dotsWrap.appendChild(dot);
+    });
+    positionFeatureTour();
+  }
+
+  // Positions both the spotlight "hole" and the card for the CURRENT step — re-run on every
+  // step change and on window resize while the tour is open. A step with a real target that's
+  // currently rendered and visible (nonzero size, not hidden behind a collapsed panel) gets
+  // the spotlight treatment; anything else (step 5's target:null, or a target that happens not
+  // to be on screen for some reason) falls back to the plain centered-scrim card, per the
+  // task's own explicitly-sanctioned fallback.
+  function positionFeatureTour(){
+    var step = FEATURE_TOUR_STEPS[featureTourStepIndex];
+    var spotlight = document.getElementById('feature-tour-spotlight');
+    var scrim = document.getElementById('feature-tour-scrim');
+    var card = document.getElementById('feature-tour-card');
+    var targetEl = step.target ? document.querySelector(step.target) : null;
+    var rect = (targetEl && targetEl.offsetParent !== null) ? targetEl.getBoundingClientRect() : null;
+    if (rect && rect.width > 0 && rect.height > 0){
+      scrim.style.display = 'none';
+      spotlight.style.display = 'block';
+      var pad = 8;
+      spotlight.style.top = (rect.top - pad) + 'px';
+      spotlight.style.left = (rect.left - pad) + 'px';
+      spotlight.style.width = (rect.width + pad * 2) + 'px';
+      spotlight.style.height = (rect.height + pad * 2) + 'px';
+      card.style.transform = 'none';
+      positionFeatureTourCardNear(card, rect, pad);
+    } else {
+      spotlight.style.display = 'none';
+      scrim.style.display = 'block';
+      card.style.transform = 'translate(-50%, -50%)';
+      card.style.top = '50%';
+      card.style.left = '50%';
+    }
+  }
+
+  function positionFeatureTourCardNear(card, rect, pad){
+    var cw = card.offsetWidth || 300, ch = card.offsetHeight || 160;
+    var margin = 14;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var spaceBelow = vh - (rect.bottom + pad), spaceAbove = rect.top - pad;
+    var top = (spaceBelow >= ch + margin || spaceBelow >= spaceAbove)
+      ? (rect.bottom + pad + margin)
+      : (rect.top - pad - margin - ch);
+    top = Math.max(margin, Math.min(top, vh - ch - margin));
+    var left = Math.max(margin, Math.min(rect.left + rect.width / 2 - cw / 2, vw - cw - margin));
+    card.style.top = top + 'px';
+    card.style.left = left + 'px';
   }
 
   // ---------- Go to place ----------
@@ -22797,6 +22984,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('about-close-btn').addEventListener('click', function(){
       document.getElementById('about-modal').classList.add('hidden');
     });
+    document.getElementById('replay-tour-btn').addEventListener('click', function(){
+      document.getElementById('about-modal').classList.add('hidden');
+      startFeatureTour();
+    });
 
     // Hidden trigger for the on-screen boot-timing debug view (Session 50) — 5 taps on the
     // version number within a 2.5s window between consecutive taps (a slower tap resets the
@@ -23156,6 +23347,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('onboarding-guest-btn').addEventListener('click', function(){
       markOnboarded('guest');
       document.getElementById('onboarding-modal').classList.add('hidden');
+    });
+
+    // Feature tour (first-run walkthrough) — Skip is always visible/clickable regardless of
+    // step, per its own explicit "never force completion" requirement; Next on the final step
+    // reads "Done" (renderFeatureTourStep sets the label) but is the exact same close action.
+    document.getElementById('feature-tour-skip-btn').addEventListener('click', closeFeatureTour);
+    document.getElementById('feature-tour-back-btn').addEventListener('click', function(){
+      if (featureTourStepIndex > 0){ featureTourStepIndex--; renderFeatureTourStep(); }
+    });
+    document.getElementById('feature-tour-next-btn').addEventListener('click', function(){
+      if (featureTourStepIndex < FEATURE_TOUR_STEPS.length - 1){ featureTourStepIndex++; renderFeatureTourStep(); }
+      else { closeFeatureTour(); }
+    });
+    window.addEventListener('resize', function(){
+      if (!document.getElementById('feature-tour-card').classList.contains('hidden')) positionFeatureTour();
     });
     document.getElementById('tap-stack-panel-close').addEventListener('click', closeTapStackPanel);
     document.getElementById('tap-stack-back-btn').addEventListener('click', tapStackGoBack);
@@ -23668,6 +23874,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         document.getElementById('polygon-modal').classList.add('hidden');
         document.getElementById('onboarding-modal').classList.add('hidden');
         document.getElementById('about-modal').classList.add('hidden');
+        closeFeatureTour();
         document.getElementById('boot-timing-modal').classList.add('hidden');
         document.getElementById('add-sheet').classList.add('hidden');
         document.getElementById('tools-sheet').classList.add('hidden');
