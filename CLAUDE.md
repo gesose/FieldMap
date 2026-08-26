@@ -16,9 +16,15 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   bearings-source) rather than one Leaflet layer per item — see Architecture notes
 - Style switching works — everything persists correctly across all base layer switches, including
   off-screen items and anything mid-draw or mid-edit at the moment of the switch
-- Clustering is temporarily disabled: all pins always show as individual markers regardless of zoom. The
-  cluster-circles/cluster-counts bubble layers and pins-source still exist but no longer drive individual
-  marker visibility (see Architecture notes) — proper clustering to be implemented in a later session
+- Pin clustering is real and working — this bullet previously said otherwise and was stale; corrected after
+  a direct investigation (see the dedicated Session entry below for the full evidence). Nearby pins group into
+  a numbered accent-colored bubble (cluster-circles/cluster-counts, real MapLibre `supercluster`, radius 50px/
+  max zoom 14) below `clusterMaxZoom`, and `updateMarkerVisibility()` (on every `map.on('idle', ...)`) hides
+  exactly the individual pin markers confirmed — via `queryRenderedFeatures`+`getClusterLeaves()` against
+  bubbles actually rendered on screen right now, never inferred from an empty/incomplete query — to be members
+  of a currently-visible bubble; every other pin defaults to visible. A "Cluster pins" Settings checkbox
+  (`state.settings.clusterPins`, default on) toggles `cluster-circles`/`cluster-counts` layer visibility and
+  falls back to showing every marker individually when off. See Architecture notes' "Pin clustering" entry.
 - Trip is now a real entity (state.trips), not a free-text string — Stage 1 of 3 of the Active Trip project
   (Session 16). Every pin/track/polygon/bearing references it via .tripId; see Architecture notes' "Trips"
   entry for the full design.
@@ -907,6 +913,16 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   crosshatch vs. a calm flat slate fill) and wired into Tap-stack from the start. See Architecture notes'
   "Forest Closures" entry for the full design, including a real server-side record-count limit found and
   fixed live on one of the 3 regional feeds.
+- Onboarding feature tour — a 5-step first-run walkthrough, separate from the pre-existing sign-in/guest
+  onboarding gate (`#onboarding-modal`), auto-shown exactly once right after a device completes that gate for
+  the very first time and always replayable afterward via "Replay app tour" in Tools → About. 4 of the 5 steps
+  spotlight the real, live UI element they describe (map controls, +Add, Layers, Tools → Download) via a real
+  `getBoundingClientRect()`-driven highlight; the 5th (pin-to-pin nav + tap-to-select, no single element to
+  point at) falls back to a centered card, the task's own explicitly-sanctioned fallback. Two real bugs found
+  on real-device testing right after shipping and fixed the same session: a cleanup bug where "Done" left the
+  dim scrim stuck over the whole map (an inline-style-vs-CSS-class specificity bug affecting every close path,
+  not just Done), and a desktop step order that jumped diagonally between corners twice, resequenced to jump
+  only once. See Architecture notes' "Onboarding feature tour" entry for the full design and both fixes.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -1632,8 +1648,10 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
 - Pin markers: maplibregl.Marker + custom HTML (buildPinMarkerHtml); view content renders in the shared
   #view-drawer (see below), not a per-marker maplibregl.Popup anymore — openPopup() polyfill on the marker
   now opens the drawer directly
-- pins-source (GeoJSON, cluster:true) + cluster-circles/cluster-counts layers still exist and are re-added by
-  reinitializeLayers(), but only drive the aggregated bubble count display now
+- pins-source (GeoJSON, cluster:true, clusterMaxZoom:14, clusterRadius:50) + cluster-circles/cluster-counts
+  layers are re-added by reinitializeLayers() and drive REAL clustering — see the "Pin clustering" Architecture
+  notes entry and updateMarkerVisibility()'s own entry below for the full current mechanism (corrected —
+  this was genuinely disabled for many early sessions, but was fixed without ever updating this file)
 - Routes: tracks-source (GeoJSON LineStrings) + tracks-line/tracks-line-touch layers. Areas: polygons-source
   (GeoJSON Polygons) + polygons-fill/polygons-line layers, plus separate maplibregl.Marker labels at each
   area's bounding-box center. Bearings: bearings-source (GeoJSON LineStrings, dashed) +
@@ -1932,10 +1950,39 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   at the end of reinitializeLayers(), so a style switch mid-draw or mid-edit doesn't lose the in-progress state
 - reinitializeLayers() called on map.on('style.load') — rebuilds every pin marker fresh (remove + re-add all),
   re-adds all sources/layers, and resyncs all draw/edit previews after every setStyle()
-- updateMarkerVisibility() called on map.on('idle') — always shows every pin marker (subject only to the
-  filter-panel mapItemVisible() check); no longer hides markers based on cluster-source query results, since
-  querySourceFeatures() only sees currently rendered/loaded tiles and was hiding off-screen pins after a style
-  switch. A clustered pin may render its marker underneath the cluster bubble for now.
+- updateMarkerVisibility() called on map.on('idle') — real, working cluster-aware marker hiding (corrected
+  entry; this file previously described an older, disabled state — see the "Pin clustering" entry below for
+  the full investigation). A pin marker defaults to visible (the safe fallback for anything not currently
+  provable as clustered — off-screen, tile not yet loaded after a style switch, etc.) and is only ever
+  explicitly hidden once positively confirmed, via `queryRenderedFeatures({layers:['cluster-circles']})` +
+  `pinsSrc.getClusterLeaves(cluster_id, point_count, 0, cb)`, to be a leaf of a cluster bubble that's actually
+  rendered on screen right now — deliberately never inferred from an empty/incomplete `querySourceFeatures()`
+  result, which only sees currently loaded tiles and would otherwise get an off-screen pin stuck hidden after
+  a style switch. `state.settings.clusterPins` (Settings' "Cluster pins" checkbox, default on) gates whether
+  `cluster-circles`/`cluster-counts` are shown at all; with it off, every pin's marker shows individually.
+- Pin clustering (real, working — this file previously, incorrectly, said otherwise): confirmed by direct
+  investigation, prompted by a real-device report of visible numbered cluster bubbles that appeared to
+  contradict this file's own long-standing "Clustering is temporarily disabled" claim. Read the actual live
+  code first rather than trusting the doc either way — `updateMarkerVisibility()` and the `pins-source`/
+  `cluster-circles`/`cluster-counts` layer definitions (see both entries directly above) are a complete,
+  correct, real MapLibre `supercluster` implementation: a real `cluster:true` GeoJSON source, a `circle` layer
+  whose radius steps by `point_count` (14/18/22px mobile, 16/20/24px desktop — deliberately scaled to match
+  `buildPinMarkerHtml()`'s own mobile/desktop pin-circle sizes 1:1, so a cluster bubble never visibly outgrows
+  the individual pins it represents), a `symbol` layer showing `{point_count_abbreviated}` in white, and real
+  member-hiding logic wired to a live `map.on('idle', ...)` listener — not dead/half-built code, and not
+  something else being mistaken for clustering (no other feature in this app renders an accent-colored numbered
+  circle with this radius-by-count/white-text-label shape). Confirmed via `git log -S"getClusterLeaves"` that
+  this was fixed in exactly one commit (`8a0a1ff`, "bug fixes", 2026-07-14, bumping `APP_VERSION 2.14.0 →
+  2.14.1`) — a real, if genericly-titled, bug-fix session, not multiple incremental changes. That commit's own
+  diff is the definitive evidence: the REMOVED code is byte-for-byte the exact "always show every pin's HTML
+  marker... a clustered pin may render its marker underneath the cluster bubble for now" behavior this file
+  used to describe as current, and the ADDED code is exactly today's live `getClusterLeaves()`-based mechanism
+  — meaning this file's "Clustering is temporarily disabled" claim was accurate right up until that one commit,
+  which fixed the real feature completely but never updated this file to match, and it silently stayed stale
+  across every session since (many of which, per git log, are dated well after 2026-07-14). No code change was
+  made or needed this session — this was a pure documentation correction; see the "Current state" bullet up
+  top and the two Architecture-notes entries directly above (pins-source, updateMarkerVisibility) for the
+  corrected description of the real mechanism.
 - GMU boundaries: MapLibre-based, single-select state picker (#gmu-state-select), one state's fill/line/label
   layers visible at a time. Table-driven via a GMU_STATES catalog object (url, labelField, popupTitle/popupMeta
   functions, infoLabel/infoUrl, optional filterFeature) — adding a state is one catalog entry, not bespoke code.
@@ -7213,6 +7260,119 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     access; BLM's own fire-restrictions page (found via the real link on ODFW's page, not guessed) is purely
     informational — individual closures posted as static PDF maps, no embedded interactive map or GIS service
     reference anywhere in the page.
+- Onboarding feature tour — a genuinely separate concept from the pre-existing `#onboarding-modal` (that gate
+  only ever asks "sign in or continue as guest"; this is a 5-step tour of what the app actually does).
+  - **Content and step targets**: (1) Welcome/orientation, spotlighting `#map-controls` (zoom/locate/layers/
+    search/north-reset); (2) "+ Add anything, anywhere", spotlighting `#add-sheet-btn`; (3) "Layers are where
+    the depth lives", spotlighting `#layers-btn`; (4) "Go offline before you lose signal", spotlighting
+    `#tools-sheet-btn`; (5) "A couple of time-savers" (pin-to-pin nav's "Navigate to", and Tap-stack's overlap
+    picker), `target: null` — no single real element to point at, so this one uses the task's own explicitly-
+    sanctioned centered-card fallback instead of a spotlight. (Step order was later resequenced on desktop —
+    see the "Session (bug fixes)" sub-bullet below; this list already reflects the corrected order.)
+  - **Spotlight mechanism — the "ideal" version was built, not the fallback**: for the 4 target-having steps,
+    `positionFeatureTour()` resolves the real element via `document.querySelector(step.target)`, checks it's
+    genuinely visible (`offsetParent !== null` and a nonzero `getBoundingClientRect()`), and positions
+    `#feature-tour-spotlight` — a single absolutely-positioned element with `box-shadow:0 0 0 9999px
+    rgba(8,10,8,0.72)` — exactly over that live rect (with 8px padding). This "hole punch" trick dims the
+    entire screen except the target in ONE element, with no separate scrim needed for this case.
+    `positionFeatureTourCardNear()` then places the info card on whichever side (above/below the target) has
+    more room, clamped within the viewport with a 14px margin, and re-runs on every step change and on
+    `window.resize`. For the one no-target step, `#feature-tour-scrim` (a plain full-screen dim div) is shown
+    instead and the card centers via `translate(-50%,-50%)`. A target that's missing or not currently visible
+    for any reason (not just step 5's deliberate `null`) gracefully falls back to this same centered treatment
+    — the code never assumes a target selector will resolve to something real and on-screen.
+  - **Persistence/triggering — a real, first-time-only gate, deliberately separate from the sign-in gate's own
+    flag**: a new `fieldmap-tour-shown` localStorage key (`shouldShowFeatureTour()`/`markFeatureTourShown()`),
+    independent of `fieldmap-onboarded`. `markOnboarded(how)` — the ONE function every completion path funnels
+    through (the guest button's click handler, and `updateAccountUI(user)`, which itself covers both Google
+    AND email sign-in since both route through the same shared `onAuthStateChanged` handler) — now captures
+    `isFirstTime = shouldShowOnboarding()` BEFORE writing the onboarded flag, and only schedules
+    `setTimeout(startFeatureTour, 1000)` when `isFirstTime && shouldShowFeatureTour()`. This means the tour
+    auto-fires ONLY for a device genuinely completing the sign-in gate for the very first time — an already-
+    onboarded user upgrading to a version that ships this feature never has it forced on them, but can always
+    reach it via the replay button. `startFeatureTour()` calls `markFeatureTourShown()` immediately at the
+    START (not only on an explicit Skip/Done), so even an unusual exit (closing the tab mid-tour) can't cause
+    it to nag the user again on their next open — the always-available replay button covers real intent to
+    see it again.
+  - **Replay entry point**: "Replay app tour" button (`#replay-tour-btn`) added to the existing `#about-modal`
+    (Tools → About), directly below "What's new" and above "Check for updates" — chosen over inventing a new
+    menu location or duplicating it into Settings too, since About is already this app's existing "what is
+    this app / what's new" informational surface (satisfying the task's own "check if a help/settings area
+    already exists" instruction) and this project's own documented minimize-clutter preference argues against
+    a second copy of the same entry point.
+  - **Container/visual style**: a floating card (`#feature-tour-card`) styled like this app's existing
+    `.modal` surfaces (`--bg-elevated` background, 14px radius, border) rather than a full `.modal-overlay`,
+    since a real `.modal-overlay`'s opaque backdrop would have covered the very element being spotlighted —
+    a deliberate, reasoned deviation from the modal pattern, not an oversight. Always-visible "Skip tour"
+    text link in the card's own header (present on every step, satisfying "never force completion"); Back/
+    Next/dot-indicator row in the footer; Next relabels to "Done" on the last step but is otherwise identical
+    to Skip/Escape in effect. Escape key wired into the app's existing global `keydown` handler alongside
+    every other modal it already closes. z-index 3500/3501 — above every `.modal-overlay` (2000) and the toast
+    (3000), below the boot `#loading-overlay` (4000), which the tour can never coexist with anyway.
+  - **Build-session verification**: fresh-install simulated by clearing both `fieldmap-onboarded` and
+    `fieldmap-tour-shown` plus unregistering the service worker/clearing Cache Storage (the established stale-
+    SHELL_CACHE gotcha) — confirmed the tour auto-appeared correctly with the real 5-step spotlight sequence,
+    correct dots/Back-hidden-on-step-1/Next-becomes-Done, Skip and Escape both dismissing mid-tour, Back
+    correctly stepping backward, no reappearance on a normal subsequent reload, and the replay button correctly
+    restarting it fresh from About. **This verification had a real gap, not caught until the very next real-
+    device test** (see below): Skip/Escape were only checked via `classList.contains('hidden')`, never actual
+    `getComputedStyle().display` — which is exactly what let Bug 1 (below) ship undetected. Also found and
+    flagged, not fixed (pre-existing, unrelated): clearing `fieldmap-onboarded` on an account with an already-
+    fast-resolving persisted Google session exposes a real boot-sequence race where the boot's own
+    unconditional `setTimeout(...,800)` re-shows `#onboarding-modal` even after the auth callback already hid
+    it — the tour itself renders correctly on top regardless (higher z-index), so this doesn't affect a real
+    fresh install (which never has a fast-resolving persisted session to race against), and was left untouched
+    as out of scope. `node --check` confirmed clean syntax on all extracted inline `<script>` blocks. Zero
+    console errors. APP_VERSION bumped 2.69.1 → 2.70.0 (minor — new feature), SHELL_CACHE bumped v195 → v196.
+  - **Session (bug fixes)** — two real bugs reported from real-device desktop testing right after v2.70.0
+    shipped, both fixed and verified in the same follow-up session.
+    - **Bug 1 — cleanup on Done left the screen stuck**: clicking "Done" on the last step left the dim scrim
+      covering the whole map with nothing clickable underneath, screen looking frozen. Root-caused precisely,
+      not guessed: `positionFeatureTour()` sets `spotlight.style.display`/`scrim.style.display` directly via
+      INLINE style each step (`'block'`/`'none'`, switching between the spotlight-hole and full-scrim looks).
+      An inline style always outranks a CSS class rule, so `closeFeatureTour()`'s `classList.add('hidden')`
+      (backed by `.hidden{display:none}`) was silently ineffective whenever the last-rendered step had left
+      that element's inline style at `'block'` — true for the scrim on step 5 specifically (the ONLY way to
+      reach "Done"), and, it turned out on closer analysis, true for the spotlight on EVERY target-having step
+      too. This retroactively explains why the build session's own Skip/Escape verification looked clean: it
+      only ever checked `classList.contains('hidden')` (which was always true — the class genuinely was being
+      added) rather than the real signal, `getComputedStyle().display` — so Skip and Escape carried the
+      identical latent defect the whole time, just never actually observed until real-device testing surfaced
+      it via Done. Fixed by having `closeFeatureTour()` also explicitly clear `spotlight.style.display=''`
+      and `scrim.style.display=''` right after adding the `.hidden` class, letting the class rule govern
+      display again — since Skip/Escape/Next-on-last-step all funnel through this one shared function, all
+      three close paths are fixed together, not just Done. Verified via `getComputedStyle().display` (not
+      class) for all three close paths — Done from step 5, Skip from step 2, Escape from step 4 — confirming
+      all three now correctly leave spotlight/scrim/card all `display:none`, plus `document.elementFromPoint()`
+      at screen-center resolving to the real MapLibre canvas afterward (genuinely interactive, not just
+      visually clear). Confirmed on both a real desktop viewport and a real 390×844 mobile iframe.
+    - **Bug 2 — desktop step order caused excessive eye/head movement**: the spotlight jumped between screen
+      corners on nearly every step. Measured real `getBoundingClientRect()` positions for all 4 targets before
+      changing anything, on both a real desktop viewport (2560×1313) and a real 390×844 mobile iframe. Desktop
+      targets fall into exactly 2 zones — bottom-right (`#map-controls`, and `#layers-btn`, which is literally
+      inside that same cluster) and top-left (`#add-sheet-btn`/`#tools-sheet-btn`, right next to each other in
+      the sidebar header) — and the original order (Welcome BR → Add TL → Layers BR → Offline TL → Time-
+      savers center) interleaved the two zones twice, forcing two full corner-to-corner jumps. Reordered to
+      Welcome(BR) → Layers(BR) → Add(TL) → Offline(TL) → Time-savers(center) so both bottom-right steps run
+      back to back, then both top-left steps run back to back: exactly one zone transition for the whole tour
+      — the minimum possible given 2 BR targets + 2 TL targets + 1 centered step. Implementation was a pure
+      content reorder (swapping the "Add" and "Layers" step objects' positions in `FEATURE_TOUR_STEPS`), no
+      positioning-logic changes needed. **Explicit tradeoff, stated per the task's own instruction to
+      prioritize the smoother path when content and position can't both be optimal**: "Layers" (exploration/
+      depth) now comes before "Add" (the core create action) — a legitimate but different narrative than
+      teaching the create-action first, deliberately deprioritized here. On the real mobile iframe, all 4
+      targets already cluster within one ~80px band near the bottom of the screen regardless of step order —
+      confirmed live before relying on it, not assumed — so this reorder is neutral for mobile, not merely
+      harmless. Verified with a full 5-step walkthrough and real screenshots at every step on both desktop
+      (confirming the exact new order and the single zone-jump) and the mobile iframe (confirming the reorder
+      changes nothing there); Skip and Escape re-confirmed (alongside Bug 1's fix) via `getComputedStyle()` on
+      both platforms. Zero console errors in the actual tour test content (one error was found in this
+      session's own test-harness wrapper page — its real top-level app instance's `updateCenterReadout()`
+      threw after the test script deliberately gutted that page's own body to embed a mobile-emulation
+      iframe — confirmed via the stack trace's own source URL to be exclusively from the wrapper page's
+      context, not the iframe under test, and unrelated to the tour code). `node --check` confirmed clean
+      syntax on all extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.70.0 →
+      2.70.1 (patch — two real bug fixes, no new UI), SHELL_CACHE bumped v196 → v197.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -9897,3 +10057,70 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   --check` confirmed clean syntax on the main inline `<script>` block and `service-worker.js`. APP_VERSION
   bumped 2.69.0 → 2.69.1 (patch — a real correctness fix to an already-shipped feature, no new UI),
   SHELL_CACHE bumped v194 → v195.
+- Session (onboarding feature tour): built a 5-step first-run walkthrough, deliberately separate from the
+  pre-existing sign-in/guest onboarding gate — see Architecture notes' "Onboarding feature tour" entry for the
+  complete design; summary here. Content, per spec: welcome/orientation, "+ Add", Layers, offline download,
+  and a closing "time-savers" step covering pin-to-pin navigation and Tap-stack's overlap picker. Built the
+  explicitly-preferred "ideal" version, not the simpler fallback — 4 of 5 steps spotlight the real, live UI
+  element via a `getBoundingClientRect()`-driven "hole punch" highlight (a single element's own
+  `box-shadow:0 0 0 9999px rgba(...)` dims everything outside its live-measured rect, re-positioned on every
+  step and on window resize), with the one step lacking a single real target (time-savers) falling back to a
+  centered card over a plain scrim — the sanctioned fallback, used only where it was actually needed. A new
+  `fieldmap-tour-shown` flag, deliberately independent of the existing sign-in gate's own `fieldmap-onboarded`,
+  gates automatic display: `markOnboarded()` now captures whether this is a genuine first-time transition
+  BEFORE writing its own flag, so the tour only ever auto-fires for a device completing the sign-in gate for
+  the very first time — never forced on an already-onboarded user upgrading to this version — with a "Replay
+  app tour" button added to the existing Tools → About screen (chosen over inventing a new menu location) as
+  the permanent, always-available way to see it again. Verified live: fresh-install auto-show, full 5-step
+  walkthrough, Skip/Escape/Back/replay all functioning, and no reappearance on a normal subsequent reload —
+  though this session's own Skip/Escape checks turned out to have a real gap (checked via `classList` only,
+  not actual computed style), which is exactly what let the real bug found in the very next session ship
+  unnoticed. Also found and deliberately left untouched, flagged as out of scope: a real, pre-existing boot-
+  sequence race (unrelated to this feature) that only surfaces when deliberately clearing the sign-in gate's
+  own flag to simulate a fresh install. `node --check` confirmed clean syntax on all extracted inline
+  `<script>` blocks. APP_VERSION bumped 2.69.1 → 2.70.0 (minor — new feature), SHELL_CACHE bumped v195 → v196.
+- Session (onboarding tour bug fixes): two real bugs reported from real-device desktop testing of v2.70.0,
+  both root-caused and fixed in one follow-up session — see Architecture notes' "Onboarding feature tour"
+  entry, its own "Session (bug fixes)" sub-bullet, for the complete investigation; summary here. Bug 1 — "Done"
+  on the last step left the dim scrim stuck over the whole map, unclickable: root-caused to an inline
+  `style.display` (set per-step by the positioning logic, to switch between the spotlight-hole and full-scrim
+  looks) silently outranking the `.hidden` CSS class's own `display:none` rule, so adding the class on close
+  had no visible effect whenever the last-rendered step had left that element's inline style at `'block'` —
+  which the last step (the only way to reach "Done") always did for the scrim, and which any target-having
+  step did for the spotlight. This also retroactively explained why the BUILD session's own Skip/Escape
+  verification had looked clean: it only ever checked `classList.contains('hidden')`, never the real signal
+  (`getComputedStyle().display`) — Skip and Escape carried the identical latent defect the whole time, simply
+  never observed. Fixed once, in the one shared `closeFeatureTour()` function every close path (Skip/Escape/
+  Done) funnels through, by explicitly clearing the inline override alongside adding the class. Bug 2 — the
+  spotlight jumped between opposite screen corners on nearly every step on desktop: measured real
+  `getBoundingClientRect()` positions for all 4 real targets on both a real desktop viewport and a real
+  390×844 mobile iframe BEFORE changing anything, confirming desktop's 4 targets fall into exactly 2 zones
+  (bottom-right, top-left) that the original step order interleaved twice, and confirming mobile's own 4
+  targets already cluster within one tight band regardless of order — meaning the fix (reordering which
+  step points at which target, a pure content change, zero positioning-logic changes) helps desktop and is
+  neutral, not harmful, on mobile. Per the task's own explicit instruction to prioritize the smoother visual
+  path over strict narrative order when the two can't both be optimal, resequenced to exactly one zone
+  transition (the minimum possible) at the cost of a slightly less natural content order (exploration/Layers
+  now comes before the core create-action/Add). Verified both fixes live with full 5-step walkthroughs and
+  real screenshots on desktop AND the mobile iframe, checking actual `getComputedStyle().display` (not class)
+  for Done/Skip/Escape this time. One console error surfaced during testing was confirmed to originate
+  entirely from this session's own test-harness wrapper page (its real app instance's DOM was deliberately
+  gutted to embed a mobile-emulation iframe), not from the tour code under test. `node --check` confirmed
+  clean syntax on all extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.70.0 →
+  2.70.1 (patch — two real bug fixes, no new UI), SHELL_CACHE bumped v196 → v197.
+- Session (pin clustering documentation correction, investigation-only, no code changes): a real-device report
+  said the visible numbered circles on the map looked exactly like working pin clusters, directly contradicting
+  this file's own long-standing "Clustering is temporarily disabled" claim — asked to check the actual code
+  (not assume from the doc either direction) and correct the record. Read `updateMarkerVisibility()` and the
+  `pins-source`/`cluster-circles`/`cluster-counts` definitions directly: confirmed real, complete, working
+  clustering — a genuine `supercluster` GeoJSON source, real per-count circle-radius/white-count-label paint,
+  and cluster-membership-aware individual-marker hiding wired to a live `map.on('idle', ...)` listener, not
+  dead code and not some other feature being mistaken for it. Traced exactly when this was fixed via
+  `git log -S"getClusterLeaves"` — one commit, `8a0a1ff` ("bug fixes", 2026-07-14, APP_VERSION 2.14.0 →
+  2.14.1) — and confirmed via that commit's own diff that the REMOVED code is byte-for-byte the disabled
+  behavior this file used to describe, and the ADDED code is exactly today's live mechanism: real, dated proof
+  this was a genuine fix that simply never got written up, not a discrepancy between two both-partly-true
+  descriptions. Corrected the "Current state" bullet and the two directly-affected Architecture notes entries
+  (pins-source, updateMarkerVisibility), and added a dedicated "Pin clustering" entry with the full mechanism
+  and evidence trail. See that entry for complete detail. No application code was touched — this was a pure
+  documentation correction, per explicit instruction. No APP_VERSION/SHELL_CACHE bump.

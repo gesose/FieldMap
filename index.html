@@ -323,6 +323,8 @@
   .layer-overlay-row input{accent-color:var(--accent);}
   .opacity-row{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted);}
   .opacity-row.show{display:flex;}
+  #mvum-vehicle-row{display:none;}
+  #mvum-vehicle-row.show{display:block;}
   .opacity-row input{flex:1;accent-color:var(--accent);}
   /* Aspect's 4 independent N/E/S/W cardinal checkboxes — same show/hide-on-master convention as
      .opacity-row (hidden until aspect-toggle is checked), just a wrapped row of small labeled
@@ -2411,6 +2413,33 @@
         <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="forestclosures-disclaimer"></div>
         <a class="layer-info-src" href="https://www.fs.usda.gov/detailfull/r6/home/?cid=fseprd872984" target="_blank">Source: USDA Forest Service (Regions 3, 4 &amp; 6)</a>
       </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="mvum-toggle"> Roads &amp; trails (MVUM) <button class="layer-hint-btn" data-layer-id="lh-mvum" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="mvum-opacity-row"><input type="range" id="mvum-opacity" min="20" max="100" value="85"></div>
+      <div id="mvum-vehicle-row">
+        <select id="mvum-vehicle-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-top:6px;">
+          <option value="">Highlight by vehicle type…</option>
+          <option value="highway">Highway-legal vehicles</option>
+          <option value="highclearance">High-clearance / 4WD</option>
+          <option value="atv">ATV</option>
+          <option value="motorcycle">Motorcycle</option>
+        </select>
+      </div>
+      <div class="layer-info-panel" id="lh-mvum">
+        <div class="layer-info-desc">Real USFS Motor Vehicle Use Map roads and trails, shown in the official MVUM colors — black solid = open to all vehicles, gray = seasonal restriction, dashed = special designation or narrow trail. Pick a vehicle type above to highlight matching routes with a gold outline; everything else stays visible, just dimmed — nothing is ever hidden. Tap any route for full vehicle-type and seasonal-date detail. Zoom in to load data for the visible area.</div>
+        <div class="layer-info-legend">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <span class="legend-swatch" style="background:#1a1a1a;color:#fff;">Open to all</span>
+            <span class="legend-swatch" style="background:#8a8a8a;color:#fff;">Highway-legal only</span>
+            <span class="legend-swatch" style="background:#bbbbbb;color:#222;">Seasonal</span>
+            <span class="legend-swatch" style="background:#f4c430;color:#222;">Highlighted match</span>
+          </div>
+        </div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="mvum-disclaimer"></div>
+        <a class="layer-info-src" href="https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer" target="_blank">Source: USDA Forest Service EDW</a>
+      </div>
     </div>
   </div>
 
@@ -3437,7 +3466,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.70.1';
+  var APP_VERSION = '2.71.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4638,6 +4667,97 @@
   var gaugeRefreshTimer = null;
   var gaugeZoomHintShown = false;
   var openGaugePopup = null;
+  // MVUM (Motor Vehicle Use Map) — real vector roads/trails, confirmed live in a dedicated prior
+  // research session (see CLAUDE.md): a SINGLE national EDW service, not split by USFS region
+  // like Forest Closures — /1 (Roads) and /2 (Trails), both esriGeometryPolyline, both support
+  // real f=geojson queries with full attributes (no raster /export workaround needed, despite an
+  // earlier, unconfirmed research note suggesting otherwise — directly tested and refuted: both
+  // /export AND /query accept plain inSR=4326/bboxSR=4326 with no Web Mercator requirement).
+  // State-wide feature counts run 6K-30K roads / hundreds-to-thousands of trails — far too large
+  // to fetch-once-and-cache the way Forest Closures does — so this is a live viewport-bbox query
+  // like Hydrography/Gauge Stations, re-queried on pan/zoom, gated behind MVUM_MIN_ZOOM.
+  var MVUM_ROADS_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/1/query';
+  var MVUM_TRAILS_URL = 'https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/2/query';
+  var MVUM_MIN_ZOOM = 11; // below this a bbox query spans too much road-dense area and would need many pagination rounds
+  var mvumRefreshTimer = null;
+  var mvumZoomHintShown = false;
+  var mvumSelectedVehicleType = null; // one of MVUM_VEHICLE_TYPES' own id values, or null (no highlight)
+  var openMvumPopup = null;
+  // The subset of MVUM's real ~15 per-vehicle-class fields exposed as a user-facing highlight
+  // choice — per explicit instruction, "probably the most commonly relevant ones rather than
+  // all ~15", matching the task's own named examples exactly. The full real field list (all
+  // ~15) is still shown in the tap-to-inspect popup via MVUM_ALL_VEHICLE_FIELDS below — this
+  // smaller list is only for the Layers-panel highlight selector.
+  var MVUM_VEHICLE_TYPES = [
+    { id: 'highway', label: 'Highway-legal vehicles', field: 'passengervehicle', datesField: 'passengervehicle_datesopen' },
+    { id: 'highclearance', label: 'High-clearance / 4WD', field: 'highclearancevehicle', datesField: 'highclearancevehicle_datesopen' },
+    { id: 'atv', label: 'ATV', field: 'atv', datesField: 'atv_datesopen' },
+    { id: 'motorcycle', label: 'Motorcycle', field: 'motorcycle', datesField: 'motorcycle_datesopen' }
+  ];
+  // Full real per-vehicle-class field list (confirmed live, both names and value structure — each
+  // field is the literal string "open" or null, never "closed"), used only for the tap-to-inspect
+  // popup's own "which vehicle types are open here" list — deliberately more exhaustive than the
+  // 4-option highlight selector above, since a popup is a "give full detail" surface.
+  var MVUM_ALL_VEHICLE_FIELDS = [
+    { label: 'Passenger vehicle', field: 'passengervehicle', datesField: 'passengervehicle_datesopen' },
+    { label: 'High-clearance vehicle', field: 'highclearancevehicle', datesField: 'highclearancevehicle_datesopen' },
+    { label: 'Truck', field: 'truck', datesField: 'truck_datesopen' },
+    { label: 'Bus', field: 'bus', datesField: 'bus_datesopen' },
+    { label: 'Motorhome', field: 'motorhome', datesField: 'motorhome_datesopen' },
+    { label: '4WD >50" wide', field: 'fourwd_gt50inches', datesField: 'fourwd_gt50_datesopen' },
+    { label: '2WD >50" wide', field: 'twowd_gt50inches', datesField: 'twowd_gt50_datesopen' },
+    { label: 'ATV', field: 'atv', datesField: 'atv_datesopen' },
+    { label: 'Motorcycle', field: 'motorcycle', datesField: 'motorcycle_datesopen' },
+    { label: 'Tracked OHV >50" wide', field: 'tracked_ohv_gt50inches', datesField: 'tracked_ohv_gt50_datesopen' },
+    { label: 'Tracked OHV ≤50" wide', field: 'tracked_ohv_lt50inches', datesField: 'tracked_ohv_lt50_datesopen' },
+    { label: 'Other OHV >50" wide', field: 'other_ohv_gt50inches', datesField: 'other_ohv_gt50_datesopen' },
+    { label: 'Other OHV ≤50" wide', field: 'other_ohv_lt50inches', datesField: 'other_ohv_lt50_datesopen' },
+    { label: 'Other wheeled OHV', field: 'otherwheeled_ohv', datesField: 'otherwheeled_ohv_datesopen' },
+    { label: 'E-bike (Class 1)', field: 'e_bike_class1', datesField: 'e_bike_class1_dur' },
+    { label: 'E-bike (Class 2)', field: 'e_bike_class2', datesField: 'e_bike_class2_dur' },
+    { label: 'E-bike (Class 3)', field: 'e_bike_class3', datesField: 'e_bike_class3_dur' }
+  ];
+  // Real official USFS MVUM cartographic categories, straight from the service's own
+  // drawingInfo.renderer (confirmed live, not invented) — one shared table for both Roads
+  // (symbol 1-4,11,12) and Trails (5-10,11,12,16,17), since the two code ranges never collide
+  // and both layers are rendered from one merged source/paint per the "one combined layer"
+  // design. Colors/dash are preserved faithfully from the real renderer (black = open to all,
+  // gray = seasonal, dashed = special-designation/narrow-trail); widths are a deliberate,
+  // documented adaptation — the raw Esri esriSLS widths (0.4-8px, sized for a desktop ArcGIS
+  // print/export context) don't translate 1:1 to a web map at this app's usual 1-4px scale, so
+  // widths here preserve the real RELATIVE emphasis (seasonal renders wider than yearlong,
+  // matching the source data) rather than the literal px values. Symbol "3" (highway-legal
+  // only, yearlong) is the one deliberate color deviation: the real renderer uses pure white,
+  // which is legible on a print MVUM's white paper background but would be genuinely invisible
+  // against any of this app's own basemaps — used a muted gray instead, preserving the real
+  // "unobtrusive, nothing special" visual weight the white was clearly going for.
+  var MVUM_SYMBOL_STYLES = {
+    '1':  { color: '#1a1a1a', width: 2.5, dash: false, name: 'Open to all vehicles — yearlong' },
+    '2':  { color: '#1a1a1a', width: 2.5, dash: false, name: 'Open to all vehicles — seasonal' },
+    '3':  { color: '#8a8a8a', width: 1.5, dash: false, name: 'Highway-legal vehicles only — yearlong' },
+    '4':  { color: '#bbbbbb', width: 3.5, dash: false, name: 'Highway-legal vehicles only — seasonal' },
+    '5':  { color: '#1a1a1a', width: 1,   dash: true,  name: 'Trail open to all vehicles — yearlong' },
+    '6':  { color: '#bbbbbb', width: 3.5, dash: false, name: 'Trail open to all vehicles — seasonal' },
+    '7':  { color: '#1a1a1a', width: 1.2, dash: true,  name: 'Trail ≤50" wide — yearlong' },
+    '8':  { color: '#bbbbbb', width: 3.5, dash: false, name: 'Trail ≤50" wide — seasonal' },
+    '9':  { color: '#1a1a1a', width: 2.5, dash: false, name: 'Trail open to motorcycles — yearlong' },
+    '10': { color: '#bbbbbb', width: 3.5, dash: false, name: 'Trail open to motorcycles — seasonal' },
+    '11': { color: '#1a1a1a', width: 1,   dash: true,  name: 'Special designation — yearlong' },
+    '12': { color: '#bbbbbb', width: 3.5, dash: false, name: 'Special designation — seasonal' },
+    '16': { color: '#1a1a1a', width: 1,   dash: true,  name: 'Wheeled OHV <50" wide — yearlong' },
+    '17': { color: '#bbbbbb', width: 3.2, dash: false, name: 'Wheeled OHV <50" wide — seasonal' }
+  };
+  var MVUM_SOLID_SYMBOLS = ['1','2','3','4','6','8','9','10','12','17'];
+  var MVUM_DASHED_SYMBOLS = ['5','7','11','16'];
+  var MVUM_HIGHLIGHT_COLOR = '#f4c430'; // a vivid gold, deliberately distinct from --accent (used
+  // everywhere else in this app) and from MVUM's own black/gray/white palette, so a highlighted
+  // route is unambiguous at a glance.
+  // Data-completeness caveat, adapted from the Timber Harvest/Thinning disclaimer's own wording
+  // pattern (see TIMBER_DISCLAIMER's own comment for the "behind '?', not always-visible" review
+  // this follows) — using MVUM's own real, live-confirmed service description text as the source
+  // of the actual caveat, not invented: "Not every National Forest has data included... Data for
+  // each individual unit must be verified... prior to publication."
+  var MVUM_DISCLAIMER = 'MVUM data is compiled and published on a unit-by-unit basis — not every National Forest has data included, and coverage/accuracy depends on each individual unit keeping its data in sync with its own official published MVUM. Always verify current road/trail status with the managing Forest Service unit before relying on this for vehicle access.';
   // NOHRSC snow depth — ArcGIS Server dynamic MapServer /export, image (not tiled-cache)
   // service, native SR is 4269 but (confirmed via a live request) it reprojects fine when
   // given a Web Mercator bbox/bboxSR like the MVUM export already does — unlike the
@@ -8184,6 +8304,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         map.on('mouseleave', id, function(){ map.getCanvas().style.cursor = ''; });
       });
 
+      function handleMvumClick(e){
+        if (e.defaultPrevented) return; // see cluster-circles handler above for why
+        e.preventDefault();
+        if (e.originalEvent) e.originalEvent.stopPropagation();
+        var latlng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode){
+          if (rangeRingMode){ handleRangeRingMapTap(latlng); return; }
+          if (bearingMode){ handleBearingMapTap(latlng); return; }
+          if (elevTapMode){ fetchElevationAtPoint(latlng); return; }
+          if (compassActive){ handleCompassMapTap(latlng); return; }
+          if (measureMode){ handleMeasureClick(latlng); return; }
+          if (drawMode){ handleDrawClick(latlng); return; }
+          if (polygonMode){ handlePolygonClick(latlng); return; }
+          if (addMode){ pendingLatLng = latlng; openPinModal(null, latlng); return; }
+          return;
+        }
+        var mvumFeature = e.features && e.features[0];
+        if (!mvumFeature) return;
+        openMvumPopupAt(mvumFeature.properties, e.lngLat);
+      }
+      ['mvum-line-solid', 'mvum-line-dashed'].forEach(function(id){
+        map.on('click', id, handleMvumClick);
+        map.on('mouseenter', id, function(){ map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', id, function(){ map.getCanvas().style.cursor = ''; });
+      });
+
       // Clicking the in-progress draw preview line inserts a new point at that spot
       map.on('click', 'draw-preview-line', function(e){
         if (e.defaultPrevented) return; // see cluster-circles handler above for why
@@ -8266,6 +8412,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('moveend', scheduleHydroRefresh);
       map.on('zoomend', scheduleGaugeRefresh);
       map.on('moveend', scheduleGaugeRefresh);
+      map.on('zoomend', scheduleMvumRefresh);
+      map.on('moveend', scheduleMvumRefresh);
       WILDFIRE_TIER_IDS.forEach(function(tierId){
         map.on('zoomend', function(){ scheduleWildfireTierRefresh(tierId); });
         map.on('moveend', function(){ scheduleWildfireTierRefresh(tierId); });
@@ -9718,6 +9866,182 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function openForestClosurePopupAt(props, lngLat){
     var id = props._fcRegion + '|' + props._fcShape + '|' + (props._fcObjectId != null ? props._fcObjectId : Math.random());
     showViewDrawer('forestclosure', id, forestClosurePopupHtml(props));
+  }
+
+  // ── MVUM (Motor Vehicle Use Map) ────────────────────────────────────────
+  function mvumBboxGeometryQS(){
+    var b = map.getBounds();
+    return 'geometry=' + encodeURIComponent(b.getWest() + ',' + b.getSouth() + ',' + b.getEast() + ',' + b.getNorth()) +
+      '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=geojson';
+  }
+
+  // Same adaptive-backoff shape as fetchForestClosureLayerPaged, kept as its own function since
+  // this one needs a real bbox baked into every page's URL (Forest Closures never filters by
+  // viewport at all) — a genuinely different URL-building need, matching that function's own
+  // documented reasoning for not reusing Wildlife's fetchStateDataLayerPaged either.
+  function fetchMvumLayerPaged(baseUrl, bboxQS, cb){
+    var PAGE_SIZE_START = 1000, PAGE_SIZE_FLOOR = 50;
+    var accumulated = [];
+    var url0 = baseUrl + '?where=1%3D1&' + bboxQS;
+    function fetchPage(offset, pageSize){
+      var url = url0 + '&resultOffset=' + offset + '&resultRecordCount=' + pageSize;
+      fetch(url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(data){
+          if (data.error) throw new Error((data.error && data.error.message) || 'ArcGIS query error');
+          var features = data.features || [];
+          accumulated = accumulated.concat(features);
+          if (features.length === pageSize && features.length > 0){
+            fetchPage(offset + features.length, pageSize);
+          } else {
+            cb(accumulated, false);
+          }
+        })
+        .catch(function(err){
+          var smaller = Math.floor(pageSize / 4);
+          if (smaller >= PAGE_SIZE_FLOOR){
+            console.warn('[FieldMap] MVUM page failed at size ' + pageSize + ', retrying at ' + smaller + ':', url, err);
+            fetchPage(offset, smaller);
+          } else {
+            console.error('[FieldMap] MVUM page permanently failed (giving up on remainder of this layer):', url, err);
+            cb(accumulated, true);
+          }
+        });
+    }
+    fetchPage(0, PAGE_SIZE_START);
+  }
+
+  // Live viewport-bbox query, gated behind MVUM_MIN_ZOOM — a state-wide fetch (6K-30K roads
+  // alone) would be impractical to ever cache/hold in full, unlike Forest Closures' much smaller
+  // national total, so this follows Hydrography/Gauge Stations' own live-requery-on-pan/zoom
+  // pattern instead of a fetch-once cache. Roads and Trails are fetched in parallel and merged
+  // into ONE combined source (per the "one combined layer" design), each feature tagged with
+  // _mvumKind so the popup/Tap-stack can still say "Road"/"Trail" even though rendering itself
+  // doesn't need to distinguish the two (symbol codes never collide between them).
+  function loadMvumForViewport(){
+    if (!state.settings.mvumOn || !map) return;
+    if (map.getZoom() < MVUM_MIN_ZOOM){
+      if (map.getSource('mvum-source')) map.getSource('mvum-source').setData({ type: 'FeatureCollection', features: [] });
+      if (!mvumZoomHintShown){ showToast('Zoom in to load MVUM roads & trails'); mvumZoomHintShown = true; }
+      return;
+    }
+    var bboxQS = mvumBboxGeometryQS();
+    var pending = 2, anyFailed = false, allFeatures = [];
+    function onLayerDone(kind, features, failed){
+      if (failed) anyFailed = true;
+      features.forEach(function(feat){
+        feat.properties = feat.properties || {};
+        feat.properties._mvumKind = kind;
+      });
+      allFeatures = allFeatures.concat(features);
+      pending--;
+      if (pending === 0){
+        if (!state.settings.mvumOn) return; // toggled off while this was in flight
+        if (map.getSource('mvum-source')) map.getSource('mvum-source').setData({ type: 'FeatureCollection', features: allFeatures });
+        if (anyFailed) showToast('Some MVUM data may be incomplete — a source server didn’t fully respond.');
+      }
+    }
+    fetchMvumLayerPaged(MVUM_ROADS_URL, bboxQS, function(features, failed){ onLayerDone('road', features, failed); });
+    fetchMvumLayerPaged(MVUM_TRAILS_URL, bboxQS, function(features, failed){ onLayerDone('trail', features, failed); });
+  }
+
+  function scheduleMvumRefresh(){
+    if (mvumRefreshTimer) clearTimeout(mvumRefreshTimer);
+    mvumRefreshTimer = setTimeout(loadMvumForViewport, 500);
+  }
+
+  function setMvumLayersVisible(on){
+    ['mvum-line-solid', 'mvum-line-dashed'].forEach(function(id){
+      if (map && map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+    if (map && map.getLayer('mvum-line-highlight')){
+      map.setLayoutProperty('mvum-line-highlight', 'visibility', (on && mvumSelectedVehicleType) ? 'visible' : 'none');
+    }
+    if (!on && openMvumPopup){ openMvumPopup.remove(); openMvumPopup = null; }
+  }
+
+  function setMvumOn(on){
+    state.settings.mvumOn = on;
+    var row = document.getElementById('mvum-opacity-row');
+    if (row) row.classList.toggle('show', on);
+    var vrow = document.getElementById('mvum-vehicle-row');
+    if (vrow) vrow.classList.toggle('show', on);
+    setMvumLayersVisible(on);
+    if (on) loadMvumForViewport();
+  }
+
+  // Highlighting a vehicle type never hides anything (per explicit instruction) — matching
+  // routes get a bright halo layer underneath them AND stay at full base opacity; everything
+  // else keeps rendering at a reduced opacity on the same base layers, still fully visible and
+  // tappable, just visually de-emphasized. typeId of '' or null clears the highlight entirely,
+  // returning both base layers to a flat opacity with no case expression.
+  function setMvumVehicleType(typeId){
+    mvumSelectedVehicleType = typeId || null;
+    if (!map) return;
+    var baseOpacity = state.settings.mvumOpacity != null ? state.settings.mvumOpacity : 0.85;
+    var typeDef = MVUM_VEHICLE_TYPES.filter(function(t){ return t.id === mvumSelectedVehicleType; })[0];
+    ['mvum-line-solid', 'mvum-line-dashed'].forEach(function(id){
+      if (!map.getLayer(id)) return;
+      var opacityExpr = typeDef
+        ? ['case', ['==', ['get', typeDef.field], 'open'], baseOpacity, baseOpacity * 0.25]
+        : baseOpacity;
+      map.setPaintProperty(id, 'line-opacity', opacityExpr);
+    });
+    if (map.getLayer('mvum-line-highlight')){
+      if (typeDef){
+        map.setFilter('mvum-line-highlight', ['==', ['get', typeDef.field], 'open']);
+        map.setLayoutProperty('mvum-line-highlight', 'visibility', state.settings.mvumOn ? 'visible' : 'none');
+      } else {
+        map.setLayoutProperty('mvum-line-highlight', 'visibility', 'none');
+      }
+    }
+  }
+
+  function mvumPopupHtml(props){
+    var routeLabel = (props.name && String(props.name).trim()) || props.id || props.field_id || 'Unnamed route';
+    var kindLabel = props._mvumKind === 'trail' ? 'Trail' : 'Road';
+    var title = kindLabel + ' ' + routeLabel;
+    var metaParts = [];
+    if (props.mvum_symbol_name) metaParts.push(props.mvum_symbol_name);
+    if (props.forestname) metaParts.push(props.forestname);
+    if (props.districtname) metaParts.push(props.districtname);
+    var metaHtml = metaParts.length ? '<div class="pin-popup-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>' : '';
+    var surfaceHtml = props.surfacetype ? '<div class="pin-popup-meta">Surface: ' + escapeHtml(props.surfacetype) + '</div>' : '';
+    var openTypes = MVUM_ALL_VEHICLE_FIELDS.filter(function(v){ return props[v.field] === 'open'; });
+    var vehicleHtml = '';
+    if (openTypes.length){
+      vehicleHtml = '<div class="pin-popup-meta" style="margin-top:6px;font-weight:600;">Open to:</div>' +
+        '<div class="pin-popup-meta" style="line-height:1.6;">' +
+        openTypes.map(function(v){
+          var dates = props[v.datesField];
+          return escapeHtml(v.label) + (dates ? ' <span style="opacity:0.7;">(' + escapeHtml(dates) + ')</span>' : '');
+        }).join('<br>') +
+        '</div>';
+    } else {
+      vehicleHtml = '<div class="pin-popup-meta" style="margin-top:6px;">No vehicle-type data available for this segment.</div>';
+    }
+    return '<div class="pin-popup-body">' +
+      '<div class="pin-popup-name">' + escapeHtml(title) + '</div>' +
+      metaHtml + surfaceHtml + vehicleHtml +
+      '</div>';
+  }
+
+  function openMvumPopupAt(props, lngLat){
+    var id = props._mvumKind + '|' + props.objectid;
+    showViewDrawer('mvum', id, mvumPopupHtml(props));
+  }
+
+  // Builds a MapLibre `match` expression on the real `symbol` field from MVUM_SYMBOL_STYLES —
+  // the SAME full table is used for both the solid and dashed line layers (each layer's own
+  // `filter` already restricts which features it ever sees, so there's no need for two separate
+  // partial tables). propName is 'color' or 'width'; a feature with a missing/unrecognized
+  // symbol value falls back to a neutral gray/medium width rather than not rendering at all.
+  function mvumSymbolMatchExpression(propName){
+    var expr = ['match', ['get', 'symbol']];
+    Object.keys(MVUM_SYMBOL_STYLES).forEach(function(code){
+      expr.push(code, MVUM_SYMBOL_STYLES[code][propName]);
+    });
+    expr.push(propName === 'color' ? '#999999' : 1.5);
+    return expr;
   }
 
   function usfsBoundaryPopupHtml(props){
@@ -12032,6 +12356,58 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // MVUM roads/trails — one combined source/toggle (per explicit design), live viewport-bbox
+    // data (see loadMvumForViewport's own comment for why, unlike Forest Closures just above).
+    // mvum-line-highlight is added FIRST so it paints underneath the real symbol-colored lines —
+    // a wide gold halo shown only under whichever routes match the currently-selected vehicle
+    // type (see setMvumVehicleType); the base layers' own opacity is what actually de-emphasizes
+    // non-matching routes, never hides them.
+    if (!map.getSource('mvum-source')){
+      map.addSource('mvum-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    var mvumVisibility = state.settings.mvumOn ? 'visible' : 'none';
+    var mvumOpacity = state.settings.mvumOpacity != null ? state.settings.mvumOpacity : 0.85;
+    if (!map.getLayer('mvum-line-highlight')){
+      map.addLayer({
+        id: 'mvum-line-highlight',
+        type: 'line',
+        source: 'mvum-source',
+        filter: ['==', ['get', 'symbol'], '__none__'], // real filter set by setMvumVehicleType once a type is chosen
+        layout: { visibility: 'none', 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': MVUM_HIGHLIGHT_COLOR, 'line-width': 6, 'line-opacity': 0.85, 'line-blur': 1 }
+      });
+    }
+    if (!map.getLayer('mvum-line-solid')){
+      map.addLayer({
+        id: 'mvum-line-solid',
+        type: 'line',
+        source: 'mvum-source',
+        filter: ['match', ['get', 'symbol'], MVUM_SOLID_SYMBOLS, true, false],
+        layout: { visibility: mvumVisibility, 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': mvumSymbolMatchExpression('color'),
+          'line-width': mvumSymbolMatchExpression('width'),
+          'line-opacity': mvumOpacity
+        }
+      });
+    }
+    if (!map.getLayer('mvum-line-dashed')){
+      map.addLayer({
+        id: 'mvum-line-dashed',
+        type: 'line',
+        source: 'mvum-source',
+        filter: ['match', ['get', 'symbol'], MVUM_DASHED_SYMBOLS, true, false],
+        layout: { visibility: mvumVisibility, 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': mvumSymbolMatchExpression('color'),
+          'line-width': mvumSymbolMatchExpression('width'),
+          'line-dasharray': [2, 1.5],
+          'line-opacity': mvumOpacity
+        }
+      });
+    }
+    if (state.settings.mvumOn) loadMvumForViewport();
+
     // Routes (tracks) — GeoJSON source of all saved route LineStrings, re-added after
     // every style change. Two layers on the same source: a wide invisible one purely
     // for easier click hit-testing on mobile, and the actual visible styled line.
@@ -12704,6 +13080,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return { title: f.properties._fcName || 'Forest Closure', meta: meta };
       },
       open: function(f, lngLat){ openForestClosurePopupAt(f.properties, lngLat); }
+    },
+    {
+      type: 'mvum',
+      queryLayers: function(){ return ['mvum-line-solid', 'mvum-line-dashed']; },
+      getKey: function(f){ return f.properties._mvumKind + '|' + f.properties.objectid; },
+      label: function(f){
+        var routeLabel = (f.properties.name && String(f.properties.name).trim()) || f.properties.id || f.properties.field_id || 'route';
+        var kindLabel = f.properties._mvumKind === 'trail' ? 'Trail' : 'Road';
+        return { title: kindLabel + ' ' + routeLabel, meta: f.properties.mvum_symbol_name || 'MVUM' };
+      },
+      open: function(f, lngLat){ openMvumPopupAt(f.properties, lngLat); }
     },
     {
       type: 'fireperimeter', queryLayers: function(){ return ['fireperimeters-fill']; },
@@ -22082,6 +22469,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.usfsBoundariesOpacity === undefined) state.settings.usfsBoundariesOpacity = 0.9;
             if (state.settings.forestClosuresOn === undefined) state.settings.forestClosuresOn = false;
             if (state.settings.forestClosuresOpacity === undefined) state.settings.forestClosuresOpacity = 0.55;
+            if (state.settings.mvumOn === undefined) state.settings.mvumOn = false;
+            if (state.settings.mvumOpacity === undefined) state.settings.mvumOpacity = 0.85;
             if (state.settings.slopeAngleOn === undefined) state.settings.slopeAngleOn = false;
             if (state.settings.slopeAngleOpacity === undefined) state.settings.slopeAngleOpacity = 0.6;
             if (state.settings.elevRangeOpacity === undefined) state.settings.elevRangeOpacity = 0.65;
@@ -22269,7 +22658,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // inside their own separate panel). Base Layer is deliberately excluded — a single-select
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
-    landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle', 'forestclosures-toggle'],
+    landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle', 'forestclosures-toggle', 'mvum-toggle'],
     environmental: ['snowdepth-toggle', 'aqismoke-toggle', 'aqismokevert-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['wildlife-biggame-quick-toggle', 'wildlife-uplandgame-quick-toggle', 'wildlife-fish-quick-toggle']
@@ -22334,6 +22723,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('timberharvest-disclaimer').textContent = TIMBER_DISCLAIMER;
     document.getElementById('timberthinning-disclaimer').textContent = TIMBER_DISCLAIMER;
     document.getElementById('forestclosures-disclaimer').textContent = FOREST_CLOSURE_DISCLAIMER;
+    document.getElementById('mvum-disclaimer').textContent = MVUM_DISCLAIMER;
     // Pre-render the Aspect wheel(s) unconditionally, not just when the layer itself is turned
     // on: the floating desktop wheel is only ever visible while the layer is on (so it's always
     // populated by the time it's seen), but the new mobile wheel lives inside the "?" tooltip,
@@ -22715,6 +23105,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       scheduleSave();
     });
 
+    // ── MVUM (Motor Vehicle Use Map) ──
+    document.getElementById('mvum-toggle').addEventListener('change', function(){
+      setMvumOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('mvum-opacity').addEventListener('input', function(){
+      state.settings.mvumOpacity = this.value / 100;
+      setMvumVehicleType(mvumSelectedVehicleType); // re-applies the flat-or-case opacity expression at the new base value
+      scheduleSave();
+    });
+    document.getElementById('mvum-vehicle-select').addEventListener('change', function(){
+      setMvumVehicleType(this.value);
+    });
+
     // ── Active fire perimeters (NIFC WFIGS) ──
     document.getElementById('fireperimeters-toggle').addEventListener('change', function(){
       setFirePerimetersOn(this.checked);
@@ -22862,6 +23266,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('forestclosures-toggle').checked = !!state.settings.forestClosuresOn;
     document.getElementById('forestclosures-opacity').value = Math.round((state.settings.forestClosuresOpacity != null ? state.settings.forestClosuresOpacity : 0.55) * 100);
     document.getElementById('forestclosures-opacity-row').classList.toggle('show', !!state.settings.forestClosuresOn);
+    document.getElementById('mvum-toggle').checked = !!state.settings.mvumOn;
+    document.getElementById('mvum-opacity').value = Math.round((state.settings.mvumOpacity != null ? state.settings.mvumOpacity : 0.85) * 100);
+    document.getElementById('mvum-opacity-row').classList.toggle('show', !!state.settings.mvumOn);
+    document.getElementById('mvum-vehicle-row').classList.toggle('show', !!state.settings.mvumOn);
     document.getElementById('fireperimeters-toggle').checked = !!state.settings.fireperimetersOn;
     document.getElementById('fireperimeters-opacity').value = Math.round((state.settings.fireperimetersOpacity != null ? state.settings.fireperimetersOpacity : 0.55) * 100);
     document.getElementById('fireperimeters-opacity-row').classList.toggle('show', !!state.settings.fireperimetersOn);
