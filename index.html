@@ -2401,6 +2401,7 @@
       <label class="layer-overlay-row">
         <input type="checkbox" id="forestclosures-toggle"> Forest closures <button class="layer-hint-btn" data-layer-id="lh-forestclosures" title="About">?</button>
       </label>
+      <p class="hint" id="forestclosures-loading" style="margin:2px 0 4px;display:none;">Loading forest closures…</p>
       <div class="opacity-row" id="forestclosures-opacity-row"><input type="range" id="forestclosures-opacity" min="20" max="100" value="55"></div>
       <div class="layer-info-panel" id="lh-forestclosures">
         <div class="layer-info-desc">Current standing forest orders on National Forest land in OR, WA, AZ, NM, ID, NV &amp; UT — fire restrictions/closures, firearm restrictions, motor vehicle prohibitions, recreation closures, and more. Fire-related closures show as a red crosshatch; every other order type shows as a calmer solid fill. Tap any closure for details and a link to the real signed order. Fetched once and cached for the session.</div>
@@ -3466,7 +3467,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.71.0';
+  var APP_VERSION = '2.72.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -5800,11 +5801,19 @@
   var drawRouteProfile = 'driving-car'; // default: drive on main roads
   var gpsFollowWatchId = null;
   // GPS location dot
-  var gpsDotWatchId = null, gpsDotMarker = null, gpsAccCircle = null;
+  var gpsDotWatchId = null, gpsDotMarker = null;
   var gpsDotState = 'off'; // 'off' | 'following' | 'free'
   var compassHeadingDeg = null; // from DeviceOrientationEvent when GPS heading unavailable
   var lastGpsLatLng = null;
   var lastGpsAltitudeM = null, lastGpsAltitudeTime = 0; // from the GPS dot watcher, used by getElevationFt()'s GPS fallback tier
+  // Last known fix accuracy in meters (Session D, item 2) — the real gpsAccCircle feature this
+  // variable was originally declared for but never built. Set on every position update inside
+  // _gpsDotInit's own subscribeSharedGps callback; also read at the tail of reinitializeLayers()
+  // to re-show the accuracy circle after a base-layer style switch (map.setStyle({diff:false})
+  // wipes every real map layer including gpsacc-fill, but the DOM gpsDotMarker survives — without
+  // this restore, the circle would stay hidden until the next live position update happened to
+  // arrive on its own).
+  var lastGpsAccuracyM = null;
   // Coords/elevation readout chip's own map-center/current-location toggle. Its own STATE stays
   // entirely independent of gpsDotState/lastGpsLatLng (the locate button's own GPS tracking) and
   // of Compass's currentGpsLatLng — sharing state across these would risk the chip's tap
@@ -7334,8 +7343,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // currentTripId: whatever this form field currently has staged (its button's data-trip-id) —
   // used only to highlight the matching row, never read/written to any real item here.
-  function openTripPickerForForm(currentTripId, onSelect){
-    closeAllPanels();
+  // preserveViewDrawer (Session D, item 1): the tap-anywhere draft's trip-picker-btn lives
+  // INSIDE #view-drawer itself (unlike every other caller's trip-picker-btn, which lives in a
+  // separate .modal-overlay) — closeAllPanels()'s own unconditional closeViewDrawer() call would
+  // discard the whole in-progress draft (temp marker + state) the instant the button is tapped,
+  // since closeViewDrawer() treats any close of a 'tap'-type view as an abandon (see its own
+  // comment). closeAllPanels_except (already used elsewhere for an analogous "don't close the
+  // thing I'm opening this from" need) closes every OTHER floating panel without ever touching
+  // #view-drawer at all, sidestepping the problem entirely rather than adding a new sticky flag
+  // that would need remembering to reset on every possible dismiss path (pick made, panel closed
+  // via its own ×, Escape, outside click, ...). Every existing caller is unaffected — this
+  // parameter defaults to falsy, so their behavior is byte-identical to before.
+  function openTripPickerForForm(currentTripId, onSelect, preserveViewDrawer){
+    if (preserveViewDrawer) closeAllPanels_except('trip-picker-panel'); else closeAllPanels();
     tripPickerMode = 'form';
     tripPickerFormCallback = onSelect;
     tripPickerFormCurrentId = currentTripId || null;
@@ -9824,12 +9844,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Item 5 (Session D) — no equivalent loading-indicator pattern existed yet anywhere in the
+  // app (checked first, per explicit instruction, before building one — Washington fish's own
+  // State Data fetch has no such indicator either). Reuses the plain .hint-text-toggle pattern
+  // already established for AQI's "Data as of [time]" label (a <p class="hint">, shown/hidden
+  // via a display style toggle) rather than inventing a spinner/animation, since this codebase
+  // has no existing CSS spinner anywhere to match either. Only shown when a real fetch is about
+  // to happen (forestClosuresCache is still null) — a cache hit resolves ensureForestClosuresLoaded's
+  // callback synchronously-ish (same tick), so showing it unconditionally would either flash
+  // uselessly or, worse, never get hidden if some future caller's callback ordering changed.
+  function setForestClosuresLoadingVisible(show){
+    var el = document.getElementById('forestclosures-loading');
+    if (el) el.style.display = show ? 'block' : 'none';
+  }
+
   function setForestClosuresOn(on){
     state.settings.forestClosuresOn = on;
     var row = document.getElementById('forestclosures-opacity-row');
     if (row) row.classList.toggle('show', on);
-    if (!on){ setForestClosuresLayersVisible(false); return; }
+    if (!on){ setForestClosuresLayersVisible(false); setForestClosuresLoadingVisible(false); return; }
+    if (!forestClosuresCache) setForestClosuresLoadingVisible(true);
     ensureForestClosuresLoaded(function(data){
+      setForestClosuresLoadingVisible(false);
       if (map && map.getSource('forestclosures-source')) map.getSource('forestclosures-source').setData(data);
       setForestClosuresLayersVisible(true);
     });
@@ -12832,6 +12868,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // GPS accuracy circle (Session D, item 2) — the gpsAccCircle var was declared long before
+    // this session but never actually built into a real layer. A translucent ring around the
+    // GPS dot showing current fix precision — a REAL geographic circle (circlePolygonCoords,
+    // radius = the live navigator.geolocation accuracy value converted to miles), not a fixed
+    // pixel-radius halo, so its on-screen size correctly reflects true GPS uncertainty at any
+    // zoom. Hidden by default; updateGpsAccuracyCircle() (called from _gpsDotInit's own
+    // subscribeSharedGps callback) is the only thing that ever shows it, and it shares the GPS
+    // dot's own on/off/no-fix-yet lifecycle exactly (same watcher, same _gpsDotTurnOff teardown)
+    // — consistent with how every other GPS-dependent feature in this app already handles that.
+    if (!map.getSource('gpsacc-source')){
+      map.addSource('gpsacc-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('gpsacc-fill')){
+      map.addLayer({
+        id: 'gpsacc-fill',
+        type: 'fill',
+        source: 'gpsacc-source',
+        layout: { visibility: 'none' },
+        paint: { 'fill-color': '#3a8fd4', 'fill-opacity': 0.15, 'fill-outline-color': 'rgba(58,143,212,0.5)' }
+      });
+    }
+
     // Rebuild every pin marker fresh on each style change/initial load, so icons,
     // colors, and positions stay correct regardless of what the previous style left behind.
     Object.keys(markersById).forEach(function(id){ removeMarkerForPin(id); });
@@ -12853,6 +12911,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (SUNRISE_ARC_ON && !document.getElementById('sunrise-panel').classList.contains('hidden')) renderSunArc(map.getCenter(), sunDate);
     if (compassActive) updateCompassMapLines();
     redrawCompassTarget();
+    // Restores the GPS accuracy circle after a base-layer style switch — map.setStyle({diff:false})
+    // above just wiped gpsacc-fill/gpsacc-source (re-added, empty, right above), but the DOM
+    // gpsDotMarker survives style switches independently, so without this the circle would stay
+    // hidden until the next live position update happened to arrive on its own.
+    if (gpsDotState !== 'off') updateGpsAccuracyCircle(lastGpsAccuracyM);
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
     renderOfflineBoundaries();
@@ -14211,6 +14274,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       updateTapAnywhereChips();
       updateTapAnywhereMarkerIcon();
     },
+    // Item 1 (Session D) — same 'form'-mode trip picker every other creation modal already
+    // uses (openTripPickerForForm stages the pick on the button itself; the real commit still
+    // only happens on Save, exactly like every other field in this draft). setTripPickerButtonDisplay
+    // is the same shared helper those modals' own trip-picker-btn wiring calls.
+    tapAnywhereOpenTripPicker: function(event){
+      // Same fix as openDrawerConditionsForecast's own (see its comment) — trip-picker-panel is
+      // in OUTSIDE_CLICK_DISMISS_IDS, so without stopping this click here, it bubbles to the
+      // document-level outside-click listener, which sees the panel now open and this button
+      // (living inside #view-drawer, not #trip-picker-panel) as "outside it," and immediately
+      // re-hides the very panel this click just opened — found live, not assumed: the picker
+      // never visibly appeared when this button was first tapped.
+      if (event) event.stopPropagation();
+      if (!tapAnywhereState) return;
+      openTripPickerForForm(tapAnywhereState.tripId || null, function(newTripId){
+        if (!tapAnywhereState) return; // dismissed/discarded while the picker was open
+        tapAnywhereState.tripId = newTripId;
+        setTripPickerButtonDisplay('tap-anywhere-trip-btn', newTripId);
+      }, true); // preserveViewDrawer — see openTripPickerForForm's own comment
+    },
     tapAnywhereDirections: function(){
       if (!tapAnywhereState) return;
       openDirectionsTo(tapAnywhereState.latlng.lat, tapAnywhereState.latlng.lng);
@@ -14251,7 +14333,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var elevationFt = tapAnywhereState.elevationFt;
       var newPin = {
         id: uid(), lat: latlng.lat, lng: latlng.lng,
-        name: name, tags: tags, notes: '', tripId: state.settings.activeTripId, status: 'escout',
+        name: name, tags: tags, notes: '', tripId: tapAnywhereState.tripId || null, status: 'escout',
         created: Date.now(), updatedAt: Date.now(), source: 'tap-anywhere',
         state: stateForPoint(latlng.lat, latlng.lng)
       };
@@ -16932,6 +17014,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         gpsDotMarker.setLngLat([lastGpsLatLng.lng, lastGpsLatLng.lat]);
         gpsDotMarker.getElement().innerHTML = buildGpsDotHtml(heading);
       }
+      updateGpsAccuracyCircle(pos.coords.accuracy);
       if (gpsDotState === 'following') map.setCenter([lastGpsLatLng.lng, lastGpsLatLng.lat]);
     }, function(err){
       showToast('Location error — check permissions');
@@ -16946,14 +17029,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return compassHeadingDeg;
   }
 
+  // Real geographic circle (circlePolygonCoords — the same primitive Range Ring already uses,
+  // numerically verified there) around the live GPS fix, radius = the fix's own reported
+  // accuracy in meters converted to miles — so its on-screen size genuinely reflects current
+  // GPS precision at any zoom, not a fixed pixel halo. Hides itself (rather than showing a
+  // stale/meaningless circle) whenever there's no real fix yet or no valid accuracy value,
+  // matching how the GPS dot itself only appears once a real position has actually arrived.
+  function updateGpsAccuracyCircle(accuracyM){
+    lastGpsAccuracyM = (accuracyM != null && !isNaN(accuracyM) && accuracyM > 0) ? accuracyM : null;
+    if (!map || !map.getLayer('gpsacc-fill')) return;
+    if (!lastGpsLatLng || lastGpsAccuracyM == null){
+      map.setLayoutProperty('gpsacc-fill', 'visibility', 'none');
+      return;
+    }
+    var radiusMiles = lastGpsAccuracyM / 1609.344;
+    var ring = circlePolygonCoords(lastGpsLatLng.lat, lastGpsLatLng.lng, radiusMiles);
+    map.getSource('gpsacc-source').setData({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }]
+    });
+    map.setLayoutProperty('gpsacc-fill', 'visibility', 'visible');
+  }
+
   function _gpsDotTurnOff(){
     gpsDotState = 'off';
     compassHeadingDeg = null; lastGpsLatLng = null; lastGpsAltitudeM = null; lastGpsAltitudeTime = 0;
+    lastGpsAccuracyM = null;
     document.getElementById('locate-btn').classList.remove('active', 'locate-free');
     if (gpsDotWatchId !== null){ unsubscribeSharedGps(gpsDotWatchId); gpsDotWatchId = null; }
     if (_gpsDotInit._removeOrientation){ _gpsDotInit._removeOrientation(); _gpsDotInit._removeOrientation = null; }
     if (gpsDotMarker){ gpsDotMarker.remove(); gpsDotMarker = null; }
-    gpsAccCircle = null;
+    if (map && map.getLayer('gpsacc-fill')) map.setLayoutProperty('gpsacc-fill', 'visibility', 'none');
+    if (map && map.getSource('gpsacc-source')) map.getSource('gpsacc-source').setData({ type: 'FeatureCollection', features: [] });
   }
 
   function handleLocateBtn(){
@@ -20629,6 +20736,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
   }
 
+  // Item 1 (Session D): the auto-file-under-the-active-trip logic already worked correctly
+  // (tapAnywhereSave read state.settings.activeTripId directly) — what was missing was any way
+  // to override it before Save, unlike the other 4 creation modals (Add pin, Draw Route/Area
+  // Finish, Compass Save bearing), which all offer a trip-picker-btn. Reuses that exact same
+  // shared component/CSS class/openTripPickerForForm 'form'-mode flow, not a new picker.
+  function tapAnywhereTripBtnLabel(){
+    var trip = tapAnywhereState.tripId ? tripById(tapAnywhereState.tripId) : null;
+    return trip ? trip.name : 'No trip';
+  }
+
   // Compact (not-yet-saved) drawer content — footer is Save/Directions/Share only, no
   // overflow: nothing exists yet to Move/Edit shape/Delete. Title input keeps a stable DOM
   // identity across re-renders of ITS OWN container (see FieldMap.tapAnywhereTitleInput) —
@@ -20645,6 +20762,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         'oninput="FieldMap.tapAnywhereTitleInput(this.value)">' +
       '</div>' +
       '<div id="tap-anywhere-chips">' + tapAnywhereChipsHtml() + '</div>' +
+      '<div style="margin-bottom:10px;">' +
+        '<button type="button" class="trip-picker-btn' + (tapAnywhereState.tripId ? '' : ' no-trip') + '" ' +
+          'id="tap-anywhere-trip-btn" data-trip-id="' + escapeHtml(tapAnywhereState.tripId || '') + '" ' +
+          'onclick="FieldMap.tapAnywhereOpenTripPicker(event)">' + escapeHtml(tapAnywhereTripBtnLabel()) + '</button>' +
+      '</div>' +
       '<div class="pin-popup-coords pin-popup-coords-row">' +
         '<span>' + latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5) + '</span>' +
         '<span id="tap-anywhere-elev">' + tapAnywhereElevText() + '</span>' +
@@ -20668,7 +20790,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   function openTapAnywhereDrawer(latlng){
     discardTapAnywhereDraft(); // defensive — should already be null, but never leave two temp markers around
-    tapAnywhereState = { latlng: latlng, name: '', detectedTagIds: [], elevationFt: null };
+    // tripId defaults to the device's active trip (unchanged auto-file behavior) — the new
+    // trip-picker-btn (Item 1, Session D) just lets the user override it before Save, exactly
+    // like every other field in this draft.
+    tapAnywhereState = { latlng: latlng, name: '', detectedTagIds: [], elevationFt: null, tripId: state.settings.activeTripId || null };
     tapAnywhereMarker = new maplibregl.Marker({ element: buildTapAnywhereMarkerEl(), anchor: 'center' })
       .setLngLat([latlng.lng, latlng.lat])
       .addTo(map);
@@ -24391,7 +24516,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Show onboarding for first-time or guest users not yet signed in
     if (shouldShowOnboarding()){
       setTimeout(function(){
-        document.getElementById('onboarding-modal').classList.remove('hidden');
+        // Item 4 (Session D) — re-check fresh at fire time rather than trusting the outer
+        // decision captured 800ms ago. A persisted Google/email session that resolves within
+        // this window already correctly hides the modal and calls markOnboarded() (via the
+        // shared onAuthStateChanged handler, updateAccountUI) — without this inner re-check,
+        // this same setTimeout would still fire unconditionally and re-show the modal a moment
+        // after auth had already dismissed it, racing a fast-resolving persisted session.
+        if (shouldShowOnboarding()){
+          document.getElementById('onboarding-modal').classList.remove('hidden');
+        }
       }, 800);
     }
     // Active Trip (Stage 2): indicator reflects activeTripId from the very first frame; the
