@@ -1,8 +1,45 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Each account's synced map data lives on one document keyed by the account's own uid.
+    // Own-uid-only: no account can read or write another account's document.
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Read-only, invite-specific item/trip sharing. A share is a point-in-time snapshot
+    // COPY of the shared pins/tracks/areas (not a live reference — a recipient can never
+    // read the owner's users/{uid} doc), addressed to exactly one recipient by the email
+    // they sign into FieldMap with. Revoking a share deletes its document.
+    match /shares/{shareId} {
+      // A share doc is readable by its owner, OR by the signed-in user whose auth-token
+      // email (case-insensitive) matches the recipient it was addressed to. Firebase Auth
+      // ID tokens carry the signed-in user's email as request.auth.token.email for both
+      // password and Google providers (confirmed live). No unauthenticated read path.
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.ownerUid
+        || (
+          request.auth.token.email != null
+          && request.auth.token.email.lower() == resource.data.recipientEmail
+        )
+      );
+
+      // Only the authenticated owner can create a share, and only naming themselves as
+      // owner. recipientEmail must be a non-trivial, already-lowercased string (the client
+      // lowercases before writing; the rule enforces it so a stray mixed-case write can't
+      // silently make a share unreadable to its intended recipient).
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.ownerUid
+        && request.resource.data.recipientEmail is string
+        && request.resource.data.recipientEmail.size() > 3
+        && request.resource.data.recipientEmail == request.resource.data.recipientEmail.lower()
+        && request.resource.data.kind in ['item', 'trip'];
+
+      // Revoke == delete. Only the owner can delete their own share.
+      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerUid;
+
+      // No update path: a share is immutable once created (re-share = new doc).
     }
   }
 }

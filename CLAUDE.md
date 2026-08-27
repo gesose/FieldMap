@@ -860,9 +860,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   visual, screenshot-confirmed proof at 2 different bearings/widths).
 - Session A (Firestore rules audit, Oregon Fish State Data investigation, AQI offline-label investigation) —
   added `firestore.rules` to the repo, version-controlled and matching the real live deployed rules exactly
-  (own-uid-only read/write, confirmed both by direct empirical Firebase SDK testing against the real database
-  from this sandbox and by the user independently pasting the literal Firebase Console text — the two matched
-  exactly) — a real security audit that found the existing rules already correct, not a fix. Investigated two
+  at the time (own-uid-only read/write, confirmed both by direct empirical Firebase SDK testing against the
+  real database from this sandbox and by the user independently pasting the literal Firebase Console text —
+  the two matched exactly) — a real security audit that found the existing rules already correct, not a fix.
+  (The rules were later EXTENDED with a `shares/{shareId}` collection for read-only item/trip sharing — the
+  `users/{userId}` rule stayed byte-identical; see the "Read-only item/trip sharing" entry.) Investigated two
   previously-reported bugs (Oregon Fish State Data rendering zero features with no error; AQI's offline-
   fallback label missing its "(from downloaded area)" suffix) at length, live, across many clean single-
   interaction test cycles — could not reproduce either as a permanent, real-code bug; both mechanisms worked
@@ -923,6 +925,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   dim scrim stuck over the whole map (an inline-style-vs-CSS-class specificity bug affecting every close path,
   not just Done), and a desktop step order that jumped diagonally between corners twice, resequenced to jump
   only once. See Architecture notes' "Onboarding feature tour" entry for the full design and both fixes.
+- Roads & trails (MVUM) is a new Land-and-Boundaries overlay (`743a661`, "mvum" commit — undocumented until
+  now, backfilled) — real USDA Forest Service Motor Vehicle Use Map roads (`EDW_MVUM_01/MapServer/1`) and
+  trails (`/2`), a live viewport-bbox query gated behind `MVUM_MIN_ZOOM` (11), rendered in the official MVUM
+  cartographic palette (black solid = open to all vehicles, gray = seasonal, dashed = special/narrow) via a
+  `match` expression on the service's own `symbol` field. A vehicle-type `<select>` highlights matching routes
+  with a gold outline (`#f4c430`) — everything else stays visible, just dimmed, nothing is ever hidden.
+  Tap-to-inspect popup shows all ~15 per-vehicle-class fields + seasonal dates. Own non-jurisdiction-specific
+  disclaimer (`MVUM_DISCLAIMER`, from the service's own description text). See Architecture notes' "Roads &
+  trails (MVUM)" entry.
+- Read-only item/trip sharing (Session — Read-only item/trip sharing) — invite-specific (by recipient email,
+  no anonymous link), read-only, point-in-time-COPY sharing of one pin/track/area OR a whole trip. New
+  `shares/{shareId}` Firestore collection + a real `firestore.rules` extension (`users/{userId}` rule
+  unchanged; `shares` reads gated on `request.auth.token.email` == the addressed recipient, confirmed live).
+  Sender: "Share with a FieldMap user…" in an item's ⋮ menu, a ↗ on trip-group headers, "Share a trip…" +
+  a revocable sent-shares manager in Settings → Sharing. Recipient: a violet read-only overlay
+  ("<name> — Shared by <sender>") with a per-share Layers-panel visibility toggle, auto-loaded on sign-in;
+  a `?share=<id>` deep link (still email-gated) gives a clean wrong-account message. `firebase.json` +
+  `.firebaserc` are now version-controlled. See Architecture notes' "Read-only item/trip sharing" entry.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -942,17 +962,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `circlePolygonCoords`), tied to the GPS dot's own on/off/no-fix-yet lifecycle. Kept here as a pointer since
   this bullet was referenced from several earlier sessions' own "what's broken" framing — see the "GPS
   accuracy circle" Architecture notes entry for the full mechanism.
-- Trip/pin/track sharing (share link → recipient's map shows a read-only overlay labeled "Dataset Name —
-  Shared by [person]" with a visibility toggle) — confirmed via direct investigation (see the dedicated
-  Architecture notes entry) that this does NOT exist anywhere in the codebase, in any form. No share-link
-  generation, no read-only-overlay rendering, no "Shared by" label, no Firestore access path that could ever
-  support it (the deployed `firestore.rules` only ever allows a user to read/write their OWN
-  `users/{uid}` document — no other account could read shared data even if a link existed). The only thing
-  under a "Share" label anywhere in the app is `shareLocationText()`/`shareTrack()`'s completely unrelated
-  native-OS-share-sheet / Google-Maps-link feature (shares one coordinate or a GPX file as plain
-  text/attachment — no FieldMap-to-FieldMap collaborative viewing of any kind). This is greenfield, not a
-  partial/broken feature — a future build session should treat it as starting from zero, not reconciling
-  existing code.
+- ~~Trip/pin/track sharing~~ — BUILT (Session — Read-only item/trip sharing). Invite-specific (by
+  recipient email, no anonymous link access), read-only, point-in-time-copy sharing of one pin/track/area OR a
+  whole trip's items. A real `shares/{shareId}` top-level Firestore collection + a real `firestore.rules`
+  extension (the `users/{userId}` own-uid-only rule is byte-identical; `shares` reads are gated on
+  `request.auth.token.email` matching the addressed recipient). Recipient sees a violet read-only overlay
+  ("<name> — Shared by <sender>") with a per-share visibility toggle in the Layers panel; sender manages/revokes
+  from Settings → Sharing. Kept here as a pointer since several earlier "what's broken" entries reference it —
+  see Architecture notes' "Read-only item/trip sharing" entry for the full design and verification.
+- `serializeForFirestore()` (Firebase sync module, index.html) does NOT write `trips`, `rangeRings`, or
+  `buffers` to Firestore — it only serializes pins/tracks/polygons/bearings/tags/tombstones. `getSyncableState`,
+  `mergeStates`, and `applyMergedState` all handle those three types, but the serialize step drops them on
+  every push, so **trips / range rings / buffers survive locally and same-device merges but never sync to
+  another device** — contradicting CLAUDE.md's own Session 16 (Trips) and Session 21 (Range Ring/Buffer)
+  entries, which claim sync works. Found while building the sharing feature (which is unaffected — it
+  denormalizes its own payload copy). Not fixed there — a core-sync-path change deserves its own focused
+  session with real two-device testing. The fix is additive (~3 lines: add `trips`/`rangeRings` verbatim,
+  `buffers` with the same `serializePoint` points-map as tracks/polygons).
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
   the offline-boundary rectangles (these are read-only display outlines, not user-drawn/editable shapes) —
   not in scope, different feature
@@ -7387,6 +7413,69 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       context, not the iframe under test, and unrelated to the tour code). `node --check` confirmed clean
       syntax on all extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.70.0 →
       2.70.1 (patch — two real bug fixes, no new UI), SHELL_CACHE bumped v196 → v197.
+- Roads & trails (MVUM) — `743a661` "mvum" commit (APP_VERSION 2.70.1 → 2.71.0, SHELL_CACHE v197 → v198);
+  no CLAUDE.md entry was written at the time — backfilled here from the commit diff. A new Land-and-Boundaries
+  Layers-panel overlay showing real USDA Forest Service Motor Vehicle Use Map data.
+  - **Data**: `MVUM_ROADS_URL` = `EDW/EDW_MVUM_01/MapServer/1/query`, `MVUM_TRAILS_URL` = `.../2/query` (USDA
+    Forest Service EDW ArcGIS, confirmed live in a dedicated prior research session). Live viewport-bbox
+    query re-run on pan/zoom, same architecture as Hydrography / Gauge Stations, gated behind
+    `MVUM_MIN_ZOOM` (11 — below that a bbox spans too much road-dense area and needs many pagination rounds).
+    `fetchMvumLayerPaged` does adaptive page-size backoff (like Wildlife State Data / Forest Closures) with an
+    honest "some MVUM data may be incomplete" toast on a permanent page failure. `mvum-source` is one shared
+    GeoJSON source for both layers; each feature is tagged `_mvumKind` (`'road'`/`'trail'`) so the popup /
+    Tap-stack can label it even though rendering is unified.
+  - **Cartography**: `MVUM_SYMBOL_STYLES` + `MVUM_SOLID_SYMBOLS` (`['1','2','3','4','6','8','9','10','12','17']`)
+    / `MVUM_DASHED_SYMBOLS` (`['5','7','11','16']`) drive a MapLibre `match` expression on the service's own
+    real `symbol` field — the official MVUM print palette: black solid = open to all vehicles, gray = seasonal
+    restriction, dashed = special designation / narrow trail. White (MVUM's own paper-background color for one
+    category) is remapped since it would be invisible on a dark basemap.
+  - **Vehicle-type highlight**: `MVUM_VEHICLE_TYPES` (a curated subset of MVUM's ~15 per-vehicle-class fields)
+    feeds a `<select>` (`#mvum-vehicle-select`, in a `#mvum-vehicle-row` shown only while the toggle is on);
+    `setMvumVehicleType(typeId)` sets `mvumSelectedVehicleType`, which adds a gold outline
+    (`MVUM_HIGHLIGHT_COLOR` `#f4c430`, deliberately distinct from `--accent` and from MVUM's own
+    black/gray/white) to matching routes — everything else stays visible, just dimmed. Nothing is ever
+    hidden. The tap-to-inspect popup shows ALL ~15 vehicle-class fields (`MVUM_ALL_VEHICLE_FIELDS`) + seasonal
+    open/close dates, regardless of the highlight selection.
+  - `MVUM_DISCLAIMER` (non-jurisdiction-specific, sourced from the service's own live description text — "not
+    every National Forest has data included… always verify current status with the managing unit"), surfaced
+    in the layer's "?" info panel (`#mvum-disclaimer`). `state.settings.mvumOn` (default false) /
+    `state.settings.mvumOpacity` (default 0.85). Wired into `LAYER_SECTION_TOGGLE_IDS.landboundaries` and (per
+    the commit) Tap-stack.
+- Session D (`d6f4216` "ui polish details", APP_VERSION 2.71.0 → 2.72.0, SHELL_CACHE v198 → v199) — a
+  4-or-5-item polish batch; only item 2 (GPS accuracy circle, entry directly below) was written up at the
+  time. Items 1/3/4/5 backfilled here from the commit diff.
+  - **Item 1 — tap-anywhere trip picker (Active Trip project, Stage 3)**: the tap-anywhere quick-capture
+    drawer now has a real trip-picker button (`#tap-anywhere-trip-btn`, pre-filled with the active trip,
+    overridable before Save exactly like every other field in the draft), closing the "Stage 3 not yet
+    started" gap the Active Trip UI entry flagged. `FieldMap.tapAnywhereOpenTripPicker(event)` calls
+    `event.stopPropagation()` (the button lives inside `#view-drawer`, and `#trip-picker-panel` is in
+    `OUTSIDE_CLICK_DISMISS_IDS` — without this the opening click bubbles to the outside-click listener which
+    immediately re-hides the panel; found live, not assumed) then `openTripPickerForForm(tapAnywhereState.tripId
+    || null, cb, true)`. The new **3rd `preserveViewDrawer` param** on `openTripPickerForForm` was added for
+    exactly this: it calls `closeAllPanels_except('trip-picker-panel')` instead of `closeAllPanels()`, so
+    `closeViewDrawer()`'s "any close of a 'tap'-type view = abandon the draft" behavior never fires and the
+    in-progress tap-anywhere draft (temp marker + state) survives opening the picker. Defaults falsy — every
+    existing caller is byte-identical. The created pin now reads `tripId: tapAnywhereState.tripId || null`.
+  - **Item 3 — boot-timing investigation**: per the user's own recollection this batch included a boot-timing
+    investigation; the commit contains no code artifact for it (no `Item 3` marker, no boot-timing change),
+    so it was investigation-only and its specific finding isn't recoverable from git. Flagged here for
+    completeness rather than left as a silent gap.
+  - **Item 4 — onboarding race fix**: the boot sequence's `setTimeout(fn, 800)` that shows `#onboarding-modal`
+    now re-checks `shouldShowOnboarding()` *at fire time* rather than trusting the decision captured 800ms
+    earlier. A persisted Google/email session that resolves within that window already hides the modal and
+    calls `markOnboarded()` (via `updateAccountUI`) — without the inner re-check, this timer would still fire
+    unconditionally and re-show the modal a moment after auth had already dismissed it, racing a
+    fast-resolving persisted session. (The Onboarding *feature tour* entry's Item-4 comment reference is to
+    this same fix.)
+  - **Item 5 — Forest Closures loading indicator**: `#forestclosures-loading` (a plain `<p class="hint">`
+    "Loading forest closures…", `display:none` by default) + `setForestClosuresLoadingVisible(show)`.
+    `setForestClosuresOn(on)` shows it only when a real fetch is about to happen (`!forestClosuresCache`) —
+    a cache hit resolves `ensureForestClosuresLoaded`'s callback same-tick, so showing it unconditionally
+    would flash uselessly. Hidden in the callback and on toggle-off. Reuses the plain `.hint`-text-toggle
+    pattern already established for AQI's "Data as of [time]" label rather than inventing a spinner (this
+    codebase has no CSS spinner anywhere). Checked first, per explicit instruction, that no equivalent
+    loading indicator existed elsewhere to match — none did (Washington fish State Data's fetch has none
+    either).
 - GPS accuracy circle (Session D, item 2) — a real MapLibre `type:'geojson'` source (`gpsacc-source`) + fill
   layer (`gpsacc-fill`), added in `reinitializeLayers()` right after the compass-target layers, hidden by
   default (`visibility:'none'`). `updateGpsAccuracyCircle(accuracyM)` — called from `_gpsDotInit()`'s own
@@ -7407,50 +7496,132 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   full teardown (layer hidden, source emptied, watch unsubscribed) on GPS off; and — the trickiest case —
   correct restoration (`visibility:'visible'`, real feature data) after a genuine Topo→Topo Dark style
   switch. Confirmed visually via screenshot on both the initial style and after the switch.
-- Trip/pin/track sharing — investigated, confirmed never built (no code changes). A prior session's own
-  design work (not this file — no trace of it was found anywhere in CLAUDE.md itself either) apparently
-  called for a share-link feature: generate a link to a specific pin/track/trip, a recipient opens it and
-  sees the data as a read-only overlay on their own map, labeled "Dataset Name — Shared by [person]," with a
-  visibility toggle. Asked to check whether this had actually been built versus only designed — the premise
-  that CLAUDE.md itself already documents this as a "locked-in architecture decision" does NOT hold up: a
-  full-file search for that framing, for "Shared by"/"Dataset Name" literal text, for any share-link/
-  share-token/share-id naming pattern, and for any git history ever touching a `sharedBy`/`share_id`-shaped
-  identifier all came back empty — this file never described any such feature, working or not, until this
-  entry.
-  - **What actually exists under "Share" — confirmed unrelated**: `shareLocationText(name, lat, lng,
-    extraLine)` (called by `sharePin`/`sharePolygon`/`shareBearing`/the Range Ring and Buffer share buttons)
-    and `shareTrack`'s own GPX-export variant are both plain native-OS-share-sheet integrations
-    (`navigator.share`, falling back to a copied Google Maps link or a copied coordinate string) — they hand
-    a single coordinate or a GPX file to whatever the OS's own share sheet offers (Messages, Mail, another
-    app, etc.). There is no FieldMap-to-FieldMap concept here at all: nothing generates a URL this app itself
-    would recognize on open, nothing persists a "this item is shared" flag, and the recipient (if they even
-    have FieldMap) has no path to import the shared point back in as a live, updating overlay — at most they
-    get a pin they could manually recreate from a Google Maps link.
-  - **The decisive evidence — `firestore.rules` structurally cannot support this today**: the entire deployed
-    ruleset is `match /users/{userId} { allow read, write: if request.auth != null && request.auth.uid ==
-    userId; }` — ONE rule, own-uid-only, for the ONLY collection this app's Firestore schema has
-    (`users/{uid}`, the same single per-account document every entity type — pins/tracks/polygons/bearings/
-    trips/tombstones — lives on as an array field; see the "Sync architecture pattern" memory note and the
-    "Trips" Architecture notes entry for why there are no real Firestore sub-collections anywhere in this
-    app). No other account can read ANY part of another user's document under any circumstances, with or
-    without a hypothetical share link — even if client-side code existed to construct a shareable URL, the
-    security rules alone would block a recipient from ever loading the referenced data. This is the single
-    most conclusive piece of evidence that the feature isn't just UI-incomplete but has literally zero
-    supporting backend infrastructure of any kind.
-  - **Also checked and confirmed absent**: any "Shared by"/read-only-overlay/visibility-toggle HTML or CSS
-    anywhere in `index.html` (a repo-wide grep for the literal strings found only the generic English word
-    "shared" inside unrelated code comments, e.g. "a var shared by two functions" — never the feature label);
-    any query-string handling beyond the pre-existing `?safemode=1` check (no share-token/share-id parsing of
-    any kind); any dormant/unwired modal or panel markup for a share flow (none found); and git history for
-    any commit ever touching a `sharedBy`/`share_id`-shaped concept (`git log --all -S"sharedBy"` and
-    `-S"share_id"` both return zero commits).
-  - **Conclusion reported to the user**: this is a greenfield build, not a reconciliation or bug-fix task —
-    there is no partial implementation to complete, no broken wiring to fix, and no existing data model to
-    extend carefully around. A real future build would need, at minimum: a genuine new Firestore access
-    pattern (the current own-uid-only rule set cannot support any cross-account read at all, so this needs
-    real security-rules design, not just new client code), a share-link generation/resolution mechanism, a
-    read-only-overlay rendering path distinct from every existing user-owned-object rendering path in this
-    file, and a "Shared by" labeling/visibility-toggle UI that doesn't exist in any form today.
+- Read-only item/trip sharing (Session — Read-only item/trip sharing) — invite-specific (by recipient
+  email; no anonymous link access), read-only, point-in-time-COPY sharing of one pin/track/area OR a whole
+  trip's items. This is the greenfield feature the prior "confirmed never built" investigation (kept in the
+  Session history below) concluded had zero supporting infrastructure — everything here is new.
+  - **Firebase tooling now in the repo**: `firebase.json` (`{firestore:{rules:'firestore.rules'}}`) and
+    `.firebaserc` (`{projects:{default:'fieldmap-4d8bc'}}`) are version-controlled. Deploy rules with
+    `npx firebase deploy --only firestore:rules` from the repo root (needs `npx firebase login` once — the CLI
+    isn't installed globally, and this sandbox has no cached auth, so a rules change always needs the user to
+    auth the CLI or paste into the Firebase Console). `firestore.rules` in the repo is the source of truth and
+    matches what's deployed.
+  - **Data model — `shares/{shareId}` (auto-id) top-level collection**: `{ ownerUid, ownerEmail, ownerName,
+    recipientEmail (lowercased/trimmed), kind: 'item'|'trip', name, createdAt (ms), payload: { pins:[…],
+    tracks:[…], polygons:[…] } }`. The payload is a **denormalized copy** (full item objects, track/polygon
+    `points` as `[{lat,lng},…]` — Firestore-friendly, matching `serializePoint` in the sync module), NOT a
+    reference: a recipient can never read the owner's `users/{uid}` doc (rules forbid it), so a reference
+    would be unreadable, and a point-in-time snapshot is the right semantics for "read-only share" anyway.
+    Trade-off, documented in the UI ("A read-only copy is sent — later edits won't update it"): the sender
+    editing an item later doesn't update the share. Bearings / range rings / buffers are deliberately out of
+    scope for v1 (the single-item scope is explicitly "one pin, track, or area"; a trip payload includes only
+    those three types). **Revoke == hard-delete the doc** (chosen over a `revoked` flag — simpler rules,
+    provably removes access, no "un-revoke" requirement, no lingering revoked docs; the alternative was
+    considered).
+  - **`firestore.rules` — the `users/{userId}` rule is byte-identical**; `shares/{shareId}` adds:
+    - `allow read: if request.auth != null && ( request.auth.uid == resource.data.ownerUid ||
+      (request.auth.token.email != null && request.auth.token.email.lower() == resource.data.recipientEmail) )`
+      — covers both `get` (deep-link) and `list` (the recipient's `where('recipientEmail','==',myEmailLower)`
+      query and the sender's `where('ownerUid','==',myUid)` query; for `list` the rule is checked per-doc and
+      the client constrains the query so every returned doc satisfies it). `request.auth.token.email` is the
+      decoded Firebase Auth ID-token `email` claim — **confirmed live** it's present for both `password` and
+      Google providers, and that `.lower()` compiles/works in rules. Client lowercases `recipientEmail` on
+      write; the rule lowercases the token email on read (belt + suspenders — emails are case-insensitive).
+    - `allow create` — only the authed owner, only naming themselves `ownerUid`, `recipientEmail` a non-trivial
+      already-lowercased string, `kind in ['item','trip']`.
+    - `allow delete` — owner only. No `update` path (a share is immutable; re-share = new doc).
+    - No composite indexes needed (both queries are single-field equality — auto-indexed).
+  - **Client — Firebase module (ES module)**: added `collection, addDoc, getDocs, deleteDoc, query, where` to
+    the firestore import; tracks `currentUserEmail` (lowercased, from `user.email`) in `onAuthStateChanged`;
+    after `performInitialSync` resolves, calls `loadIncomingShares()` →
+    `getDocs(query(collection(db,'shares'), where('recipientEmail','==',currentUserEmail)))` →
+    `window.FieldMapApp.applyIncomingShares(arr)`. New `window.FieldMapSync` methods: `getEmail`, `isSignedIn`,
+    `createShare(recipientEmail, kind, name, payload)` (validates email/self/`JSON.stringify` length < 900 KB
+    for the ~1 MiB Firestore doc cap, then `addDoc`), `listSentShares()` (owner query, newest first),
+    `revokeShare(id)` (`deleteDoc`), `fetchShareById(id)` (returns `{ok:true,share}` or
+    `{ok:false,reason:'denied'|'not-found'|'error'}` — used by the deep link), `reloadIncomingShares`.
+  - **Client — classic script (the "Read-only item/trip sharing" block, just above `window.FieldMap = {`)**:
+    - `incomingShares` (module var, full share docs for this account), `state.settings.hiddenShares`
+      (`{shareId:true}`, device-local, defaulted `{}` in `loadState` fixups — never in `getSyncableState`).
+    - Payload builders: `buildPinSharePayloadItem` / `buildTrackSharePayloadItem` / `buildPolygonSharePayloadItem`
+      (strip to a known-safe field set, `points` → `[{lat,lng}]` via `shareSerializePoints`),
+      `buildTripSharePayload(tripId)` (everything with `.tripId === tripId` across pins/tracks/areas).
+    - `applyIncomingShares(shares)` / `clearIncomingShares()` (both on `window.FieldMapApp`; `applyIncomingShares`'s
+      wrapper also calls `handleShareDeepLink()`). `renderSharedOverlays()` rebuilds three `shared-*` GeoJSON
+      sources from every non-hidden incoming share (pins→Point, tracks→LineString, polys→Polygon, each feature
+      carrying `shareId/shareName/ownerLabel/itemName/kind/notes` + pin coords/elev). `renderSharedWithMeSection()`
+      populates `#shared-with-me-list` (one checkbox row per share: "<name> / Shared by <owner> · N items
+      [· trip]", a ⤢ "zoom to" button); `#shared-with-me-block` is `.hidden` unless `incomingShares.length`.
+      `setShareHidden` writes `state.settings.hiddenShares` + `persist()` + re-renders overlays.
+      `fitToShare(sh)` un-hides + `map.fitBounds` over the payload's coords.
+    - `openSharedItemDrawer(props)` → `showViewDrawer('shared', shareId+'::'+itemName, sharedItemDrawerHtml(props))`
+      — a read-only card: "SHARED · READ-ONLY" violet badge, "<shareName> · Shared by <owner>", notes, coords
+      (pins), and a "Directions" button for pins only (via `openDirectionsTo`). No edit/delete/move.
+    - Share modal (`#share-modal`): `openShareModal(kind, name, payload)` (guards not-signed-in / 0-items),
+      `submitShareModal` (calls `createShare`, shows a result message + a copyable `?share=<id>` link),
+      `closeShareModal`. `#share-unavailable-modal` (`showShareUnavailableModal`) for the deep-link
+      wrong-account/revoked case.
+    - Share manager (`renderShareManager()` → `#share-manager-list` in Settings → SHARING, shown only when
+      signed in via `updateAccountUI`): lists `listSentShares()` with a per-row "Revoke" button
+      (`confirm()` → `revokeShare` → re-render).
+    - `pickTripToShare()` reuses `openTripPickerForForm(null, cb)` — on pick, `openShareModal('trip', …)`.
+    - **Sender entry points**: item overflow (⋮) menu gets "Share with a FieldMap user…" for pin (appended to
+      its existing `extraMenuItemsHtml`), track, and area (both of which now pass an 8th `popupFooterHtml`
+      arg); the sidebar trip-group header (trip sort mode, signed in) gets a "↗" share button; Settings →
+      SHARING gets "Share a trip…". `FieldMap.shareItemWithUser(type, id)` / `FieldMap.shareTripWithUser(tripId)`
+      / `FieldMap.directionsToShared(lat, lng)` are the exports.
+  - **`shared-*` sources/layers** (in `reinitializeLayers()`, right after `polygons-line`, re-fed at the tail
+    via `renderSharedOverlays()`): `shared-polys-source` → `shared-polys-fill` (`#8b5cf6` @ 0.13) +
+    `shared-polys-line` (dashed `[2,1.5]`); `shared-tracks-source` → `shared-tracks-touch` (18px invisible) +
+    `shared-tracks-line` (dashed violet); `shared-pins-source` → `shared-pins-circle` (violet fill, white
+    stroke). Violet + dashed deliberately so they never read as the user's own editable items. Click handlers
+    (in `createMap()`, registered AFTER the user's own item handlers so a rare overlap resolves to the user's
+    own editable item first) → `openSharedItemDrawer`. NOT wired into Tap-stack's disambiguation registry
+    (a follow-up — for now a shared/own overlap just opens whichever registered first).
+  - **`?share=<id>` deep link** — NOT anonymous access (the rules still 100% email-gate every read); the link
+    is a convenience pointer + the one place a "you're signed in with the wrong email" message has a trigger
+    (without a link, a wrong-email recipient just silently sees nothing). `handleShareDeepLink()`: if not
+    signed in → stash the id in `sessionStorage` + toast "Sign in to view the item shared with you" + open
+    Settings (retries after `FieldMapSync` loads / after sign-in via the `applyIncomingShares` wrapper). If
+    signed in → `fetchShareById` → ok: push into `incomingShares`, un-hide, render, `fitToShare`, toast
+    "<name> shared by <owner> added to your map", strip the `?share=` param via `history.replaceState`. Fail
+    (`denied` — includes a non-existent doc, since the rule references `resource.data` which is null →
+    permission-denied, so "doc doesn't exist" and "you can't read it" are indistinguishable by design) →
+    `#share-unavailable-modal` with a message covering both wrong-email and revoked.
+  - **Verification** — this sandbox: two Chrome constraints made a single-session in-browser 2-account test
+    impossible (one profile/auth; the browser was signed in as the real `geoff@theranchmine.com` with 69 real
+    pins — must not be disturbed) AND the app's own MapLibre style never reaches `style.load` here (the
+    long-documented Mapbox-loading limbo). Worked around per this project's established methodology:
+    - **Node SDK, real throwaway accounts** (`sharetest/phase1..5`): (phase1) ID token carries `email` for
+      `password` provider; (phase2, deployed a temp rule) `request.auth.token.email` in rules — correct
+      recipient reads ✅, wrong email `permission-denied` ✅, unauthenticated denied ✅; (phase3, 14/14 against
+      the FINAL deployed rules) create item+trip shares, reject mixed-case `recipientEmail` / spoofed
+      `ownerUid`, owner lists own, recipient lists incoming with full pins+tracks+polygons payload, recipient
+      `getDoc`, wrong-email `getDoc` denied + list empty, non-owner & recipient can't delete, owner revokes,
+      recipient loses access after revoke (list + getDoc). All accounts + docs deleted.
+    - **Real geoff account, in-app UI**: pin overflow → "Share with a FieldMap user…" → modal with the real
+      pin → created a real `shares/{id}` doc → success message + `?share=` link → appeared in Settings →
+      Sharing manager → **Revoked via the manager UI** → doc deleted. `phase4a`/`phase4b` (Node): a real
+      throwaway recipient account received that geoff-created share with full payload, wrong account denied,
+      and lost access after the app-UI revoke. Trip-share flow (Settings → "Share a trip…" → picker → modal),
+      `createShare` validation (`bad-email`, `self`) all confirmed. `phase5`: a share addressed to the real
+      `geoff@theranchmine.com` (from a throwaway sender) → opened `?share=<id>` in the geoff browser session
+      → "Shared with me" section rendered "<name> / Shared by Sam Sender · 4 items · trip", toast fired,
+      `?share=` param cleared; per-share visibility checkbox toggled `hiddenShares` correctly; the manager
+      correctly did NOT list it (incoming ≠ sent); after Node-revoke + `reloadIncomingShares`, the section
+      went hidden again. `?share=<bogus>` → the "unavailable" modal with the wrong-account/revoked message.
+      Throughout: zero console errors, geoff's 69 pins / 12 tracks untouched, `lastLocalEditAt` unchanged
+      (no write to geoff's synced state).
+    - **Isolated `maplibregl.Map` harness** (background-only style, no Mapbox): the real `shared-*` paint
+      config + real `renderSharedOverlays` feature-building, fed the real geoff share payload + a synthetic
+      trip (tracks+polys) → screenshot-confirmed violet pin circles (white stroke), dashed violet track,
+      dashed violet area with a faint fill, all visually distinct from the app's own item styling. Read-only
+      drawer HTML asserted: pin card has the badge + "Shared by …" + Directions; track card has notes, no
+      Directions.
+    - **Not verifiable here** (flagged, not silently claimed): the shared overlay rendering inside the real
+      app's own map instance (proven via the harness with real payload instead); a full 2-account flow in one
+      live browser session; the "not signed in → sign in → share appears" path end to end (each half proven
+      separately). A real device is the natural next check.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10224,3 +10395,43 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   work was never backfilled into this file at all — flagged to the user as a distinct, still-open
   documentation gap, not fixed in this pass beyond this one directly-relevant correction). No application
   code was touched. No APP_VERSION/SHELL_CACHE bump.
+- Session (MVUM overlay) — `743a661` "mvum" commit, APP_VERSION 2.70.1 → 2.71.0, SHELL_CACHE v197 → v198.
+  No CLAUDE.md entry was written at the time; backfilled from the commit diff in the session below. Built
+  the Roads & trails (MVUM) Land-and-Boundaries overlay — real USDA Forest Service Motor Vehicle Use Map
+  roads + trails as a live viewport-bbox query, official MVUM cartographic palette via a `match` on the
+  service's own `symbol` field, a vehicle-type highlight `<select>`, full per-vehicle-class tap-to-inspect
+  popup, own disclaimer, Tap-stack integration. See Architecture notes' "Roads & trails (MVUM)" entry.
+- Session D (`d6f4216` "ui polish details") — APP_VERSION 2.71.0 → 2.72.0, SHELL_CACHE v198 → v199. A
+  polish batch of 4-5 items; only item 2 (GPS accuracy circle) got a CLAUDE.md entry at the time. Backfilled
+  from the commit diff: item 1 (tap-anywhere trip picker — Active Trip project Stage 3, plus a new
+  `preserveViewDrawer` param on `openTripPickerForForm`), item 3 (a boot-timing investigation per the user's
+  recollection — no code artifact in the commit, so investigation-only, specific finding not recoverable),
+  item 4 (onboarding modal re-checks `shouldShowOnboarding()` at `setTimeout` fire time, not the decision
+  from 800ms earlier — a fast-resolving persisted session race), item 5 (Forest Closures "Loading…"
+  indicator, shown only on a real cache-miss fetch). See Architecture notes' "Session D" entry and the "GPS
+  accuracy circle" entry.
+- Session (Read-only item/trip sharing) — built the invite-specific read-only sharing feature the prior
+  "confirmed never built" investigation had scoped as greenfield. New `shares/{shareId}` Firestore
+  collection with a point-in-time-copy payload (pins/tracks/areas, or a whole trip's items); a real
+  `firestore.rules` extension gating `shares` reads on `request.auth.token.email` matching the addressed
+  recipient (the `users/{userId}` rule is byte-identical); `firebase.json` + `.firebaserc` added to the repo.
+  FIRST confirmed live, per explicit instruction: the ID token carries `email` as a claim AND
+  `request.auth.token.email` works in deployed rules (deployed a temp probe rule, tested correct-recipient
+  read + wrong-email denied + unauthenticated denied with real throwaway accounts, then reverted). Client:
+  Firebase-module `createShare`/`listSentShares`/`revokeShare`/`fetchShareById`/`loadIncomingShares`; classic
+  script's "Read-only item/trip sharing" block (overlay rendering into 3 new `shared-*` violet/dashed GeoJSON
+  layers, a "Shared with me" Layers-panel section with per-share visibility toggles, a read-only detail
+  drawer, a share modal, a Settings → Sharing manager, and `?share=<id>` deep-link handling with a clean
+  wrong-account message). Sender entry points: item ⋮ menu, trip-group header ↗, Settings. Verified: Node
+  SDK integration tests (14/14 against the final deployed rules — create item+trip, reject mixed-case/spoofed
+  writes, recipient list+getDoc with full payload, wrong-email denied, non-owner/recipient can't delete,
+  revoke → access lost); real-`geoff@theranchmine.com`-account in-app sender flow (create real share → manager
+  → revoke) cross-checked by a Node recipient account; a share addressed to the real geoff account exercised
+  via `?share=` deep-link in the browser (overlay section, toast, visibility toggle, wrong-account modal for a
+  bogus id); an isolated `maplibregl.Map` harness screenshot-confirming the real `shared-*` paint config
+  renders violet pins / dashed tracks / dashed areas from the real payload (the app's own map never reaches
+  `style.load` in this sandbox — the long-documented Mapbox limbo). geoff's 69 real pins / 12 tracks
+  untouched throughout, zero console errors. Also flagged (not fixed) a real pre-existing bug found along the
+  way: `serializeForFirestore()` omits `trips`/`rangeRings`/`buffers`, so those never sync across devices.
+  APP_VERSION 2.72.0 → 2.73.0, SHELL_CACHE v199 → v200. See Architecture notes' "Read-only item/trip
+  sharing" entry.
