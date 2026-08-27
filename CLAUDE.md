@@ -936,9 +936,23 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   use their classic centered modal — only EDITING an existing item (or continuing to refine a just-quick-
   saved tap-anywhere pin) expands the drawer in place; this was a deliberate scope line in the expand-in-
   place batch, not an oversight — see Architecture notes' #view-drawer entry
-- GPS accuracy circle (gpsAccCircle) — declared but never assigned/rendered anywhere; confirmed (Session 15
-  audit) this is a never-built feature, not a stalled Leaflet port — there's no leftover L.circle code for it
-  either. Needs a MapLibre source/layer built from scratch, not a port.
+- ~~GPS accuracy circle (gpsAccCircle) — declared but never assigned/rendered anywhere~~ — BUILT (Session D,
+  item 2): a real MapLibre source/layer (`gpsacc-source`/`gpsacc-fill`), a translucent geographic circle
+  around the GPS dot whose radius is the live fix's own reported accuracy (meters→miles via
+  `circlePolygonCoords`), tied to the GPS dot's own on/off/no-fix-yet lifecycle. Kept here as a pointer since
+  this bullet was referenced from several earlier sessions' own "what's broken" framing — see the "GPS
+  accuracy circle" Architecture notes entry for the full mechanism.
+- Trip/pin/track sharing (share link → recipient's map shows a read-only overlay labeled "Dataset Name —
+  Shared by [person]" with a visibility toggle) — confirmed via direct investigation (see the dedicated
+  Architecture notes entry) that this does NOT exist anywhere in the codebase, in any form. No share-link
+  generation, no read-only-overlay rendering, no "Shared by" label, no Firestore access path that could ever
+  support it (the deployed `firestore.rules` only ever allows a user to read/write their OWN
+  `users/{uid}` document — no other account could read shared data even if a link existed). The only thing
+  under a "Share" label anywhere in the app is `shareLocationText()`/`shareTrack()`'s completely unrelated
+  native-OS-share-sheet / Google-Maps-link feature (shares one coordinate or a GPX file as plain
+  text/attachment — no FieldMap-to-FieldMap collaborative viewing of any kind). This is greenfield, not a
+  partial/broken feature — a future build session should treat it as starting from zero, not reconciling
+  existing code.
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
   the offline-boundary rectangles (these are read-only display outlines, not user-drawn/editable shapes) —
   not in scope, different feature
@@ -7373,6 +7387,70 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       context, not the iframe under test, and unrelated to the tour code). `node --check` confirmed clean
       syntax on all extracted inline `<script>` blocks and `service-worker.js`. APP_VERSION bumped 2.70.0 →
       2.70.1 (patch — two real bug fixes, no new UI), SHELL_CACHE bumped v196 → v197.
+- GPS accuracy circle (Session D, item 2) — a real MapLibre `type:'geojson'` source (`gpsacc-source`) + fill
+  layer (`gpsacc-fill`), added in `reinitializeLayers()` right after the compass-target layers, hidden by
+  default (`visibility:'none'`). `updateGpsAccuracyCircle(accuracyM)` — called from `_gpsDotInit()`'s own
+  `subscribeSharedGps` position callback, alongside the existing dot-marker update — builds a real circle
+  polygon via `circlePolygonCoords(lastGpsLatLng.lat, lastGpsLatLng.lng, accuracyM/1609.344)` (the same
+  64-vertex circle primitive Range Ring already uses), so the circle's on-screen size is a genuine geographic
+  radius that shrinks/grows correctly with zoom, not a fixed pixel halo. Deliberately shares the GPS dot's
+  own lifecycle rather than an independent watcher: shown/updated only while `gpsDotState !== 'off'`, hidden
+  (layout `visibility:'none'` + source cleared to an empty FeatureCollection) in `_gpsDotTurnOff()`, and
+  re-shown from `lastGpsAccuracyM` (a new module var, set on every position update) at the tail of
+  `reinitializeLayers()` after a base-layer style switch — `map.setStyle({diff:false})` wipes the layer
+  along with everything else, but the DOM `gpsDotMarker` itself survives independently, so without this
+  restore the circle would stay hidden until the next live position update happened to arrive on its own.
+  Hides itself whenever `accuracyM` is null/NaN/non-positive, matching how the dot itself only ever appears
+  once a real fix has arrived. Verified live (mocked `navigator.geolocation.watchPosition`, no real GPS in
+  this sandbox): a real 50m accuracy value measured (haversine, not approximated) to a 49.999m actual ring
+  radius, a 200m value to 199.998m; live radius updates on a second fix; correct hide on null/zero accuracy;
+  full teardown (layer hidden, source emptied, watch unsubscribed) on GPS off; and — the trickiest case —
+  correct restoration (`visibility:'visible'`, real feature data) after a genuine Topo→Topo Dark style
+  switch. Confirmed visually via screenshot on both the initial style and after the switch.
+- Trip/pin/track sharing — investigated, confirmed never built (no code changes). A prior session's own
+  design work (not this file — no trace of it was found anywhere in CLAUDE.md itself either) apparently
+  called for a share-link feature: generate a link to a specific pin/track/trip, a recipient opens it and
+  sees the data as a read-only overlay on their own map, labeled "Dataset Name — Shared by [person]," with a
+  visibility toggle. Asked to check whether this had actually been built versus only designed — the premise
+  that CLAUDE.md itself already documents this as a "locked-in architecture decision" does NOT hold up: a
+  full-file search for that framing, for "Shared by"/"Dataset Name" literal text, for any share-link/
+  share-token/share-id naming pattern, and for any git history ever touching a `sharedBy`/`share_id`-shaped
+  identifier all came back empty — this file never described any such feature, working or not, until this
+  entry.
+  - **What actually exists under "Share" — confirmed unrelated**: `shareLocationText(name, lat, lng,
+    extraLine)` (called by `sharePin`/`sharePolygon`/`shareBearing`/the Range Ring and Buffer share buttons)
+    and `shareTrack`'s own GPX-export variant are both plain native-OS-share-sheet integrations
+    (`navigator.share`, falling back to a copied Google Maps link or a copied coordinate string) — they hand
+    a single coordinate or a GPX file to whatever the OS's own share sheet offers (Messages, Mail, another
+    app, etc.). There is no FieldMap-to-FieldMap concept here at all: nothing generates a URL this app itself
+    would recognize on open, nothing persists a "this item is shared" flag, and the recipient (if they even
+    have FieldMap) has no path to import the shared point back in as a live, updating overlay — at most they
+    get a pin they could manually recreate from a Google Maps link.
+  - **The decisive evidence — `firestore.rules` structurally cannot support this today**: the entire deployed
+    ruleset is `match /users/{userId} { allow read, write: if request.auth != null && request.auth.uid ==
+    userId; }` — ONE rule, own-uid-only, for the ONLY collection this app's Firestore schema has
+    (`users/{uid}`, the same single per-account document every entity type — pins/tracks/polygons/bearings/
+    trips/tombstones — lives on as an array field; see the "Sync architecture pattern" memory note and the
+    "Trips" Architecture notes entry for why there are no real Firestore sub-collections anywhere in this
+    app). No other account can read ANY part of another user's document under any circumstances, with or
+    without a hypothetical share link — even if client-side code existed to construct a shareable URL, the
+    security rules alone would block a recipient from ever loading the referenced data. This is the single
+    most conclusive piece of evidence that the feature isn't just UI-incomplete but has literally zero
+    supporting backend infrastructure of any kind.
+  - **Also checked and confirmed absent**: any "Shared by"/read-only-overlay/visibility-toggle HTML or CSS
+    anywhere in `index.html` (a repo-wide grep for the literal strings found only the generic English word
+    "shared" inside unrelated code comments, e.g. "a var shared by two functions" — never the feature label);
+    any query-string handling beyond the pre-existing `?safemode=1` check (no share-token/share-id parsing of
+    any kind); any dormant/unwired modal or panel markup for a share flow (none found); and git history for
+    any commit ever touching a `sharedBy`/`share_id`-shaped concept (`git log --all -S"sharedBy"` and
+    `-S"share_id"` both return zero commits).
+  - **Conclusion reported to the user**: this is a greenfield build, not a reconciliation or bug-fix task —
+    there is no partial implementation to complete, no broken wiring to fix, and no existing data model to
+    extend carefully around. A real future build would need, at minimum: a genuine new Firestore access
+    pattern (the current own-uid-only rule set cannot support any cross-account read at all, so this needs
+    real security-rules design, not just new client code), a share-link generation/resolution mechanism, a
+    read-only-overlay rendering path distinct from every existing user-owned-object rendering path in this
+    file, and a "Shared by" labeling/visibility-toggle UI that doesn't exist in any form today.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10124,3 +10202,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   (pins-source, updateMarkerVisibility), and added a dedicated "Pin clustering" entry with the full mechanism
   and evidence trail. See that entry for complete detail. No application code was touched — this was a pure
   documentation correction, per explicit instruction. No APP_VERSION/SHELL_CACHE bump.
+- Session (trip/pin/track sharing investigation, documentation-only, no code changes): asked to check
+  whether a read-only trip-sharing feature (share link → recipient's map shows the data as a read-only
+  overlay labeled "Dataset Name — Shared by [person]," with a visibility toggle) already exists, since it
+  was unclear whether an earlier session's design work for it had ever actually been built. Investigated
+  the real code rather than trusting the premise either way — a full-file search for the feature's own
+  literal UI text ("Shared by"/"Dataset Name"), for any share-link/share-token generation, for any
+  cross-account Firestore read path, and for any git history ever touching a `sharedBy`/`share_id`-shaped
+  concept all came back completely empty. Confirmed the only thing living under a "Share" label anywhere in
+  the app (`shareLocationText`/`shareTrack`) is an unrelated native-OS-share-sheet/Google-Maps-link/GPX-export
+  feature with no FieldMap-to-FieldMap concept at all. The single most conclusive piece of evidence: the
+  deployed `firestore.rules` is a single own-uid-only rule with no other collection of any kind — no other
+  account could ever read shared data even if a share-link mechanism existed client-side, since the backend
+  itself structurally cannot support cross-account reads today. Reported this back as a genuine greenfield
+  build, not a partial/broken feature needing reconciliation — see the dedicated "Trip/pin/track sharing"
+  Architecture notes entry for the complete evidence trail. Also flagged, separately: the premise that
+  CLAUDE.md itself already documents this as a "locked-in architecture decision" doesn't hold up — no such
+  text exists anywhere in this file prior to this session's own new entry. While in this section, also
+  corrected one other now-stale "what's broken" bullet noticed along the way: the GPS accuracy circle,
+  listed as never-built, was actually built and live-verified in Session D (a separate session whose own
+  work was never backfilled into this file at all — flagged to the user as a distinct, still-open
+  documentation gap, not fixed in this pass beyond this one directly-relevant correction). No application
+  code was touched. No APP_VERSION/SHELL_CACHE bump.
