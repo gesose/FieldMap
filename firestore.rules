@@ -39,7 +39,24 @@ service cloud.firestore {
       // Revoke == delete. Only the owner can delete their own share.
       allow delete: if request.auth != null && request.auth.uid == resource.data.ownerUid;
 
-      // No update path: a share is immutable once created (re-share = new doc).
+      // Update: two narrow paths.
+      //  - The OWNER can refresh the snapshot ("Push update"): change payload / name /
+      //    updatedAt / updateRequestedAt, but ownerUid / recipientEmail / kind are frozen.
+      //  - The RECIPIENT can ONLY set updateRequestedAt ("Request update") — the diff must
+      //    touch that single field and nothing else.
+      allow update: if request.auth != null && (
+        (
+          request.auth.uid == resource.data.ownerUid
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.recipientEmail == resource.data.recipientEmail
+          && request.resource.data.kind == resource.data.kind
+        )
+        || (
+          request.auth.token.email != null
+          && request.auth.token.email.lower() == resource.data.recipientEmail
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updateRequestedAt'])
+        )
+      );
     }
   }
 }

@@ -939,10 +939,14 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `shares/{shareId}` Firestore collection + a real `firestore.rules` extension (`users/{userId}` rule
   unchanged; `shares` reads gated on `request.auth.token.email` == the addressed recipient, confirmed live).
   Sender: "Share with a FieldMap user…" in an item's ⋮ menu, a ↗ on trip-group headers, "Share a trip…" +
-  a revocable sent-shares manager in Settings → Sharing. Recipient: a violet read-only overlay
-  ("<name> — Shared by <sender>") with a per-share Layers-panel visibility toggle, auto-loaded on sign-in;
-  a `?share=<id>` deep link (still email-gated) gives a clean wrong-account message. `firebase.json` +
-  `.firebaserc` are now version-controlled. See Architecture notes' "Read-only item/trip sharing" entry.
+  a sent-shares manager in Settings → Sharing with per-row Revoke + **Push update** (refresh the snapshot
+  from current data without revoke+re-share); the share modal also lists existing shares of that item with an
+  inline Revoke. Recipient: shared pins render as read-only DOM markers with the sender's REAL icon + status
+  colour (a violet dashed ring marks them shared), shared tracks/areas in the sender's real colour (dashed);
+  a per-share Layers-panel visibility toggle + a **Request update** (↻) button; auto-loaded on sign-in; a
+  `?share=<id>` deep link (still email-gated) gives a clean wrong-account message. `firebase.json` +
+  `.firebaserc` are version-controlled. See Architecture notes' "Read-only item/trip sharing" entry and its
+  "Session — Bug B" sub-bullet.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -970,15 +974,18 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   ("<name> — Shared by <sender>") with a per-share visibility toggle in the Layers panel; sender manages/revokes
   from Settings → Sharing. Kept here as a pointer since several earlier "what's broken" entries reference it —
   see Architecture notes' "Read-only item/trip sharing" entry for the full design and verification.
-- `serializeForFirestore()` (Firebase sync module, index.html) does NOT write `trips`, `rangeRings`, or
-  `buffers` to Firestore — it only serializes pins/tracks/polygons/bearings/tags/tombstones. `getSyncableState`,
-  `mergeStates`, and `applyMergedState` all handle those three types, but the serialize step drops them on
-  every push, so **trips / range rings / buffers survive locally and same-device merges but never sync to
-  another device** — contradicting CLAUDE.md's own Session 16 (Trips) and Session 21 (Range Ring/Buffer)
-  entries, which claim sync works. Found while building the sharing feature (which is unaffected — it
-  denormalizes its own payload copy). Not fixed there — a core-sync-path change deserves its own focused
-  session with real two-device testing. The fix is additive (~3 lines: add `trips`/`rangeRings` verbatim,
-  `buffers` with the same `serializePoint` points-map as tracks/polygons).
+- ~~`serializeForFirestore()` omits `trips`/`rangeRings`/`buffers`~~ — FIXED (Session — Bug A: trip-pin
+  association cross-device sync). `serializeForFirestore()` now writes all three (buffers' `points` flattened
+  via `serializePoint` like tracks/polygons; trips/rangeRings verbatim — no nested arrays). This was the
+  real, confirmed root cause of "a pin's trip shows on desktop but the same account on a phone shows it
+  ungrouped": pin `tripId`s synced (pins are written verbatim) but the trip ENTITIES never reached Firestore,
+  so `tripById(pin.tripId)` resolved to nothing on the second device. Self-healing (each device re-pushes its
+  local trips on next `performInitialSync`, and `mergeArray`'s "unique to local — always kept" logic prevents
+  loss during the migration). Verified live: geoff's real cloud doc went `trips: MISSING` → 7 trips, sidebar
+  "By trip" resolves; Node cross-device test 15/15. See Architecture notes' "Session — Bug A" entry. NOTE:
+  a device that had trips A still needs to open the app (which re-pushes) before device B sees them; and pins
+  pointing at trip entities that were *already lost* before this fix (geoff has ~14) stay orphaned until the
+  device that still has those trip entities syncs.
 - "Edit shape" vertex-editing exists for both routes and areas; there is no equivalent "edit vertices" for
   the offline-boundary rectangles (these are read-only display outlines, not user-drawn/editable shapes) —
   not in scope, different feature
@@ -7507,17 +7514,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     auth the CLI or paste into the Firebase Console). `firestore.rules` in the repo is the source of truth and
     matches what's deployed.
   - **Data model — `shares/{shareId}` (auto-id) top-level collection**: `{ ownerUid, ownerEmail, ownerName,
-    recipientEmail (lowercased/trimmed), kind: 'item'|'trip', name, createdAt (ms), payload: { pins:[…],
-    tracks:[…], polygons:[…] } }`. The payload is a **denormalized copy** (full item objects, track/polygon
-    `points` as `[{lat,lng},…]` — Firestore-friendly, matching `serializePoint` in the sync module), NOT a
-    reference: a recipient can never read the owner's `users/{uid}` doc (rules forbid it), so a reference
-    would be unreadable, and a point-in-time snapshot is the right semantics for "read-only share" anyway.
-    Trade-off, documented in the UI ("A read-only copy is sent — later edits won't update it"): the sender
-    editing an item later doesn't update the share. Bearings / range rings / buffers are deliberately out of
-    scope for v1 (the single-item scope is explicitly "one pin, track, or area"; a trip payload includes only
-    those three types). **Revoke == hard-delete the doc** (chosen over a `revoked` flag — simpler rules,
-    provably removes access, no "un-revoke" requirement, no lingering revoked docs; the alternative was
-    considered).
+    recipientEmail (lowercased/trimmed), kind: 'item'|'trip', sourceKind: 'pin'|'track'|'polygon'|'trip',
+    sourceId, name, createdAt (ms), updatedAt (ms), updateRequestedAt (ms|null), payload: { pins:[…],
+    tracks:[…], polygons:[…] } }`. (`sourceKind`/`sourceId`/`updatedAt`/`updateRequestedAt` added in Bug B —
+    see below; shares created before carry neither and can't be "Push update"d.) Each payload pin also carries
+    a resolved `iconKey` + `markerColor` (Bug B). The payload is a **denormalized copy** (full item objects,
+    track/polygon `points` as `[{lat,lng},…]` — Firestore-friendly, matching `serializePoint` in the sync
+    module), NOT a reference: a recipient can never read the owner's `users/{uid}` doc (rules forbid it), so a
+    reference would be unreadable, and a point-in-time snapshot is the right semantics for "read-only share"
+    (with "Push update" / "Request update" — Bug B — as the deliberate manual-refresh path). Bearings / range
+    rings / buffers are deliberately out of scope for v1. **Revoke == hard-delete the doc** (chosen over a
+    `revoked` flag — simpler, provably removes access, no lingering revoked docs).
   - **`firestore.rules` — the `users/{userId}` rule is byte-identical**; `shares/{shareId}` adds:
     - `allow read: if request.auth != null && ( request.auth.uid == resource.data.ownerUid ||
       (request.auth.token.email != null && request.auth.token.email.lower() == resource.data.recipientEmail) )`
@@ -7529,7 +7536,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       write; the rule lowercases the token email on read (belt + suspenders — emails are case-insensitive).
     - `allow create` — only the authed owner, only naming themselves `ownerUid`, `recipientEmail` a non-trivial
       already-lowercased string, `kind in ['item','trip']`.
-    - `allow delete` — owner only. No `update` path (a share is immutable; re-share = new doc).
+    - `allow delete` — owner only.
+    - `allow update` (added Bug B) — OWNER: change payload/name/updatedAt/updateRequestedAt (ownerUid/
+      recipientEmail/kind frozen). RECIPIENT: `request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+      ['updateRequestedAt'])` — may touch that single field and nothing else. Confirmed to compile/enforce
+      live (Node `bugB-update-rules` 8/8).
     - No composite indexes needed (both queries are single-field equality — auto-indexed).
   - **Client — Firebase module (ES module)**: added `collection, addDoc, getDocs, deleteDoc, query, where` to
     the firestore import; tracks `currentUserEmail` (lowercased, from `user.email`) in `onAuthStateChanged`;
@@ -7622,6 +7633,55 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       app's own map instance (proven via the harness with real payload instead); a full 2-account flow in one
       live browser session; the "not signed in → sign in → share appears" path end to end (each half proven
       separately). A real device is the natural next check.
+  - **Session — Bug B (real icons/status/colour + update workflow, from real cross-account testing)**:
+    - **Rendering**: shared PINS were rendering as one generic `shared-pins-circle` layer (uniform violet
+      dot, no icon). Now `buildPinSharePayloadItem` resolves and stores `iconKey` (`iconKeyForItem(pin)`) +
+      `markerColor` (`statusColorFor(pin)`) on the SENDER side (where the sender's own tag vocabulary /
+      water-pin logic live), and the recipient renders each shared pin as a real `maplibregl.Marker` DOM
+      element (`buildSharedPinMarkerHtml` — `renderMarkerIcon(iconKey)` on the `markerColor` background) wrapped
+      in a violet DASHED ring so it still reads as shared/read-only. `sharedPinMarkersById` (`<shareId>::<pinId>`)
+      manages add/update/remove; `shared-pins-source`/`shared-pins-circle` deleted. Shares made before
+      `iconKey` was stored fall back on the recipient side: `sharedPinIconKey(pin)` resolves the icon from the
+      pin's raw tag STRINGS via `TAG_ICON_MAP` directly (bypassing `tagById`, so standard tags like
+      `camp`/`elk`/`fish`/`cabin` still resolve without the recipient having the sender's tag objects) +
+      water-tag special-case; `sharedPinColor(pin)` falls back to `STATUS_COLORS[pin.status]`. Shared
+      TRACKS/AREAS now paint in the sender's real `color`/`fillOpacity` via `['coalesce', ['get','color'], …]`
+      (feature props carry `color`/`fillOpacity`), still dashed.
+    - **Push update (sender)**: the share doc gained `sourceKind` (`'pin'|'track'|'polygon'|'trip'`) + `sourceId`
+      + `updatedAt` + `updateRequestedAt`. Rules gained an `update` path: OWNER may change payload/name/updatedAt/
+      updateRequestedAt (ownerUid/recipientEmail/kind frozen); RECIPIENT may ONLY touch `updateRequestedAt`
+      (`request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updateRequestedAt'])` — confirmed to
+      compile/work). `FieldMapSync.pushShareUpdate(id, payload, name)` → `updateDoc`. The manager's "Push
+      update" button per row rebuilds the payload from `sourceKind`/`sourceId` current data
+      (`rebuildSharePayloadFromSource`) — disabled with a reason if the source item/trip is gone or the share
+      predates `sourceKind`.
+    - **Request update (recipient)**: `FieldMapSync.requestShareUpdate(id)` → `updateDoc({updateRequestedAt})`.
+      The "Shared with me" row's ↻ button (and the read-only drawer's "Request update") runs
+      `requestShareUpdateFlow`: re-pull incoming shares FIRST (if the sender already pushed, the recipient just
+      got it — toast "refreshed to the sender's latest", no flag set); otherwise flag `updateRequestedAt` and
+      toast "Update requested — <sender> will see it next time they open FieldMap". The sender's manager shows
+      "• update requested" and highlights "Push update" when `updateRequestedAt > updatedAt`. A pushed update
+      also lands automatically on the recipient's next sign-in (`loadIncomingShares` always re-fetches fresh).
+    - **Revoke discoverability**: three surfaces now — the share-created result screen text ("Manage, refresh
+      … or revoke it anytime in Settings → Sharing"), the Settings → Sharing manager (per-row Revoke), and
+      the share modal itself which, when reopened for an already-shared item, lists "Already shared with:
+      <email> [Revoke]" inline.
+    - **Verified live** (same constraints as the build session — one Chrome profile signed in as the real
+      geoff@theranchmine.com, app map stuck pre-`style.load`): Node `bugB-update-rules` 8/8 (owner push
+      allowed / can't reassign recipient; recipient request-only allowed / can't touch other fields or
+      payload; wrong account denied; recipient reads pushed `iconKey`); real geoff account — created a trip
+      share whose payload pins carried `iconKey:'camp'`/`markerColor:'#7B61FF'`/`status:'favorite'`, manager
+      showed Revoke + Push update, Push update bumped `updatedAt`; a share addressed to geoff from a throwaway
+      sender — geoff's ↻ set `updateRequestedAt`, Node `status` showed `requested:true`, Node `push` flipped
+      the payload (`confirmed`→`favorite`), geoff's ↻ then detected the fresher `updatedAt` and toasted
+      "refreshed to the sender's latest"; the in-modal "Already shared with … Revoke" removed a real share.
+      Marker rendering screenshot-confirmed via an isolated harness (`buildSharedPinMarkerHtml` verbatim +
+      real `MARKER_ICONS`): 8 pins rendered with real icons (camp/viewpoint/water/elk/duck/trailhead/gate/
+      turkey) on real status colours (green/violet/blue/red/orange/grey) each inside the violet dashed ring.
+      `sharedPinIconKey` fallback checked against the real pre-Bug-B "Ditch Creek 2026" share's pins
+      (tags `cabin`/`upland`/`fish`/`elkshed` → those exact icons). geoff's 69 pins / 7 trips untouched, zero
+      console errors. Not verified: the DOM markers rendering on the app's own live map (harness-proven only).
+    - APP_VERSION 2.73.0 → 2.74.0 (bundled with Bug A), SHELL_CACHE v200 → v201.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10435,3 +10495,30 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   way: `serializeForFirestore()` omits `trips`/`rangeRings`/`buffers`, so those never sync across devices.
   APP_VERSION 2.72.0 → 2.73.0, SHELL_CACHE v199 → v200. See Architecture notes' "Read-only item/trip
   sharing" entry.
+- Session (Bug A + Bug B, from real cross-device/cross-account testing) — two bugs reported after the sharing
+  feature shipped, fixed together. **Bug A (high-priority, core data integrity)**: a pin's trip association
+  showed on desktop but the same signed-in account on a phone showed the pin ungrouped. Investigated first
+  (per explicit instruction, not assumed): confirmed via reading geoff's REAL live Firestore doc that it has
+  62 pins each carrying a `tripId` but NO `trips` field at all — the exact documented `serializeForFirestore()`
+  gap (same root cause as the Range Ring/Buffer sync bug). Pin `tripId`s sync because pins are written
+  verbatim; the trip ENTITIES never reach Firestore, so `tripById(pin.tripId)` resolves to nothing on device
+  2. Fixed at the root: `serializeForFirestore()` now writes `trips` + `rangeRings` verbatim and `buffers`
+  with `points` flattened via `serializePoint` (like tracks/polygons — Firestore rejects `Array<Array>`).
+  Self-healing migration (each device re-pushes its local trips on next `performInitialSync`; `mergeArray`'s
+  "unique to local — always kept" prevents loss). Verified: Node cross-device integration test against real
+  Firestore 15/15 (fresh sync, migration against a trips-less doc, tombstone still propagates); geoff's real
+  cloud doc went `trips: MISSING` → 7 real trips (written automatically by `performInitialSync` on the fixed
+  code), 48/62 pin→trip associations now resolve, sidebar "By trip" shows named groups. Remaining ~14 pins
+  point at 9 trip entities *already lost* before the fix (names gone from device+cloud) — heal when the
+  device that still has them syncs. **Bug B**: shared items rendered as generic violet dots with no icons;
+  no update workflow. Fixed rendering (real per-pin `iconKey`/`markerColor` resolved sender-side + stored,
+  recipient renders real DOM markers with a violet dashed "shared" ring; tracks/areas in the sender's real
+  colour; recipient-side tag-string fallback for pre-Bug-B shares) and added a full update workflow (`sourceKind`/
+  `sourceId`/`updatedAt`/`updateRequestedAt` on the share doc; rules `update` path for owner "Push update" +
+  recipient "Request update"; manager "Push update" button + "update requested" badge; recipient ↻ button).
+  Made revoke discoverable via 3 surfaces (result screen, Settings manager, an inline "Already shared with"
+  list in the share modal). Verified: Node `bugB-update-rules` 8/8, real geoff account for the sender flow,
+  a throwaway sender→geoff for the request/push cycle, an isolated harness screenshot for the real-icon
+  markers. Both bugs: zero console errors, geoff's data untouched. APP_VERSION 2.73.0 → 2.74.0, SHELL_CACHE
+  v200 → v201. See Architecture notes' "Read-only item/trip sharing" entry (its "Session — Bug B" sub-bullet)
+  and the fixed `serializeForFirestore()` line in "What's broken".

@@ -3259,6 +3259,7 @@
         <input type="email" id="share-modal-email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@example.com">
       </label>
       <p class="hint" style="margin:6px 0 0;">They must sign into FieldMap with this exact address to see the share.</p>
+      <div id="share-modal-existing" class="hidden"></div>
       <div id="share-modal-error" class="hidden" style="font-size:12px;color:#e05a3a;margin-top:8px;"></div>
       <div class="modal-actions" style="margin-top:14px;">
         <button class="btn btn-ghost" id="share-modal-cancel-btn">Cancel</button>
@@ -3520,7 +3521,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.73.0';
+  var APP_VERSION = '2.74.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -7945,11 +7946,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('mouseenter', 'polygons-fill', function(){ map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'polygons-fill', function(){ map.getCanvas().style.cursor = ''; });
 
-      // Shared-with-me overlays (read-only) — tapping opens a read-only detail card. Same
-      // mode-aware pass-through / defaultPrevented guard as the user's own item handlers.
-      // Registered AFTER the user's own tracks/polygons handlers so a rare overlap resolves
-      // to the user's own editable item first.
-      ['shared-pins-circle', 'shared-tracks-touch', 'shared-polys-fill'].forEach(function(lid){
+      // Shared-with-me track/area overlays (read-only) — tapping opens a read-only detail
+      // card. Same mode-aware pass-through / defaultPrevented guard as the user's own item
+      // handlers. Registered AFTER the user's own handlers so a rare overlap resolves to the
+      // user's own editable item first. (Shared PINS are DOM markers with their own click
+      // handler — see buildSharedPinMarkerHtml in renderSharedOverlays.)
+      ['shared-tracks-touch', 'shared-polys-fill'].forEach(function(lid){
         map.on('click', lid, function(e){
           if (e.defaultPrevented) return;
           if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode) return;
@@ -12568,23 +12570,25 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
-    // Shared-with-me overlays — read-only, point-in-time COPIES of pins/tracks/areas that
-    // another FieldMap user shared directly with this account (see the "Read-only item/trip
-    // sharing" block). Deliberately violet + dashed so they never read as the user's own
-    // editable items. Added here (above the user's own tracks/polys would sit if inserted
-    // after — insertion order is z-order) so a shared area's translucent wash never buries
-    // the user's own. Data is (re)fed by renderSharedOverlays(), including at this function's
-    // own tail after a style switch wipes the sources.
+    // Shared-with-me overlays — read-only, point-in-time COPIES of tracks/areas another
+    // FieldMap user shared directly with this account (see the "Read-only item/trip sharing"
+    // block). Rendered in the SENDER's own real colour (['coalesce', ['get','color'], …]) but
+    // DASHED, so they read as "shared / read-only" without being a generic placeholder.
+    // Shared PINS are DOM markers (buildSharedPinMarkerHtml — real icon + status colour + a
+    // violet dashed ring), not a layer. Added here (above where the user's own tracks/polys
+    // would sit) so a shared area's wash never buries the user's own. Data is (re)fed by
+    // renderSharedOverlays(), including at this function's own tail after a style switch.
     if (!map.getSource('shared-polys-source')){
       map.addSource('shared-polys-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     }
     if (!map.getLayer('shared-polys-fill')){
       map.addLayer({ id: 'shared-polys-fill', type: 'fill', source: 'shared-polys-source',
-        paint: { 'fill-color': '#8b5cf6', 'fill-opacity': 0.13 } });
+        paint: { 'fill-color': ['coalesce', ['get', 'color'], '#8b5cf6'],
+          'fill-opacity': ['coalesce', ['get', 'fillOpacity'], 0.15] } });
     }
     if (!map.getLayer('shared-polys-line')){
       map.addLayer({ id: 'shared-polys-line', type: 'line', source: 'shared-polys-source',
-        paint: { 'line-color': '#8b5cf6', 'line-width': 2, 'line-dasharray': [2, 1.5] } });
+        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 2, 'line-dasharray': [2, 1.5] } });
     }
     if (!map.getSource('shared-tracks-source')){
       map.addSource('shared-tracks-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -12596,15 +12600,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!map.getLayer('shared-tracks-line')){
       map.addLayer({ id: 'shared-tracks-line', type: 'line', source: 'shared-tracks-source',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#8b5cf6', 'line-width': 3, 'line-opacity': 0.9, 'line-dasharray': [2, 1.5] } });
-    }
-    if (!map.getSource('shared-pins-source')){
-      map.addSource('shared-pins-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    }
-    if (!map.getLayer('shared-pins-circle')){
-      map.addLayer({ id: 'shared-pins-circle', type: 'circle', source: 'shared-pins-source',
-        paint: { 'circle-radius': 7, 'circle-color': '#8b5cf6', 'circle-opacity': 0.9,
-          'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 3, 'line-opacity': 0.95, 'line-dasharray': [2, 1.5] } });
     }
 
     // Bearings — GeoJSON source of all saved bearing lines. Wide invisible touch layer +
@@ -14350,6 +14346,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // for the access model and CLAUDE.md's "Read-only item/trip sharing" entry.
   var SHARED_ACCENT = '#8b5cf6';
   var incomingShares = [];   // full share docs addressed to the signed-in account
+  var sharedPinMarkersById = {};  // "<shareId>::<pinId>" -> maplibregl.Marker (read-only DOM markers)
 
   // Points across the app are stored as [[lat,lng],...] OR [{lat,lng},...]; a share's
   // stored payload always uses [{lat,lng},...] (Firestore-friendly, matches serializePoint
@@ -14366,9 +14363,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
 
   function buildPinSharePayloadItem(pin){
+    // iconKey / markerColor are RESOLVED here on the sender's side (where the sender's own
+    // tag vocabulary and water-pin logic are available) and stored verbatim, so the recipient
+    // renders the exact same marker without needing the sender's tags. status kept too.
     return { id: pin.id, name: pin.name, lat: pin.lat, lng: pin.lng, notes: pin.notes || '',
       elevationFt: (pin.elevationFt != null ? pin.elevationFt : null),
-      status: pin.status || 'escout', tags: (pin.tags || []).slice(), created: pin.created || null };
+      status: pin.status || 'escout', tags: (pin.tags || []).slice(), created: pin.created || null,
+      iconKey: iconKeyForItem(pin), markerColor: statusColorFor(pin) };
   }
   function buildTrackSharePayloadItem(track){
     return { id: track.id, name: track.name, color: track.color || '#c2622d',
@@ -14400,6 +14401,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
   function clearIncomingShares(){
     incomingShares = [];
+    Object.keys(sharedPinMarkersById).forEach(function(k){ sharedPinMarkersById[k].remove(); });
+    sharedPinMarkersById = {};
     renderSharedOverlays();
     renderSharedWithMeSection();
   }
@@ -14407,29 +14410,89 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return !!(state.settings.hiddenShares && state.settings.hiddenShares[shareId]);
   }
 
-  // Rebuilds the three shared-* GeoJSON sources from every non-hidden incoming share.
-  // Called on apply, on a visibility toggle, and at the tail of reinitializeLayers() (a
-  // style switch wipes the sources).
+  // iconKey / markerColor for a shared pin. Newer shares carry both resolved by the sender
+  // (buildPinSharePayloadItem). Shares made before that fall back to resolving the icon from
+  // the pin's raw tag strings directly (TAG_ICON_MAP is keyed by tag id/label, so standard
+  // tags still resolve even though the recipient doesn't have the sender's tag objects), and
+  // the colour from the pin's own status.
+  function sharedPinIconKey(pin){
+    if (pin.iconKey) return pin.iconKey;
+    var tags = pin.tags || [];
+    if (tags.some(function(t){ return WATER_TAGS.indexOf(t) !== -1; })) return waterIconKeyForStatus(pin.status || 'escout');
+    for (var i = 0; i < tags.length; i++){
+      var k = TAG_ICON_MAP[tags[i]] || TAG_ICON_MAP[(tags[i] || '').toLowerCase()];
+      if (k) return k;
+    }
+    return 'access';
+  }
+  function sharedPinColor(pin){
+    return pin.markerColor || (STATUS_COLORS[pin.status] || STATUS_COLORS.escout).bg;
+  }
+
+  // A shared pin's marker — the sender's REAL icon + status colour, wrapped in a violet
+  // dashed ring so it still reads as "shared / read-only" and never as one of the user's
+  // own editable pins.
+  function buildSharedPinMarkerHtml(props){
+    var isMobile = window.innerWidth <= 600;
+    var circleSize = isMobile ? 26 : 32;
+    var iconSize   = isMobile ? 16 : 20;
+    var color = props.markerColor || (STATUS_COLORS[props.status] || STATUS_COLORS.escout).bg;
+    return '<div style="position:relative;width:' + (circleSize + 8) + 'px;height:' + (circleSize + 8) + 'px;' +
+        'border-radius:50%;border:2px dashed ' + SHARED_ACCENT + ';box-sizing:border-box;' +
+        'display:flex;align-items:center;justify-content:center;">' +
+      '<div style="width:' + circleSize + 'px;height:' + circleSize + 'px;border-radius:50%;' +
+        'background:' + color + ';border:2px solid rgba(255,255,255,0.9);box-shadow:0 2px 5px rgba(0,0,0,0.45);' +
+        'display:flex;align-items:center;justify-content:center;">' +
+        renderMarkerIcon(props.iconKey || 'access', iconSize) +
+      '</div></div>';
+  }
+
+  // Rebuilds the shared overlays from every non-hidden incoming share:
+  //  - pins  -> read-only DOM markers (real icon/status/colour), keyed by <shareId>::<pinId>
+  //  - tracks/areas -> shared-tracks-source / shared-polys-source GeoJSON (dashed, but in the
+  //    sender's own real colour via a ['get','color'] paint expression)
+  // Called on apply, on a visibility toggle, and at the tail of reinitializeLayers().
   function renderSharedOverlays(){
     if (!map) return;
-    var pinFeats = [], trackFeats = [], polyFeats = [];
+    var trackFeats = [], polyFeats = [], liveKeys = {};
     incomingShares.forEach(function(sh){
       if (shareIsHidden(sh.id)) return;
       var ownerLabel = sh.ownerName || sh.ownerEmail || 'a FieldMap user';
       var pl = sh.payload || {};
       (pl.pins || []).forEach(function(pin){
         if (typeof pin.lng !== 'number' || typeof pin.lat !== 'number') return;
-        pinFeats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [pin.lng, pin.lat] },
-          properties: { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
-            itemName: pin.name || 'Pin', kind: 'pin', lat: pin.lat, lng: pin.lng,
-            notes: pin.notes || '', elevationFt: (pin.elevationFt != null ? pin.elevationFt : '') } });
+        var key = sh.id + '::' + (pin.id || pin.name || Math.random());
+        liveKeys[key] = true;
+        var props = { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
+          itemName: pin.name || 'Pin', kind: 'pin', lat: pin.lat, lng: pin.lng,
+          notes: pin.notes || '', elevationFt: (pin.elevationFt != null ? pin.elevationFt : ''),
+          iconKey: sharedPinIconKey(pin), markerColor: sharedPinColor(pin), status: pin.status || 'escout' };
+        var existing = sharedPinMarkersById[key];
+        if (existing){
+          existing.setLngLat([pin.lng, pin.lat]);
+          existing.getElement().innerHTML = buildSharedPinMarkerHtml(props);
+          existing.getElement()._shareProps = props;
+        } else {
+          var el = document.createElement('div');
+          el.className = 'pin-marker shared-pin-marker';
+          el.style.cssText = 'cursor:pointer;';
+          el.innerHTML = buildSharedPinMarkerHtml(props);
+          el._shareProps = props;
+          el.addEventListener('click', function(e){
+            if (addMode || drawMode || polygonMode || elevTapMode || compassActive || bearingMode || measureMode || rangeRingMode) return;
+            e.stopPropagation();
+            openSharedItemDrawer(el._shareProps);
+          });
+          sharedPinMarkersById[key] = new maplibregl.Marker({ element: el }).setLngLat([pin.lng, pin.lat]).addTo(map);
+        }
       });
       (pl.tracks || []).forEach(function(tr){
         var coords = shareRingLngLat(tr.points);
         if (coords.length < 2) return;
         trackFeats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
           properties: { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
-            itemName: tr.name || 'Route', kind: 'track', notes: tr.notes || '' } });
+            itemName: tr.name || 'Route', kind: 'track', notes: tr.notes || '',
+            color: tr.color || SHARED_ACCENT } });
       });
       (pl.polygons || []).forEach(function(pg){
         var ring = shareRingLngLat(pg.points);
@@ -14437,11 +14500,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         ring = ring.slice(); ring.push(ring[0].slice());
         polyFeats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] },
           properties: { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
-            itemName: pg.name || 'Area', kind: 'polygon', notes: pg.notes || '' } });
+            itemName: pg.name || 'Area', kind: 'polygon', notes: pg.notes || '',
+            color: pg.color || SHARED_ACCENT, fillOpacity: (pg.fillOpacity != null ? pg.fillOpacity : 0.18) } });
       });
     });
+    // Remove markers whose share is now hidden / gone.
+    Object.keys(sharedPinMarkersById).forEach(function(key){
+      if (!liveKeys[key]){ sharedPinMarkersById[key].remove(); delete sharedPinMarkersById[key]; }
+    });
     var s;
-    if ((s = map.getSource('shared-pins-source'))) s.setData({ type: 'FeatureCollection', features: pinFeats });
     if ((s = map.getSource('shared-tracks-source'))) s.setData({ type: 'FeatureCollection', features: trackFeats });
     if ((s = map.getSource('shared-polys-source'))) s.setData({ type: 'FeatureCollection', features: polyFeats });
   }
@@ -14480,14 +14547,46 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<span style="font-size:10px;color:var(--text-muted);">Shared by ' + escapeHtml(sh.ownerLabel || sh.ownerName || sh.ownerEmail || 'a FieldMap user') +
           ' · ' + n + ' item' + (n === 1 ? '' : 's') +
           (sh.kind === 'trip' ? ' · trip' : '') + '</span>';
+      var req = document.createElement('button');
+      req.className = 'layer-hint-btn';
+      req.style.cssText = 'width:20px;height:20px;font-size:12px;flex-shrink:0;';
+      req.title = 'Request an updated snapshot from the sender';
+      req.textContent = '↻';
+      req.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        requestShareUpdateFlow(sh);
+      });
       var jump = document.createElement('button');
       jump.className = 'layer-hint-btn';
       jump.style.cssText = 'width:20px;height:20px;font-size:11px;flex-shrink:0;';
       jump.title = 'Zoom to';
       jump.textContent = '⤢';
       jump.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); fitToShare(sh); });
-      row.appendChild(cb); row.appendChild(txt); row.appendChild(jump);
+      row.appendChild(cb); row.appendChild(txt); row.appendChild(req); row.appendChild(jump);
       listEl.appendChild(row);
+    });
+  }
+
+  // Recipient "Request update": flags the share (rules only let the recipient touch
+  // updateRequestedAt) AND immediately re-pulls incoming shares, so if the sender already
+  // pushed a fresh snapshot it lands right now.
+  function requestShareUpdateFlow(sh){
+    var prevUpdatedAt = sh.updatedAt || 0;
+    showToast('Checking for updates…', 1500);
+    // Re-pull first: if the sender already pushed a fresher snapshot, we just got it and
+    // there's nothing to request. Only flag updateRequestedAt when we're genuinely still
+    // behind, so the sender's "update requested" badge means something.
+    Promise.resolve(window.FieldMapSync.reloadIncomingShares()).then(function(){
+      var fresh = incomingShares.find(function(s){ return s.id === sh.id; });
+      if (fresh && (fresh.updatedAt || 0) > prevUpdatedAt){
+        showToast('“' + (fresh.name || 'Shared items') + '” refreshed to the sender’s latest', 4000);
+        return;
+      }
+      return Promise.resolve(window.FieldMapSync.requestShareUpdate(sh.id))
+        .then(function(){
+          showToast('Update requested — ' + (sh.ownerLabel || sh.ownerName || sh.ownerEmail || 'the sender') + ' will see it next time they open FieldMap', 5000);
+        })
+        .catch(function(){ showToast('Couldn’t send the update request — try again', 3000); });
     });
   }
 
@@ -14523,12 +14622,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var badge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + SHARED_ACCENT + '22;border:1px solid ' + SHARED_ACCENT + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
       '<span style="width:7px;height:7px;border-radius:50%;background:' + SHARED_ACCENT + ';flex-shrink:0;display:inline-block;"></span>' +
       '<span style="font-size:10px;font-weight:700;color:' + SHARED_ACCENT + ';">SHARED · READ-ONLY</span></span>';
-    var footer = '';
+    var footerBtns = [];
     if (props.kind === 'pin' && props.lat != null && props.lat !== ''){
-      footer = '<div class="pin-popup-footer">' +
-        '<button class="btn btn-small" onclick="FieldMap.directionsToShared(' + Number(props.lat) + ',' + Number(props.lng) + ')">Directions</button>' +
-        '</div>';
+      footerBtns.push('<button class="btn btn-small" onclick="FieldMap.directionsToShared(' + Number(props.lat) + ',' + Number(props.lng) + ')">Directions</button>');
     }
+    if (props.shareId){
+      footerBtns.push('<button class="btn btn-small" onclick="FieldMap.requestSharedUpdate(\'' + props.shareId + '\')">Request update</button>');
+    }
+    var footer = footerBtns.length ? '<div class="pin-popup-footer">' + footerBtns.join('') + '</div>' : '';
     return '<div class="pin-popup-name-row"><div class="pin-popup-name">' + escapeHtml(props.itemName || kindLabel) + '</div></div>' +
       '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' + badge +
         '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(kindLabel) + '</span></div>' +
@@ -14537,28 +14638,80 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       notes + coordLine + footer;
   }
 
+  // Given a share doc, rebuild a fresh payload + name from the sender's CURRENT data using
+  // its stored sourceKind/sourceId. { ok:false } if the source item/trip no longer exists
+  // locally, or the share predates sourceKind (legacy — no way to know what it was for).
+  function rebuildSharePayloadFromSource(sh){
+    if (sh.sourceKind === 'trip'){
+      var trip = sh.sourceId ? tripById(sh.sourceId) : null;
+      if (!trip) return { ok: false };
+      return { ok: true, name: trip.name, payload: buildTripSharePayload(sh.sourceId) };
+    }
+    if (sh.sourceKind === 'pin'){
+      var p = state.pins.find(function(x){ return x.id === sh.sourceId; });
+      return p ? { ok: true, name: p.name, payload: { pins: [buildPinSharePayloadItem(p)], tracks: [], polygons: [] } } : { ok: false };
+    }
+    if (sh.sourceKind === 'track'){
+      var t = state.tracks.find(function(x){ return x.id === sh.sourceId; });
+      return t ? { ok: true, name: t.name, payload: { pins: [], tracks: [buildTrackSharePayloadItem(t)], polygons: [] } } : { ok: false };
+    }
+    if (sh.sourceKind === 'polygon'){
+      var g = (state.polygons || []).find(function(x){ return x.id === sh.sourceId; });
+      return g ? { ok: true, name: g.name, payload: { pins: [], tracks: [], polygons: [buildPolygonSharePayloadItem(g)] } } : { ok: false };
+    }
+    return { ok: false };
+  }
+
   // ── Sender side: the share modal (used for both a single item and a whole trip) ──
-  var shareModalPending = null;  // { kind:'item'|'trip', name, payload }
-  function openShareModal(kind, name, payload){
+  var shareModalPending = null;  // { kind:'item'|'trip', name, payload, source:{sourceKind,sourceId} }
+  function openShareModal(kind, name, payload, source){
     if (!window.FieldMapSync || !window.FieldMapSync.isSignedIn || !window.FieldMapSync.isSignedIn()){
       showToast('Sign in first to share with another FieldMap user', 3500);
       return;
     }
     var n = (payload.pins || []).length + (payload.tracks || []).length + (payload.polygons || []).length;
     if (n === 0){ showToast('Nothing to share here yet', 2500); return; }
-    shareModalPending = { kind: kind, name: name, payload: payload };
+    shareModalPending = { kind: kind, name: name, payload: payload, source: source || null };
     document.getElementById('share-modal-title').textContent = kind === 'trip' ? 'Share trip' : 'Share item';
     document.getElementById('share-modal-summary').textContent =
-      (kind === 'trip' ? '"' + name + '" — ' : '"' + name + '" — ') + n + ' item' + (n === 1 ? '' : 's') +
-      ' (pins/routes/areas). A read-only copy is sent — later edits won’t update it.';
+      '"' + name + '" — ' + n + ' item' + (n === 1 ? '' : 's') +
+      ' (pins/routes/areas). A read-only copy is sent; use "Push update" later to refresh it.';
     var input = document.getElementById('share-modal-email');
     input.value = '';
     var err = document.getElementById('share-modal-error'); err.classList.add('hidden'); err.textContent = '';
     document.getElementById('share-modal-result').classList.add('hidden');
     document.getElementById('share-modal-form').classList.remove('hidden');
+    // If this exact item/trip is already shared with someone, show those shares inline so
+    // "revoke" is reachable right here, not only buried in Settings.
+    renderShareModalExisting(source);
     closeAllPanels();
     document.getElementById('share-modal').classList.remove('hidden');
     setTimeout(function(){ input.focus(); }, 50);
+  }
+  function renderShareModalExisting(source){
+    var box = document.getElementById('share-modal-existing');
+    if (!box) return;
+    box.innerHTML = ''; box.classList.add('hidden');
+    if (!source || !source.sourceId || !window.FieldMapSync || !window.FieldMapSync.isSignedIn()) return;
+    window.FieldMapSync.listSentShares().then(function(shares){
+      var mine = shares.filter(function(s){ return s.sourceId === source.sourceId; });
+      if (!mine.length) return;
+      box.classList.remove('hidden');
+      box.innerHTML = '<div style="font-size:11px;color:var(--text-muted);margin:10px 0 4px;">Already shared with:</div>';
+      mine.forEach(function(s){
+        var line = document.createElement('div');
+        line.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;';
+        line.innerHTML = '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(s.recipientEmail || '') + '</span>';
+        var rb = document.createElement('button');
+        rb.className = 'btn btn-ghost btn-small'; rb.style.cssText = 'flex-shrink:0;color:#e3897d;'; rb.textContent = 'Revoke';
+        rb.addEventListener('click', function(){
+          if (!confirm('Revoke this share? ' + (s.recipientEmail || 'the recipient') + ' will lose access immediately.')) return;
+          rb.disabled = true;
+          window.FieldMapSync.revokeShare(s.id).then(function(){ showToast('Share revoked'); renderShareModalExisting(source); renderShareManager(); });
+        });
+        line.appendChild(rb); box.appendChild(line);
+      });
+    }).catch(function(){});
   }
   function submitShareModal(){
     if (!shareModalPending) return;
@@ -14567,14 +14720,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     err.classList.add('hidden'); err.textContent = '';
     var btn = document.getElementById('share-modal-create-btn');
     btn.disabled = true; btn.textContent = 'Sharing…';
-    window.FieldMapSync.createShare(email, shareModalPending.kind, shareModalPending.name, shareModalPending.payload)
+    window.FieldMapSync.createShare(email, shareModalPending.kind, shareModalPending.name, shareModalPending.payload, shareModalPending.source)
       .then(function(res){
         document.getElementById('share-modal-form').classList.add('hidden');
         var r = document.getElementById('share-modal-result');
         r.classList.remove('hidden');
         var link = location.origin + location.pathname + '?share=' + res.id;
         document.getElementById('share-modal-result-msg').textContent =
-          'Shared with ' + email.toLowerCase() + '. They’ll see it on their map after signing into FieldMap with that email.';
+          'Shared with ' + email.toLowerCase() + '. They’ll see it on their map after signing into FieldMap with that email. ' +
+          'Manage, refresh ("Push update"), or revoke it anytime in Settings → Sharing.';
         var linkEl = document.getElementById('share-modal-result-link');
         linkEl.value = link;
         renderShareManager();
@@ -14612,30 +14766,62 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       shares.forEach(function(sh){
         var pl = sh.payload || {};
         var n = (pl.pins || []).length + (pl.tracks || []).length + (pl.polygons || []).length;
+        var requested = (sh.updateRequestedAt || 0) > (sh.updatedAt || sh.createdAt || 0);
+        var lastUpd = sh.updatedAt && sh.updatedAt !== sh.createdAt ? ' · updated ' + relativeTimeLabel(sh.updatedAt) : '';
         var row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);';
-        row.innerHTML =
+        row.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border);';
+        var top = document.createElement('div');
+        top.style.cssText = 'display:flex;align-items:center;gap:8px;';
+        top.innerHTML =
           '<div style="min-width:0;flex:1;">' +
             '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(sh.name || 'Shared items') +
-              (sh.kind === 'trip' ? ' <span style="color:var(--text-muted);font-size:10px;">(trip)</span>' : '') + '</div>' +
+              (sh.kind === 'trip' ? ' <span style="color:var(--text-muted);font-size:10px;">(trip)</span>' : '') +
+              (requested ? ' <span style="color:var(--yellow);font-size:10px;font-weight:700;">• update requested</span>' : '') + '</div>' +
             '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">to ' +
-              escapeHtml(sh.recipientEmail || '') + ' · ' + n + ' item' + (n === 1 ? '' : 's') + '</div>' +
+              escapeHtml(sh.recipientEmail || '') + ' · ' + n + ' item' + (n === 1 ? '' : 's') + lastUpd + '</div>' +
           '</div>';
-        var btn = document.createElement('button');
-        btn.className = 'btn btn-ghost btn-small';
-        btn.style.cssText = 'flex-shrink:0;color:#e3897d;';
-        btn.textContent = 'Revoke';
-        btn.addEventListener('click', function(){
-          if (!confirm('Revoke this share? ' + escapeHtml(sh.recipientEmail || 'the recipient') + ' will lose access immediately.')) return;
-          btn.disabled = true; btn.textContent = 'Revoking…';
+        var revoke = document.createElement('button');
+        revoke.className = 'btn btn-ghost btn-small';
+        revoke.style.cssText = 'flex-shrink:0;color:#e3897d;';
+        revoke.textContent = 'Revoke';
+        revoke.addEventListener('click', function(){
+          if (!confirm('Revoke this share? ' + (sh.recipientEmail || 'the recipient') + ' will lose access immediately.')) return;
+          revoke.disabled = true; revoke.textContent = 'Revoking…';
           window.FieldMapSync.revokeShare(sh.id).then(function(){
             showToast('Share revoked'); renderShareManager();
           }).catch(function(){
-            btn.disabled = false; btn.textContent = 'Revoke';
+            revoke.disabled = false; revoke.textContent = 'Revoke';
             showToast('Couldn’t revoke — try again', 3000);
           });
         });
-        row.appendChild(btn);
+        top.appendChild(revoke);
+        row.appendChild(top);
+
+        // Push update — rebuild the snapshot from current data (needs sourceKind/sourceId).
+        var rebuilt = rebuildSharePayloadFromSource(sh);
+        var push = document.createElement('button');
+        push.className = 'btn btn-ghost btn-small';
+        push.style.cssText = 'margin-top:5px;font-size:11px;' + (requested ? 'color:var(--accent);font-weight:700;' : '');
+        if (!sh.sourceKind){
+          push.textContent = 'Push update (unavailable — shared before this feature)';
+          push.disabled = true;
+        } else if (!rebuilt.ok){
+          push.textContent = 'Push update — ' + (sh.kind === 'trip' ? 'trip' : 'item') + ' no longer on this device';
+          push.disabled = true;
+        } else {
+          push.textContent = requested ? 'Push update (requested)' : 'Push update';
+          push.addEventListener('click', function(){
+            push.disabled = true; push.textContent = 'Updating…';
+            window.FieldMapSync.pushShareUpdate(sh.id, rebuilt.payload, rebuilt.name).then(function(){
+              showToast('Snapshot updated for ' + (sh.recipientEmail || 'the recipient'));
+              renderShareManager();
+            }).catch(function(e){
+              push.disabled = false; push.textContent = 'Push update';
+              showToast(e && e.message === 'too-large' ? 'Too large to update' : 'Couldn’t push update — try again', 3000);
+            });
+          });
+        }
+        row.appendChild(push);
         wrap.appendChild(row);
       });
     }).catch(function(){
@@ -14651,7 +14837,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     openTripPickerForForm(null, function(tripId){
       if (!tripId) return;
       var trip = tripById(tripId);
-      openShareModal('trip', (trip && trip.name) || 'Trip', buildTripSharePayload(tripId));
+      openShareModal('trip', (trip && trip.name) || 'Trip', buildTripSharePayload(tripId), { sourceKind: 'trip', sourceId: tripId });
     });
   }
 
@@ -14727,15 +14913,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (pin) openPinModal(pin, null);
     },
     shareItemWithUser: function(type, id){
-      if (type === 'pin'){ var p = state.pins.find(function(x){ return x.id === id; }); if (p) openShareModal('item', p.name || 'Pin', { pins: [buildPinSharePayloadItem(p)], tracks: [], polygons: [] }); }
-      else if (type === 'track'){ var t = state.tracks.find(function(x){ return x.id === id; }); if (t) openShareModal('item', t.name || 'Route', { pins: [], tracks: [buildTrackSharePayloadItem(t)], polygons: [] }); }
-      else if (type === 'polygon'){ var g = (state.polygons || []).find(function(x){ return x.id === id; }); if (g) openShareModal('item', g.name || 'Area', { pins: [], tracks: [], polygons: [buildPolygonSharePayloadItem(g)] }); }
+      if (type === 'pin'){ var p = state.pins.find(function(x){ return x.id === id; }); if (p) openShareModal('item', p.name || 'Pin', { pins: [buildPinSharePayloadItem(p)], tracks: [], polygons: [] }, { sourceKind: 'pin', sourceId: id }); }
+      else if (type === 'track'){ var t = state.tracks.find(function(x){ return x.id === id; }); if (t) openShareModal('item', t.name || 'Route', { pins: [], tracks: [buildTrackSharePayloadItem(t)], polygons: [] }, { sourceKind: 'track', sourceId: id }); }
+      else if (type === 'polygon'){ var g = (state.polygons || []).find(function(x){ return x.id === id; }); if (g) openShareModal('item', g.name || 'Area', { pins: [], tracks: [], polygons: [buildPolygonSharePayloadItem(g)] }, { sourceKind: 'polygon', sourceId: id }); }
     },
     shareTripWithUser: function(tripId){
       var trip = tripById(tripId);
-      openShareModal('trip', (trip && trip.name) || 'Trip', buildTripSharePayload(tripId));
+      openShareModal('trip', (trip && trip.name) || 'Trip', buildTripSharePayload(tripId), { sourceKind: 'trip', sourceId: tripId });
     },
     directionsToShared: function(lat, lng){ openDirectionsTo(Number(lat), Number(lng)); },
+    requestSharedUpdate: function(shareId){
+      var sh = incomingShares.find(function(s){ return s.id === shareId; });
+      if (sh) requestShareUpdateFlow(sh);
+    },
     openShareTripPicker: pickTripToShare,
     revokeSentShare: function(id){ /* handled inline in renderShareManager */ },
     deletePin: function(id){
@@ -25119,7 +25309,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     initializeFirestore, doc, getDoc, setDoc, onSnapshot,
     persistentLocalCache, persistentMultipleTabManager,
     enableNetwork, disableNetwork,
-    collection, addDoc, getDocs, deleteDoc, query, where
+    collection, addDoc, getDocs, deleteDoc, updateDoc, query, where
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
   var firebaseConfig = {
@@ -25207,6 +25397,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         return Object.assign({}, p, { points: (p.points || []).map(serializePoint) });
       }),
       bearings: data.bearings || [],
+      // trips, rangeRings and buffers were omitted here for a long time even though
+      // getSyncableState / mergeStates / applyMergedState all handled them — a real
+      // cross-device bug: trip ENTITIES never reached Firestore, so a pin's tripId synced
+      // fine (pins are written verbatim) but resolved to nothing on a second device, and
+      // range rings / buffers didn't sync at all. rangeRings have no nested arrays (radii is
+      // a flat number array); buffers carry a points array that needs the same [{lat,lng}]
+      // flattening as tracks/polygons (Firestore rejects Array<Array>).
+      rangeRings: data.rangeRings || [],
+      buffers: (data.buffers || []).map(function(b){
+        return Object.assign({}, b, { points: (b.points || []).map(serializePoint) });
+      }),
+      trips: data.trips || [],
       tags: data.tags || [],
       tombstones: data.tombstones || {},
       updatedAtMs: data.lastLocalEditAt || Date.now()
@@ -25352,8 +25554,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // recipient by email. The recipient can never read the owner's users/{uid} doc, so a
   // reference wouldn't be readable — the copy is deliberate. Revoke == delete the doc.
   function loadIncomingShares(){
-    if (!currentUserEmail) return;
-    getDocs(query(collection(db, 'shares'), where('recipientEmail', '==', currentUserEmail)))
+    if (!currentUserEmail) return Promise.resolve();
+    return getDocs(query(collection(db, 'shares'), where('recipientEmail', '==', currentUserEmail)))
       .then(function(qs){
         var arr = [];
         qs.forEach(function(d){ var x = d.data() || {}; x.id = d.id; arr.push(x); });
@@ -25507,7 +25709,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     isSignedIn: function(){ return !!currentUid; },
     // Create a share addressed to recipientEmail. kind: 'item' | 'trip'.
     // payload: { pins:[], tracks:[], polygons:[] } — full item objects, points as [{lat,lng}].
-    createShare: function(recipientEmail, kind, name, payload){
+    // source: { sourceKind:'pin'|'track'|'polygon'|'trip', sourceId } — lets "Push update"
+    //   rebuild the snapshot from the sender's current data without a revoke+re-share.
+    createShare: function(recipientEmail, kind, name, payload, source){
       if (!currentUid) return Promise.reject(new Error('not-signed-in'));
       var rec = String(recipientEmail || '').trim().toLowerCase();
       if (rec.length < 4 || rec.indexOf('@') < 1 || rec.indexOf('.') < 0){
@@ -25515,6 +25719,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       }
       if (rec === currentUserEmail) return Promise.reject(new Error('self'));
       var pl = payload || {};
+      var now = Date.now();
       var doc0 = {
         ownerUid: currentUid,
         ownerEmail: (auth.currentUser && auth.currentUser.email) || '',
@@ -25522,8 +25727,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
                    (auth.currentUser && auth.currentUser.email) || 'A FieldMap user',
         recipientEmail: rec,
         kind: kind === 'trip' ? 'trip' : 'item',
+        sourceKind: (source && source.sourceKind) || null,
+        sourceId: (source && source.sourceId) || null,
         name: String(name || 'Shared items').slice(0, 120),
-        createdAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
+        updateRequestedAt: null,
         payload: { pins: pl.pins || [], tracks: pl.tracks || [], polygons: pl.polygons || [] }
       };
       // Firestore hard-caps a document at ~1 MiB. A rough JSON-length guard well under that
@@ -25532,6 +25741,26 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         if (JSON.stringify(doc0).length > 900000) return Promise.reject(new Error('too-large'));
       } catch(e){}
       return addDoc(collection(db, 'shares'), doc0).then(function(ref){ return { id: ref.id }; });
+    },
+    // Sender refreshes an already-sent share's snapshot with current data (rules: owner only,
+    // ownerUid/recipientEmail/kind frozen). Also clears any pending updateRequestedAt.
+    pushShareUpdate: function(shareId, payload, name){
+      if (!currentUid || !shareId) return Promise.reject(new Error('bad-args'));
+      var pl = payload || {};
+      var upd = {
+        payload: { pins: pl.pins || [], tracks: pl.tracks || [], polygons: pl.polygons || [] },
+        updatedAt: Date.now(),
+        updateRequestedAt: null
+      };
+      if (name != null) upd.name = String(name).slice(0, 120);
+      try { if (JSON.stringify(upd).length > 900000) return Promise.reject(new Error('too-large')); } catch(e){}
+      return updateDoc(doc(db, 'shares', shareId), upd);
+    },
+    // Recipient asks the sender for a fresh snapshot — the rules only let a recipient touch
+    // the single updateRequestedAt field.
+    requestShareUpdate: function(shareId){
+      if (!shareId) return Promise.reject(new Error('bad-args'));
+      return updateDoc(doc(db, 'shares', shareId), { updateRequestedAt: Date.now() });
     },
     listSentShares: function(){
       if (!currentUid) return Promise.resolve([]);
