@@ -3521,7 +3521,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.74.0';
+  var APP_VERSION = '2.75.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -12572,23 +12572,28 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // Shared-with-me overlays — read-only, point-in-time COPIES of tracks/areas another
     // FieldMap user shared directly with this account (see the "Read-only item/trip sharing"
-    // block). Rendered in the SENDER's own real colour (['coalesce', ['get','color'], …]) but
-    // DASHED, so they read as "shared / read-only" without being a generic placeholder.
-    // Shared PINS are DOM markers (buildSharedPinMarkerHtml — real icon + status colour + a
-    // violet dashed ring), not a layer. Added here (above where the user's own tracks/polys
-    // would sit) so a shared area's wash never buries the user's own. Data is (re)fed by
-    // renderSharedOverlays(), including at this function's own tail after a style switch.
+    // block). Each type is TWO layers: the real thing in the SENDER's own real status colour
+    // (['get','color'] — resolved from the sender's status by renderSharedOverlays, so a red
+    // "avoid" area stays RED on the recipient's map, never a placeholder), plus a wider VIOLET
+    // DASHED "halo" underneath — the polygon/line analog of the violet dashed ring on shared
+    // PIN markers (buildSharedPinMarkerHtml). Added here (above where the user's own tracks/
+    // polys would sit). Data is (re)fed by renderSharedOverlays(), incl. at this function's
+    // own tail after a style switch. Layer add-order below IS the z-order.
     if (!map.getSource('shared-polys-source')){
       map.addSource('shared-polys-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     }
     if (!map.getLayer('shared-polys-fill')){
       map.addLayer({ id: 'shared-polys-fill', type: 'fill', source: 'shared-polys-source',
         paint: { 'fill-color': ['coalesce', ['get', 'color'], '#8b5cf6'],
-          'fill-opacity': ['coalesce', ['get', 'fillOpacity'], 0.15] } });
+          'fill-opacity': ['coalesce', ['get', 'fillOpacity'], 0.18] } });
     }
-    if (!map.getLayer('shared-polys-line')){
+    if (!map.getLayer('shared-polys-line-shared')){   // violet dashed "shared" halo (under)
+      map.addLayer({ id: 'shared-polys-line-shared', type: 'line', source: 'shared-polys-source',
+        paint: { 'line-color': '#8b5cf6', 'line-width': 5, 'line-opacity': 0.9, 'line-dasharray': [1.5, 2] } });
+    }
+    if (!map.getLayer('shared-polys-line')){          // real status-colour outline (on top)
       map.addLayer({ id: 'shared-polys-line', type: 'line', source: 'shared-polys-source',
-        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 2, 'line-dasharray': [2, 1.5] } });
+        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 2.5 } });
     }
     if (!map.getSource('shared-tracks-source')){
       map.addSource('shared-tracks-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -12597,10 +12602,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.addLayer({ id: 'shared-tracks-touch', type: 'line', source: 'shared-tracks-source',
         layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-width': 18, 'line-opacity': 0 } });
     }
-    if (!map.getLayer('shared-tracks-line')){
+    if (!map.getLayer('shared-tracks-line-shared')){  // violet dashed "shared" halo (under)
+      map.addLayer({ id: 'shared-tracks-line-shared', type: 'line', source: 'shared-tracks-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#8b5cf6', 'line-width': 7, 'line-opacity': 0.85, 'line-dasharray': [1.5, 2] } });
+    }
+    if (!map.getLayer('shared-tracks-line')){         // real status-colour line (on top)
       map.addLayer({ id: 'shared-tracks-line', type: 'line', source: 'shared-tracks-source',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 3, 'line-opacity': 0.95, 'line-dasharray': [2, 1.5] } });
+        paint: { 'line-color': ['coalesce', ['get', 'color'], '#8b5cf6'], 'line-width': 3, 'line-opacity': 0.98 } });
     }
 
     // Bearings — GeoJSON source of all saved bearing lines. Wide invisible touch layer +
@@ -14371,14 +14381,22 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       status: pin.status || 'escout', tags: (pin.tags || []).slice(), created: pin.created || null,
       iconKey: iconKeyForItem(pin), markerColor: statusColorFor(pin) };
   }
+  // Tracks/areas have NO stored .color — the app resolves the on-map line/fill colour from
+  // .status via STATUS_COLORS at render time (see updateTracksSource / updatePolygonsSource).
+  // So the share payload must carry .status AND the resolved colour (mirroring how pins carry
+  // markerColor), or a shared "avoid" (red) area silently renders as the escout default on
+  // the recipient's map.
+  function geomStatusColor(item){
+    return (STATUS_COLORS[item.status || 'escout'] || STATUS_COLORS.escout).bg;
+  }
   function buildTrackSharePayloadItem(track){
-    return { id: track.id, name: track.name, color: track.color || '#c2622d',
+    return { id: track.id, name: track.name, status: track.status || 'escout', color: geomStatusColor(track),
       points: shareSerializePoints(track.points), notes: track.notes || '', created: track.created || null,
       elevGainFt: (track.elevGainFt != null ? track.elevGainFt : null),
       elevLossFt: (track.elevLossFt != null ? track.elevLossFt : null) };
   }
   function buildPolygonSharePayloadItem(poly){
-    return { id: poly.id, name: poly.name, color: poly.color || '#3a8fd4',
+    return { id: poly.id, name: poly.name, status: poly.status || 'escout', color: geomStatusColor(poly),
       fillOpacity: (poly.fillOpacity != null ? poly.fillOpacity : 0.18),
       points: shareSerializePoints(poly.points), notes: poly.notes || '', created: poly.created || null };
   }
@@ -14427,6 +14445,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   }
   function sharedPinColor(pin){
     return pin.markerColor || (STATUS_COLORS[pin.status] || STATUS_COLORS.escout).bg;
+  }
+  // Line/fill colour for a shared track/area. Newer shares carry .status (+ a resolved
+  // .color) — resolve from status so it always matches the sender's map. Shares made before
+  // this fix carry only a hardcoded default .color (rust for tracks, blue for areas) and no
+  // status — use that as a best-effort fallback; the sender's "Push update" recovers the
+  // real colour. Never a generic placeholder when we can do better.
+  function sharedGeomColor(item){
+    if (item && item.status && STATUS_COLORS[item.status]) return STATUS_COLORS[item.status].bg;
+    return (item && item.color) || SHARED_ACCENT;
   }
 
   // A shared pin's marker — the sender's REAL icon + status colour, wrapped in a violet
@@ -14492,7 +14519,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         trackFeats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
           properties: { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
             itemName: tr.name || 'Route', kind: 'track', notes: tr.notes || '',
-            color: tr.color || SHARED_ACCENT } });
+            status: tr.status || '', color: sharedGeomColor(tr) } });
       });
       (pl.polygons || []).forEach(function(pg){
         var ring = shareRingLngLat(pg.points);
@@ -14501,7 +14528,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         polyFeats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] },
           properties: { shareId: sh.id, shareName: sh.name || 'Shared', ownerLabel: ownerLabel,
             itemName: pg.name || 'Area', kind: 'polygon', notes: pg.notes || '',
-            color: pg.color || SHARED_ACCENT, fillOpacity: (pg.fillOpacity != null ? pg.fillOpacity : 0.18) } });
+            status: pg.status || '', color: sharedGeomColor(pg), fillOpacity: (pg.fillOpacity != null ? pg.fillOpacity : 0.18) } });
       });
     });
     // Remove markers whose share is now hidden / gone.
@@ -14622,6 +14649,12 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var badge = '<span style="display:inline-flex;align-items:center;gap:4px;background:' + SHARED_ACCENT + '22;border:1px solid ' + SHARED_ACCENT + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
       '<span style="width:7px;height:7px;border-radius:50%;background:' + SHARED_ACCENT + ';flex-shrink:0;display:inline-block;"></span>' +
       '<span style="font-size:10px;font-weight:700;color:' + SHARED_ACCENT + ';">SHARED · READ-ONLY</span></span>';
+    // The sender's status (Avoid / Confirmed / …) — carried on the payload so a shared
+    // "avoid" area's meaning survives, not just its colour.
+    var sc = props.status && STATUS_COLORS[props.status];
+    var statusBadge = sc ? '<span style="display:inline-flex;align-items:center;gap:4px;background:' + sc.bg + '22;border:1px solid ' + sc.bg + '66;border-radius:10px;padding:1px 7px 1px 4px;">' +
+      '<span style="width:7px;height:7px;border-radius:50%;background:' + sc.bg + ';flex-shrink:0;display:inline-block;"></span>' +
+      '<span style="font-size:10px;font-weight:700;color:' + sc.bg + ';">' + escapeHtml(sc.label) + '</span></span>' : '';
     var footerBtns = [];
     if (props.kind === 'pin' && props.lat != null && props.lat !== ''){
       footerBtns.push('<button class="btn btn-small" onclick="FieldMap.directionsToShared(' + Number(props.lat) + ',' + Number(props.lng) + ')">Directions</button>');
@@ -14631,7 +14664,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     var footer = footerBtns.length ? '<div class="pin-popup-footer">' + footerBtns.join('') + '</div>' : '';
     return '<div class="pin-popup-name-row"><div class="pin-popup-name">' + escapeHtml(props.itemName || kindLabel) + '</div></div>' +
-      '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' + badge +
+      '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px;">' + badge + statusBadge +
         '<span style="font-size:11px;color:var(--text-muted);">' + escapeHtml(kindLabel) + '</span></div>' +
       '<div class="pin-popup-cat" style="font-size:11px;">' + escapeHtml(props.shareName || 'Shared') +
         ' · Shared by ' + escapeHtml(props.ownerLabel || 'a FieldMap user') + '</div>' +

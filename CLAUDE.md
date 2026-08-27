@@ -7645,8 +7645,9 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       pin's raw tag STRINGS via `TAG_ICON_MAP` directly (bypassing `tagById`, so standard tags like
       `camp`/`elk`/`fish`/`cabin` still resolve without the recipient having the sender's tag objects) +
       water-tag special-case; `sharedPinColor(pin)` falls back to `STATUS_COLORS[pin.status]`. Shared
-      TRACKS/AREAS now paint in the sender's real `color`/`fillOpacity` via `['coalesce', ['get','color'], …]`
-      (feature props carry `color`/`fillOpacity`), still dashed.
+      TRACKS/AREAS at this point paint via `['coalesce', ['get','color'], …]` but the payload's `color` was
+      still the hardcoded per-type default (`#3a8fd4`/`#c2622d`) — the sender's real status colour was never
+      captured. Superseded by the next session's fix (see below).
     - **Push update (sender)**: the share doc gained `sourceKind` (`'pin'|'track'|'polygon'|'trip'`) + `sourceId`
       + `updatedAt` + `updateRequestedAt`. Rules gained an `update` path: OWNER may change payload/name/updatedAt/
       updateRequestedAt (ownerUid/recipientEmail/kind frozen); RECIPIENT may ONLY touch `updateRequestedAt`
@@ -7682,6 +7683,51 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       (tags `cabin`/`upland`/`fish`/`elkshed` → those exact icons). geoff's 69 pins / 7 trips untouched, zero
       console errors. Not verified: the DOM markers rendering on the app's own live map (harness-proven only).
     - APP_VERSION 2.73.0 → 2.74.0 (bundled with Bug A), SHELL_CACHE v200 → v201.
+  - **Session — shared Area/Track status colour (real-device: a red "avoid" Area rendered generic blue on
+    the recipient)**: root cause — `buildPolygonSharePayloadItem`/`buildTrackSharePayloadItem` wrote
+    `color: item.color || <hardcoded default>`, but polygons/tracks have NO stored `.color` field at all
+    (the app resolves fill/stroke from `STATUS_COLORS[status]` at render time in `updatePolygonsSource`/
+    `updateTracksSource`), so the payload's colour was ALWAYS the default (`#3a8fd4` area / `#c2622d` track)
+    — a status meant to say "avoid" silently lost its meaning when shared. Fix: both builders now store the
+    sender's `status` plus a resolved `color` from a shared `geomStatusColor(item)` (=
+    `(STATUS_COLORS[item.status||'escout'] || STATUS_COLORS.escout).bg`); the polygon builder also carries
+    `fillOpacity`. Recipient side: new `sharedGeomColor(item)` resolves status-first
+    (`STATUS_COLORS[item.status].bg`), falling back to the stored `item.color`, then `SHARED_ACCENT` — so a
+    garbled/future status can't crash it and an OLD share (no `status`) still renders in whatever default
+    colour it was baked with. `renderSharedOverlays` now puts `status` + the resolved `color` on the
+    track/polygon feature props.
+    - **Shared indicator** — the polygon/line analog of the pin's violet dashed ring: `reinitializeLayers`'s
+      shared-* block dropped the single dashed line layer and instead paints a `SHARED_ACCENT` (`#8b5cf6`)
+      violet DASHED "halo" layer UNDER a real-colour solid layer, per geometry:
+      `shared-polys-line-shared` (width 5, dasharray [1.5,2], opacity 0.9) under `shared-polys-line`
+      (`['coalesce',['get','color'],'#8b5cf6']`, width 2.5); `shared-tracks-line-shared` (width 7,
+      dasharray [1.5,2]) under `shared-tracks-line` (real colour, width 3). `shared-polys-fill` uses the
+      real `color` at `['coalesce',['get','fillOpacity'],0.18]`. The 18px transparent `shared-tracks-touch`
+      click layer is unchanged.
+    - **Drawer**: `sharedItemDrawerHtml` now shows the sender's status label as a coloured badge for shared
+      tracks/areas (e.g. an `issue` area shows "Avoid" in `#D64545`), matching how a shared pin already
+      surfaces its status.
+    - **Other shareable types**: Bearings / Range Rings / Buffers are NOT shareable (no payload builder, not
+      in the share modal's type list) — confirmed, no action needed.
+    - **Backward compatibility**: a share created before this fix carries no `status` on its polygons/tracks,
+      so `sharedGeomColor` falls back to the stored default colour (blue area / rust track) rather than
+      erroring — and the sender's "Push update" (Bug B) rebuilds the payload through the new builders, so one
+      push recovers the real status colour with no revoke/re-share.
+    - **Verified**: Node `bugC-area-color` 18/18 — all 5 statuses → correct `STATUS_COLORS` colour for both
+      builders; `sharedGeomColor` status-first / old-share-fallback / missing-fallback / unknown-status;
+      a real Firestore round-trip (throwaway owner + recipient accounts, deleted after) preserving
+      `status:'issue'` + `#D64545` + `fillOpacity:0.22` on a "DO NOT ENTER" area and `status:'verify'` +
+      `#F28C28` on an "Unverified spur" track through a real `shares/{id}` doc. Isolated `maplibregl.Map`
+      harness (real shared-* layer config, screenshot): a red "DO NOT ENTER" area renders red fill + red
+      outline + violet dashed halo; green area, orange track, violet track, and a `status`-less old-share
+      area (blue fallback) all correct. Real app (one Chrome profile as the real geoff@theranchmine.com,
+      app map still stuck pre-`style.load`): shared geoff's "Meadow" (confirmed → `#3A8F45`) and "Mearns
+      area" (verify → `#F28C28`) via the real share modal, both revoked afterward; drawer badge confirmed
+      ("Avoid" `#D64545` for an issue area, "Confirmed" for a confirmed track). geoff's 69 pins / 12 tracks /
+      5 polygons / 7 trips untouched, zero console errors. Not verified: the shared overlay painting on the
+      app's own live map (harness-proven only, same standing Mapbox-limbo limitation as the prior two
+      sessions).
+    - APP_VERSION 2.74.0 → 2.75.0, SHELL_CACHE v201 → v202.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10522,3 +10568,28 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   markers. Both bugs: zero console errors, geoff's data untouched. APP_VERSION 2.73.0 → 2.74.0, SHELL_CACHE
   v200 → v201. See Architecture notes' "Read-only item/trip sharing" entry (its "Session — Bug B" sub-bullet)
   and the fixed `serializeForFirestore()` line in "What's broken".
+- Session (shared Area/Track status colour, real-device follow-up) — Bug B fixed shared PIN icons/colours but
+  a sender's red "avoid" Area still rendered generic blue on the recipient (confirmed via real screenshots) —
+  a warning colour silently losing its meaning when shared. Root cause: `buildPolygonSharePayloadItem`/
+  `buildTrackSharePayloadItem` wrote `color: item.color || <default>`, but polygons/tracks have no stored
+  `.color` at all (the app resolves it from `STATUS_COLORS[status]` at render time), so the payload colour
+  was ALWAYS the hardcoded default. Fix: both builders now store the sender's `status` + a resolved `color`
+  (shared `geomStatusColor`); recipient `sharedGeomColor` resolves status-first with a stored-colour /
+  `SHARED_ACCENT` fallback. The single dashed shared-line layer was replaced with a `SHARED_ACCENT` violet
+  DASHED "halo" layer painted UNDER a real-colour solid layer, per geometry (`shared-polys-line-shared` /
+  `shared-tracks-line-shared`) — the polygon/line analog of the pin's violet dashed ring; `shared-polys-fill`
+  uses the real colour + `fillOpacity`. `sharedItemDrawerHtml` now shows the sender's status label as a
+  coloured badge for shared tracks/areas. Bearings/Range Rings/Buffers confirmed NOT shareable — no action.
+  Backward compat: a pre-fix share carries no `status`, so `sharedGeomColor` falls back to the baked default
+  colour (no error); the sender's "Push update" rebuilds through the new builders and recovers the real
+  status colour in one push. Verified: Node `bugC-area-color` 18/18 (all 5 statuses → correct STATUS_COLORS
+  for both builders; sharedGeomColor status-first/fallbacks; a real Firestore round-trip preserving
+  `issue`+`#D64545`+`fillOpacity:0.22` on a "DO NOT ENTER" area and `verify`+`#F28C28` on an "Unverified
+  spur" track); isolated `maplibregl.Map` harness screenshot (red area = red fill + red outline + violet
+  dashed halo; green/orange/violet/blue-fallback all correct); real geoff account — shared "Meadow"
+  (confirmed → `#3A8F45`) and "Mearns area" (verify → `#F28C28`) via the real share modal, both revoked;
+  drawer badge confirmed. geoff's 69 pins / 12 tracks / 5 polygons / 7 trips untouched, zero console errors.
+  Not verified: the overlay painting on the app's own live map (harness-proven only — same Mapbox-limbo
+  limitation as the prior two sessions). APP_VERSION 2.74.0 → 2.75.0, SHELL_CACHE v201 → v202. See
+  Architecture notes' "Read-only item/trip sharing" entry (its "Session — shared Area/Track status colour"
+  sub-bullet).
