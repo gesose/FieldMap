@@ -2162,7 +2162,23 @@
       <input type="checkbox" id="sunrise-arc-toggle" checked> Show sun path on map
     </label>
   </div>
-  <div id="moon-tab-content" class="hidden"></div>
+  <div id="moon-tab-content" class="hidden">
+    <div id="moon-tab-readout"></div>
+    <!-- Moon-position time control (drives the map bearing line + the readout above) -->
+    <div style="margin:10px 0 12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+        <span style="font-size:11px;color:var(--text-muted);">Moon position</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span id="moon-slider-time-label" style="font-size:12px;font-weight:600;color:var(--text);font-family:var(--font-mono);"></span>
+          <button id="moon-slider-now-btn" class="btn btn-small" style="font-size:10px;padding:3px 7px;">Now</button>
+        </div>
+      </div>
+      <input type="range" id="moon-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
+      <input type="checkbox" id="moon-arc-toggle" checked> Show moon path on map
+    </label>
+  </div>
   <div id="solunar-tab-content" class="hidden"></div>
 </div>
 
@@ -3538,7 +3554,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.76.0';
+  var APP_VERSION = '2.77.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4414,6 +4430,12 @@
   // (dashed line from map center to the sun dot), plus 3 reused maplibregl.Marker instances
   // for the sun dot and the sunrise/sunset time labels (re-added by reinitializeLayers()).
   var sunArcSunDotMarker = null, sunArcSunriseLabelMarker = null, sunArcSunsetLabelMarker = null;
+  // Moon-path arc (Moon tab): moon-arc-source (silver-blue path across the sky) + moon-dash-source
+  // (the "which way to face" bearing line from map center to the moon dot). Markers: moon dot,
+  // a bearing/altitude label on the line, and moonrise/moonset time labels at the arc ends.
+  var moonArcDotMarker = null, moonArcBearingLabelMarker = null, moonArcRiseLabelMarker = null, moonArcSetLabelMarker = null;
+  var MOON_ARC_ON = true;              // "Show moon path on map" (Moon tab)
+  var moonSliderMinutes = null;        // null = real now (today) / same clock-time on another date; 0-1439 = that minute of sunDate
   // Compass: compass-dashed-source (north + facing reference lines) + compass-target-source
   // (solid bearing line to a tapped target), plus a reused marker for the target dot.
   var compassTargetMarker = null;
@@ -8533,8 +8555,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       map.on('zoomend', scheduleTimberThinningRefresh);
       map.on('moveend', scheduleTimberThinningRefresh);
       map.on('zoomend', function(){
-        var panelOpen = !document.getElementById('sunrise-panel').classList.contains('hidden');
-        if (SUNRISE_ARC_ON && panelOpen) renderSunArc(map.getCenter(), sunDate);
+        if (!document.getElementById('sunrise-panel').classList.contains('hidden')) updateSkyDiagram();
+      });
+      map.on('moveend', function(){
+        if (!document.getElementById('sunrise-panel').classList.contains('hidden')) updateSkyDiagram();
       });
       map.on('moveend', function(){
         if (compassActive && compassUseCenter) updateCompassMapLines();
@@ -12962,6 +12986,32 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       });
     }
 
+    // Moon-path arc (Moon tab) — a silver-blue path across the sky, plus a brighter dashed
+    // "which way to face" bearing line from map center to the moon dot (dot is a marker).
+    if (!map.getSource('moon-arc-source')){
+      map.addSource('moon-arc-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('moon-arc-line')){
+      map.addLayer({
+        id: 'moon-arc-line',
+        type: 'line',
+        source: 'moon-arc-source',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#9fb2cc', 'line-width': 3, 'line-opacity': 0.82 }
+      });
+    }
+    if (!map.getSource('moon-dash-source')){
+      map.addSource('moon-dash-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('moon-dash-line')){
+      map.addLayer({
+        id: 'moon-dash-line',
+        type: 'line',
+        source: 'moon-dash-source',
+        paint: { 'line-color': '#d6e0f0', 'line-width': 2.2, 'line-dasharray': [3, 2.5], 'line-opacity': 0.95 }
+      });
+    }
+
     // Compass — red/blue dashed north+facing reference lines (data-driven color, shared
     // dasharray) and a separate solid gold bearing-to-target line + target dot marker.
     if (!map.getSource('compass-dashed-source')){
@@ -13043,7 +13093,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     redrawMeasureLine();
     if (vertexEditSyncFn) vertexEditSyncFn();
     if (bearingEndpointSyncFn) bearingEndpointSyncFn();
-    if (SUNRISE_ARC_ON && !document.getElementById('sunrise-panel').classList.contains('hidden')) renderSunArc(map.getCenter(), sunDate);
+    if (!document.getElementById('sunrise-panel').classList.contains('hidden')) updateSkyDiagram();
     if (compassActive) updateCompassMapLines();
     redrawCompassTarget();
     // Restores the GPS accuracy circle after a base-layer style switch — map.setStyle({diff:false})
@@ -20748,26 +20798,53 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   var sunPanelTab = 'sun'; // 'sun' | 'moon' | 'solunar'
 
   function renderMoonTab(center, date){
-    var el = document.getElementById('moon-tab-content');
+    var el = document.getElementById('moon-tab-readout');
     if (!el) return;
     var sol = computeSolunar(date, center.lat, center.lng);
     var mt = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(date)), center.lat, center.lng);
     var overhead = null, underfoot = null;
     sol.periods.forEach(function(p){ if (p.label === 'Moon overhead') overhead = p; else if (p.label === 'Moon underfoot') underfoot = p; });
+    var info = moonBearingInfo(date, center.lat, center.lng);
+
     function row(icon, label, val){
       return '<div class="sunrise-time-row"><span class="sunrise-time-icon" style="font-size:14px;color:var(--text-muted);">' + icon + '</span>' +
         '<span class="sunrise-time-label">' + label + '</span>' +
         '<span class="sunrise-time-value" style="font-size:13px;">' + val + '</span></div>';
     }
-    var html = '<div style="text-align:center;padding:4px 0 10px;">' +
-      '<div style="font-size:40px;line-height:1;">' + sol.phase.icon + '</div>' +
-      '<div style="font-size:14px;font-weight:600;margin-top:5px;">' + sol.phase.name + '</div>' +
+    var html = '<div style="text-align:center;padding:4px 0 8px;">' +
+      '<div style="font-size:38px;line-height:1;">' + sol.phase.icon + '</div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:4px;">' + sol.phase.name + '</div>' +
       '<div style="font-size:12px;color:var(--text-muted);">' + sol.phase.illumPct + '% illuminated</div></div>';
+
+    // "Which way to face" card — the headline of this tab.
+    var whenLabel = info.isRealNow ? 'right now' : ('at ' + formatTime12(info.time));
+    if (info.aboveHorizon){
+      html += '<div style="padding:8px 11px;border-radius:8px;background:#9fb2cc22;border:1px solid #6b7a92;margin-bottom:10px;">' +
+        '<div style="font-size:11px;color:var(--text-muted);">Face this direction to see the moon ' + whenLabel + '</div>' +
+        '<div style="font-size:17px;font-weight:700;margin-top:2px;">' + info.cardinal + ' &nbsp;' + Math.round(info.bearingDeg) + '°</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:1px;">' + Math.round(info.altitudeDeg) + '° above the horizon</div></div>';
+    } else {
+      html += '<div style="padding:8px 11px;border-radius:8px;background:#8a8f8c22;border:1px solid var(--border);margin-bottom:10px;">' +
+        '<div style="font-size:13px;font-weight:600;">Moon is below the horizon ' + whenLabel + '</div>' +
+        (info.nextRise
+          ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Rises ' + formatTime12(info.nextRise) + ' facing ' +
+            bearingCardinalLabel(info.nextRiseBearingDeg) + ' ' + Math.round(info.nextRiseBearingDeg) + '°</div>'
+          : '') + '</div>';
+    }
+
     html += row('↑', 'Moonrise', mt.rise ? formatTime12(mt.rise) : (mt.alwaysUp ? 'Up all day' : 'None today'));
     html += row('↓', 'Moonset',  mt.set  ? formatTime12(mt.set)  : (mt.alwaysDown ? 'Down all day' : 'None today'));
     html += row('◉', 'Moon overhead (transit)',  overhead  ? formatTime12(overhead.center)  : '—');
     html += row('○', 'Moon underfoot (anti-transit)', underfoot ? formatTime12(underfoot.center) : '—');
     el.innerHTML = html;
+
+    // keep the slider's own label in sync with whatever time the diagram is aimed at
+    var lbl = document.getElementById('moon-slider-time-label');
+    if (lbl) lbl.textContent = formatTime12(info.time) + (info.isRealNow ? ' (now)' : '');
+    var slider = document.getElementById('moon-time-slider');
+    if (slider && moonSliderMinutes === null){
+      slider.value = info.time.getHours() * 60 + info.time.getMinutes();
+    }
   }
 
   function renderSolunarTab(center, date){
@@ -20825,6 +20902,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (btn) btn.classList.toggle('active', t === tab);
     });
     renderActiveSunPanelTab();
+    updateSkyDiagram(); // swap the map overlay to match the tab (sun arc / moon arc / none)
     // the mobile dock sizes itself to panel height — re-measure after the content swap
     var panel = document.getElementById('sunrise-panel');
     if (panel && panel.classList.contains('sunrise-docked-panel')){
@@ -20871,12 +20949,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!sunDate) sunDate = new Date();
     document.getElementById('sunrise-panel').classList.remove('hidden');
     closeAllPanels_except('sunrise-panel');
+    moonSliderMinutes = null;
     if (window._sunSliderInit) window._sunSliderInit();
+    if (window._moonSliderInit) window._moonSliderInit();
     sunriseDockOpen();
-    var center = map.getCenter();
-    renderSunriseTimes(center, sunDate);
+    renderSunriseTimes(map.getCenter(), sunDate);
     renderActiveSunPanelTab();
-    if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+    updateSkyDiagram();
   }
 
   function renderSunriseTimes(center, date){
@@ -21137,6 +21216,168 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     addDirMarker(times.sunset,  formatTime12(times.sunset),  '#c47a28', 'right');
   }
 
+  // ════════ Moon-position sky diagram + "which way to face" bearing line (Moon tab) ════════
+
+  function clearMoonArc(){
+    if (map && map.getSource('moon-arc-source'))  map.getSource('moon-arc-source').setData({ type:'FeatureCollection', features: [] });
+    if (map && map.getSource('moon-dash-source')) map.getSource('moon-dash-source').setData({ type:'FeatureCollection', features: [] });
+    [moonArcDotMarker, moonArcBearingLabelMarker, moonArcRiseLabelMarker, moonArcSetLabelMarker].forEach(function(m){ if (m) m.remove(); });
+    moonArcDotMarker = moonArcBearingLabelMarker = moonArcRiseLabelMarker = moonArcSetLabelMarker = null;
+  }
+
+  // SunCalc azimuth is 0 = due south, positive toward west, range −π…π.
+  // Compass bearing wanted: 0 = north, clockwise. bearing = (azimuth + π) normalised to [0,360).
+  function azToCompassBearing(azimuthRad){
+    var d = (azimuthRad * 180 / Math.PI + 180) % 360;
+    return d < 0 ? d + 360 : d;
+  }
+
+  // The moment the Moon tab's diagram is "aimed at": the moon-position slider if the user has
+  // touched it, else real-now on today, else the same wall-clock time projected onto `date`.
+  function moonDiagramTargetTime(date){
+    var isToday = date.toDateString() === new Date().toDateString();
+    if (moonSliderMinutes !== null){
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate(),
+        Math.floor(moonSliderMinutes / 60), moonSliderMinutes % 60, 0);
+    }
+    if (isToday) return new Date();
+    var now = new Date();
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), now.getHours(), now.getMinutes(), 0);
+  }
+
+  // Everything the Moon tab and the bearing line both need for one instant.
+  function moonBearingInfo(date, lat, lng){
+    var t = moonDiagramTargetTime(date);
+    var pos = SunCalc.getMoonPosition(t, lat, lng);
+    var bearingDeg = azToCompassBearing(pos.azimuth);
+    var altDeg = pos.altitude * 180 / Math.PI;
+    var mt = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(date)), lat, lng);
+    var info = {
+      time: t,
+      isRealNow: moonSliderMinutes === null && date.toDateString() === new Date().toDateString(),
+      bearingDeg: bearingDeg,
+      cardinal: bearingCardinalLabel(bearingDeg),
+      altitudeDeg: altDeg,
+      aboveHorizon: altDeg > 0,
+      nextRise: null, nextRiseBearingDeg: null
+    };
+    if (!info.aboveHorizon && mt.rise && mt.rise > t && !isNaN(mt.rise.getTime())){
+      info.nextRise = mt.rise;
+      info.nextRiseBearingDeg = azToCompassBearing(SunCalc.getMoonPosition(mt.rise, lat, lng).azimuth);
+    }
+    return info;
+  }
+
+  // Silver-blue path of the moon across the sky for the whole local day, + the dashed bearing
+  // line from map centre toward the moon's current compass direction, + a bearing/altitude
+  // label, + moonrise/moonset labels at the arc ends. Mirrors renderSunArc's geometry exactly.
+  function renderMoonArc(center, date){
+    clearMoonArc();
+    if (!MOON_ARC_ON) return;
+    if (typeof SunCalc === 'undefined') return;
+    if (!map.getSource('moon-arc-source')) return;
+
+    var drawCenter = center;
+    var distDeg = sunArcDistDeg();
+    var cosLat  = Math.cos(drawCenter.lat * Math.PI / 180);
+    var dayStartMs = sunDayMidnightMs(date);
+    var step = 10 * 60 * 1000;
+
+    // Path runs (broken wherever the moon is below the horizon).
+    var runs = [], curRun = null, firstUpMs = null, lastUpMs = null;
+    for (var ms = dayStartMs; ms <= dayStartMs + 24 * 3600 * 1000; ms += step){
+      var pos = SunCalc.getMoonPosition(new Date(ms), center.lat, center.lng);
+      if (pos.altitude < -0.05){ curRun = null; continue; }
+      if (firstUpMs === null) firstUpMs = ms;
+      lastUpMs = ms;
+      var az = pos.azimuth + Math.PI;
+      var pt = [drawCenter.lat + distDeg * Math.cos(az), drawCenter.lng + distDeg * Math.sin(az) / cosLat];
+      if (!curRun){ curRun = { pts: [] }; runs.push(curRun); }
+      curRun.pts.push(pt);
+    }
+    var arcFeatures = [];
+    runs.forEach(function(run){
+      if (run.pts.length >= 2){
+        arcFeatures.push({ type: 'Feature', properties: {},
+          geometry: { type: 'LineString', coordinates: run.pts.map(function(p){ return [p[1], p[0]]; }) } });
+      }
+    });
+    map.getSource('moon-arc-source').setData({ type: 'FeatureCollection', features: arcFeatures });
+
+    // Bearing line + moon dot for the currently-aimed-at time.
+    var info = moonBearingInfo(date, center.lat, center.lng);
+    if (info.aboveHorizon){
+      // Same [lat + d·cos(az), lng + d·sin(az)/cosLat] offset convention as the path loop above,
+      // where that loop's `az` = SunCalc azimuth + π. Since compass bearing = azimuth·180/π + 180,
+      // the az to feed the offset is exactly bearing·π/180.
+      var azForOffset = info.bearingDeg * Math.PI / 180;
+      var dotLat = drawCenter.lat + distDeg * Math.cos(azForOffset);
+      var dotLng = drawCenter.lng + distDeg * Math.sin(azForOffset) / cosLat;
+
+      map.getSource('moon-dash-source').setData({ type: 'FeatureCollection', features: [{
+        type: 'Feature', properties: {},
+        geometry: { type: 'LineString', coordinates: [[drawCenter.lng, drawCenter.lat], [dotLng, dotLat]] }
+      }] });
+
+      var dotEl = document.createElement('div');
+      dotEl.innerHTML = '<div style="width:15px;height:15px;border-radius:50%;background:#e8edf6;border:2px solid #6b7a92;box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,0.45);"></div>';
+      moonArcDotMarker = new maplibregl.Marker({ element: dotEl, anchor: 'center' }).setLngLat([dotLng, dotLat]).addTo(map);
+
+      // bearing/altitude label, just outside the dot, radially
+      var cPx = map.project([drawCenter.lng, drawCenter.lat]);
+      var dPx = map.project([dotLng, dotLat]);
+      var vx = dPx.x - cPx.x, vy = dPx.y - cPx.y, vlen = Math.sqrt(vx*vx + vy*vy) || 1;
+      var labLngLat = map.unproject([dPx.x + (vx/vlen) * 16, dPx.y + (vy/vlen) * 16]);
+      var onRight = vx >= 0;
+      var labEl = document.createElement('div');
+      labEl.style.cssText = 'white-space:nowrap;font-size:12px;font-weight:700;color:#dfe6f2;text-shadow:0 1px 3px rgba(0,0,0,0.9);pointer-events:none;text-align:' + (onRight ? 'left' : 'right') + ';';
+      labEl.textContent = Math.round(info.bearingDeg) + '° ' + info.cardinal + ' · ' + Math.round(info.altitudeDeg) + '°↑';
+      moonArcBearingLabelMarker = new maplibregl.Marker({ element: labEl, anchor: onRight ? 'left' : 'right' }).setLngLat(labLngLat).addTo(map);
+    } else {
+      map.getSource('moon-dash-source').setData({ type: 'FeatureCollection', features: [] });
+    }
+
+    // Moonrise / moonset labels at the arc ends.
+    function endLabel(ms, existingKey){
+      if (ms === null) return null;
+      var pos = SunCalc.getMoonPosition(new Date(ms), center.lat, center.lng);
+      var az = pos.azimuth + Math.PI;
+      var edgeLat = drawCenter.lat + distDeg * Math.cos(az);
+      var edgeLng = drawCenter.lng + distDeg * Math.sin(az) / cosLat;
+      var cPx = map.project([drawCenter.lng, drawCenter.lat]);
+      var ePx = map.project([edgeLng, edgeLat]);
+      var dx = ePx.x - cPx.x, dy = ePx.y - cPx.y, len = Math.sqrt(dx*dx + dy*dy) || 1;
+      var pos2 = map.unproject([ePx.x + (dx/len) * 12, ePx.y + (dy/len) * 12]);
+      var onRight = dx >= 0;
+      var el = document.createElement('div');
+      el.style.cssText = 'white-space:nowrap;font-size:13px;font-weight:700;color:#aab8cf;text-shadow:0 1px 3px rgba(0,0,0,0.9);pointer-events:none;text-align:' + (onRight ? 'left' : 'right') + ';';
+      return new maplibregl.Marker({ element: el, anchor: onRight ? 'left' : 'right' }).setLngLat(pos2).addTo(map);
+    }
+    var mt2 = SunCalc.getMoonTimes(new Date(dayStartMs), center.lat, center.lng);
+    if (mt2.rise && !isNaN(mt2.rise.getTime()) && mt2.rise >= new Date(dayStartMs) && mt2.rise < new Date(dayStartMs + 86400000)){
+      moonArcRiseLabelMarker = endLabel(mt2.rise.getTime());
+      if (moonArcRiseLabelMarker) moonArcRiseLabelMarker.getElement().textContent = '↑ ' + formatTime12(mt2.rise);
+    }
+    if (mt2.set && !isNaN(mt2.set.getTime()) && mt2.set >= new Date(dayStartMs) && mt2.set < new Date(dayStartMs + 86400000)){
+      moonArcSetLabelMarker = endLabel(mt2.set.getTime());
+      if (moonArcSetLabelMarker) moonArcSetLabelMarker.getElement().textContent = '↓ ' + formatTime12(mt2.set);
+    }
+  }
+
+  // Single entry point deciding which sky diagram (if any) is on the map, based on the open tab.
+  function updateSkyDiagram(){
+    if (!map || !map.getSource('sun-arc-source')) return;
+    var center = map.getCenter();
+    if (sunPanelTab === 'moon'){
+      clearSunArc();
+      renderMoonArc(center, sunDate); // no-ops itself when MOON_ARC_ON is false
+    } else if (sunPanelTab === 'solunar'){
+      clearSunArc(); clearMoonArc();
+    } else {
+      clearMoonArc();
+      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate); else clearSunArc();
+    }
+  }
 
   // Canonical list of floating popover panels — shared by closeAllPanels/closeAllPanels_except
   // so a panel only has to be added in one place to get consistent close-on-switch behavior.
@@ -21163,7 +21404,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     FLOATING_PANEL_IDS.forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
-    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); sunriseDockClose(); }
+    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); clearMoonArc(); sunriseDockClose(); }
   }
 
   function setElevTapMode(on){
@@ -23288,7 +23529,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
-    if (wasSunriseOpen){ clearSunArc(); sunriseDockClose(); }
+    if (wasSunriseOpen){ clearSunArc(); clearMoonArc(); sunriseDockClose(); }
     // #view-drawer isn't in FLOATING_PANEL_IDS (different dismiss model — no scrim, map
     // stays interactive), but should still close whenever something else is about to take
     // over the screen. This one hook point covers both required dismiss paths: a plain
@@ -23949,7 +24190,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           var prevCenter = map.getCenter();
           map.resize();
           map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
-          if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+          updateSkyDiagram();
         }); });
       }
     });
@@ -23958,47 +24199,47 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       navigator.geolocation.getCurrentPosition(function(pos){
         map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: Math.max(map.getZoom(), 12) });
         setTimeout(function(){
-          var center = map.getCenter();
-          renderSunriseTimes(center, sunDate);
+          renderSunriseTimes(map.getCenter(), sunDate);
           renderActiveSunPanelTab();
-          if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+          updateSkyDiagram();
         }, 400);
       }, function(){ showToast('Could not get location'); });
     });
     document.getElementById('sunrise-close-btn').addEventListener('click', function(){
       document.getElementById('sunrise-panel').classList.add('hidden');
       clearSunArc();
+      clearMoonArc();
       sunriseDockClose();
     });
+    // prev / next / date-input keep whatever moon-position time the user picked (so "plan the
+    // same shot the next night" just works); only "Today" snaps the moon diagram back to now.
     document.getElementById('sunrise-prev-btn').addEventListener('click', function(){
       sunDate = new Date(sunDate.getTime() - 86400000);
-      var center = map.getCenter();
-      renderSunriseTimes(center, sunDate);
+      renderSunriseTimes(map.getCenter(), sunDate);
       renderActiveSunPanelTab();
-      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+      updateSkyDiagram();
     });
     document.getElementById('sunrise-next-btn').addEventListener('click', function(){
       sunDate = new Date(sunDate.getTime() + 86400000);
-      var center = map.getCenter();
-      renderSunriseTimes(center, sunDate);
+      renderSunriseTimes(map.getCenter(), sunDate);
       renderActiveSunPanelTab();
-      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+      updateSkyDiagram();
     });
     document.getElementById('sunrise-today-btn').addEventListener('click', function(){
       sunDate = new Date();
-      var center = map.getCenter();
-      renderSunriseTimes(center, sunDate);
+      moonSliderMinutes = null;
+      if (window._moonSliderInit) window._moonSliderInit();
+      renderSunriseTimes(map.getCenter(), sunDate);
       renderActiveSunPanelTab();
-      if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+      updateSkyDiagram();
     });
     document.getElementById('sunrise-date-input').addEventListener('change', function(){
       var parts = this.value.split('-');
       if (parts.length === 3){
         sunDate = new Date(Number(parts[0]), Number(parts[1])-1, Number(parts[2]));
-        var center = map.getCenter();
-        renderSunriseTimes(center, sunDate);
+        renderSunriseTimes(map.getCenter(), sunDate);
         renderActiveSunPanelTab();
-        if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
+        updateSkyDiagram();
       }
     });
     document.querySelectorAll('.sun-tab-btn[data-suntab]').forEach(function(btn){
@@ -24011,8 +24252,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('sunrise-arc-toggle').addEventListener('change', function(){
       SUNRISE_ARC_ON = this.checked;
-      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
-      else clearSunArc();
+      updateSkyDiagram();
+    });
+    document.getElementById('moon-arc-toggle').addEventListener('change', function(){
+      MOON_ARC_ON = this.checked;
+      updateSkyDiagram();
     });
 
     // Time slider — scrub sun position through the day
@@ -24045,17 +24289,45 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         label.textContent = sliderMinutesToTime(mins);
         var pct = mins / 1440 * 100;
         if (sliderMarker){ sliderMarker.style.left = pct + '%'; sliderMarker.style.display = ''; }
-        if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+        updateSkyDiagram();
       });
 
       document.getElementById('sunrise-slider-now-btn').addEventListener('click', function(){
         sunSliderMinutes = null;
         initSliderToNow();
-        if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
+        updateSkyDiagram();
       });
 
       // Init on panel open
       window._sunSliderInit = initSliderToNow;
+    })();
+
+    // Moon-position time slider (Moon tab) — drives the map bearing line + the tab's readout.
+    (function(){
+      var slider = document.getElementById('moon-time-slider');
+      var label  = document.getElementById('moon-slider-time-label');
+      function fmt(mins){
+        var h = Math.floor(mins/60), m = mins % 60, ampm = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+        return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+      }
+      function initToNow(){
+        var now = new Date();
+        slider.value = now.getHours() * 60 + now.getMinutes();
+        moonSliderMinutes = null;
+        label.textContent = fmt(parseInt(slider.value)) + ' (now)';
+      }
+      slider.addEventListener('input', function(){
+        moonSliderMinutes = parseInt(this.value);
+        label.textContent = fmt(moonSliderMinutes);
+        renderMoonTab(map.getCenter(), sunDate);
+        updateSkyDiagram();
+      });
+      document.getElementById('moon-slider-now-btn').addEventListener('click', function(){
+        initToNow();
+        renderMoonTab(map.getCenter(), sunDate);
+        updateSkyDiagram();
+      });
+      window._moonSliderInit = initToNow;
     })();
 
     document.getElementById('elev-done-btn').addEventListener('click', function(){

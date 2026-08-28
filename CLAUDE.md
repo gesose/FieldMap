@@ -948,15 +948,18 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `.firebaserc` are version-controlled. See Architecture notes' "Read-only item/trip sharing" entry and its
   "Session — Bug B" sub-bullet.
 - Solunar (moon-phase activity prediction) is a new Sun / Moon / Solunar tab toggle inside the existing
-  Sunrise/Sunset panel — the Sun tab is unchanged; Moon shows phase + rise/set + overhead/underfoot times;
-  Solunar shows ±60-min major periods (around lunar transit/anti-transit) + ±30-min minor periods (around
-  moonrise/moonset) + a colour-coded day rating (Excellent/Good/Fair/Poor) with a formula explainer and an
-  always-visible "traditional prediction, not established science / FieldMap's own model" disclaimer. All
-  client-side on the SunCalc library the panel already loads, plus an inlined hour-angle lunar meridian
-  finder (SunCalc has no transit function) verified against USNO and a full ephemeris to within ~4 min. Also
-  fixed a pre-existing bug in the same code: the Sun tab was showing the previous day's sunrise/sunset at
-  western longitudes (SunCalc.getTimes needs a local-noon anchor, not midnight). See Architecture notes'
-  "Solunar" entry for the full design and verification.
+  Sunrise/Sunset panel — the Sun tab is unchanged; the Moon tab shows the moon's phase, rise/set, overhead/
+  underfoot times, a real `getMoonPosition()`-driven **moon-path sky diagram on the map** (silver-blue arc,
+  distinct from the sun arc) with a dashed **"which way to face" bearing line** (compass direction + altitude
+  to the moon at a picked time, defaulting to real-time — for photo/backlighting planning); the Solunar tab
+  shows ±60-min major periods (around lunar transit/anti-transit) + ±30-min minor periods (around moonrise/
+  moonset) + a colour-coded day rating (Excellent/Good/Fair/Poor) with a formula explainer and an always-
+  visible "traditional prediction, not established science / FieldMap's own model" disclaimer, and no map
+  overlay (it's a "when," not a "where"). All client-side on the SunCalc library the panel already loads,
+  plus an inlined hour-angle lunar meridian finder (SunCalc has no transit function) verified against USNO
+  and a full ephemeris to within ~4 min. Also fixed a pre-existing bug in the same code: the Sun tab was
+  showing the previous day's sunrise/sunset at western longitudes (SunCalc.getTimes needs a local-noon
+  anchor, not midnight). See Architecture notes' "Solunar" entry for the full design and verification.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -7846,6 +7849,42 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     arc rendered correctly earlier in this same session on v2.76.0 (screenshot), and the only arc change is
     one `getTimes` call wrapped in `sunDayNoon()` (its `getPosition` sampling loop is untouched).
   - APP_VERSION 2.75.2 → 2.76.0 (minor — new feature), SHELL_CACHE v204 → v205.
+  - **Session (Moon-position sky diagram + "which way to face" bearing line)** — two things: (a) a real bug
+    (the Moon tab showed the *Sun* tab's arc on the map, because the sun arc is a map overlay driven by
+    `SUNRISE_ARC_ON`, not by which tab is open), (b) a new moon-position diagram + bearing line.
+    - **New map overlay**: `moon-arc-source`/`moon-arc-line` (silver-blue `#9fb2cc` path of the moon across
+      the sky for the whole local day, broken wherever the moon is below the horizon) + `moon-dash-source`/
+      `moon-dash-line` (brighter `#d6e0f0` dashed "face this way" bearing line from map centre to the moon
+      dot). Added in `reinitializeLayers()` right after the sun-arc sources; restored on style switch by the
+      same tail hook. Markers: moon dot, a `bearing° cardinal · alt°↑` label by the dot, and `↑ moonrise` /
+      `↓ moonset` time labels at the arc ends. Geometry is byte-identical to `renderSunArc` (`az = azimuth +
+      π`, `pt = [lat + d·cos(az), lng + d·sin(az)/cosLat]`) — uses `SunCalc.getMoonPosition().azimuth/altitude`
+      (real position, per the task; `azToCompassBearing(az) = (az·180/π + 180) mod 360` → 0 = N, clockwise).
+    - **`updateSkyDiagram()`** is the single decider of which sky overlay (if any) is on the map, keyed off
+      `sunPanelTab`: Sun → sun arc (if `SUNRISE_ARC_ON`), Moon → moon arc (if `MOON_ARC_ON`), Solunar → NONE
+      (per the task — Solunar is a "when" not a "where"). Every date-change / slider / tab-switch / panel-open
+      / style-reload / map-move path now routes through it (replacing the scattered `if (SUNRISE_ARC_ON)
+      renderSunArc(...)` calls). A `moveend` handler was also added so both arcs now follow a map pan (the
+      sun arc previously only re-centred on `zoomend` — the panel's own comment already claimed pan-follow).
+    - **Moon tab UI** (now real content, not the old text-only stub): a phase card, a **"Face this direction
+      to see the moon"** headline (cardinal + degrees + `N° above the horizon`), moonrise/moonset + overhead/
+      underfoot times, a **"Moon position" time slider** (0-1439 min of `sunDate`) with a **Now** button, and
+      a **"Show moon path on map"** checkbox (`MOON_ARC_ON`, default on). `moonSliderMinutes` (null = track
+      real-now on today / same clock-time projected onto another date; a number = that minute of `sunDate`).
+      prev/next/date-input KEEP the picked time (plan the same shot the next night); only **Today** snaps back
+      to now. When the moon is below the horizon at the aimed-at time, the headline instead reads "Moon is
+      below the horizon … Rises [time] facing [bearing]" and no bearing line is drawn (the arc still shows the
+      full path).
+    - **Verified live**: the moon arc + bearing line + dot + rise/set labels render on the map (screenshot,
+      during a window when this sandbox's Mapbox tiles loaded), visually distinct from the sun arc; tab
+      switching correctly swaps the overlay (sun→moon clears the sun arc & draws the moon arc — confirmed via
+      source feature counts 5→0 / 0→2; moon→solunar clears both; solunar→sun restores the sun arc); the
+      bearing line updates as the slider time changes (9 PM ESE 109°/16° → 11 PM SE 134°/36°) and disappears
+      when the moon is below the horizon; slider persists across prev/next and resets on Today. **Accuracy**:
+      `azToCompassBearing(getMoonPosition().azimuth)` and the altitude were cross-checked against
+      astronomy-engine (`Horizon`) over 5 place/time cases — **worst 2.1° bearing, 1.7° altitude** (SunCalc's
+      inherent truncated-theory limit; fine for photo planning). Zero console errors; `node --check` clean.
+  - APP_VERSION 2.76.0 → 2.77.0, SHELL_CACHE v205 → v206.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10836,3 +10875,19 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Sun-arc final visual re-check blocked by the sandbox's intermittent Mapbox style-load stall, but the arc
   rendered fine earlier this session on the built version and its code is all but untouched. APP_VERSION
   2.75.2 → 2.76.0, SHELL_CACHE v204 → v205.
+- Session (Moon-position sky diagram + moon-direction bearing line) — real-device bug: the Moon tab showed
+  the Sun tab's arc (the sun arc is a map overlay keyed off `SUNRISE_ARC_ON`, not the open tab). Built a real
+  moon-position diagram: `SunCalc.getMoonPosition()`-driven silver-blue arc of the moon across the sky
+  (`moon-arc-source`/`-line`, mirroring `renderSunArc`'s geometry exactly), plus a dashed "which way to face"
+  bearing line (`moon-dash-source`/`-line`) from map centre to the moon dot with a `bearing° cardinal · alt°`
+  label. A new `updateSkyDiagram()` decides which overlay is on the map per tab: Sun→sun arc, Moon→moon arc,
+  Solunar→none (a "when" not a "where"). Moon tab UI: a "Face this direction" headline (cardinal + degrees +
+  altitude), a "Moon position" time slider + Now button (defaults to real-time, pick any time to plan ahead —
+  slider persists across prev/next so "same shot the next night" works, Today resets it), and a "Show moon
+  path on map" toggle. Below-horizon at the aimed time → headline shows "rises [time] facing [bearing]", no
+  bearing line, arc still drawn. Verified live: the arc + bearing line + dot + moonrise/moonset labels render
+  (screenshot), visually distinct from the sun arc; tab-switch swaps the overlay correctly (source feature
+  counts); the bearing line tracks the slider time and hides below the horizon; `azToCompassBearing(getMoon
+  Position().azimuth)` + altitude cross-checked vs astronomy-engine — worst 2.1° / 1.7°. Zero console errors,
+  `node --check` clean. APP_VERSION 2.76.0 → 2.77.0, SHELL_CACHE v205 → v206. See Architecture notes' "Solunar"
+  entry, its "Session (Moon-position sky diagram…)" sub-bullet.
