@@ -1903,7 +1903,11 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     check, gated on `!shouldShowOnboarding()` — not because the two conditions can ever really coexist (a
     genuinely first-ever install can't have an activeTripId set yet — every path that sets one requires a
     usable, past-onboarding app), but as cheap insurance against ever stacking two centered modals with no
-    arbitration between them.
+    arbitration between them. Its "Start a new trip" button (`#trip-startup-new-btn`) opens the trip picker
+    via `openTripPickerForDevice()` — it was missing `e.stopPropagation()`, so the click bubbled to the
+    outside-click-dismiss listener and re-hid the picker it had just opened (the exact `OUTSIDE_CLICK_DISMISS_IDS`
+    gotcha; fixed in the panel-trigger audit session — see that session-history entry). The other two buttons
+    (`-continue-btn` / `-end-btn`) open no dismiss-list panel and don't need the guard.
   - Persistent indicator (#active-trip-chip, updateActiveTripIndicator): ALWAYS visible now (Session 19 fix)
     — originally hidden entirely with no active trip, which meant a fresh account with zero trips ever
     created had no indicator AND no startup prompt (that only ever fires when a trip is already active),
@@ -10642,3 +10646,50 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   modal, `44 items`). All modals cancelled — zero shares created, geoff's data untouched, zero console
   errors. APP_VERSION 2.75.0 → 2.75.1, SHELL_CACHE v202 → v203. See Architecture notes' "Read-only item/trip
   sharing" entry (its "Session — Settings 'Share a trip…' button dead" sub-bullet).
+- Session (preventive panel-trigger audit — the "missing e.stopPropagation() on a panel-opening button"
+  bug class) — this class had been found and fixed independently 4× (Session 53 Export menu, tap-anywhere
+  trip picker, `openDrawerConditionsForecast`'s "10-day forecast" link, the Settings "Share a trip…" button).
+  Confirmed the actual current variable names live (not assumed): `FLOATING_PANEL_IDS` (10 ids), `PANEL_SCRIM_IDS`
+  (`layers-panel`/`filter-panel`/`settings-panel`/`weather-panel`/`wildlife-panel`/`gmu-state-panel`/`trip-picker-panel`),
+  `OUTSIDE_CLICK_DISMISS_IDS` = `PANEL_SCRIM_IDS` + `sort-menu`/`export-menu`/`mobile-sort-menu`. The
+  vulnerable pattern: a click handler synchronously opens one of those 10 panels, the trigger element is NOT
+  inside that panel, and the click bubbles (no `e.stopPropagation()`) to the document-level listener
+  (index.html ~line 25022) which iterates `OUTSIDE_CLICK_DISMISS_IDS` and hides any open panel not containing
+  `e.target` — re-closing the just-opened panel in the same event. `sunrise-panel`/`compass-panel`/`tap-stack-panel`
+  are in `FLOATING_PANEL_IDS` but deliberately NOT in the scrim/dismiss lists, so they're outside this bug
+  class entirely. Traced every trigger of every one of the 10 panels (grepped all callers of
+  `openTripPickerForDevice`/`openTripPickerForForm`/`openWeatherPanel`/`openActiveLayersPanel`/
+  `openWildlifeCategoryPicker`, plus every inline `.classList.remove/toggle('hidden')` on `layers-panel`/
+  `filter-panel`/`settings-panel`/`gmu-state-panel`/`sort-menu`/`export-menu`/`mobile-sort-menu`, plus inline
+  `onclick=` attributes). **Full result** — one new bug found and fixed, everything else already guarded:
+  - **layers-panel** ← `layers-btn` ✓ guarded.
+  - **filter-panel** ← `sheet-filter-btn` ✓ guarded.
+  - **settings-panel** ← `sheet-settings-btn` ✓ guarded; the `?share=` deep-link path opens it from an async
+    callback (never a synchronous click), N/A.
+  - **weather-panel** ← `sheet-weather-btn` ✓ guarded; `FieldMap.openDrawerConditionsForecast(event)` ✓
+    guarded (`if (event) event.stopPropagation()` — verified live it stops propagation to document).
+  - **wildlife-panel** ← `active-layers-chip` ✓; `wildlife-{biggame,uplandgame,fish}-open-btn` ×3 ✓;
+    `wildlife-{cat}-quick-toggle` ×3 (`change` handler → `openWildlifeCategoryPicker` when checked-with-nothing-
+    configured) — **NOT vulnerable**, verified live: a checkbox's `change` fires as the `click`'s default
+    action, *after* the `click` event has already finished bubbling to document, so the panel opens cleanly
+    and nothing re-closes it (real `.click()` on the uplandgame toggle with no active species: picker opened
+    and stayed open, checkbox correctly reverted).
+  - **gmu-state-panel** ← `gmu-layers-open-btn` ✓ guarded.
+  - **trip-picker-panel** ← `active-trip-chip` ✓; `{pin,track,polygon,bearing,rangering,buffer}-trip-btn` ×6
+    ✓; `FieldMap.tapAnywhereOpenTripPicker(event)` ✓ (verified live); `share-trip-btn` ✓ (previous session's
+    fix); **`trip-startup-new-btn` ("Start a new trip" in the boot-time `#trip-startup-modal`) ✗ MISSING —
+    the one bug this audit found**. Confirmed live: bubbling `.click()` → `#trip-picker-panel` opened then
+    re-hidden same tick; non-bubbling click → stayed open. Button lives inside `#trip-startup-modal` (not in
+    the dismiss list, and not `.contains()` the picker), so the dismiss listener closed the picker. Fixed
+    with `e.stopPropagation()`, matching the other five trip-picker triggers.
+  - **sort-menu** ← `sort-btn` ✓ guarded.
+  - **export-menu** ← `sheet-export-btn` ✓ guarded (Session 53).
+  - **mobile-sort-menu** ← `mobile-sort-btn` ✓ guarded.
+  Verified live in the real app (signed in as the real geoff@theranchmine.com, map rendered): real
+  `computer`-tool click on "Start a new trip" → "SWITCH TRIP" picker opens and **stays open** (real trips
+  listed). Regression sweep — real bubbling `.click()` on all 12 checked triggers (`layers-btn`,
+  `sheet-filter-btn`, `sheet-settings-btn`, `sheet-weather-btn`, `sheet-export-btn`, `gmu-layers-open-btn`,
+  `active-layers-chip`, `wildlife-biggame-open-btn`, `active-trip-chip`, `sort-btn`, `mobile-sort-btn`,
+  `trip-startup-new-btn`) + the 6 `*-trip-btn` + `share-trip-btn` + the uplandgame quick-toggle: every one
+  "opens and stays open", zero regressions, zero console errors. APP_VERSION 2.75.1 → 2.75.2, SHELL_CACHE
+  v203 → v204.

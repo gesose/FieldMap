@@ -3521,7 +3521,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.75.1';
+  var APP_VERSION = '2.75.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -24757,7 +24757,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('trip-startup-continue-btn').addEventListener('click', function(){
       document.getElementById('trip-startup-modal').classList.add('hidden');
     });
-    document.getElementById('trip-startup-new-btn').addEventListener('click', function(){
+    document.getElementById('trip-startup-new-btn').addEventListener('click', function(e){
+      // e.stopPropagation() required — openTripPickerForDevice() opens #trip-picker-panel
+      // (in OUTSIDE_CLICK_DISMISS_IDS); without stopping this click it bubbles to the
+      // document-level outside-click listener, which sees the picker now open and this button
+      // (inside #trip-startup-modal, not #trip-picker-panel) as "outside it," and re-hides the
+      // panel this click just opened. Same gotcha as active-trip-chip / share-trip-btn / the
+      // *-trip-btn handlers. (trip-startup-continue-btn / -end-btn don't open a panel, so they
+      // don't need it.)
+      e.stopPropagation();
       document.getElementById('trip-startup-modal').classList.add('hidden');
       openTripPickerForDevice();
     });
