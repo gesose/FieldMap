@@ -10693,3 +10693,38 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `trip-startup-new-btn`) + the 6 `*-trip-btn` + `share-trip-btn` + the uplandgame quick-toggle: every one
   "opens and stays open", zero regressions, zero console errors. APP_VERSION 2.75.1 → 2.75.2, SHELL_CACHE
   v203 → v204.
+- Session (solunar/moon feasibility investigation — research-only, no code changes, no version bump): scoping
+  a solunar (major/minor feeding periods) + moon-phase feature for the existing Sunrise/Sunset tool.
+  **SunCalc**: v1.8.0, loaded from cdnjs (`suncalc.min.js`, also precached in `service-worker.js`'s
+  `SHELL_FILES`). Full API surface (read from the real minified source): `getPosition`, `getTimes`, `times`,
+  `addTime`, `getMoonPosition` → `{azimuth, altitude, distance, parallacticAngle}`, `getMoonIllumination` →
+  `{fraction, phase, angle}`, `getMoonTimes` → `{rise, set}` (or `{alwaysUp}`/`{alwaysDown}`). **Currently
+  used**: `getTimes`/`getPosition` (sun times list + sun-path arc), and — already — `getMoonTimes` +
+  `getMoonIllumination` in `renderSunriseTimes()` (index.html ~20643), which renders a moon row: phase
+  icon+name (`Math.round(illum.phase*8)%8`), illumination %, and moonrise/moonset. `getMoonPosition` is
+  present in the library but **not called anywhere** in the app yet. **What's genuinely free** from existing
+  SunCalc calls: minor periods (center a ~1h window on moonrise/moonset — already have the times), and all
+  phase weighting / day-rating inputs / phase name+icon (already computed). **What needs new logic**: SunCalc
+  has **no lunar-transit / meridian-crossing function**, and transit + anti-transit (moon overhead / moon
+  underfoot) are what drive the *major* periods — the primary solunar signal. Recommended approach: sweep
+  `getMoonPosition(t, lat, lng).altitude` across a ~26h window (~10-min steps, ~156 pure-trig calls — cheap,
+  same order as the sun-arc's own per-render sampling) to find altitude local maxima (transit) and minima
+  (anti-transit), then parabolic/bisection-refine each to minute accuracy — the same Hermite-over-samples
+  technique SunCalc itself uses internally for `getMoonTimes`. ~40–70 lines, needs edge-case care (0/1/3
+  majors per calendar day near midnight boundaries; lunar day ≈ 24h50m; polar always-up/down). A cleaner-but-
+  more-fragile alternative is to inline ~10 lines of SunCalc's internal moon-coords + sidereal-time math to
+  get the hour angle H directly (transit at H=0, anti-transit at H=π, near-linear so trivially interpolated)
+  — rejected for the recommendation because it means copying library internals; altitude-sweep uses only the
+  public API. **Also needs**: period-window construction + overlap merge; classification vs. sun times
+  (daylight/twilight/dark, "prime" = major/minor overlapping dawn/dusk); a **day-rating model** (there is NO
+  canonical solunar formula — Solunar.org and every app differ — so this is a deliberate design decision,
+  not math); a new collapsible section (or Sun/Moon/Solunar view toggle) in `#sunrise-panel` (date nav
+  prev/next/today/date-input is already wired — solunar just hooks the same re-render; note `renderSunriseTimes`
+  is NOT re-called on map pan today, only `renderSunArc` is); a non-science disclaimer matching the app's
+  existing convention; verification of transit times against a reference (USNO / timeanddate.com) for a few
+  dates/locations before wiring in. **Scope verdict**: the "we already have the math" framing is *partly*
+  true but understates it — minor periods + phase are free, but the major-period transit finder is real
+  (if modest) new numerical code SunCalc doesn't provide, and the rating model needs a design call. Realistic
+  estimate: one focused session, comparable to Session 21's Range Ring/Buffer geo-math (add one missing
+  primitive, verify it standalone, then build features + UI on it) — not a quick 20-line drop-in. No design
+  chosen or code written this session.
