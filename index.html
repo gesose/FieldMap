@@ -3521,7 +3521,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.75.0';
+  var APP_VERSION = '2.75.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -24807,7 +24807,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
 
     // ── Sharing wiring ──
-    document.getElementById('share-trip-btn').addEventListener('click', function(){ pickTripToShare(); });
+    document.getElementById('share-trip-btn').addEventListener('click', function(e){
+      // e.stopPropagation() is required — trip-picker-panel is in OUTSIDE_CLICK_DISMISS_IDS, so
+      // without it this same click bubbles to the document-level outside-click listener, which
+      // sees the picker now open and this button (inside #settings-panel, not #trip-picker-panel)
+      // as "outside it," and re-hides the very panel this click just opened. Same gotcha the
+      // pin-trip-btn / active-trip-chip / tapAnywhereOpenTripPicker handlers already guard against.
+      // pickTripToShare() is the correct shared entry point (== window.FieldMap.openShareTripPicker):
+      // it opens the trip picker, then routes the pick through the exact same openShareModal('trip', …)
+      // the sidebar's window.FieldMap.shareTripWithUser() uses — only the propagation guard was missing.
+      e.stopPropagation();
+      pickTripToShare();
+    });
     document.getElementById('share-modal-cancel-btn').addEventListener('click', closeShareModal);
     document.getElementById('share-modal-done-btn').addEventListener('click', closeShareModal);
     document.getElementById('share-modal-create-btn').addEventListener('click', submitShareModal);

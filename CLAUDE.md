@@ -7728,6 +7728,34 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       app's own live map (harness-proven only, same standing Mapbox-limbo limitation as the prior two
       sessions).
     - APP_VERSION 2.74.0 → 2.75.0, SHELL_CACHE v201 → v202.
+  - **Session — Settings "Share a trip…" button dead (real-device report)**: the Settings → Sharing
+    "Share a trip…" button (`#share-trip-btn`) did nothing on click; the sidebar's own ↗ trip-group share
+    button (visible when sorting "By trip") worked. Investigated first: the button's handler DID fire and DID
+    open the trip picker — `renderTripPickerList()` ran and `#trip-picker-panel` had `.hidden` removed — but
+    the panel was `display:none` again within the same tick, with zero errors thrown. Confirmed the exact
+    mechanism live (a non-bubbling synthetic click left the picker open; a normal bubbling click closed it):
+    the wiring at `bindUI` was `document.getElementById('share-trip-btn').addEventListener('click',
+    function(){ pickTripToShare(); })` — **no `e.stopPropagation()`**, so the same click bubbled to the
+    document-level outside-click listener (line ~25017), which iterates `OUTSIDE_CLICK_DISMISS_IDS` (includes
+    `trip-picker-panel` via `PANEL_SCRIM_IDS`), saw the picker now open and `e.target` (`#share-trip-btn`,
+    inside `#settings-panel`, not `#trip-picker-panel`) as "outside it," and re-hid it. The identical gotcha
+    the `pin-trip-btn`/`track-trip-btn`/… array, the `active-trip-chip` handler, and `tapAnywhereOpenTripPicker`
+    already guard against — the Settings button was just wired without the guard. The sidebar's ↗ handler was
+    never affected: it already calls `e.stopPropagation()`, AND it calls `window.FieldMap.shareTripWithUser
+    (tripId)` which opens the share `.modal-overlay` directly (a modal, not a `.floating-panel` — the
+    outside-click dismiss for panels doesn't touch it), never the trip picker. Fix: added `e.stopPropagation()`
+    to the `#share-trip-btn` handler. `pickTripToShare()` (== `window.FieldMap.openShareTripPicker`) is the
+    correct function and is unchanged — it's the shared entry point that opens the picker then routes the
+    pick through the exact same `openShareModal('trip', …)` the sidebar's `shareTripWithUser()` uses; the
+    Settings path genuinely needs the picker first (no trip pre-selected), so "reuse the same function" here
+    means the shared modal path, not `shareTripWithUser` (which requires a known trip id). Verified live in
+    the real app (signed in as the real geoff@theranchmine.com — the app map actually rendered this session):
+    real mouse click on Settings "Share a trip…" → the "SET TRIP" picker opened and STAYED open (real trips
+    listed) → clicking "Oregon Favorites" → the real "Share trip" modal (`"Oregon Favorites" — 2 items …`,
+    recipient-email input, "must sign into FieldMap with this exact address"); the sidebar ↗ confirmed still
+    working unchanged (clicked "2026 NE AZ Camp" ↗ → same modal, `44 items`). Every modal cancelled — zero
+    shares created (`listSentShares()` = 0), geoff's data untouched, zero console errors.
+    - APP_VERSION 2.75.0 → 2.75.1, SHELL_CACHE v202 → v203.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10593,3 +10621,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   limitation as the prior two sessions). APP_VERSION 2.74.0 → 2.75.0, SHELL_CACHE v201 → v202. See
   Architecture notes' "Read-only item/trip sharing" entry (its "Session — shared Area/Track status colour"
   sub-bullet).
+- Session (Settings "Share a trip…" button dead) — real-device report: the Settings → Sharing "Share a
+  trip…" button did nothing; the sidebar's own ↗ trip-group share button worked. Investigated first (per
+  explicit instruction, not assumed): the handler DID fire and DID open `#trip-picker-panel` (list rendered,
+  `.hidden` removed) — but the panel was re-hidden within the same tick, no error. Confirmed the mechanism
+  live (non-bubbling synthetic click → picker stays open; normal bubbling click → picker closes): the
+  `#share-trip-btn` handler was wired without `e.stopPropagation()`, so the click bubbled to the
+  document-level outside-click listener, which — `trip-picker-panel` being in `OUTSIDE_CLICK_DISMISS_IDS`
+  via `PANEL_SCRIM_IDS` — saw the picker open and the button (inside `#settings-panel`) as "outside it" and
+  re-hid it. Exactly the gotcha `pin-trip-btn`/`active-trip-chip`/`tapAnywhereOpenTripPicker` already guard
+  against. The sidebar ↗ was never affected: it already calls `e.stopPropagation()` and opens the share
+  `.modal-overlay` directly via `window.FieldMap.shareTripWithUser(tripId)` (a modal, not a panel).
+  Fix: one line — added `e.stopPropagation()` to the `#share-trip-btn` handler; `pickTripToShare()`
+  (`window.FieldMap.openShareTripPicker`, the shared entry point that opens the picker then routes the pick
+  through the same `openShareModal('trip', …)` the sidebar uses) is unchanged and correct — the Settings
+  path genuinely needs the picker first since no trip is pre-selected. Verified live in the real app (signed
+  in as the real geoff@theranchmine.com, map actually rendered this session): real click on Settings "Share
+  a trip…" → "SET TRIP" picker opens and stays open → pick "Oregon Favorites" → real "Share trip" modal
+  (`2 items`, recipient-email input); sidebar ↗ re-confirmed unchanged (clicked "2026 NE AZ Camp" ↗ → same
+  modal, `44 items`). All modals cancelled — zero shares created, geoff's data untouched, zero console
+  errors. APP_VERSION 2.75.0 → 2.75.1, SHELL_CACHE v202 → v203. See Architecture notes' "Read-only item/trip
+  sharing" entry (its "Session — Settings 'Share a trip…' button dead" sub-bullet).
