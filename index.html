@@ -1159,6 +1159,13 @@
   .wildlife-tab-btn.active{background:var(--accent);color:#2a1208;font-weight:600;}
   .wildlife-tab-btn + .wildlife-tab-btn{border-left:1px solid var(--border);}
 
+  .sun-tab-btn{
+    flex:1;padding:8px 4px;font-size:12px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  .sun-tab-btn.active{background:var(--accent);color:#2a1208;font-weight:600;}
+  .sun-tab-btn + .sun-tab-btn{border-left:1px solid var(--border);}
+
   #mobile-handle{display:none;}
 
   /* Mobile */
@@ -2122,31 +2129,41 @@
     <button class="btn btn-small" id="sunrise-next-btn" title="Next day">&#8250;</button>
     <button class="btn btn-small" id="sunrise-today-btn">Today</button>
   </div>
-  <!-- Timeline bar -->
-  <div style="margin-bottom:10px;">
-    <div id="sunrise-timeline-bar" style="height:20px;border-radius:5px;position:relative;overflow:hidden;background:#0d1117;">
-      <div id="sunrise-now-marker" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:0.9;z-index:2;"></div>
-      <div id="sunrise-slider-marker" style="position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.45);z-index:1;display:none;"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;" id="sunrise-timeline-labels"></div>
+  <!-- Sun / Moon / Solunar tab toggle -->
+  <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px;">
+    <button class="sun-tab-btn active" data-suntab="sun">Sun</button>
+    <button class="sun-tab-btn" data-suntab="moon">Moon</button>
+    <button class="sun-tab-btn" data-suntab="solunar">Solunar</button>
   </div>
-  <!-- Time slider -->
-  <div style="margin-bottom:12px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
-      <span style="font-size:11px;color:var(--text-muted);">Sun position</span>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span id="sunrise-slider-time-label" style="font-size:12px;font-weight:600;color:var(--text);font-family:var(--font-mono);"></span>
-        <button id="sunrise-slider-now-btn" class="btn btn-small" style="font-size:10px;padding:3px 7px;">Now</button>
+  <div id="sun-tab-content">
+    <!-- Timeline bar -->
+    <div style="margin-bottom:10px;">
+      <div id="sunrise-timeline-bar" style="height:20px;border-radius:5px;position:relative;overflow:hidden;background:#0d1117;">
+        <div id="sunrise-now-marker" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:0.9;z-index:2;"></div>
+        <div id="sunrise-slider-marker" style="position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.45);z-index:1;display:none;"></div>
       </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;" id="sunrise-timeline-labels"></div>
     </div>
-    <input type="range" id="sunrise-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
+    <!-- Time slider -->
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+        <span style="font-size:11px;color:var(--text-muted);">Sun position</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span id="sunrise-slider-time-label" style="font-size:12px;font-weight:600;color:var(--text);font-family:var(--font-mono);"></span>
+          <button id="sunrise-slider-now-btn" class="btn btn-small" style="font-size:10px;padding:3px 7px;">Now</button>
+        </div>
+      </div>
+      <input type="range" id="sunrise-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
+    </div>
+    <!-- Times list -->
+    <div id="sunrise-times-list" style="margin-bottom:8px;"></div>
+    <!-- Toggle sun arc on map -->
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
+      <input type="checkbox" id="sunrise-arc-toggle" checked> Show sun path on map
+    </label>
   </div>
-  <!-- Times list -->
-  <div id="sunrise-times-list" style="margin-bottom:8px;"></div>
-  <!-- Toggle sun arc on map -->
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
-    <input type="checkbox" id="sunrise-arc-toggle" checked> Show sun path on map
-  </label>
+  <div id="moon-tab-content" class="hidden"></div>
+  <div id="solunar-tab-content" class="hidden"></div>
 </div>
 
 <!-- Compass HUD (compact — heading text only, lines are on the map) -->
@@ -3521,7 +3538,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.75.2';
+  var APP_VERSION = '2.76.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -20598,6 +20615,227 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Sunrise / Sunset ──
   var SUNRISE_ARC_ON = true;
 
+  // ════════ Solunar (moon-phase activity prediction) — powers the Sunrise panel's Moon / Solunar tabs ════════
+  // Day-anchor helper. SunCalc.getTimes MUST be called at local NOON, not local midnight: at
+  // western longitudes (e.g. US Mountain) a midnight anchor makes SunCalc's internal Julian-cycle
+  // rounding land on the PREVIOUS solar day, returning yesterday's sunrise/sunset. This was a
+  // pre-existing bug in the Sun tab whenever a specific date was picked; fixed here and used by
+  // every getTimes call in this panel.
+  function sunDayNoon(date){ return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0, 0); }
+  function sunDayMidnightMs(date){ return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime(); }
+
+  var MOON_PHASE_NAMES = ['New Moon','Waxing Crescent','First Quarter','Waxing Gibbous','Full Moon','Waning Gibbous','Last Quarter','Waning Crescent'];
+  var MOON_PHASE_ICONS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
+  var SOLUNAR_MAJOR_HALF_MS = 60 * 60 * 1000; // major period: ±60 min around moon transit / anti-transit
+  var SOLUNAR_MINOR_HALF_MS = 30 * 60 * 1000; // minor period: ±30 min around moonrise / moonset
+  var SOLUNAR_DISCLAIMER = 'Solunar theory — that fish and game feed more around the moon’s daily ' +
+    'overhead/underfoot and its rise/set — is a long-standing traditional prediction, not established ' +
+    'science. The day rating is FieldMap’s own simple model (moon phase + how much of the day’s periods ' +
+    'fall in low light), not an industry standard. Use it as a rough guide, not a guarantee.';
+
+  // Improved lunar position: SunCalc's own moonCoords keeps only the 6.289° equation-of-centre term;
+  // we add the next ~8 longitude / ~4 latitude periodic terms (Meeus, "Astronomical Algorithms" ch.47
+  // low-accuracy set) → position good to ~1-2 arcmin. Meridian-transit times land within ~2-4 min of
+  // USNO / a full VSOP-ELP ephemeris (verified against both across 11 locations × a full year, worst
+  // 4.1 min, zero cases over 5 min). Same J2000 "days since 2000" epoch as SunCalc, so it stays
+  // consistent with the rest of the SunCalc-based panel.
+  var _solRad = Math.PI / 180, _solObliq = 23.4397 * _solRad, _solDayMs = 86400000, _solTwoPi = Math.PI * 2;
+  function _solToDays(ms){ return ms / _solDayMs - 0.5 + 2440588 - 2451545; }
+  function _solSiderealTime(d, lw){ return _solRad * (280.16 + 360.9856235 * d) - lw; }
+  function _solMoonRa(d){
+    var Lp = _solRad * (218.316 + 13.176396 * d),
+        M  = _solRad * (134.963 + 13.064993 * d),
+        Mp = _solRad * (357.5291 + 0.98560028 * d),
+        D  = _solRad * (297.8502 + 12.19074912 * d),
+        F  = _solRad * (93.272 + 13.22935 * d), s = Math.sin;
+    var lng = Lp + _solRad * (6.289 * s(M) + 1.274 * s(2*D - M) + 0.658 * s(2*D) - 0.186 * s(Mp)
+      - 0.059 * s(2*M - 2*D) - 0.057 * s(2*D - Mp - M) + 0.053 * s(2*D + M) + 0.046 * s(2*D - Mp)
+      + 0.041 * s(M - Mp) - 0.035 * s(D) - 0.031 * s(M + Mp) - 0.015 * s(2*F - 2*D) + 0.011 * s(M - 4*D));
+    var lat = _solRad * (5.128 * s(F) + 0.281 * s(M + F) - 0.278 * s(M - F) - 0.173 * s(2*D - F)
+      + 0.055 * s(2*D - M - F) + 0.046 * s(2*D - M + F) + 0.033 * s(2*D + F) + 0.017 * s(2*M + F));
+    return Math.atan2(Math.sin(lng) * Math.cos(_solObliq) - Math.tan(lat) * Math.sin(_solObliq), Math.cos(lng));
+  }
+  function _solHourAngleRaw(ms, lngDeg){ var d = _solToDays(ms); return _solSiderealTime(d, _solRad * -lngDeg) - _solMoonRa(d); }
+  function _solHourAngleNear(ms, lngDeg, target){
+    var h = _solHourAngleRaw(ms, lngDeg);
+    while (h - target >  Math.PI) h -= _solTwoPi;
+    while (target - h >  Math.PI) h += _solTwoPi;
+    return h;
+  }
+  // Every hour-angle H = k·π crossing in [dayStartMs, dayStartMs+24h). even k = upper transit
+  // (moon overhead / on the meridian), odd k = lower transit (moon underfoot). Per calendar day
+  // this yields 1 or 2 events (successive same-type transits are always >24h apart, so 3+ is
+  // impossible; 1 happens ~7% of days when a transit falls just outside the day boundary).
+  // Works at any latitude incl. polar (hour angle is latitude-independent) — never throws.
+  function findMoonMeridianEvents(dayStartMs, lat, lng){
+    var dayEndMs = dayStartMs + _solDayMs, STEP = 600000, PAD = 5400000; // 10-min sweep, 90-min pad
+    var ts = [], hs = [], t, i;
+    for (t = dayStartMs - PAD; t <= dayEndMs + PAD; t += STEP){ ts.push(t); hs.push(_solHourAngleRaw(t, lng)); }
+    // phase-unwrap: true 10-min step in H is ~0.25 rad, so force |Δ| < π (kills the atan2 RA wrap)
+    for (i = 1; i < hs.length; i++){
+      while (hs[i] - hs[i-1] >  Math.PI) hs[i] -= _solTwoPi;
+      while (hs[i] - hs[i-1] < -Math.PI) hs[i] += _solTwoPi;
+    }
+    var events = [];
+    for (i = 0; i < hs.length - 1; i++){
+      var h0 = hs[i], h1 = hs[i + 1];
+      if (h1 <= h0) continue; // H is monotone-increasing after unwrap
+      for (var k = Math.floor(h0 / Math.PI) + 1; k * Math.PI <= h1; k++){
+        var target = k * Math.PI, a = ts[i], b = ts[i + 1];
+        var tm = a + (b - a) * (target - h0) / (h1 - h0); // linear seed, then bisection
+        for (var it = 0; it < 60; it++){
+          if (b - a < 100) break;
+          var fm = _solHourAngleNear(tm, lng, target) - target;
+          var fa = _solHourAngleNear(a, lng, target) - target;
+          if (fa === 0){ b = a = tm; break; }
+          if (fa * fm <= 0) b = tm; else a = tm;
+          tm = (a + b) / 2;
+        }
+        if (tm < dayStartMs || tm >= dayEndMs) continue;
+        events.push({ type: ((k % 2 + 2) % 2) === 0 ? 'transit' : 'antitransit', timeMs: tm });
+      }
+    }
+    events.sort(function(x, y){ return x.timeMs - y.timeMs; });
+    return events;
+  }
+
+  // Full solunar picture for one calendar day at (lat,lng). date's Y/M/D is used; time part ignored.
+  function computeSolunar(date, lat, lng){
+    var dayStartMs = sunDayMidnightMs(date), noon = sunDayNoon(date);
+    var meridian = findMoonMeridianEvents(dayStartMs, lat, lng);
+    var majors = meridian.map(function(ev){
+      return { kind: 'major', label: ev.type === 'transit' ? 'Moon overhead' : 'Moon underfoot', weight: 2,
+        center: new Date(ev.timeMs), start: new Date(ev.timeMs - SOLUNAR_MAJOR_HALF_MS), end: new Date(ev.timeMs + SOLUNAR_MAJOR_HALF_MS) };
+    });
+    var mt = SunCalc.getMoonTimes(new Date(dayStartMs), lat, lng);
+    var minors = [];
+    [['rise', 'Moonrise'], ['set', 'Moonset']].forEach(function(p){
+      var tt = mt[p[0]];
+      if (tt && !isNaN(tt.getTime())){
+        minors.push({ kind: 'minor', label: p[1], weight: 1, center: tt,
+          start: new Date(tt.getTime() - SOLUNAR_MINOR_HALF_MS), end: new Date(tt.getTime() + SOLUNAR_MINOR_HALF_MS) });
+      }
+    });
+    var periods = majors.concat(minors).sort(function(a, b){ return a.center - b.center; });
+    var illum = SunCalc.getMoonIllumination(noon);
+    var phaseIdx = Math.round(illum.phase * 8) % 8;
+    var phaseStrength = 1 - 4 * Math.min(illum.phase, Math.abs(illum.phase - 0.5), 1 - illum.phase); // 1 at new/full, 0 at quarters
+    var sun = SunCalc.getTimes(noon, lat, lng);
+    var sunUsable = sun.sunrise && sun.sunset && !isNaN(sun.sunrise.getTime()) && !isNaN(sun.sunset.getTime());
+    function darkFrac(pr){
+      if (!sunUsable) return 0.5; // neutral when the sun never rises/sets (polar day/night)
+      var dark = 0;
+      for (var j = 0; j <= 4; j++){
+        var tt = new Date(pr.start.getTime() + (pr.end - pr.start) * j / 4);
+        if (tt < sun.sunrise || tt > sun.sunset) dark++;
+      }
+      return dark / 5;
+    }
+    var wSum = 0, dSum = 0;
+    periods.forEach(function(pr){ pr.darkFraction = darkFrac(pr); wSum += pr.weight; dSum += pr.weight * pr.darkFraction; });
+    var lowLightScore = wSum ? dSum / wSum : 0.5;
+    var dayScore = 0.65 * phaseStrength + 0.35 * lowLightScore;
+    var rating = dayScore >= 0.72 ? 'Excellent' : dayScore >= 0.50 ? 'Good' : dayScore >= 0.30 ? 'Fair' : 'Poor';
+    return {
+      periods: periods, majorCount: majors.length, minorCount: minors.length,
+      moonAlwaysUp: !!mt.alwaysUp, moonAlwaysDown: !!mt.alwaysDown,
+      phase: { idx: phaseIdx, name: MOON_PHASE_NAMES[phaseIdx], icon: MOON_PHASE_ICONS[phaseIdx], illumPct: Math.round(illum.fraction * 100) },
+      rating: rating, dayScore: dayScore
+    };
+  }
+
+  // ── Sunrise-panel tab state + renderers ──
+  var sunPanelTab = 'sun'; // 'sun' | 'moon' | 'solunar'
+
+  function renderMoonTab(center, date){
+    var el = document.getElementById('moon-tab-content');
+    if (!el) return;
+    var sol = computeSolunar(date, center.lat, center.lng);
+    var mt = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(date)), center.lat, center.lng);
+    var overhead = null, underfoot = null;
+    sol.periods.forEach(function(p){ if (p.label === 'Moon overhead') overhead = p; else if (p.label === 'Moon underfoot') underfoot = p; });
+    function row(icon, label, val){
+      return '<div class="sunrise-time-row"><span class="sunrise-time-icon" style="font-size:14px;color:var(--text-muted);">' + icon + '</span>' +
+        '<span class="sunrise-time-label">' + label + '</span>' +
+        '<span class="sunrise-time-value" style="font-size:13px;">' + val + '</span></div>';
+    }
+    var html = '<div style="text-align:center;padding:4px 0 10px;">' +
+      '<div style="font-size:40px;line-height:1;">' + sol.phase.icon + '</div>' +
+      '<div style="font-size:14px;font-weight:600;margin-top:5px;">' + sol.phase.name + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);">' + sol.phase.illumPct + '% illuminated</div></div>';
+    html += row('↑', 'Moonrise', mt.rise ? formatTime12(mt.rise) : (mt.alwaysUp ? 'Up all day' : 'None today'));
+    html += row('↓', 'Moonset',  mt.set  ? formatTime12(mt.set)  : (mt.alwaysDown ? 'Down all day' : 'None today'));
+    html += row('◉', 'Moon overhead (transit)',  overhead  ? formatTime12(overhead.center)  : '—');
+    html += row('○', 'Moon underfoot (anti-transit)', underfoot ? formatTime12(underfoot.center) : '—');
+    el.innerHTML = html;
+  }
+
+  function renderSolunarTab(center, date){
+    var el = document.getElementById('solunar-tab-content');
+    if (!el) return;
+    var sol = computeSolunar(date, center.lat, center.lng);
+    var ratingColor = { Excellent: '#3a8f45', Good: '#7aa63f', Fair: '#c9932e', Poor: '#8a8f8c' }[sol.rating] || '#8a8f8c';
+    var html = '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;background:' +
+      ratingColor + '22;border:1px solid ' + ratingColor + ';margin-bottom:10px;">' +
+      '<span style="font-size:26px;line-height:1;">' + sol.phase.icon + '</span>' +
+      '<div><div style="font-size:15px;font-weight:700;color:' + ratingColor + ';">' + sol.rating + ' day</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);">' + sol.phase.name + ' · ' + sol.phase.illumPct +
+      '% illuminated</div></div></div>';
+    if (!sol.periods.length){
+      html += '<p class="hint" style="margin:8px 0;">No major or minor periods fall on this calendar day here' +
+        ((sol.moonAlwaysUp || sol.moonAlwaysDown) ? ' — the moon does not rise or set at this location today.' : '.') + '</p>';
+    } else {
+      html += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:5px;">Predicted feeding windows</div>';
+      sol.periods.forEach(function(p){
+        var isMajor = p.kind === 'major';
+        html += '<div class="sunrise-time-row"' + (isMajor ? ' style="font-weight:600;"' : '') + '>' +
+          '<span class="sunrise-time-icon" style="font-size:12px;color:' + (isMajor ? 'var(--accent)' : 'var(--text-muted)') + ';">' +
+          (isMajor ? '◉' : '○') + '</span>' +
+          '<span class="sunrise-time-label">' + (isMajor ? 'Major' : 'Minor') + ' — ' + p.label + '</span>' +
+          '<span class="sunrise-time-value" style="font-size:12px;">' + formatTime12(p.start) + '–' + formatTime12(p.end) + '</span></div>';
+      });
+    }
+    html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">' +
+      '<button id="solunar-explain-btn" class="link-btn" style="font-size:11px;color:var(--text-muted);">How is the day rating calculated?</button>' +
+      '<div id="solunar-explain" class="hidden" style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;">' +
+      'Score = 65% moon-phase strength (new &amp; full moons rate highest, quarter moons lowest) + 35% how much of ' +
+      'the day’s periods fall while the sun is down (major periods weighted double). ' +
+      '≥ 0.72 Excellent · ≥ 0.50 Good · ≥ 0.30 Fair · else Poor.</div></div>';
+    html += '<p class="hint" style="font-size:10px;line-height:1.5;margin-top:10px;">' + SOLUNAR_DISCLAIMER + '</p>';
+    el.innerHTML = html;
+    var b = document.getElementById('solunar-explain-btn');
+    if (b) b.addEventListener('click', function(){ document.getElementById('solunar-explain').classList.toggle('hidden'); });
+  }
+
+  // Re-render whichever of the Moon/Solunar tabs is showing (the Sun tab is driven by
+  // renderSunriseTimes, which every date-change path already calls).
+  function renderActiveSunPanelTab(){
+    if (typeof SunCalc === 'undefined') return;
+    var center = map.getCenter();
+    if (sunPanelTab === 'moon') renderMoonTab(center, sunDate);
+    else if (sunPanelTab === 'solunar') renderSolunarTab(center, sunDate);
+  }
+
+  function setSunPanelTab(tab){
+    sunPanelTab = tab;
+    ['sun', 'moon', 'solunar'].forEach(function(t){
+      var c = document.getElementById(t + '-tab-content');
+      if (c) c.classList.toggle('hidden', t !== tab);
+      var btn = document.querySelector('.sun-tab-btn[data-suntab="' + t + '"]');
+      if (btn) btn.classList.toggle('active', t === tab);
+    });
+    renderActiveSunPanelTab();
+    // the mobile dock sizes itself to panel height — re-measure after the content swap
+    var panel = document.getElementById('sunrise-panel');
+    if (panel && panel.classList.contains('sunrise-docked-panel')){
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){
+        var h = panel.offsetHeight || 180;
+        document.getElementById('map').style.bottom = (88 + h) + 'px';
+        map.resize();
+      }); });
+    }
+  }
+
   function sunriseDockOpen(){
     if (window.innerWidth > 760) return;
     var panel = document.getElementById('sunrise-panel');
@@ -20637,14 +20875,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     sunriseDockOpen();
     var center = map.getCenter();
     renderSunriseTimes(center, sunDate);
+    renderActiveSunPanelTab();
     if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
   }
 
   function renderSunriseTimes(center, date){
     if (typeof SunCalc === 'undefined'){ showToast('SunCalc not loaded'); return; }
-    var times = SunCalc.getTimes(date, center.lat, center.lng);
-    var moonTimes = SunCalc.getMoonTimes(date, center.lat, center.lng);
-    var moonIllum = SunCalc.getMoonIllumination(date);
+    // getTimes anchored at local noon (see sunDayNoon's comment — a midnight anchor returns the
+    // wrong solar day at western longitudes). getMoonTimes anchors itself internally to local
+    // midnight, so pass the day directly.
+    var times = SunCalc.getTimes(sunDayNoon(date), center.lat, center.lng);
+    var moonTimes = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(date)), center.lat, center.lng);
+    var moonIllum = SunCalc.getMoonIllumination(sunDayNoon(date));
 
     // Update date picker
     var y = date.getFullYear(), mo = date.getMonth()+1, dy = date.getDate();
@@ -20776,7 +21018,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!map.getSource('sun-arc-source')) return; // sources not ready yet (mid style-load)
 
     var drawCenter = center; // arc always draws at map center
-    var times = SunCalc.getTimes(date, center.lat, center.lng);
+    var times = SunCalc.getTimes(sunDayNoon(date), center.lat, center.lng); // noon anchor — see sunDayNoon
     var startTime = times.nightEnd || times.nauticalDawn || times.dawn;
     var endTime   = times.night   || times.nauticalDusk || times.dusk;
     if (!startTime || !endTime || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return;
@@ -23718,6 +23960,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         setTimeout(function(){
           var center = map.getCenter();
           renderSunriseTimes(center, sunDate);
+          renderActiveSunPanelTab();
           if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
         }, 400);
       }, function(){ showToast('Could not get location'); });
@@ -23731,18 +23974,21 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       sunDate = new Date(sunDate.getTime() - 86400000);
       var center = map.getCenter();
       renderSunriseTimes(center, sunDate);
+      renderActiveSunPanelTab();
       if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     });
     document.getElementById('sunrise-next-btn').addEventListener('click', function(){
       sunDate = new Date(sunDate.getTime() + 86400000);
       var center = map.getCenter();
       renderSunriseTimes(center, sunDate);
+      renderActiveSunPanelTab();
       if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     });
     document.getElementById('sunrise-today-btn').addEventListener('click', function(){
       sunDate = new Date();
       var center = map.getCenter();
       renderSunriseTimes(center, sunDate);
+      renderActiveSunPanelTab();
       if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
     });
     document.getElementById('sunrise-date-input').addEventListener('change', function(){
@@ -23751,8 +23997,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         sunDate = new Date(Number(parts[0]), Number(parts[1])-1, Number(parts[2]));
         var center = map.getCenter();
         renderSunriseTimes(center, sunDate);
+        renderActiveSunPanelTab();
         if (SUNRISE_ARC_ON) renderSunArc(center, sunDate);
       }
+    });
+    document.querySelectorAll('.sun-tab-btn[data-suntab]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        setSunPanelTab(btn.dataset.suntab);
+        // the "Hide/Show times" link only applies to the Sun tab's times list
+        var tb = document.getElementById('sunrise-toggle-times-btn');
+        if (tb) tb.style.display = (btn.dataset.suntab === 'sun') ? '' : 'none';
+      });
     });
     document.getElementById('sunrise-arc-toggle').addEventListener('change', function(){
       SUNRISE_ARC_ON = this.checked;

@@ -947,6 +947,16 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   `?share=<id>` deep link (still email-gated) gives a clean wrong-account message. `firebase.json` +
   `.firebaserc` are version-controlled. See Architecture notes' "Read-only item/trip sharing" entry and its
   "Session — Bug B" sub-bullet.
+- Solunar (moon-phase activity prediction) is a new Sun / Moon / Solunar tab toggle inside the existing
+  Sunrise/Sunset panel — the Sun tab is unchanged; Moon shows phase + rise/set + overhead/underfoot times;
+  Solunar shows ±60-min major periods (around lunar transit/anti-transit) + ±30-min minor periods (around
+  moonrise/moonset) + a colour-coded day rating (Excellent/Good/Fair/Poor) with a formula explainer and an
+  always-visible "traditional prediction, not established science / FieldMap's own model" disclaimer. All
+  client-side on the SunCalc library the panel already loads, plus an inlined hour-angle lunar meridian
+  finder (SunCalc has no transit function) verified against USNO and a full ephemeris to within ~4 min. Also
+  fixed a pre-existing bug in the same code: the Sun tab was showing the previous day's sunrise/sunset at
+  western longitudes (SunCalc.getTimes needs a local-noon anchor, not midnight). See Architecture notes'
+  "Solunar" entry for the full design and verification.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -7760,6 +7770,82 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     working unchanged (clicked "2026 NE AZ Camp" ↗ → same modal, `44 items`). Every modal cancelled — zero
     shares created (`listSentShares()` = 0), geoff's data untouched, zero console errors.
     - APP_VERSION 2.75.0 → 2.75.1, SHELL_CACHE v202 → v203.
+- Solunar (moon-phase activity prediction) — a Sun / Moon / Solunar tab toggle inside the existing
+  Sunrise/Sunset panel (`#sunrise-panel`). The Sun tab is the pre-existing view, unchanged. All the moon math
+  is client-side, built on the SunCalc library the panel already loads (`suncalc.min.js` 1.8.0, cdnjs + SW
+  precache).
+  - **Tab structure**: the day selector (prev/date-input/next/today) and location line are shared across all
+    3 tabs. `#sun-tab-content` wraps the timeline bar + slider + times list + "Show sun path" checkbox (all
+    the old content). `#moon-tab-content` / `#solunar-tab-content` are new sibling divs, `.hidden` by default.
+    `.sun-tab-btn` CSS mirrors `.wildlife-tab-btn` exactly. `sunPanelTab` ('sun'|'moon'|'solunar'),
+    `setSunPanelTab()`, `renderActiveSunPanelTab()` (dispatches to `renderMoonTab`/`renderSolunarTab`; the
+    Sun tab is already driven by `renderSunriseTimes`). Every date-change path (prev/next/today/date-input/
+    my-location) and `openSunrisePanel()` now also call `renderActiveSunPanelTab()`. Recalc is on panel-open
+    and date-change only — never on map pan (matches the Sun tab; per the design spec). `#sunrise-toggle-times-btn`
+    ("Hide/Show times") is hidden on the Moon/Solunar tabs (it only targets the Sun tab's list).
+  - **Lunar meridian-transit finder (`findMoonMeridianEvents(dayStartMs, lat, lng)`)** — the one piece SunCalc
+    doesn't provide. SunCalc's own `moonCoords` keeps only the single 6.289° equation-of-centre term
+    (position error up to ~1-2°), so the finder inlines the next ~8 longitude / ~4 latitude periodic terms
+    from Meeus "Astronomical Algorithms" ch.47 low-accuracy set (`_solMoonRa` → ~1-2 arcmin). It works in
+    **hour-angle space, NOT the altitude-sweep** the earlier research proposed: `_solHourAngleRaw(ms, lngDeg)
+    = siderealTime(d, lw) − moonRA(d)`, sampled every 10 min across [dayStart−90min, dayEnd+90min],
+    phase-unwrapped (the atan2 RA wrap makes H jump ±2π — force |Δ|<π), then every `H = k·π` crossing
+    linear-seeded + bisected. Even k = **upper transit** (moon overhead / on the meridian), odd k = **lower
+    transit** (moon underfoot). Hour-angle is latitude-independent, so this never throws at any latitude incl.
+    the exact poles (whether a pole "transit" is physically meaningful is moot — a hunter is never there;
+    Svalbard/Utqiagvik at 71-78° genuinely do transit). The altitude-sweep was tried first and rejected: it
+    was 2-3× less accurate (worst ~13 min vs ~4 min) because SunCalc's refraction term and the altitude
+    curve's shape near a deep-below-horizon lower transit distort where the apparent extremum falls.
+  - **Verification (the task's hard requirement — done in Node against two independent authoritative
+    references BEFORE building the UI)**: (1) **USNO** `aa.usno.navy.mil/api/rstt/oneday` "Upper Transit" —
+    6 locations, worst **3 min**, typically 0-2. (2) **astronomy-engine** (`SearchHourAngle`, VSOP87/ELP2000
+    grade — gives BOTH upper AND lower transit, unlike USNO's one-day API) — 11 locations (Ushuaia −55° to
+    Reykjavik 64°) × 72 days across all of 2025 = **1531 transit events, worst error 4.12 min, ZERO over
+    5 min**, ~81% within 3 min. Event-count agreement with astronomy-engine: 786/792 exact; the 6 differences
+    are all events within ~2 min of local midnight, listed on the adjacent calendar day (genuine boundary
+    ambiguity, not a miss). Then the **ported in-browser code** was re-checked against USNO (Boulder
+    2026-08-30: our 1:36 AM vs USNO 01:34) and astronomy-engine (2026-08-27 1-major day: our 11:45 vs ae
+    11:44 = 1 min). Scratch scripts in the session's scratchpad (`transit-ha2.js`, `verify4.js`, `verify5.js`,
+    `solunar.js`), not committed.
+  - **Edge cases** — the task's "0/1/3 majors per calendar day" premise is **wrong and was corrected**:
+    successive same-type lunar transits are always > 24 h apart (measured 24.64-25.13 h), so a calendar day
+    has **exactly 1 or 2** major periods, never 3, never (in practice at usable latitudes) 0 — confirmed by
+    our finder's own per-day distribution matching astronomy-engine's *exactly* over 11,680 day-samples
+    (1: 792, 2: 10,888). **1-major days** (~7%, when a transit falls just outside the day — e.g. any calendar
+    day the moon's upper transit lands after midnight) render 3 periods and show "Moon overhead — —" on the
+    Moon tab; verified live (2026-08-27 Boulder, Full Moon). **Polar always-up/always-down**: `SunCalc.getMoonTimes`
+    returns `{alwaysUp}`/`{alwaysDown}` → 0 minor periods, Moon tab shows "Up all day" / "None today", the
+    day-rating's low-light term falls back to a neutral 0.5 (sun never sets → can't classify); verified live
+    (Svalbard 78°N summer + winter — 2 majors, 0 minors, no crash).
+  - **Period construction**: **Major** = ±60 min around each transit/anti-transit (weight 2). **Minor** =
+    ±30 min around moonrise/moonset from `SunCalc.getMoonTimes` (weight 1). Sorted by centre time.
+  - **Day rating — FieldMap's own model, NOT an industry standard** (there is no canonical solunar formula;
+    every app differs). `dayScore = 0.65·phaseStrength + 0.35·lowLightScore`, where `phaseStrength =
+    1 − 4·min(phase, |phase−0.5|, 1−phase)` (1 at new & full moon, 0 at the quarters — traditional solunar
+    "best days" are almost purely phase-driven) and `lowLightScore` = weighted fraction of the day's periods
+    that fall while the sun is down (majors ×2). Bands: **≥ 0.72 Excellent · ≥ 0.50 Good · ≥ 0.30 Fair · else
+    Poor**. Sanity-checked over a 60-day span: new/full moon days rate Excellent tapering to Good, quarter-moon
+    days rate Poor/Fair, spread Excellent 12 / Good 19 / Fair 20 / Poor 9. The Solunar tab shows the rating
+    badge (colour-coded), the period list, a collapsible "How is the day rating calculated?" explainer, and a
+    non-negotiable always-visible disclaimer (`SOLUNAR_DISCLAIMER`) making the "traditional prediction, not
+    established science / FieldMap's own model" framing explicit — matches the app's convention for AQI / GMU
+    / Range-Ring style tools.
+  - **Pre-existing bug found and fixed in the same code**: `SunCalc.getTimes` must be anchored at local
+    **noon**, not local midnight — at western longitudes (US Mountain etc.) a midnight anchor makes SunCalc's
+    internal Julian-cycle rounding land on the **previous** solar day, so the Sun tab was showing *yesterday's*
+    sunrise/sunset whenever a specific date was picked via the date input. Confirmed live (Mountain TZ, pick
+    Oct 13 → panel showed Oct 12's 06:09 sunrise; noon-anchored gives Oct 13's correct 06:10). Fixed with a
+    `sunDayNoon(date)` helper used by the `getTimes` calls in `renderSunriseTimes` AND `renderSunArc`
+    (`getMoonTimes` self-anchors to local midnight internally, so it's passed the day directly).
+  - **Verified live** in the real app (signed-in geoff account): the 3-way tab toggle switches content
+    correctly; real dates show correct, USNO-matching major/minor times; the rating badge + explainer +
+    disclaimer render; 1-major and polar edge cases don't break; Next/Prev re-render the active Moon/Solunar
+    tab; the Sun-tab bug fix confirmed (correct-day sunrise). Zero console errors; `node --check` clean on the
+    main inline block + `service-worker.js`. The sun-path **arc**'s final visual re-check was blocked by this
+    sandbox's intermittent Mapbox style-load stall (well-documented across dozens of prior sessions) — but the
+    arc rendered correctly earlier in this same session on v2.76.0 (screenshot), and the only arc change is
+    one `getTimes` call wrapped in `sunDayNoon()` (its `getPosition` sampling loop is untouched).
+  - APP_VERSION 2.75.2 → 2.76.0 (minor — new feature), SHELL_CACHE v204 → v205.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10728,3 +10814,25 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   estimate: one focused session, comparable to Session 21's Range Ring/Buffer geo-math (add one missing
   primitive, verify it standalone, then build features + UI on it) — not a quick 20-line drop-in. No design
   chosen or code written this session.
+- Session (Solunar feature build) — built the Sun / Moon / Solunar tab toggle in the Sunrise/Sunset panel
+  (see Architecture notes' "Solunar" entry for the full design). Per the task's explicit "verify the transit
+  finder against a real independent reference BEFORE building the UI, off-by-30-min undermines the feature":
+  built a standalone Node lunar meridian-transit finder and verified it against **USNO** (`aa.usno.navy.mil`
+  one-day API — worst 3 min over 6 locations) and **astronomy-engine** (VSOP/ELP-grade, gives lower transit
+  too — **1531 events over 11 locations × a full year, worst 4.12 min, zero over 5 min**). Chose an
+  hour-angle method (inlines ~30 lines of standard Meeus ch.47 lunar terms + sidereal time; SunCalc's own
+  truncated `moonCoords` alone gave ~13 min) over the altitude-sweep the research had proposed, after
+  measuring the altitude-sweep as 2-3× worse (refraction + curve-shape distortion near a deep lower transit).
+  Corrected the task's "0/1/3 majors per calendar day" premise: successive same-type transits are always
+  >24 h apart, so it's **1 or 2** per day, never 3 — confirmed our per-day count distribution matches
+  astronomy-engine's exactly over 11,680 samples. Day-rating is FieldMap's own documented model
+  (0.65·phase-strength + 0.35·low-light-overlap; new/full → Excellent, quarters → Poor), with an always-visible
+  "traditional prediction, not science" disclaimer and a collapsible formula explainer. Found and fixed a
+  **pre-existing bug** in the same code: `SunCalc.getTimes` at a local-midnight anchor returns the *previous*
+  solar day's sunrise/sunset at western longitudes — the Sun tab showed yesterday's times whenever a date was
+  picked; fixed with a `sunDayNoon()` anchor in `renderSunriseTimes` + `renderSunArc`. Verified live in the
+  real app (tab toggle, real dates matching USNO, rating/explainer/disclaimer, 1-major + polar edge cases,
+  date-nav re-rendering the active tab, the Sun-tab bug fix); zero console errors; `node --check` clean.
+  Sun-arc final visual re-check blocked by the sandbox's intermittent Mapbox style-load stall, but the arc
+  rendered fine earlier this session on the built version and its code is all but untouched. APP_VERSION
+  2.75.2 → 2.76.0, SHELL_CACHE v204 → v205.
