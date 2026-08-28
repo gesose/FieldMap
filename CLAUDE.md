@@ -959,7 +959,12 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   plus an inlined hour-angle lunar meridian finder (SunCalc has no transit function) verified against USNO
   and a full ephemeris to within ~4 min. Also fixed a pre-existing bug in the same code: the Sun tab was
   showing the previous day's sunrise/sunset at western longitudes (SunCalc.getTimes needs a local-noon
-  anchor, not midnight). See Architecture notes' "Solunar" entry for the full design and verification.
+  anchor, not midnight). The Tools-menu entry is now "Sun/Moon" (was "Sunrise"); the Moon tab shows a
+  "Full moon N days · New moon N days" countdown (SunCalc phase math, day-boundary-robust); and the Sun and
+  Moon tabs have a header-chevron **compact-view toggle** (device-persisted `state.settings.sunPanelCompact`)
+  that hides everything but the date/time slider and the phase diagram/countdown, shrinking the panel so the
+  map/arc above it has far more room — Solunar has no such toggle (pure info, no map overlay). See Architecture
+  notes' "Solunar" entry for the full design and verification.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -7885,6 +7890,50 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       astronomy-engine (`Horizon`) over 5 place/time cases — **worst 2.1° bearing, 1.7° altitude** (SunCalc's
       inherent truncated-theory limit; fine for photo planning). Zero console errors; `node --check` clean.
   - APP_VERSION 2.76.0 → 2.77.0, SHELL_CACHE v205 → v206.
+  - **Session (Sun/Moon rename + moon-phase countdown + Sun/Moon compact view)** — 3 small follow-ups.
+    - **Tools-menu label** "Sunrise" → "Sun/Moon" (`#sheet-sunrise-btn`'s `.sheet-label` only — the button
+      id, its handler, `openSunrisePanel()`, and the panel's own `<h2>Sunrise & Sunset</h2>` are all
+      unchanged).
+    - **Moon-phase countdown** — the Moon tab's centred phase block gains a line: "Full moon N days · New
+      moon N days" (`moonCountdownLabel`: 0 → "today", 1 → "tomorrow", else "N days"). `nextMoonPhaseMs(fromMs,
+      target)` finds the first `SunCalc.getMoonIllumination().phase` crossing of target (0 = new, 0.5 = full)
+      after `fromMs` — linear guess from the 29.53-day synodic period, then bisect the wrapped `phase − target`
+      (phase is very nearly linear in time over a few days, so a ±3-day bracket around the guess always
+      contains the crossing). `moonPhaseCountdown(selectedDate, target)` wraps it: search from **18 h before
+      the selected day's midnight** (so a crossing that lands early on the selected day itself isn't
+      mis-skipped to the next lunar cycle — SunCalc's phase model runs a few hours off the true opposition/
+      conjunction, enough to flip a day-boundary answer), advance one cycle if that crossing already passed,
+      then return `round(hitLocalMidnight − selMidnight)` in days, floored at 0. **Verified live** against a
+      published 2026 lunar calendar for 5 dates: 2026-01-25 → full 7d (Feb 1) / new 23d (Feb 17); 2026-06-15
+      → full 14d (Jun 29) / new 29d (Jul 14); 2026-08-20 → full 8d / new 21d; 2026-08-28 → full "today" (Aug
+      28 is the full moon) / new 13d; 2026-12-10 → full 13d (Dec 23) / new 28d (Jan 7). A 672-day sweep vs
+      `astronomy-engine` (`SearchMoonQuarter`/`NextMoonQuarter`) matched to the exact day on 669; the 3
+      misses are all the same benign "on the full-moon day itself" edge (we say "today", astronomy-engine's
+      opposition instant was late the previous evening local → it counts the *next* full) — "today" is the
+      friendlier, defensible read when the moon looks 100% full, and SunCalc's error only ever runs *late*
+      vs truth (never "tomorrow" for a today event), which is the safe direction. The task's "use SunCalc's
+      existing moon-phase math" constraint is honoured — no ephemeris added.
+    - **Compact view for the Sun & Moon tabs** (not Solunar — no map overlay to free room for) — real UX fix:
+      the docked panel's info block left too little map above it to read the sun/moon path arc. A header
+      chevron button (`#sunrise-compact-btn`, up/down SVG polyline swapped by `applySunPanelCompact`)
+      toggles `#sunrise-panel.sun-compact`, whose one CSS rule hides every `.sunrise-detail` element
+      (`!important`) — plus it hides the "Hide/Show times" link. `.sunrise-detail` tags: the location line,
+      `#sunrise-times-list`, both "Show … path on map" checkboxes, and (in `renderMoonTab`) the "which way to
+      face" card + the 4 rise/set/transit rows. **Stays visible in compact**: date selector, tab bar, the Sun
+      timeline bar, both time sliders, and the Moon phase icon/name/illumination/countdown block. State is
+      `state.settings.sunPanelCompact` (default false, device-only — same reasoning as `showZoomButtons`),
+      persisted via `scheduleSave()`, re-applied on every `openSunrisePanel()` / `setSunPanelTab()`.
+      `remeasureSunriseDock()` (extracted from the pre-existing times-toggle re-measure logic) resizes the
+      mobile dock (`#map`'s bottom inset = `88 + panelHeight`) and calls `updateSkyDiagram()` so the arc
+      redraws to fill the now-larger map. `setSunPanelTab`/`openSunrisePanel` set the button to
+      `display:inline-flex` for Sun/Moon and `display:none` for Solunar (a bare `''` fell back to the CSS
+      `display:none` default — a bug caught and fixed during live verification). **Verified live**: panel
+      height Sun 716→253 px, Moon 569→325 px (desktop floating) / 305→252, 568→324 (mobile dock); a real
+      screenshot on each tab shows the full path arc that the panel used to cover; compact button present on
+      Sun & Moon, absent on Solunar; Solunar renders fully regardless of `sun-compact` state; the setting
+      persists across tab switches and a full reload defaults it to off. Zero console errors; `node --check`
+      clean on the main inline block + `service-worker.js`.
+  - APP_VERSION 2.77.0 → 2.78.0, SHELL_CACHE v206 → v207.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -10891,3 +10940,26 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Position().azimuth)` + altitude cross-checked vs astronomy-engine — worst 2.1° / 1.7°. Zero console errors,
   `node --check` clean. APP_VERSION 2.76.0 → 2.77.0, SHELL_CACHE v205 → v206. See Architecture notes' "Solunar"
   entry, its "Session (Moon-position sky diagram…)" sub-bullet.
+- Session (Sun/Moon rename + moon-phase countdown + Sun/Moon compact view) — 3 small follow-ups on the Sun/
+  Moon/Solunar tool. (1) Tools-menu entry "Sunrise" → "Sun/Moon" (label text only). (2) Moon tab gains a
+  "Full moon N days · New moon N days" countdown — `nextMoonPhaseMs` (SunCalc phase crossing: linear synodic
+  guess + bisect) wrapped in `moonPhaseCountdown`, which searches from ~18 h before the selected day's
+  midnight so an event early on the selected day isn't mis-skipped a full cycle (SunCalc's phase runs a few
+  hours off the true opposition/conjunction), then returns whole calendar days floored at 0 ("today"/
+  "tomorrow"/"N days"). Verified live vs a published 2026 lunar calendar for 5 dates and a 672-day
+  astronomy-engine sweep (669 exact, 3 benign "on the full-moon day → we say today" edges; SunCalc only ever
+  errs late, never early). "Use SunCalc's existing math" constraint honoured — no ephemeris added. (3) A
+  compact-view toggle on the Sun & Moon tabs only (Solunar has no map overlay): a header chevron toggles
+  `#sunrise-panel.sun-compact`, whose one `!important` CSS rule hides every `.sunrise-detail` element (the
+  location line, times list, both "Show … path" checkboxes, and the Moon "which way to face" card + rise/set
+  rows) plus the "Hide times" link — leaving the date selector, tab bar, Sun timeline bar, both sliders, and
+  the Moon phase/countdown block. `state.settings.sunPanelCompact` (default false, device-only, persisted).
+  `remeasureSunriseDock()` (extracted from the existing times-toggle logic) re-sizes the mobile dock so `#map`
+  gains the freed height and `updateSkyDiagram()` redraws the arc bigger. One bug caught and fixed in live
+  verification: the button-show line used `''` which fell back to the CSS `display:none` default — changed to
+  `inline-flex`. Verified live: panel height Sun 716→253 px / Moon 569→325 px (desktop) and 305→252 / 568→324
+  (mobile dock); real screenshots on both tabs show the full path arc the panel used to cover; button present
+  on Sun & Moon, absent on Solunar; Solunar unaffected; state persists across tab switches; fresh reload
+  defaults to off. Zero console errors; `node --check` clean on the main inline block + `service-worker.js`.
+  APP_VERSION 2.77.0 → 2.78.0, SHELL_CACHE v206 → v207. See Architecture notes' "Solunar" entry, its
+  "Session (Sun/Moon rename + moon-phase countdown + Sun/Moon compact view)" sub-bullet.

@@ -1166,6 +1166,14 @@
   .sun-tab-btn.active{background:var(--accent);color:#2a1208;font-weight:600;}
   .sun-tab-btn + .sun-tab-btn{border-left:1px solid var(--border);}
 
+  /* Sun/Moon panel "compact view" — hides everything tagged .sunrise-detail so the map area
+     above the docked panel grows and the path arc has room to breathe. Distinct from the
+     full-panel-collapse close button; a middle state that stays on the current tab. */
+  #sunrise-compact-btn{display:none;align-items:center;justify-content:center;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:2px;line-height:0;}
+  #sunrise-compact-btn:hover,#sunrise-compact-btn.active{color:var(--text);}
+  #sunrise-panel.sun-compact .sunrise-detail{display:none!important;}
+  #sunrise-panel.sun-compact #sunrise-toggle-times-btn{display:none!important;}
+
   #mobile-handle{display:none;}
 
   /* Mobile */
@@ -2067,7 +2075,7 @@
             <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
           </svg>
         </div>
-        <div class="sheet-label">Sunrise</div>
+        <div class="sheet-label">Sun/Moon</div>
       </button>
       <button class="sheet-cell" id="sheet-elevation-btn">
         <div class="sheet-icon">
@@ -2115,10 +2123,13 @@
     <h2 style="margin:0;">Sunrise &amp; Sunset</h2>
     <div style="display:flex;gap:8px;align-items:center;">
       <button id="sunrise-toggle-times-btn" class="link-btn" style="font-size:12px;color:var(--text-muted);">Hide times</button>
+      <button id="sunrise-compact-btn" title="Compact view (more map)" aria-label="Toggle compact view">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,8 10,13 15,8"/></svg>
+      </button>
       <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
     </div>
   </div>
-  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+  <div class="sunrise-detail" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
     <span id="sunrise-location"></span>
     <button id="sunrise-my-location-btn" class="link-btn" style="font-size:11px;">My location</button>
   </div>
@@ -2156,9 +2167,9 @@
       <input type="range" id="sunrise-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
     </div>
     <!-- Times list -->
-    <div id="sunrise-times-list" style="margin-bottom:8px;"></div>
+    <div id="sunrise-times-list" class="sunrise-detail" style="margin-bottom:8px;"></div>
     <!-- Toggle sun arc on map -->
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
+    <label class="sunrise-detail" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
       <input type="checkbox" id="sunrise-arc-toggle" checked> Show sun path on map
     </label>
   </div>
@@ -2175,7 +2186,7 @@
       </div>
       <input type="range" id="moon-time-slider" min="0" max="1439" value="0" style="width:100%;accent-color:var(--accent);cursor:pointer;">
     </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
+    <label class="sunrise-detail" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);">
       <input type="checkbox" id="moon-arc-toggle" checked> Show moon path on map
     </label>
   </div>
@@ -3554,7 +3565,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.77.0';
+  var APP_VERSION = '2.78.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4369,6 +4380,9 @@
       // synced: purely "how THIS device's UI should look," not data. Defaults true, matching
       // the always-on native NavigationControl it replaces.
       showZoomButtons: true,
+      // Sun/Moon panel "compact view" — device-only, same reasoning as showZoomButtons: purely
+      // "how THIS device's panel should look" (trade info density for map/arc visibility), not data.
+      sunPanelCompact: false,
       // Active Trip (Stage 2 of the Active Trip project) — device-only, deliberately inside
       // state.settings rather than a synced field: settings are never part of
       // getSyncableState's payload, so this naturally never syncs to Firestore, matching the
@@ -20749,6 +20763,47 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     return events;
   }
 
+  // Instant (ms) of the first new moon (target 0) or full moon (target 0.5) STRICTLY after fromMs,
+  // using SunCalc's own moon-phase math. SunCalc.getMoonIllumination(d).phase is a 0→1 sawtooth
+  // over the synodic month (0/1 = new, 0.5 = full) and is very nearly linear in time over a few
+  // days. Linear guess from the 29.53-day synodic period, then bisect the wrapped (phase − target).
+  var MOON_SYNODIC_MS = 29.53058867 * 86400000;
+  function nextMoonPhaseMs(fromMs, target){
+    var p0 = SunCalc.getMoonIllumination(new Date(fromMs)).phase;
+    var frac = (target - p0 + 1) % 1;                 // cycle-fraction still to go, in [0,1)
+    if (frac < 1e-3) frac += 1;                        // essentially on it → we want the NEXT one
+    var guess = fromMs + frac * MOON_SYNODIC_MS;
+    function g(ms){                                    // phase − target, wrapped to (−0.5, 0.5]
+      var d = SunCalc.getMoonIllumination(new Date(ms)).phase - target;
+      if (d > 0.5) d -= 1;
+      if (d <= -0.5) d += 1;
+      return d;
+    }
+    var lo = guess - 3 * 86400000, hi = guess + 3 * 86400000;
+    var glo = g(lo), ghi = g(hi), tries = 0;
+    while (glo * ghi > 0 && tries < 10){ lo -= 86400000; hi += 86400000; glo = g(lo); ghi = g(hi); tries++; }
+    for (var i = 0; i < 60; i++){
+      var mid = (lo + hi) / 2;
+      if (glo * g(mid) <= 0) hi = mid; else { lo = mid; glo = g(lo); }
+    }
+    return (lo + hi) / 2;
+  }
+  // Whole days from `selectedDate` to the next new/full moon (0 = "today"). Searching from ~18 h
+  // before the selected day's midnight keeps an event that falls early on the selected day itself
+  // from being mis-skipped to the following lunar cycle (SunCalc's phase model runs a few hours
+  // off the true opposition/conjunction — enough to flip a day-boundary answer without this).
+  function moonPhaseCountdown(selectedDate, target){
+    var selMid = sunDayMidnightMs(selectedDate);
+    var hitMs = nextMoonPhaseMs(selMid - 18 * 3600000, target);
+    if (hitMs < selMid) hitMs = nextMoonPhaseMs(hitMs + 3 * 86400000, target); // already passed → next cycle
+    var h = new Date(hitMs);
+    var hitMid = new Date(h.getFullYear(), h.getMonth(), h.getDate()).getTime();
+    return Math.max(0, Math.round((hitMid - selMid) / 86400000));
+  }
+  function moonCountdownLabel(days){
+    return days <= 0 ? 'today' : days === 1 ? 'tomorrow' : days + ' days';
+  }
+
   // Full solunar picture for one calendar day at (lat,lng). date's Y/M/D is used; time part ignored.
   function computeSolunar(date, lat, lng){
     var dayStartMs = sunDayMidnightMs(date), noon = sunDayNoon(date);
@@ -20797,6 +20852,38 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Sunrise-panel tab state + renderers ──
   var sunPanelTab = 'sun'; // 'sun' | 'moon' | 'solunar'
 
+  // Re-measure the mobile dock (panel height drives #map's bottom inset) and redraw the arc at
+  // the new map size. No-op on desktop, where the panel floats and doesn't resize the map.
+  function remeasureSunriseDock(){
+    var panel = document.getElementById('sunrise-panel');
+    if (!panel || !panel.classList.contains('sunrise-docked-panel')) return;
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      var h = panel.offsetHeight || 180;
+      document.getElementById('map').style.bottom = (88 + h) + 'px';
+      var prevCenter = map.getCenter();
+      map.resize();
+      map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
+      updateSkyDiagram();
+    }); });
+  }
+
+  // Compact view: hide everything tagged .sunrise-detail, shrinking the panel so the map area
+  // above it grows and the sun/moon arc has room. Never shown on the Solunar tab (no map overlay).
+  function applySunPanelCompact(){
+    var panel = document.getElementById('sunrise-panel');
+    if (!panel) return;
+    var on = !!state.settings.sunPanelCompact;
+    panel.classList.toggle('sun-compact', on);
+    var btn = document.getElementById('sunrise-compact-btn');
+    if (btn){
+      btn.classList.toggle('active', on);
+      var svg = btn.querySelector('polyline');
+      // full view -> show a "collapse" (down) chevron; compact -> show an "expand" (up) chevron
+      if (svg) svg.setAttribute('points', on ? '5,12 10,7 15,12' : '5,8 10,13 15,8');
+      btn.title = on ? 'Full view (all info)' : 'Compact view (more map)';
+    }
+  }
+
   function renderMoonTab(center, date){
     var el = document.getElementById('moon-tab-readout');
     if (!el) return;
@@ -20811,10 +20898,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         '<span class="sunrise-time-label">' + label + '</span>' +
         '<span class="sunrise-time-value" style="font-size:13px;">' + val + '</span></div>';
     }
+    // Days to the next new / full moon (0 = today), searched forward from this selected day.
+    var toFull = moonPhaseCountdown(date, 0.5);
+    var toNew  = moonPhaseCountdown(date, 0);
+
     var html = '<div style="text-align:center;padding:4px 0 8px;">' +
       '<div style="font-size:38px;line-height:1;">' + sol.phase.icon + '</div>' +
       '<div style="font-size:14px;font-weight:600;margin-top:4px;">' + sol.phase.name + '</div>' +
-      '<div style="font-size:12px;color:var(--text-muted);">' + sol.phase.illumPct + '% illuminated</div></div>';
+      '<div style="font-size:12px;color:var(--text-muted);">' + sol.phase.illumPct + '% illuminated</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);margin-top:5px;">' +
+        'Full moon ' + moonCountdownLabel(toFull) + ' · New moon ' + moonCountdownLabel(toNew) +
+      '</div></div>';
+
+    html += '<div class="sunrise-detail">';
 
     // "Which way to face" card — the headline of this tab.
     var whenLabel = info.isRealNow ? 'right now' : ('at ' + formatTime12(info.time));
@@ -20836,6 +20932,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     html += row('↓', 'Moonset',  mt.set  ? formatTime12(mt.set)  : (mt.alwaysDown ? 'Down all day' : 'None today'));
     html += row('◉', 'Moon overhead (transit)',  overhead  ? formatTime12(overhead.center)  : '—');
     html += row('○', 'Moon underfoot (anti-transit)', underfoot ? formatTime12(underfoot.center) : '—');
+    html += '</div>'; // .sunrise-detail
     el.innerHTML = html;
 
     // keep the slider's own label in sync with whatever time the diagram is aimed at
@@ -20901,17 +20998,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var btn = document.querySelector('.sun-tab-btn[data-suntab="' + t + '"]');
       if (btn) btn.classList.toggle('active', t === tab);
     });
+    // Compact view is a Sun/Moon-tab concept only — Solunar is pure info, no map overlay to free room for.
+    var compactBtn = document.getElementById('sunrise-compact-btn');
+    if (compactBtn) compactBtn.style.display = (tab === 'solunar') ? 'none' : 'inline-flex';
     renderActiveSunPanelTab();
+    applySunPanelCompact();
     updateSkyDiagram(); // swap the map overlay to match the tab (sun arc / moon arc / none)
-    // the mobile dock sizes itself to panel height — re-measure after the content swap
-    var panel = document.getElementById('sunrise-panel');
-    if (panel && panel.classList.contains('sunrise-docked-panel')){
-      requestAnimationFrame(function(){ requestAnimationFrame(function(){
-        var h = panel.offsetHeight || 180;
-        document.getElementById('map').style.bottom = (88 + h) + 'px';
-        map.resize();
-      }); });
-    }
+    remeasureSunriseDock(); // the mobile dock sizes itself to panel height — re-measure after the content swap
   }
 
   function sunriseDockOpen(){
@@ -20955,6 +21048,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     sunriseDockOpen();
     renderSunriseTimes(map.getCenter(), sunDate);
     renderActiveSunPanelTab();
+    var compactBtn = document.getElementById('sunrise-compact-btn');
+    if (compactBtn) compactBtn.style.display = (sunPanelTab === 'solunar') ? 'none' : 'inline-flex';
+    applySunPanelCompact();
     updateSkyDiagram();
   }
 
@@ -24193,6 +24289,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
           updateSkyDiagram();
         }); });
       }
+    });
+    document.getElementById('sunrise-compact-btn').addEventListener('click', function(){
+      state.settings.sunPanelCompact = !state.settings.sunPanelCompact;
+      scheduleSave();
+      applySunPanelCompact();
+      remeasureSunriseDock();
+      updateSkyDiagram(); // arc redraws to fill the now-larger (or smaller) map area
     });
     document.getElementById('sunrise-my-location-btn').addEventListener('click', function(){
       if (!navigator.geolocation){ showToast('Location not available'); return; }
