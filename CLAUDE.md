@@ -837,13 +837,17 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   not just longer text — real swatches, a real scaled-down wheel graphic; accordion behavior so opening one
   "?" tooltip closes any other that's open), trimmed the app's 2 length-outlier disclaimers by roughly half
   each, and designed + applied a real, deliberately narrow always-visible-vs-behind-"?" rule per Geoff's own
-  explicit minimize-clutter preference — of the app's 11 real disclaimers, only 2 (GMU boundaries, AQI) meet
-  the "could meaningfully mislead about safety/legal compliance" bar and stay always-visible; Timber's own
-  disclaimer moved behind its two "?" tooltips as the one real always-visible-Layers-panel-disclaimer that
-  didn't clear the bar; the other 8 were already appropriately scoped (conditional on a deliberate action —
-  opening a modal, expanding a section, selecting a specific state — rather than persistent ambient clutter)
-  and needed no change. See Architecture notes' "UI consolidation: audit fixes, mobile legends, accordion
-  tooltips, always-visible rule" entry for the complete design and verification detail.
+  explicit minimize-clutter preference — of the app's 11 real disclaimers, this session kept 2 (GMU
+  boundaries, AQI) always-visible as meeting the "could meaningfully mislead about safety/legal compliance"
+  bar; Timber's own disclaimer moved behind its two "?" tooltips as the one real always-visible-Layers-panel-
+  disclaimer that didn't clear the bar; the other 8 were already appropriately scoped (conditional on a
+  deliberate action — opening a modal, expanding a section, selecting a specific state — rather than
+  persistent ambient clutter) and needed no change. **Later superseded for AQI (and the new Light Pollution
+  overlay): a follow-up session moved BOTH behind their "?" + a one-time first-toggle-on modal, an explicit
+  policy change — leaving GMU as the only always-visible Layers-panel disclaimer. See the "Tonight's Sky"
+  entry's own "Session (styling reconciliation + AQI/Light-Pollution disclaimer policy change)" sub-bullet.**
+  See Architecture notes' "UI consolidation: audit fixes, mobile legends, accordion tooltips, always-visible
+  rule" entry for the complete design and verification detail.
 - Fixed a real Buffer corridor rendering bug reported from a real device — a wide corridor's stroke rendered
   as a tangled web of crossing lines instead of a clean boundary. Root cause was a genuine geometry bug in
   `bufferPolygonCoords()` (Range Ring/Buffer's own from-scratch offset-polygon math, Session 21), not a
@@ -977,8 +981,14 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   not ~15°), and **cloud cover** (real NWS gridpoint `skyCover`, time-weighted over the dark hours; "unavailable"
   outside the US). Plus an opt-in **Light pollution** map overlay (NASA GIBS VIIRS Black Marble 2016 raster,
   off by default) toggleable from either this panel or the Layers panel's Environmental section — both
-  checkboxes stay in sync. The core calc was verified against Astronomy Engine to ~0.1°. See Architecture
-  notes' "Tonight's Sky" entry for the full design and verification.
+  checkboxes stay in sync. The core calc was verified against Astronomy Engine to ~0.1°. A follow-up session
+  reconciled the panel to the established `.floating-panel`/`.sunrise-time-row` styling exactly (it had
+  drifted: 320px vs 300px width, 8px vs 10px header gap, custom prose rows instead of the icon+label+value
+  row the Sun/Moon/Solunar tabs use) and — a deliberate policy change — moved the **AQI/Smoke and Light
+  Pollution** Layers-panel disclaimers behind their "?" tooltip + a one-time first-toggle-on modal (each
+  layer its own `fieldmap-layerdisclaimer-<id>` flag, the onboarding-tour "shown once" mechanism), leaving
+  **GMU** as the only always-visible Layers-panel disclaimer. See Architecture notes' "Tonight's Sky" entry
+  for the full design and verification.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -8032,6 +8042,59 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
     the app's own MapLibre style intermittently stalls here, so the raster render was confirmed via a
     window where it caught up (screenshot above) plus direct `fetch()`+`createImageBitmap` decode of the
     real GIBS tiles at z3–z8.
+  - **Session (styling reconciliation + AQI/Light-Pollution disclaimer policy change)** — two follow-ups.
+    - **ITEM 1 — Tonight's Sky panel drift.** Investigated against the real established pattern rather than
+      guessing: the Sun/Moon/Solunar panel is `#sunrise-panel` (a plain `.floating-panel`), and so is
+      `#weather-panel`; both use a `display:flex;justify-content:space-between;margin-bottom:10px` header
+      wrapper with `<h2 style="margin:0">` (the `.floating-panel h2` rule makes it 11px uppercase muted) +
+      an 18px `link-btn` × close button, a 300px panel width, and `.sunrise-time-row` (`.sunrise-time-icon` +
+      `.sunrise-time-label` flex:1 + `.sunrise-time-value` mono, visually right-aligned) for every data row.
+      Tonight's Sky had drifted on THREE points: **width 320px** (→ 300px), **header `margin-bottom:8px`**
+      (→ 10px), and **custom prose "label 82px + left-aligned regular-weight wrapping value" rows** instead
+      of the icon+label+mono-value row. Fixed: width/header to match exactly; the summary card now matches
+      `renderSolunarTab`'s rating card byte-for-byte (9px 11px padding / 8px radius / `<color>22` bg /
+      `1px solid <color>` border / 26px icon / 15px-700 title / 11px-muted subtitle / `margin-bottom:10px`),
+      just with a 3rd muted synthesis line; the detail section is now 4 real `.sunrise-time-row`s (★ True
+      dark / ☾ Moonless / ✦ Milky Way / ☁ Clouds) with SHORT right-aligned values (`8:30 PM–4:29 AM`,
+      `none`, `washed out` / `never rises` / `too low` / a time range, `62% · partly cloudy`) plus ONE
+      trailing `<p class="hint">` carrying the single limiting caveat — matching `renderSolunarTab`'s own
+      trailing-hint structure. The in-panel Light-Pollution toggle also moved to the `#sunrise-panel`
+      toggle style (`padding-top:8px;border-top` on the label itself) and its inline disclaimer shrank to a
+      one-liner ("Night-lights layer: NASA VIIRS Black Marble, 2016 composite — not current") since that
+      panel has no "?".
+    - **ITEM 2 — AQI/Smoke + Light Pollution disclaimer policy change** (explicitly overrides the
+      UI-consolidation review that had grouped AQI with GMU on the always-visible exception list). Both had
+      an always-visible `<p class="gmu-disclaimer">` block in the Layers panel; both removed. The full text
+      now lives (a) behind the layer's own "?" tooltip — a `<div class="layer-info-desc"
+      style="opacity:0.75;margin-top:4px;" id="lh-<layer>-disclaimer">` populated in `bindUI` from a JS
+      constant (`LIGHTPOLLUTION_DISCLAIMER` / `AQI_SMOKE_DISCLAIMER`), the exact pattern `TIMBER_DISCLAIMER`
+      already established; and (b) a one-time `#layer-disclaimer-modal` (`.modal-overlay` > `.modal`, dynamic
+      title + body + "Got it") shown the FIRST time that specific layer is toggled on. `maybeShowLayerDisclaimer(id)`
+      checks/sets a per-layer `fieldmap-layerdisclaimer-<id>` localStorage flag (independent per layer, same
+      `try/catch` "shown once, persisted, default-don't-show-on-error" shape as `shouldShowFeatureTour`),
+      called from `setLightPollutionOn`/`setAqiSmokeOn` only when `on` is true — safe because those setters
+      are ONLY invoked from real user toggle events (boot-restore uses `.checked =` + `reinitializeLayers`,
+      never the setter; the mutual-exclusion cross-calls only ever pass `false`). Added to the Escape-key
+      modal-close list. **`aqismokevert` deliberately unchanged** — it never had a `gmu-disclaimer` block,
+      its "?" already carries the caveat, and a user reaching it without touching `aqismoke` is an edge case
+      the task's "AQI/Smoke" scope (the AQI layer) doesn't require covering. **GMU_DISCLAIMER deliberately
+      untouched** — still the always-visible `<p class="gmu-disclaimer">` block, no one-time modal — and its
+      code comment updated to note it's now the ONLY always-visible Layers-panel disclaimer.
+    - **Verified live**: ITEM 1 — the Tonight's Sky header/width/close-button computed styles now match
+      `#weather-panel` exactly (`display:flex align:center justify:space-between mb:10px`, close btn
+      `link-btn` 18px), and the panel renders the tight icon+label+mono-value rows + trailing hint, confirmed
+      via screenshot against the Moon tab and across Flagstaff (full moon Poor) / Fairbanks (high-lat: True
+      dark "12:49 AM–5:03 AM naut.", Milky Way "never rises", note "Never fully dark — the sun stays above
+      −18° all night") / Big Bend, plus new-moon (Excellent, Milky Way "8:09 PM–9:39 PM", note "…peaking
+      around 23°") and winter (Excellent sky, Milky Way "never rises", note "…it's a summer-sky object")
+      via a brief `Date` override. ITEM 2 — with the flags cleared: toggling Light Pollution on the first
+      time shows the modal titled "Light pollution overlay" with the full body + writes the flag; toggling
+      it off and on again (via BOTH the Layers-panel checkbox and the Tonight's Sky panel toggle) shows
+      nothing; the "?" panel contains the full disclaimer text. Identical result for AQI ("Wildfire smoke
+      (AQI)"). Escape dismisses the modal. Only 2 flags ever written (`lightpollution`, `aqismoke`).
+      Toggling GMU on writes no flag and shows no modal; GMU's own always-visible disclaimer element is
+      still present and populated. Zero console errors. `node --check` clean on all 4 inline `<script>`
+      blocks + `service-worker.js`. APP_VERSION 2.79.0 → 2.79.1, SHELL_CACHE v208 → v209.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -11155,3 +11218,24 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   the toggle working from both entry points and state persisting. Zero console errors; `node --check`
   clean. See Architecture notes' "Tonight's Sky" entry for the full design and verification.
   APP_VERSION 2.78.0 → 2.79.0, SHELL_CACHE v207 → v208.
+- Session (Tonight's Sky styling reconciliation + AQI/Light-Pollution disclaimer policy change) — two
+  follow-ups. (1) Investigated the Tonight's Sky panel against the real established pattern (the
+  Sun/Moon/Solunar panel `#sunrise-panel` and `#weather-panel` are both plain `.floating-panel`s with a
+  `justify-content:space-between;margin-bottom:10px` header, 300px width, and `.sunrise-time-row`
+  icon+label+mono-value rows) — it had drifted on width (320px), header gap (8px), and used custom
+  left-aligned prose rows. Reconciled: 300px width, 10px header gap, summary card now matches
+  `renderSolunarTab`'s rating card exactly, detail section is 4 real `.sunrise-time-row`s (★/☾/✦/☁) with
+  short right-aligned values + one trailing `<p class="hint">` for the limiting caveat. (2) Policy change
+  (explicitly overriding the UI-consolidation review that put AQI on the always-visible exception list):
+  AQI/Smoke and the new Light Pollution overlay's Layers-panel disclaimers moved from an always-visible
+  `<p class="gmu-disclaimer">` block to (a) behind the layer's "?" tooltip (populated in bindUI from
+  `LIGHTPOLLUTION_DISCLAIMER`/`AQI_SMOKE_DISCLAIMER` constants, the `TIMBER_DISCLAIMER` pattern) + (b) a
+  one-time `#layer-disclaimer-modal` shown the first time each layer is toggled on, gated by an independent
+  per-layer `fieldmap-layerdisclaimer-<id>` localStorage flag (onboarding-tour "shown once" mechanism).
+  GMU's always-visible disclaimer deliberately untouched — now the only always-visible Layers-panel
+  disclaimer. Verified live: header/width/close-button now match `#weather-panel` exactly; the panel
+  renders correctly across full-moon/new-moon/winter/high-latitude cases with the new tight rows;
+  first-toggle-on shows the modal + writes the flag for LP and AQI, subsequent toggles (from either the
+  Layers panel or the Tonight's Sky panel) show nothing, "?" carries the full text, Escape dismisses the
+  modal; toggling GMU writes no flag / shows no modal and its always-visible disclaimer is intact. Zero
+  console errors; `node --check` clean. APP_VERSION 2.79.0 → 2.79.1, SHELL_CACHE v208 → v209.

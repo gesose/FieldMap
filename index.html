@@ -2260,20 +2260,18 @@
 </div>
 
 <!-- Tonight's Sky panel -->
-<div id="nightsky-panel" class="floating-panel hidden" style="width:320px;max-height:80vh;overflow-y:auto;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+<div id="nightsky-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
     <h2 style="margin:0;">Tonight's Sky</h2>
     <button class="link-btn" id="nightsky-close-btn" style="font-size:18px;">×</button>
   </div>
   <div id="nightsky-location" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
   <div id="nightsky-summary"></div>
-  <div id="nightsky-detail" style="margin-top:10px;"></div>
-  <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;">
-      <input type="checkbox" id="nightsky-lp-toggle"> Show light pollution on map
-    </label>
-    <p class="hint" style="font-size:10px;line-height:1.5;margin:5px 0 0;">Satellite night-lights composite (NASA VIIRS Black Marble), <b>2016</b> — the most recent global composite NASA publishes. Ground light changes slowly, so it's still a good guide to where the dark skies are, but it is not current.</p>
-  </div>
+  <div id="nightsky-detail"></div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;padding-top:8px;border-top:1px solid var(--border);margin-top:10px;">
+    <input type="checkbox" id="nightsky-lp-toggle"> Show light pollution on map
+  </label>
+  <p class="hint" style="font-size:10px;line-height:1.5;margin:5px 0 0;">Night-lights layer: NASA VIIRS Black Marble, 2016 composite — not current.</p>
 </div>
 
 <!-- Elevation tooltip (appears on map click when elevation mode active) -->
@@ -2544,9 +2542,9 @@
       </label>
       <div class="opacity-row" id="aqismoke-opacity-row"><input type="range" id="aqismoke-opacity" min="20" max="100" value="60"></div>
       <p class="hint" id="aqismoke-asof" style="margin:-4px 0 4px;display:none;"></p>
-      <p class="gmu-disclaimer">Modeled air quality, not a live reading — NOAA's bias-corrected PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won't be reflected yet. Viewing this from a downloaded offline area shows data as of download time — it won't update again until you're back online or re-download.</p>
       <div class="layer-info-panel" id="lh-aqismoke">
         <div class="layer-info-desc">Near-surface PM2.5 concentration — the standard basis for wildfire-smoke air quality — colored on the real, standard EPA AQI scale (green/yellow/orange/red/purple/maroon), using NOAA's bias-corrected guidance (calibrated against real ground-station readings for better accuracy). Same live-image-overlay architecture as Snow Depth above.</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="lh-aqismoke-disclaimer"></div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
       </div>
 
@@ -2564,9 +2562,9 @@
         <input type="checkbox" id="lightpollution-toggle"> Light pollution <button class="layer-hint-btn" data-layer-id="lh-lightpollution" title="About">?</button>
       </label>
       <div class="opacity-row" id="lightpollution-opacity-row"><input type="range" id="lightpollution-opacity" min="20" max="100" value="55"></div>
-      <p class="gmu-disclaimer">Satellite night-lights composite (NASA VIIRS Black Marble), 2016 — the most recent global composite NASA publishes. Ground light changes slowly, so it's still a good guide to where dark skies are, but it is not current.</p>
       <div class="layer-info-panel" id="lh-lightpollution">
         <div class="layer-info-desc">Where artificial light escapes upward at night — a proxy for how light-polluted the sky is. Dark areas mean darker skies; bright yellow/white marks city light domes. Shown at partial opacity as contextual base data. Feeds the Tonight's Sky tool (Tools menu).</div>
+        <div class="layer-info-desc" style="opacity:0.75;margin-top:4px;" id="lh-lightpollution-disclaimer"></div>
         <a class="layer-info-src" href="https://earthobservatory.nasa.gov/features/NightLights" target="_blank">Source: NASA GIBS / VIIRS Black Marble</a>
       </div>
 
@@ -3370,6 +3368,17 @@
   </div>
 </div>
 
+<!-- One-time layer disclaimer (Light Pollution / AQI-Smoke) — shown the first time each is toggled on -->
+<div class="modal-overlay hidden" id="layer-disclaimer-modal">
+  <div class="modal" style="max-width:340px;">
+    <h2 id="layer-disclaimer-title"></h2>
+    <p id="layer-disclaimer-body" style="font-size:13px;line-height:1.55;color:var(--text-muted);margin:6px 0 0;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="layer-disclaimer-ok-btn">Got it</button>
+    </div>
+  </div>
+</div>
+
 <!-- Offline maps modal -->
 <div class="modal-overlay hidden" id="offline-modal">
   <div class="modal modal-wide">
@@ -3601,7 +3610,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.79.0';
+  var APP_VERSION = '2.79.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -6013,12 +6022,15 @@
   // one stays always-visible (not moved behind a "?") — GMU/tag requirements are a real legal
   // question with real consequences for hunting in the wrong unit, not just a data-accuracy
   // caveat, so it clears the "could meaningfully mislead about safety" bar the always-visible
-  // exception list is scoped to.
+  // exception list is scoped to. It is now the ONLY always-visible Layers-panel disclaimer:
+  // AQI/Smoke and Light Pollution were deliberately moved behind "?" + a one-time modal (see
+  // LIGHTPOLLUTION_DISCLAIMER/AQI_SMOKE_DISCLAIMER below), a policy change from the earlier
+  // UI-consolidation review that had grouped AQI with GMU on this exception list.
   var GMU_DISCLAIMER = 'Boundaries are for reference only — verify your GMU and tag requirements with the state wildlife agency before hunting.';
   // Timber harvest/thinning disclaimer — previously its own always-visible paragraph in the
   // Layers panel; moved behind both layers' own "?" tooltips (a UI audit's always-visible-vs-
   // behind-"?" review found this doesn't meet the same "user could be meaningfully misled about
-  // safety" bar the GMU/AQI exceptions above do — it's a data-completeness caveat, not a legal or
+  // safety" bar the GMU exception above does — it's a data-completeness caveat, not a legal or
   // health-and-safety one). Shown identically in both lh-timberharvest and lh-timberthinning
   // (a user is very unlikely to open both, and the accordion tooltip behavior means at most one
   // is ever visible on screen at once anyway) via this one shared constant rather than two
@@ -6033,6 +6045,32 @@
   // description already uses), not the "wrong answer has direct legal/tag consequences" framing
   // that keeps GMU always-visible, so it doesn't clear the bar for ambient Layers-panel clutter.
   var FOREST_CLOSURE_DISCLAIMER = 'Informational only — the signed closure order (linked above) is the authoritative source. Closures can be issued, changed, or rescinded without notice; verify current status with the managing Forest Service unit before relying on this.';
+  // Light Pollution + Wildfire smoke (AQI) disclaimers. Both were previously an always-visible
+  // `<p class="gmu-disclaimer">` block in the Layers panel; a deliberate policy change (explicitly
+  // overriding part of the UI-consolidation always-visible-vs-"?" review, which had put AQI on the
+  // always-visible exception list) moved them behind each layer's own "?" tooltip (populated from
+  // these constants in bindUI, exactly like TIMBER_DISCLAIMER) PLUS a one-time modal shown the
+  // first time a user ever toggles that layer on (fieldmap-layerdisclaimer-<id> flag, same
+  // "shown once, persisted" mechanism as the onboarding tour). GMU_DISCLAIMER is deliberately NOT
+  // part of this change — GMU/tag requirements are a real legal question with direct consequences
+  // for hunting the wrong unit, a genuinely higher bar than "modeled, not live" / "not current".
+  var LIGHTPOLLUTION_DISCLAIMER = 'Satellite night-lights composite (NASA VIIRS Black Marble), 2016 — the most recent global composite NASA publishes. Ground light changes slowly, so it’s still a good guide to where dark skies are, but it is not current.';
+  var AQI_SMOKE_DISCLAIMER = 'Modeled air quality, not a live reading — NOAA’s bias-corrected PM2.5 forecast guidance, refreshed ~2x/day. A fire that started in the last several hours won’t be reflected yet. Viewing this from a downloaded offline area shows data as of download time — it won’t update again until you’re back online or re-download.';
+  var LAYER_DISCLAIMERS = {
+    lightpollution: { title: 'Light pollution overlay', text: LIGHTPOLLUTION_DISCLAIMER },
+    aqismoke: { title: 'Wildfire smoke (AQI)', text: AQI_SMOKE_DISCLAIMER }
+  };
+  function layerDisclaimerSeen(id){ try { return !!localStorage.getItem('fieldmap-layerdisclaimer-' + id); } catch(e){ return true; } }
+  function markLayerDisclaimerSeen(id){ try { localStorage.setItem('fieldmap-layerdisclaimer-' + id, '1'); } catch(e){} }
+  // Shown once, the very first time this layer is toggled on. After that it lives behind the "?".
+  function maybeShowLayerDisclaimer(id){
+    var d = LAYER_DISCLAIMERS[id];
+    if (!d || layerDisclaimerSeen(id)) return;
+    markLayerDisclaimerSeen(id);
+    document.getElementById('layer-disclaimer-title').textContent = d.title;
+    document.getElementById('layer-disclaimer-body').textContent = d.text;
+    document.getElementById('layer-disclaimer-modal').classList.remove('hidden');
+  }
   // Fire-related closures render as a red crosshatch (fill-pattern, reusing
   // buildDisturbanceHatchPattern — see the "Forest Closures" reinitializeLayers block); every
   // other standing-order type (firearm restrictions, motor vehicle prohibitions, recreation
@@ -10793,6 +10831,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var a = document.getElementById('lightpollution-toggle'), b = document.getElementById('nightsky-lp-toggle');
     if (a && a.checked !== on) a.checked = on;
     if (b && b.checked !== on) b.checked = on;
+    if (on) maybeShowLayerDisclaimer('lightpollution'); // one-time, first toggle-on only
   }
 
   // Near-surface and vertically-integrated smoke fully color-wash the same area — having both
@@ -10811,6 +10850,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       updateAqiSmokeAsOfLabel();
       return;
     }
+    maybeShowLayerDisclaimer('aqismoke'); // one-time, first toggle-on only
     if (state.settings.aqiSmokeVertOn){
       setAqiSmokeVertOn(false);
       document.getElementById('aqismokevert-toggle').checked = false;
@@ -21294,17 +21334,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var rating = nightSkyRating(ts, cloudsPending ? null : cloudPct);
     var ratingColor = { Excellent: '#3a8f45', Good: '#7aa63f', Fair: '#c9932e', Poor: '#8a8f8c' }[rating.rating] || '#8a8f8c';
 
-    // ── one-line human synthesis
+    // ── one-line human synthesis (spirit of the Solunar day rating's own summary)
     var bits = [];
-    if (ts.darkStart != null){
-      var moonlessH = ts.moonlessDarkMin / 60;
-      if (ts.darkKind === 'nautical') bits.push('never fully dark tonight');
-      else if (moonlessH >= ts.darkMin / 60 - 0.25) bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd));
-      else if (ts.moonlessDark.length) bits.push('dark & moonless ' + nightSkyFmtRange(ts.moonlessDark[0].start, ts.moonlessDark[ts.moonlessDark.length - 1].end));
-      else bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd) + ' but moonlit');
-    } else {
-      bits.push('no real darkness at this latitude tonight');
-    }
+    if (ts.darkStart == null) bits.push('no real darkness at this latitude tonight');
+    else if (ts.darkKind === 'nautical') bits.push('never fully dark tonight');
+    else if (ts.moonlessDarkMin / 60 >= ts.darkMin / 60 - 0.25) bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd));
+    else if (ts.moonlessDark.length) bits.push('dark & moonless ' + nightSkyFmtRange(ts.moonlessDark[0].start, ts.moonlessDark[ts.moonlessDark.length - 1].end));
+    else bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd) + ' but moonlit');
     if (ts.core.darkMoonlessAbove.length){
       var w = ts.core.darkMoonlessAbove;
       bits.push('Milky Way core ' + nightSkyFmtRange(w[0].start, w[w.length - 1].end) + ' low in the ' + compassLabel(ts.core.visBearing));
@@ -21313,66 +21349,64 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     if (!cloudsPending && cloudPct != null) bits.push(nightSkyCloudLabel(cloudPct) + ' skies');
 
-    var summaryHtml = '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;background:' +
-      ratingColor + '22;border:1px solid ' + ratingColor + ';">' +
-      '<span style="font-size:24px;line-height:1;">' + ts.moonPhaseIcon + '</span>' +
-      '<div><div style="font-size:15px;font-weight:700;color:' + ratingColor + ';">' + rating.rating + ' night for stargazing</div>' +
-      '<div style="font-size:11px;color:var(--text-muted);line-height:1.45;">' + bits.join(' · ') + '</div></div></div>';
-    document.getElementById('nightsky-summary').innerHTML = summaryHtml;
+    // Summary card — matches renderSolunarTab's rating card exactly (padding/radius/bg/border/
+    // icon size/font sizes), just with a 3rd muted line for the synthesis.
+    document.getElementById('nightsky-summary').innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;background:' +
+        ratingColor + '22;border:1px solid ' + ratingColor + ';margin-bottom:10px;">' +
+        '<span style="font-size:26px;line-height:1;">' + ts.moonPhaseIcon + '</span>' +
+        '<div><div style="font-size:15px;font-weight:700;color:' + ratingColor + ';">' + rating.rating + ' night for stargazing</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);">' + ts.moonPhaseName + ' · ' + ts.moonIllumPct + '% lit</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:2px;">' + bits.join(' · ') + '</div></div></div>';
 
-    // ── detail rows
-    function row(label, val){
-      return '<div class="sunrise-time-row" style="align-items:flex-start;"><span class="sunrise-time-label" style="flex:0 0 82px;font-size:12px;color:var(--text-muted);">' + label + '</span>' +
-        '<span class="sunrise-time-value" style="font-size:12px;font-weight:400;font-family:inherit;text-align:left;flex:1;line-height:1.45;">' + val + '</span></div>';
+    // Detail rows — the app's established .sunrise-time-row (icon + label + right-aligned value),
+    // same as the Sun/Moon/Solunar tabs. Keep the value short; the one limiting caveat goes in a
+    // trailing <p class="hint">, matching renderSolunarTab's own trailing hint.
+    function row(icon, label, val){
+      return '<div class="sunrise-time-row">' +
+        '<span class="sunrise-time-icon">' + icon + '</span>' +
+        '<span class="sunrise-time-label">' + label + '</span>' +
+        '<span class="sunrise-time-value" style="font-size:12px;">' + val + '</span></div>';
     }
-    var d = [];
-
-    // Darkness
-    if (ts.darkStart != null){
-      d.push(row('True dark', nightSkyFmtRange(ts.darkStart, ts.darkEnd) +
-        (ts.darkKind === 'nautical' ? ' <span style="color:var(--text-muted)">(nautical only — sun never reaches −18°)</span>' : '') +
-        ' <span style="color:var(--text-muted)">· ' + (ts.darkMin / 60).toFixed(1) + ' h</span>'));
-    } else {
-      d.push(row('True dark', '<span style="color:var(--text-muted)">None — the sky never gets past twilight at this latitude tonight.</span>'));
-    }
-    // Moon
-    var moonTxt = ts.moonPhaseName + ', ' + ts.moonIllumPct + '% lit';
-    if (ts.moonIllumPct <= 3) moonTxt += ' — effectively no moon, dark all night';
-    else if (ts.darkStart != null && ts.moonlessDark.length){
-      moonTxt += '. Dark & moonless ' + ts.moonlessDark.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
-        ' <span style="color:var(--text-muted)">(' + (ts.moonlessDarkMin / 60).toFixed(1) + ' h)</span>';
-    } else if (ts.darkStart != null){
-      moonTxt += ' — up through the whole dark window, sky stays washed out';
-    }
-    d.push(row('Moon', moonTxt));
-    // Milky Way core
-    var coreTxt;
-    if (ts.core.neverRises){
-      coreTxt = '<span style="color:var(--text-muted)">Never rises at this latitude.</span>';
-    } else if (!ts.core.clearsThreshold){
-      coreTxt = '<span style="color:var(--text-muted)">Peaks at only ' + Math.round(ts.core.maxAlt) + '° around ' +
-        formatTime12(new Date(ts.core.maxAtMs)) + ' in the ' + compassLabel(ts.core.maxBearing) +
-        ' — too low for a good view (needs ~' + NIGHTSKY_CORE_ALT_MIN + '°+).</span>';
-    } else if (ts.core.darkMoonlessAbove.length){
+    var d = '';
+    d += row('★', 'True dark', ts.darkStart == null
+      ? '<span style="color:var(--text-muted)">none</span>'
+      : nightSkyFmtRange(ts.darkStart, ts.darkEnd) +
+        (ts.darkKind === 'nautical' ? ' <span style="color:var(--text-muted)">naut.</span>' : ''));
+    d += row('☾', 'Moonless', ts.darkStart == null
+      ? '<span style="color:var(--text-muted)">—</span>'
+      : (ts.moonlessDark.length
+          ? nightSkyFmtRange(ts.moonlessDark[0].start, ts.moonlessDark[ts.moonlessDark.length - 1].end)
+          : '<span style="color:var(--text-muted)">none</span>'));
+    var coreVal;
+    if (ts.core.neverRises) coreVal = '<span style="color:var(--text-muted)">never rises</span>';
+    else if (!ts.core.clearsThreshold) coreVal = '<span style="color:var(--text-muted)">too low</span>';
+    else if (ts.core.darkMoonlessAbove.length){
       var w2 = ts.core.darkMoonlessAbove;
-      coreTxt = 'Visible ' + w2.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
-        ' — low in the ' + compassLabel(ts.core.visBearing) + ', peak ' + Math.round(ts.core.visMaxAlt) + '°.';
-    } else if (ts.core.darkAbove.length){
-      var w3 = ts.core.darkAbove;
-      coreTxt = 'High enough in a dark sky ' + w3.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
-        ', <span style="color:var(--text-muted)">but the moon is up then and washes it out</span>.';
-    } else {
-      coreTxt = '<span style="color:var(--text-muted)">Up tonight but only before the sky gets dark — not visible.</span>';
-    }
-    d.push(row('Milky Way', coreTxt));
-    // Clouds
-    var cloudTxt;
-    if (cloudsPending) cloudTxt = '<span style="color:var(--text-muted)">checking…</span>';
-    else if (cloudPct == null) cloudTxt = '<span style="color:var(--text-muted)">unavailable (NWS covers the US only)</span>';
-    else cloudTxt = nightSkyCloudLabel(cloudPct) + ' <span style="color:var(--text-muted)">· avg ' + Math.round(cloudPct) + '% cover over the dark hours</span>';
-    d.push(row('Clouds', cloudTxt));
+      coreVal = nightSkyFmtRange(w2[0].start, w2[w2.length - 1].end);
+    } else coreVal = '<span style="color:var(--text-muted)">washed out</span>';
+    d += row('✦', 'Milky Way', coreVal);
+    var cloudVal;
+    if (cloudsPending) cloudVal = '<span style="color:var(--text-muted)">…</span>';
+    else if (cloudPct == null) cloudVal = '<span style="color:var(--text-muted)">n/a</span>';
+    else cloudVal = Math.round(cloudPct) + '% <span style="color:var(--text-muted)">· ' + nightSkyCloudLabel(cloudPct) + '</span>';
+    d += row('☁', 'Clouds', cloudVal);
 
-    document.getElementById('nightsky-detail').innerHTML = d.join('');
+    // The single most useful caveat about what's limiting the night.
+    var note = '';
+    if (ts.darkStart == null) note = 'The sky never gets past twilight at this latitude tonight.';
+    else if (ts.darkKind === 'nautical') note = 'Never fully dark — the sun stays above −18° all night at this latitude.';
+    else if (ts.core.neverRises) note = 'The Milky Way core doesn’t rise at this latitude — it’s a summer-sky object.';
+    else if (!ts.core.clearsThreshold) note = 'The Milky Way core only reaches ' + Math.round(ts.core.maxAlt) + '° here (~' +
+      formatTime12(new Date(ts.core.maxAtMs)) + ', ' + compassLabel(ts.core.maxBearing) + ') — too low for a good view.';
+    else if (ts.core.darkMoonlessAbove.length) note = 'Milky Way core low in the ' + compassLabel(ts.core.visBearing) +
+      ', peaking around ' + Math.round(ts.core.visMaxAlt) + '°.';
+    else if (ts.core.darkAbove.length) note = 'The core is high enough in a dark sky, but the moon is up then and washes it out.';
+    else if (ts.moonIllumPct > 3 && !ts.moonlessDark.length) note = 'The moon is up through the whole dark window — the sky stays washed out.';
+    else if (ts.moonIllumPct <= 3) note = 'New moon — the sky is as dark as it gets tonight.';
+
+    document.getElementById('nightsky-detail').innerHTML = d +
+      (note ? '<p class="hint" style="font-size:10px;line-height:1.5;margin:8px 0 0;">' + note + '</p>' : '');
   }
 
   // Re-render whichever of the Moon/Solunar tabs is showing (the Sun tab is driven by
@@ -24580,6 +24614,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('timberthinning-disclaimer').textContent = TIMBER_DISCLAIMER;
     document.getElementById('forestclosures-disclaimer').textContent = FOREST_CLOSURE_DISCLAIMER;
     document.getElementById('mvum-disclaimer').textContent = MVUM_DISCLAIMER;
+    document.getElementById('lh-lightpollution-disclaimer').textContent = LIGHTPOLLUTION_DISCLAIMER;
+    document.getElementById('lh-aqismoke-disclaimer').textContent = AQI_SMOKE_DISCLAIMER;
+    document.getElementById('layer-disclaimer-ok-btn').addEventListener('click', function(){
+      document.getElementById('layer-disclaimer-modal').classList.add('hidden');
+    });
     // Pre-render the Aspect wheel(s) unconditionally, not just when the layer itself is turned
     // on: the floating desktop wheel is only ever visible while the layer is on (so it's always
     // populated by the time it's seen), but the new mobile wheel lives inside the "?" tooltip,
@@ -26278,6 +26317,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         document.getElementById('polygon-modal').classList.add('hidden');
         document.getElementById('onboarding-modal').classList.add('hidden');
         document.getElementById('about-modal').classList.add('hidden');
+        document.getElementById('layer-disclaimer-modal').classList.add('hidden');
         closeFeatureTour();
         document.getElementById('boot-timing-modal').classList.add('hidden');
         document.getElementById('add-sheet').classList.add('hidden');
