@@ -8095,6 +8095,37 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       Toggling GMU on writes no flag and shows no modal; GMU's own always-visible disclaimer element is
       still present and populated. Zero console errors. `node --check` clean on all 4 inline `<script>`
       blocks + `service-worker.js`. APP_VERSION 2.79.0 → 2.79.1, SHELL_CACHE v208 → v209.
+  - **Session (mobile full-width regression)** — the styling-reconciliation session above set
+    `#nightsky-panel`'s width to 300px via an **inline `style="width:300px"`**, which is correct on desktop
+    but broke mobile: inline style beats a stylesheet rule regardless of media query, so the mobile
+    `@media (max-width:760px) .floating-panel{ width:auto;max-width:none;left:14px;right:14px }` rule (the
+    thing that makes `#layers-panel` render as a 14px-inset full-width drawer on a phone) could never take
+    effect — the panel stayed a cramped 300px column on mobile. Confirmed the mechanism LIVE, not assumed, at
+    a real 390px viewport (`<iframe>`, since `resize_window` doesn't actually narrow the sandbox viewport —
+    the established Sessions 28-30 technique): `#layers-panel` (no inline width) → `width:auto` / rect 358px /
+    `left:14px right:14px`; `#nightsky-panel` (inline `width:300px`) → stuck at 300px. `#sunrise-panel`'s own
+    mobile full-width is a **different, heavier mechanism** — a JS-added `.sunrise-docked-panel` class with a
+    `width:auto !important` rule that also docks it edge-to-edge (`left:0 !important;right:0 !important;
+    border-radius:16px 16px 0 0`) — NOT the right model for a plain `.floating-panel` like Tonight's Sky;
+    `#layers-panel`'s inset-14px behavior is the correct match and is what the base mobile `.floating-panel`
+    rule already provides for free. Fix: removed the inline `width:300px` from `#nightsky-panel`'s `style`
+    attribute (kept `max-height:80vh;overflow-y:auto`, matching `#sunrise-panel`/`#weather-panel`/
+    `#wildlife-panel`), added `#nightsky-panel{width:300px;}` next to the other panel-specific desktop rules
+    (near `#layers-panel{max-height:…}`), and added `#nightsky-panel{width:auto;}` **inside** the
+    `@media (max-width:760px)` block right after `#filter-panel,#layers-panel{max-height:48vh;}`. Both are
+    ID-specificity, so the media-query one (later in source) wins when the query matches and the plain one
+    wins on desktop — the same layered-ID-rule pattern `#filter-panel,#layers-panel{max-height:48vh}` already
+    uses. Verified live at BOTH widths: desktop (2560px) `#nightsky-panel` = 300px, no inline width; mobile
+    (390px `<iframe>`, opened via the real Tools → "Tonight's Sky" path) = `width:auto` / rect 358px /
+    `left:14px right:14px` / `bottom:88px` / `border-radius:12px` / `position:absolute` — byte-identical to
+    `#layers-panel`'s own mobile computed box (only `max-height` differs — 80vh vs. layers' 48vh — which is
+    intentional, matching the other Tools-menu panels). Screenshot-confirmed the panel content renders
+    full-width with a 14px inset both sides. Desktop 300px fix from the prior session is untouched. Flagged,
+    not fixed (out of scope — the task was Tonight's Sky only): `#weather-panel` and `#wildlife-panel` carry
+    the identical latent inline-`width:300px` bug and are also stuck at 300px on mobile. `node --check` clean
+    on all 4 inline `<script>` blocks + `service-worker.js` (block 3 is the Firebase `type="module"` script
+    — its `import` statement is a known, expected false positive for the extract-and-`new Function()` check,
+    unrelated to this CSS-only change). APP_VERSION 2.79.1 → 2.79.2, SHELL_CACHE v209 → v210.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -11239,3 +11270,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   Layers panel or the Tonight's Sky panel) show nothing, "?" carries the full text, Escape dismisses the
   modal; toggling GMU writes no flag / shows no modal and its always-visible disclaimer is intact. Zero
   console errors; `node --check` clean. APP_VERSION 2.79.0 → 2.79.1, SHELL_CACHE v208 → v209.
+- Session (Tonight's Sky mobile full-width regression) — the 300px width the styling-reconciliation session
+  set was applied as an **inline `style="width:300px"`** on `#nightsky-panel`, which beats the mobile
+  `@media (max-width:760px) .floating-panel{width:auto;left:14px;right:14px}` rule regardless of media query
+  — so on a phone the panel stayed a 300px column instead of the 14px-inset full-width drawer `#layers-panel`
+  becomes. Confirmed the mechanism live at a real 390px viewport (`<iframe>` — `resize_window` doesn't
+  actually narrow the sandbox viewport): `#layers-panel` (no inline width) → 358px full-width; `#nightsky-panel`
+  → stuck at 300px; `#sunrise-panel`'s own mobile full-width is a separate JS `.sunrise-docked-panel
+  {width:auto !important}` edge-to-edge dock, not the right model for a plain `.floating-panel`. Fix: removed
+  the inline `width:300px` (kept `max-height:80vh;overflow-y:auto`), added `#nightsky-panel{width:300px;}` to
+  the desktop panel rules and `#nightsky-panel{width:auto;}` inside the `@media (max-width:760px)` block —
+  the same layered-ID-rule pattern `#filter-panel,#layers-panel{max-height:48vh}` uses. Verified live at both
+  widths: desktop (2560px) = 300px; mobile (390px, opened via the real Tools → "Tonight's Sky" path) =
+  `width:auto` / 358px / `left:14px right:14px` / `bottom:88px` / `radius:12px` — byte-identical to
+  `#layers-panel`'s mobile box (only `max-height` differs, intentionally, matching the other Tools-menu
+  panels). Screenshot-confirmed. Desktop 300px fix untouched. Flagged not fixed (out of scope): `#weather-panel`
+  / `#wildlife-panel` have the identical latent inline-width bug on mobile. Zero console errors; `node --check`
+  clean. APP_VERSION 2.79.1 → 2.79.2, SHELL_CACHE v209 → v210.

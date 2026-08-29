@@ -716,6 +716,7 @@
   .floating-panel h2{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
   #filter-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
   #layers-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
+  #nightsky-panel{width:300px;}
   .layer-hint-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px;line-height:1;vertical-align:middle;border-radius:50%;border:1px solid var(--border);width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;}
   .layer-hint-btn:hover{color:var(--text);}
   .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
@@ -1359,6 +1360,8 @@
       width:auto;max-width:none;
     }
     #filter-panel,#layers-panel{max-height:48vh;}
+    /* Tonight's Sky: match #layers-panel full-width mobile behavior (desktop stays 300px via the rule above) */
+    #nightsky-panel{width:auto;}
 
     /* View drawer: on mobile this becomes the true edge-to-edge bottom sheet the feature is
        named for — desktop's small anchored card (see the base #view-drawer rule) would be
@@ -2260,7 +2263,7 @@
 </div>
 
 <!-- Tonight's Sky panel -->
-<div id="nightsky-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
+<div id="nightsky-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
     <h2 style="margin:0;">Tonight's Sky</h2>
     <button class="link-btn" id="nightsky-close-btn" style="font-size:18px;">×</button>
@@ -3610,7 +3613,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.79.1';
+  var APP_VERSION = '2.79.2';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
