@@ -10963,3 +10963,74 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   defaults to off. Zero console errors; `node --check` clean on the main inline block + `service-worker.js`.
   APP_VERSION 2.77.0 → 2.78.0, SHELL_CACHE v206 → v207. See Architecture notes' "Solunar" entry, its
   "Session (Sun/Moon rename + moon-phase countdown + Sun/Moon compact view)" sub-bullet.
+- Session ("Night Sky conditions" tool — research-only, no code changes, no version bump) — investigated
+  whether a "how dark will it get tonight / is it good for stargazing" feature is buildable from 3 inputs:
+  moon phase (already built), Milky Way galactic-core visibility timing, and a light-pollution overlay.
+  **Verdict: yes, buildable; the only genuinely new piece is the light-pollution tile source, and the one
+  hard dead end is the World Atlas 2016 raw data's CC BY-NC licence.**
+  - **PART A — galactic core timing.** SunCalc is strictly sun/moon, BUT its (non-exported) internals
+    `siderealTime(d,lw)` / `azimuth(H,phi,dec)` / `altitude(H,phi,dec)` / `astroRefraction(h)` are exactly
+    the fixed-RA/Dec→alt/az machinery needed — 4 one-liners, trivially reimplemented inline (same pattern the
+    Solunar transit finder already used). The galactic core (Sagittarius A*) is a FIXED point:
+    **RA 266.41684°, Dec −28.99411°** (J2000). Precession moves it a few arcminutes/decade — negligible for
+    "is the core usably high tonight." A ~12-line inline calc (reusing SunCalc's own sidereal-time formula:
+    `θ = rad*(280.16 + 360.9856235*d) − lwRad`; `d` = days since J2000 = `date/86400000 − 0.5 + 2440588 −
+    2451545`; `H = θ − RA`; `alt = asin(sinφ·sinδ + cosφ·cosδ·cosH)`) was verified against Astronomy Engine
+    at 5 locations equator→lat 65°: matches **within 0.1°** general case, 0.6° near the horizon (pure
+    refraction, irrelevant here). Ran live in the app's SunCalc context for Flagstaff on 2026-08-28: core
+    at 25° alt at dusk, sinks below horizon ~00:30 MST, full moon washes it out all night — exactly the
+    kind of answer the feature should give. **No astronomy library needed.** (Astronomy Engine JS is real
+    — v2.1.19, MIT, zero deps, `astronomy.browser.min.js` = 116 KB raw / 47 KB gzipped drop-in
+    `window.Astronomy`; last release Dec 2023 = mature, not abandoned; has `DefineStar`+`Equator`+`Horizon`
+    + `SearchRiseSet`/`SearchAltitude` + galactic↔equatorial rotation — but it's overkill for this one
+    fixed-point calc.) The "core viewing window" = `core_alt ≥ ~15-20°` ∩ `sun < −18°` (SunCalc
+    `getTimes().night`/`nightEnd`, already surfaced in the Sun tab) ∩ moon down or thin (SunCalc
+    `getMoonTimes`/`getMoonIllumination`, already used). North of ~lat 55° the core barely clears the
+    horizon — the tool should say so rather than showing a useless 3° window.
+  - **PART B — light-pollution data.** All live-tested for CORS/format/currency:
+    - **NASA GIBS `VIIRS_Black_Marble`** — VIIRS annual night-lights composite, ~500m, Web Mercator z0-8,
+      256px PNG, `Access-Control-Allow-Origin: *`, no key, NASA-free/no-restriction licence. Drop-in
+      `type:'raster'` source, identical integration to AQI/Snow Depth. **CATCH: only 2 time values exist,
+      2012 and 2016** — it's a frozen product. 2016 is usable (ground-light pattern is stable year-to-year)
+      but should carry an honesty note like the AQI disclaimer.
+    - **GIBS `VIIRS_SNPP_GapFilled_BRDF_Corrected_DayNightBand_Radiance`** — daily, current (to 2026-08-27),
+      CORS-clean. **Wrong tool** — daily DNB frames carry residual moonlight, cloud gaps, aurora; not a
+      stable LP baseline.
+    - **David Lorenz Light Pollution Atlas** (`djlorenz.github.io/astronomy/image_tiles/tiles{YEAR}/tile_{z}_{x}_{y}.png`)
+      — a recalculation of the World Atlas propagation model on EOG VIIRS data, giving actual Bortle / LPI
+      (ratio of artificial:natural sky brightness). Years **2016, 2020, 2022, 2023, 2024, 2025** (updated
+      ~yearly). Live-tested: HTTP 200, `image/png`, **1024×1024** tiles (need `tileSize:1024` or treat as
+      z−2), minzoom 2 / maxNativeZoom 8, `Access-Control-Allow-Origin: *` (GitHub Pages), no key, sparse
+      tiles 404 where there's no data (fine — renders transparent). **CATCH: no explicit licence** — site
+      says "For more information contact: David Lorenz dlorenz@wisc.edu"; no LICENSE file in the repo. Best
+      data + best UX, but would need an email asking permission, and it's one person's GitHub Pages (no
+      uptime SLA — mitigate with the app's existing tile cache / offline-download / graceful-404).
+    - **EOG VNL V2.2** (Colorado School of Mines) — VIIRS annual composite 2012-**2024**, ~500m, **"no
+      restrictions on use or distribution"** (cleanest licence). **NOT a tile service** — GeoTIFF download
+      only (free Earthdata login) or Google Earth Engine. Would need a one-time preprocess into Web Mercator
+      tiles (matches the Oregon-fish-data pipeline precedent).
+    - **World Atlas 2016 (Falchi et al.), GFZ** — the definitive modeled zenith sky brightness. **HARD DEAD
+      END: licensed CC BY-NC 4.0 (NonCommercial).** 2.9 GB GeoTIFF, download only. Do not use the raw data
+      directly for anything that could be construed as commercial. (djlorenz's recalculation of the same
+      model may or may not inherit the NC restriction — another reason to just ask him.)
+    - **lightpollutionmap.info** (Jurij Stare) — aggregates VIIRS 2012-2025 + World Atlas 2015. **No public
+      API** ("contact me and we'll work something out"), tiles are hotlink-protected (403), attribution
+      required. Not a usable drop-in.
+  - **PART C — recommendation.** MVP = a "Tonight's Sky" tab using ONLY SunCalc + ~40 lines of new math +
+    the GIBS Black Marble raster:
+    1. **Darkness tonight** — ~90% already in the app. `SunCalc.getTimes()` → astro-twilight window
+      (`night`→`nightEnd`); overlay `getMoonTimes`/`getMoonIllumination` → moonless-and-dark window +
+      illumination. A "darkness score" = length of the dark-AND-moonless window + peak darkness. Zero new
+      deps, reuses the Solunar tab's exact primitives.
+    2. **Milky Way core window** — the inline fixed-RA/Dec calc from Part A. "Core visible 8:20–00:30, low
+      in the S/SW" or "core doesn't usefully clear the horizon at this latitude tonight." Zero new deps.
+    3. **Light-pollution overlay** — the only new data. In order: **(a) ship GIBS Black Marble 2016 now**
+      (free, unambiguous licence, CORS-clean, AQI-style integration, add a "2016 composite" note);
+      **(b) email David Lorenz for permission** to use his 2024/2025 tiles (best data + Bortle semantics +
+      drop-in; needs the ask + graceful-degradation for his GH-Pages hosting); **(c) fall back to a one-time
+      EOG VNL V2.2 (2024) tile-preprocess** hosted with the app's own assets if (b) is declined.
+    4. **(worth adding) cloud cover tonight** — "good for stargazing" realistically needs it. The app
+      already has NWS weather integration (`getCurrentConditions`, the Weather panel); NWS gridpoint
+      forecast has `skyCover` (%). Fold in as a 4th input reusing that.
+    Dead ends flagged: World Atlas 2016 raw data (NC licence), lightpollutionmap.info (no public API), GIBS
+    daily DNB (too noisy for an LP baseline). No code was written or changed this session.
