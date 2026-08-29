@@ -2077,6 +2077,15 @@
         </div>
         <div class="sheet-label">Sun/Moon</div>
       </button>
+      <button class="sheet-cell" id="sheet-nightsky-btn">
+        <div class="sheet-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 13.5A8 8 0 1 1 10.5 4a6.5 6.5 0 0 0 9.5 9.5Z"/>
+            <path d="M15 3.5l.7 1.6 1.8.2-1.35 1.2.4 1.8L15 8.4l-1.6.9.4-1.8L12.5 6.3l1.8-.2Z" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+        <div class="sheet-label">Tonight's Sky</div>
+      </button>
       <button class="sheet-cell" id="sheet-elevation-btn">
         <div class="sheet-icon">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2248,6 +2257,23 @@
     <div id="weather-forecast"></div>
   </div>
   <div id="weather-error" class="hidden" style="font-size:12px;color:var(--text-muted);text-align:center;padding:12px;">Could not load weather. NWS only covers the United States.</div>
+</div>
+
+<!-- Tonight's Sky panel -->
+<div id="nightsky-panel" class="floating-panel hidden" style="width:320px;max-height:80vh;overflow-y:auto;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <h2 style="margin:0;">Tonight's Sky</h2>
+    <button class="link-btn" id="nightsky-close-btn" style="font-size:18px;">×</button>
+  </div>
+  <div id="nightsky-location" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
+  <div id="nightsky-summary"></div>
+  <div id="nightsky-detail" style="margin-top:10px;"></div>
+  <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);cursor:pointer;">
+      <input type="checkbox" id="nightsky-lp-toggle"> Show light pollution on map
+    </label>
+    <p class="hint" style="font-size:10px;line-height:1.5;margin:5px 0 0;">Satellite night-lights composite (NASA VIIRS Black Marble), <b>2016</b> — the most recent global composite NASA publishes. Ground light changes slowly, so it's still a good guide to where the dark skies are, but it is not current.</p>
+  </div>
 </div>
 
 <!-- Elevation tooltip (appears on map click when elevation mode active) -->
@@ -2532,6 +2558,16 @@
       <div class="layer-info-panel" id="lh-aqismokevert">
         <div class="layer-info-desc">Total smoke through the full atmospheric column, not just ground level — useful for spotting smoke aloft that hasn't reached the surface yet. This is a different measurement than the AQI layer above (total smoke mass, not a health-based air-quality value), which is why its own color scale looks different — there's no standard AQI-style palette for column smoke. Same modeled/twice-daily-refresh caveat as the AQI layer above.</div>
         <a class="layer-info-src" href="https://airquality.weather.gov/" target="_blank">Source: NOAA / NWS Air Quality</a>
+      </div>
+
+      <label class="layer-overlay-row">
+        <input type="checkbox" id="lightpollution-toggle"> Light pollution <button class="layer-hint-btn" data-layer-id="lh-lightpollution" title="About">?</button>
+      </label>
+      <div class="opacity-row" id="lightpollution-opacity-row"><input type="range" id="lightpollution-opacity" min="20" max="100" value="55"></div>
+      <p class="gmu-disclaimer">Satellite night-lights composite (NASA VIIRS Black Marble), 2016 — the most recent global composite NASA publishes. Ground light changes slowly, so it's still a good guide to where dark skies are, but it is not current.</p>
+      <div class="layer-info-panel" id="lh-lightpollution">
+        <div class="layer-info-desc">Where artificial light escapes upward at night — a proxy for how light-polluted the sky is. Dark areas mean darker skies; bright yellow/white marks city light domes. Shown at partial opacity as contextual base data. Feeds the Tonight's Sky tool (Tools menu).</div>
+        <a class="layer-info-src" href="https://earthobservatory.nasa.gov/features/NightLights" target="_blank">Source: NASA GIBS / VIIRS Black Marble</a>
       </div>
 
       <label class="layer-overlay-row">
@@ -3565,7 +3601,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.78.0';
+  var APP_VERSION = '2.79.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4320,6 +4356,9 @@
       showOfflineBoundaries: true,
       showAreaLabels: true,
       snowDepthOn: false, snowDepthOpacity: 0.75,
+      // Light pollution overlay (NASA GIBS VIIRS Black Marble 2016) — off by default, same
+      // convention as every other overlay. Used by the Tonight's Sky tool.
+      lightPollutionOn: false, lightPollutionOpacity: 0.55,
       // NOAA NDGD wildfire smoke (near-surface + vertically-integrated) — see the "Wildfire
       // smoke (AQI) overlay" Architecture notes entry for the full design. Both off by default,
       // same convention as every other overlay in this app.
@@ -4877,6 +4916,11 @@
   // it manually for its own tile-by-tile fetch loop — see webMercatorTileBbox).
   var SNOWDEPTH_TILE_URL = 'https://mapservices.weather.noaa.gov/raster/rest/services/snow/NOHRSC_Snow_Analysis/MapServer/export?' +
     'bbox={bbox-epsg-3857}&bboxSR=102100&imageSR=102100&size=256,256&format=png32&transparent=true&layers=show:0&f=image';
+  // Light pollution — NASA GIBS WMTS, VIIRS Black Marble annual night-lights composite. GIBS only
+  // publishes 2012 & 2016 composites of this product; 2016 is the most recent. CORS-open (ACAO:*),
+  // no key. WMTS tile order is {TileMatrix}/{TileRow}/{TileCol} = {z}/{y}/{x}; max native zoom 8
+  // (~500 m). Opaque RGB (black where no lights) — used as a partial-opacity contextual overlay.
+  var LIGHTPOLLUTION_TILE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png';
   // NOAA NDGD air quality — two live ArcGIS ImageServers (not MapServers like Snow Depth above,
   // hence /exportImage + no layers= param, not /export + layers=show:0 — the correct adaptation
   // of the same overall pattern for a different ArcGIS service TYPE, not a deviation from it),
@@ -10739,6 +10783,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('snowdepth-opacity-row').classList.toggle('show', on);
   }
 
+  // Light pollution (NASA GIBS VIIRS Black Marble, 2016 composite) — same plain raster overlay
+  // shape as Snow Depth / NLCD above. Toggle lives in two places (the Layers panel and the
+  // Tonight's Sky panel); this keeps both checkboxes in sync from either entry point.
+  function setLightPollutionOn(on){
+    state.settings.lightPollutionOn = on;
+    if (map && map.getLayer('lightpollution-raster')) map.setLayoutProperty('lightpollution-raster', 'visibility', on ? 'visible' : 'none');
+    document.getElementById('lightpollution-opacity-row').classList.toggle('show', on);
+    var a = document.getElementById('lightpollution-toggle'), b = document.getElementById('nightsky-lp-toggle');
+    if (a && a.checked !== on) a.checked = on;
+    if (b && b.checked !== on) b.checked = on;
+  }
+
   // Near-surface and vertically-integrated smoke fully color-wash the same area — having both
   // on at once would just have them visually fight over the same surface, so they're mutually
   // exclusive, same reasoning/pattern as Slope Angle/Aspect. Turning one on, unlike every other
@@ -11640,6 +11696,29 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         source: 'publicland-source',
         layout: { visibility: state.settings.publicLandOn ? 'visible' : 'none' },
         paint: { 'raster-opacity': state.settings.publicLandOpacity != null ? state.settings.publicLandOpacity : 0.55 }
+      });
+    }
+
+    // Light pollution (NASA GIBS VIIRS Black Marble, 2016) — full-coverage opaque RGB image
+    // (black where no artificial light), shown at partial opacity as contextual base data, so
+    // it's added low in the raster stack (below NLCD / Snow Depth / smoke and below all vector
+    // overlays and pins). Used by the Tonight's Sky tool. See LIGHTPOLLUTION_TILE_URL's comment.
+    if (!map.getSource('lightpollution-source')){
+      map.addSource('lightpollution-source', {
+        type: 'raster',
+        tiles: [LIGHTPOLLUTION_TILE_URL],
+        tileSize: 256,
+        maxzoom: 8,
+        attribution: 'Night lights: NASA GIBS / VIIRS Black Marble (2016)'
+      });
+    }
+    if (!map.getLayer('lightpollution-raster')){
+      map.addLayer({
+        id: 'lightpollution-raster',
+        type: 'raster',
+        source: 'lightpollution-source',
+        layout: { visibility: state.settings.lightPollutionOn ? 'visible' : 'none' },
+        paint: { 'raster-opacity': state.settings.lightPollutionOpacity != null ? state.settings.lightPollutionOpacity : 0.55 }
       });
     }
 
@@ -20849,6 +20928,181 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     };
   }
 
+  // ── Tonight's Sky (Tools > Tonight's Sky) — darkness + Milky Way core + cloud cover ──
+  // The Milky Way's galactic core (Sagittarius A*) is a FIXED point among the stars: J2000
+  // RA 17h45m40s = 266.41684°, Dec −29°00′28″ = −28.99411°. Precession moves it only a few
+  // arcminutes per decade — negligible here — so no star catalogue or ephemeris library is
+  // needed: a plain hour-angle → alt/az conversion places it in the sky for any location/time.
+  // Reuses the Solunar transit-finder's own inlined sidereal-time math (_solToDays/_solSiderealTime,
+  // same J2000 "days since 2000" epoch as SunCalc). Verified against Astronomy Engine to ~0.1°.
+  var GALCORE_RA = 266.41684 * _solRad, GALCORE_DEC = -28.99411 * _solRad;
+  var NIGHTSKY_CORE_ALT_MIN = 15; // degrees — below this the core sits in too much airmass / horizon murk
+  function galacticCoreAltAz(ms, latDeg, lngDeg){
+    var d = _solToDays(ms);
+    var H = _solSiderealTime(d, _solRad * -lngDeg) - GALCORE_RA; // local hour angle
+    var phi = latDeg * _solRad;
+    var alt = Math.asin(Math.sin(phi) * Math.sin(GALCORE_DEC) + Math.cos(phi) * Math.cos(GALCORE_DEC) * Math.cos(H));
+    var azRad = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(GALCORE_DEC) * Math.cos(phi));
+    return { altDeg: alt / _solRad, bearingDeg: azToCompassBearing(azRad) };
+  }
+
+  function nightSkyIntervalMinutes(list){ return list.reduce(function(a, iv){ return a + (iv.end - iv.start) / 60000; }, 0); }
+  // ISO-8601 duration → ms. NWS gridpoint values use forms like "PT6H", "P1DT3H", "PT30M", "P1D".
+  function parseIsoDuration(s){
+    var m = /P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?/.exec(s || '');
+    if (!m) return 0;
+    return (+(m[1] || 0)) * 86400000 + (+(m[2] || 0)) * 3600000 + (+(m[3] || 0)) * 60000;
+  }
+  // Time-weighted average of NWS skyCover values ([{validTime:"<iso>/<dur>", value:%}]) over [fromMs,toMs].
+  function nightSkyCloudAvg(skyCoverValues, fromMs, toMs){
+    var wSum = 0, msSum = 0;
+    (skyCoverValues || []).forEach(function(v){
+      var parts = String(v.validTime).split('/');
+      var s = Date.parse(parts[0]);
+      if (isNaN(s)) return;
+      var e = s + parseIsoDuration(parts[1]);
+      var os = Math.max(s, fromMs), oe = Math.min(e, toMs);
+      if (oe > os){ wSum += v.value * (oe - os); msSum += (oe - os); }
+    });
+    return msSum ? wSum / msSum : null;
+  }
+  function nightSkyCloudLabel(pct){
+    if (pct == null) return 'unknown';
+    if (pct < 20) return 'clear';
+    if (pct < 40) return 'mostly clear';
+    if (pct < 70) return 'partly cloudy';
+    if (pct < 90) return 'mostly cloudy';
+    return 'overcast';
+  }
+
+  // Everything about the night that starts on `date` at (lat,lng), from SunCalc + the core math above.
+  // Cloud cover is fetched separately (NWS) and merged in by the renderer.
+  function computeTonightSky(date, lat, lng){
+    var noonToday = sunDayNoon(date);
+    var noonTomorrow = new Date(noonToday.getTime() + 86400000);
+    var tToday = SunCalc.getTimes(noonToday, lat, lng);
+    var tTomorrow = SunCalc.getTimes(noonTomorrow, lat, lng);
+    var ok = function(d){ return d && !isNaN(d.getTime()); };
+
+    var sunset = tToday.sunset, sunriseNext = tTomorrow.sunrise;
+
+    // "True dark" window. If the sun never reaches −18° (high-latitude summer), there is no
+    // astronomical night — fall back to nautical dusk/dawn (−12°) and flag it; if not even that,
+    // there's no meaningful darkness at all tonight.
+    var darkStart = null, darkEnd = null, darkKind = 'astronomical';
+    if (ok(tToday.night) && ok(tTomorrow.nightEnd)){ darkStart = tToday.night.getTime(); darkEnd = tTomorrow.nightEnd.getTime(); }
+    else if (ok(tToday.nauticalDusk) && ok(tTomorrow.nauticalDawn)){
+      darkStart = tToday.nauticalDusk.getTime(); darkEnd = tTomorrow.nauticalDawn.getTime(); darkKind = 'nautical';
+    }
+
+    var moonIllum = SunCalc.getMoonIllumination(noonToday);
+    var moonIllumPct = Math.round(moonIllum.fraction * 100);
+    var moonPhaseIdx = Math.round(moonIllum.phase * 8) % 8;
+
+    // Moon-up intervals across the night, stitched from both days' rise/set (sample-seeded so a
+    // moon already up at dusk with no rise event in-window is still counted).
+    var mtToday = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(date)), lat, lng);
+    var mtTomorrow = SunCalc.getMoonTimes(new Date(sunDayMidnightMs(new Date(date.getTime() + 86400000))), lat, lng);
+    var scanLo = (ok(sunset) ? sunset.getTime() : sunDayMidnightMs(date) + 18 * 3600000) - 3 * 3600000;
+    var scanHi = (ok(sunriseNext) ? sunriseNext.getTime() : sunDayMidnightMs(date) + 30 * 3600000) + 3 * 3600000;
+    var moonUp = [];
+    var evs = [];
+    [mtToday, mtTomorrow].forEach(function(mt){
+      if (ok(mt.rise)) evs.push({ t: mt.rise.getTime(), type: 'rise' });
+      if (ok(mt.set)) evs.push({ t: mt.set.getTime(), type: 'set' });
+    });
+    evs.sort(function(a, b){ return a.t - b.t; });
+    var cur = SunCalc.getMoonPosition(new Date(scanLo), lat, lng).altitude > 0 ? scanLo : null;
+    evs.forEach(function(e){
+      if (e.type === 'rise' && cur === null) cur = e.t;
+      else if (e.type === 'set' && cur !== null){ moonUp.push({ start: cur, end: e.t }); cur = null; }
+    });
+    if (cur !== null) moonUp.push({ start: cur, end: scanHi });
+
+    // Moonless-dark = the dark window minus the moon-up intervals.
+    var moonlessDark = [];
+    if (darkStart != null){
+      var cursor = darkStart;
+      moonUp.forEach(function(iv){
+        var s = Math.max(iv.start, darkStart), e = Math.min(iv.end, darkEnd);
+        if (e <= s) return;
+        if (s > cursor) moonlessDark.push({ start: cursor, end: s });
+        cursor = Math.max(cursor, e);
+      });
+      if (cursor < darkEnd) moonlessDark.push({ start: cursor, end: darkEnd });
+    }
+
+    // Galactic core: 10-min sampling across the night.
+    var stepMs = 10 * 60000;
+    var coreScanLo = darkStart != null ? darkStart : scanLo;
+    var coreScanHi = darkStart != null ? darkEnd : scanHi;
+    var coreMaxAlt = -90, coreMaxAtMs = null, coreMaxBearing = 0;
+    var darkAbove = [], darkMoonlessAbove = [];
+    var visMaxAlt = -90, visBearing = 0;
+    var wasAbove = false, wasAboveM = false, segA = 0, segM = 0;
+    for (var ms = coreScanLo; ms <= coreScanHi + 1; ms += stepMs){
+      var c = galacticCoreAltAz(ms, lat, lng);
+      if (c.altDeg > coreMaxAlt){ coreMaxAlt = c.altDeg; coreMaxAtMs = ms; coreMaxBearing = c.bearingDeg; }
+      var inDark = darkStart != null && ms >= darkStart && ms <= darkEnd;
+      var above = inDark && c.altDeg >= NIGHTSKY_CORE_ALT_MIN;
+      var moonDown = SunCalc.getMoonPosition(new Date(ms), lat, lng).altitude < 0;
+      var aboveM = above && moonDown;
+      if (aboveM && c.altDeg > visMaxAlt){ visMaxAlt = c.altDeg; visBearing = c.bearingDeg; }
+      if (above && !wasAbove) segA = ms;
+      if (!above && wasAbove) darkAbove.push({ start: segA, end: ms });
+      wasAbove = above;
+      if (aboveM && !wasAboveM) segM = ms;
+      if (!aboveM && wasAboveM) darkMoonlessAbove.push({ start: segM, end: ms });
+      wasAboveM = aboveM;
+    }
+    if (wasAbove) darkAbove.push({ start: segA, end: coreScanHi });
+    if (wasAboveM) darkMoonlessAbove.push({ start: segM, end: coreScanHi });
+
+    return {
+      lat: lat, lng: lng, date: date,
+      sunset: sunset, sunriseNext: sunriseNext,
+      darkStart: darkStart, darkEnd: darkEnd, darkKind: darkKind,
+      darkMin: darkStart != null ? (darkEnd - darkStart) / 60000 : 0,
+      moonIllumPct: moonIllumPct, moonPhaseIdx: moonPhaseIdx,
+      moonPhaseName: MOON_PHASE_NAMES[moonPhaseIdx], moonPhaseIcon: MOON_PHASE_ICONS[moonPhaseIdx],
+      moonUp: moonUp, moonlessDark: moonlessDark, moonlessDarkMin: nightSkyIntervalMinutes(moonlessDark),
+      core: {
+        maxAlt: coreMaxAlt, maxAtMs: coreMaxAtMs, maxBearing: coreMaxBearing,
+        clearsThreshold: coreMaxAlt >= NIGHTSKY_CORE_ALT_MIN, neverRises: coreMaxAlt < 0,
+        darkAbove: darkAbove, darkMoonlessAbove: darkMoonlessAbove,
+        visMaxAlt: visMaxAlt > -90 ? visMaxAlt : null, visBearing: visBearing
+      }
+    };
+  }
+
+  // Compact rating + score, spirit of the Solunar day rating. `cloudPct` = 0..100 or null.
+  function nightSkyRating(ts, cloudPct){
+    var darkComp;
+    if (ts.darkStart == null) darkComp = 0.12;
+    else {
+      darkComp = Math.min(1, (ts.moonlessDarkMin / 60) / 5); // ~5+ moonless-dark hours = full marks
+      if (ts.darkKind === 'nautical') darkComp *= 0.7;        // "dark" but not truly astronomical
+    }
+    var cloudComp = cloudPct != null ? Math.max(0, 1 - cloudPct / 100) : 0.6; // unknown → neutral, not rewarded
+    var mwBonus = 0;
+    if (ts.core.darkMoonlessAbove.length){
+      mwBonus = Math.min(0.12, nightSkyIntervalMinutes(ts.core.darkMoonlessAbove) / 120 * 0.12);
+    }
+    var score = 0.55 * darkComp + 0.45 * cloudComp + mwBonus;
+    return { score: score, rating: score >= 0.75 ? 'Excellent' : score >= 0.55 ? 'Good' : score >= 0.32 ? 'Fair' : 'Poor' };
+  }
+
+  function nightSkyFmtRange(startMs, endMs){ return formatTime12(new Date(startMs)) + '–' + formatTime12(new Date(endMs)); }
+
+  // Debug hook — sanity-check Tonight's Sky for an arbitrary date/place (the panel itself always
+  // shows the current night). e.g. FieldMapDebug.tonightSky('2026-09-10', 35.2, -111.65)
+  window.FieldMapDebug = window.FieldMapDebug || {};
+  window.FieldMapDebug.tonightSky = function(dateStr, lat, lng){
+    var d = dateStr ? new Date(dateStr) : new Date();
+    var ts = computeTonightSky(d, lat, lng);
+    return { rating: nightSkyRating(ts, null), core: ts.core, ts: ts };
+  };
+
   // ── Sunrise-panel tab state + renderers ──
   var sunPanelTab = 'sun'; // 'sun' | 'moon' | 'solunar'
 
@@ -20979,6 +21233,146 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     el.innerHTML = html;
     var b = document.getElementById('solunar-explain-btn');
     if (b) b.addEventListener('click', function(){ document.getElementById('solunar-explain').classList.toggle('hidden'); });
+  }
+
+  // ── Tonight's Sky panel (Tools > Tonight's Sky) ──
+  var nightSkyCloudCache = {}; // "lat10,lng10" -> { pct, fetchedAt } | { pending }
+  function nightSkyCloudCacheKey(lat, lng){ return Math.round(lat * 10) + ',' + Math.round(lng * 10); }
+
+  // NWS gridpoint forecast → time-weighted mean skyCover (%) over [fromMs,toMs]. Resolves to a
+  // number, or null on any failure (out of NWS coverage, offline, server error).
+  function nightSkyFetchCloudPct(lat, lng, fromMs, toMs){
+    var key = nightSkyCloudCacheKey(lat, lng);
+    var c = nightSkyCloudCache[key];
+    if (c && c.fetchedAt && (Date.now() - c.fetchedAt) < 30 * 60000){
+      return Promise.resolve(nightSkyCloudAvg(c.values, fromMs, toMs));
+    }
+    if (c && c.pending) return c.pending.then(function(vals){ return nightSkyCloudAvg(vals, fromMs, toMs); });
+    var pending = fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lng.toFixed(4))
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){ return fetch(d.properties.forecastGridData); })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){
+        var vals = (d.properties && d.properties.skyCover && d.properties.skyCover.values) || [];
+        nightSkyCloudCache[key] = { values: vals, fetchedAt: Date.now() };
+        return vals;
+      })
+      .catch(function(err){
+        console.error('[FieldMap] Tonight’s Sky cloud fetch failed:', err);
+        delete nightSkyCloudCache[key];
+        return null;
+      });
+    nightSkyCloudCache[key] = { pending: pending };
+    return pending.then(function(vals){ return vals ? nightSkyCloudAvg(vals, fromMs, toMs) : null; });
+  }
+
+  function openNightSkyPanel(){
+    var panel = document.getElementById('nightsky-panel');
+    panel.classList.remove('hidden');
+    closeAllPanels_except('nightsky-panel');
+    var center = map.getCenter();
+    // "Tonight": after noon local → the coming night; before noon → the night in progress.
+    var anchor = new Date();
+    if (anchor.getHours() < 12) anchor = new Date(anchor.getTime() - 86400000);
+    document.getElementById('nightsky-location').textContent =
+      center.lat.toFixed(3) + '°' + (center.lat >= 0 ? 'N' : 'S') + ', ' +
+      Math.abs(center.lng).toFixed(3) + '°' + (center.lng >= 0 ? 'E' : 'W');
+    document.getElementById('nightsky-lp-toggle').checked = !!state.settings.lightPollutionOn;
+
+    var ts = computeTonightSky(anchor, center.lat, center.lng);
+    renderNightSky(ts, null, true); // render immediately with what we have; clouds fill in async
+    var cloudFrom = ts.darkStart != null ? ts.darkStart : (ts.sunset ? ts.sunset.getTime() : anchor.getTime());
+    var cloudTo = ts.darkEnd != null ? ts.darkEnd : (ts.sunriseNext ? ts.sunriseNext.getTime() : anchor.getTime() + 43200000);
+    nightSkyFetchCloudPct(center.lat, center.lng, cloudFrom, cloudTo).then(function(pct){
+      // only apply if this panel is still showing the same place
+      if (document.getElementById('nightsky-panel').classList.contains('hidden')) return;
+      renderNightSky(ts, pct, false);
+    });
+  }
+
+  function renderNightSky(ts, cloudPct, cloudsPending){
+    var rating = nightSkyRating(ts, cloudsPending ? null : cloudPct);
+    var ratingColor = { Excellent: '#3a8f45', Good: '#7aa63f', Fair: '#c9932e', Poor: '#8a8f8c' }[rating.rating] || '#8a8f8c';
+
+    // ── one-line human synthesis
+    var bits = [];
+    if (ts.darkStart != null){
+      var moonlessH = ts.moonlessDarkMin / 60;
+      if (ts.darkKind === 'nautical') bits.push('never fully dark tonight');
+      else if (moonlessH >= ts.darkMin / 60 - 0.25) bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd));
+      else if (ts.moonlessDark.length) bits.push('dark & moonless ' + nightSkyFmtRange(ts.moonlessDark[0].start, ts.moonlessDark[ts.moonlessDark.length - 1].end));
+      else bits.push('dark ' + nightSkyFmtRange(ts.darkStart, ts.darkEnd) + ' but moonlit');
+    } else {
+      bits.push('no real darkness at this latitude tonight');
+    }
+    if (ts.core.darkMoonlessAbove.length){
+      var w = ts.core.darkMoonlessAbove;
+      bits.push('Milky Way core ' + nightSkyFmtRange(w[0].start, w[w.length - 1].end) + ' low in the ' + compassLabel(ts.core.visBearing));
+    } else if (ts.core.darkAbove.length){
+      bits.push('core up in the dark but moonlit');
+    }
+    if (!cloudsPending && cloudPct != null) bits.push(nightSkyCloudLabel(cloudPct) + ' skies');
+
+    var summaryHtml = '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;background:' +
+      ratingColor + '22;border:1px solid ' + ratingColor + ';">' +
+      '<span style="font-size:24px;line-height:1;">' + ts.moonPhaseIcon + '</span>' +
+      '<div><div style="font-size:15px;font-weight:700;color:' + ratingColor + ';">' + rating.rating + ' night for stargazing</div>' +
+      '<div style="font-size:11px;color:var(--text-muted);line-height:1.45;">' + bits.join(' · ') + '</div></div></div>';
+    document.getElementById('nightsky-summary').innerHTML = summaryHtml;
+
+    // ── detail rows
+    function row(label, val){
+      return '<div class="sunrise-time-row" style="align-items:flex-start;"><span class="sunrise-time-label" style="flex:0 0 82px;font-size:12px;color:var(--text-muted);">' + label + '</span>' +
+        '<span class="sunrise-time-value" style="font-size:12px;font-weight:400;font-family:inherit;text-align:left;flex:1;line-height:1.45;">' + val + '</span></div>';
+    }
+    var d = [];
+
+    // Darkness
+    if (ts.darkStart != null){
+      d.push(row('True dark', nightSkyFmtRange(ts.darkStart, ts.darkEnd) +
+        (ts.darkKind === 'nautical' ? ' <span style="color:var(--text-muted)">(nautical only — sun never reaches −18°)</span>' : '') +
+        ' <span style="color:var(--text-muted)">· ' + (ts.darkMin / 60).toFixed(1) + ' h</span>'));
+    } else {
+      d.push(row('True dark', '<span style="color:var(--text-muted)">None — the sky never gets past twilight at this latitude tonight.</span>'));
+    }
+    // Moon
+    var moonTxt = ts.moonPhaseName + ', ' + ts.moonIllumPct + '% lit';
+    if (ts.moonIllumPct <= 3) moonTxt += ' — effectively no moon, dark all night';
+    else if (ts.darkStart != null && ts.moonlessDark.length){
+      moonTxt += '. Dark & moonless ' + ts.moonlessDark.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
+        ' <span style="color:var(--text-muted)">(' + (ts.moonlessDarkMin / 60).toFixed(1) + ' h)</span>';
+    } else if (ts.darkStart != null){
+      moonTxt += ' — up through the whole dark window, sky stays washed out';
+    }
+    d.push(row('Moon', moonTxt));
+    // Milky Way core
+    var coreTxt;
+    if (ts.core.neverRises){
+      coreTxt = '<span style="color:var(--text-muted)">Never rises at this latitude.</span>';
+    } else if (!ts.core.clearsThreshold){
+      coreTxt = '<span style="color:var(--text-muted)">Peaks at only ' + Math.round(ts.core.maxAlt) + '° around ' +
+        formatTime12(new Date(ts.core.maxAtMs)) + ' in the ' + compassLabel(ts.core.maxBearing) +
+        ' — too low for a good view (needs ~' + NIGHTSKY_CORE_ALT_MIN + '°+).</span>';
+    } else if (ts.core.darkMoonlessAbove.length){
+      var w2 = ts.core.darkMoonlessAbove;
+      coreTxt = 'Visible ' + w2.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
+        ' — low in the ' + compassLabel(ts.core.visBearing) + ', peak ' + Math.round(ts.core.visMaxAlt) + '°.';
+    } else if (ts.core.darkAbove.length){
+      var w3 = ts.core.darkAbove;
+      coreTxt = 'High enough in a dark sky ' + w3.map(function(iv){ return nightSkyFmtRange(iv.start, iv.end); }).join(', ') +
+        ', <span style="color:var(--text-muted)">but the moon is up then and washes it out</span>.';
+    } else {
+      coreTxt = '<span style="color:var(--text-muted)">Up tonight but only before the sky gets dark — not visible.</span>';
+    }
+    d.push(row('Milky Way', coreTxt));
+    // Clouds
+    var cloudTxt;
+    if (cloudsPending) cloudTxt = '<span style="color:var(--text-muted)">checking…</span>';
+    else if (cloudPct == null) cloudTxt = '<span style="color:var(--text-muted)">unavailable (NWS covers the US only)</span>';
+    else cloudTxt = nightSkyCloudLabel(cloudPct) + ' <span style="color:var(--text-muted)">· avg ' + Math.round(cloudPct) + '% cover over the dark hours</span>';
+    d.push(row('Clouds', cloudTxt));
+
+    document.getElementById('nightsky-detail').innerHTML = d.join('');
   }
 
   // Re-render whichever of the Moon/Solunar tabs is showing (the Sun tab is driven by
@@ -21477,7 +21871,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
   // Canonical list of floating popover panels — shared by closeAllPanels/closeAllPanels_except
   // so a panel only has to be added in one place to get consistent close-on-switch behavior.
-  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel', 'tap-stack-panel'];
+  var FLOATING_PANEL_IDS = ['layers-panel', 'filter-panel', 'settings-panel', 'sunrise-panel', 'compass-panel', 'weather-panel', 'nightsky-panel', 'wildlife-panel', 'gmu-state-panel', 'trip-picker-panel', 'tap-stack-panel'];
   // Scrim is scoped to pure configuration/selection popovers that actually overlay the map —
   // deliberately EXCLUDES sunrise-panel and compass-panel, both of which need the map itself
   // still interactive while open (sunrise-panel's sun-arc preview updates live as you pan the
@@ -23914,6 +24308,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
             if (state.settings.showZoomButtons === undefined) state.settings.showZoomButtons = true;
             if (state.settings.snowDepthOn === undefined) state.settings.snowDepthOn = false;
             if (state.settings.snowDepthOpacity === undefined) state.settings.snowDepthOpacity = 0.75;
+            if (state.settings.lightPollutionOn === undefined) state.settings.lightPollutionOn = false;
+            if (state.settings.lightPollutionOpacity === undefined) state.settings.lightPollutionOpacity = 0.55;
             if (state.settings.aqiSmokeOn === undefined) state.settings.aqiSmokeOn = false;
             if (state.settings.aqiSmokeOpacity === undefined) state.settings.aqiSmokeOpacity = 0.6;
             if (state.settings.aqiSmokeVertOn === undefined) state.settings.aqiSmokeVertOn = false;
@@ -24119,7 +24515,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // radio group always reads "1/5", never a meaningful count.
   var LAYER_SECTION_TOGGLE_IDS = {
     landboundaries: ['usfsboundaries-toggle', 'publicland-toggle', 'gmu-quick-toggle', 'forestclosures-toggle', 'mvum-toggle'],
-    environmental: ['snowdepth-toggle', 'aqismoke-toggle', 'aqismokevert-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
+    environmental: ['snowdepth-toggle', 'lightpollution-toggle', 'aqismoke-toggle', 'aqismokevert-toggle', 'nlcd-toggle', 'fireperimeters-toggle', 'slopeangle-toggle', 'elevrange-toggle', 'aspect-toggle', 'wildfire-recent-toggle', 'wildfire-older-toggle', 'wildfire-evenolder-toggle', 'timberharvest-toggle', 'timberthinning-toggle'],
     water: ['hydro-toggle', 'gauge-toggle'],
     wildlife: ['wildlife-biggame-quick-toggle', 'wildlife-uplandgame-quick-toggle', 'wildlife-fish-quick-toggle']
   };
@@ -24271,6 +24667,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('tools-sheet').classList.add('hidden');
       if (!sunDate) sunDate = new Date();
       openSunrisePanel();
+    });
+    document.getElementById('sheet-nightsky-btn').addEventListener('click', function(){
+      document.getElementById('tools-sheet').classList.add('hidden');
+      openNightSkyPanel();
+    });
+    document.getElementById('nightsky-close-btn').addEventListener('click', function(){
+      document.getElementById('nightsky-panel').classList.add('hidden');
     });
     document.getElementById('sunrise-toggle-times-btn').addEventListener('click', function(){
       var timesEl = document.getElementById('sunrise-times-list');
@@ -24499,6 +24902,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (map.getLayer('snowdepth-raster')) map.setPaintProperty('snowdepth-raster', 'raster-opacity', state.settings.snowDepthOpacity);
       scheduleSave();
     });
+    document.getElementById('lightpollution-toggle').addEventListener('change', function(){
+      setLightPollutionOn(this.checked);
+      scheduleSave();
+    });
+    document.getElementById('lightpollution-opacity').addEventListener('input', function(){
+      state.settings.lightPollutionOpacity = this.value / 100;
+      if (map.getLayer('lightpollution-raster')) map.setPaintProperty('lightpollution-raster', 'raster-opacity', state.settings.lightPollutionOpacity);
+      scheduleSave();
+    });
+    document.getElementById('nightsky-lp-toggle').addEventListener('change', function(){
+      setLightPollutionOn(this.checked);
+      scheduleSave();
+    });
     document.getElementById('aqismoke-toggle').addEventListener('change', function(){
       setAqiSmokeOn(this.checked);
       scheduleSave();
@@ -24721,6 +25137,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('snowdepth-toggle').checked = !!state.settings.snowDepthOn;
     document.getElementById('snowdepth-opacity').value = Math.round((state.settings.snowDepthOpacity != null ? state.settings.snowDepthOpacity : 0.75) * 100);
     document.getElementById('snowdepth-opacity-row').classList.toggle('show', !!state.settings.snowDepthOn);
+    document.getElementById('lightpollution-toggle').checked = !!state.settings.lightPollutionOn;
+    document.getElementById('lightpollution-opacity').value = Math.round((state.settings.lightPollutionOpacity != null ? state.settings.lightPollutionOpacity : 0.55) * 100);
+    document.getElementById('lightpollution-opacity-row').classList.toggle('show', !!state.settings.lightPollutionOn);
     document.getElementById('aqismoke-toggle').checked = !!state.settings.aqiSmokeOn;
     document.getElementById('aqismoke-opacity').value = Math.round((state.settings.aqiSmokeOpacity != null ? state.settings.aqiSmokeOpacity : 0.6) * 100);
     document.getElementById('aqismoke-opacity-row').classList.toggle('show', !!state.settings.aqiSmokeOn);

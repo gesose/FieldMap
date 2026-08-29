@@ -965,6 +965,20 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   that hides everything but the date/time slider and the phase diagram/countdown, shrinking the panel so the
   map/arc above it has far more room — Solunar has no such toggle (pure info, no map overlay). See Architecture
   notes' "Solunar" entry for the full design and verification.
+- Tonight's Sky (Tools → Tonight's Sky) — a "how dark will it get here tonight, is it worth going out"
+  summary panel: a colour-coded **Excellent/Good/Fair/Poor** rating (spirit of the Solunar day rating) plus
+  a one-line human synthesis ("Poor night for stargazing · dark 8:30 PM–4:29 AM but moonlit · core up in
+  the dark but moonlit · partly cloudy skies"), then detail rows for **true dark** (SunCalc astronomical
+  twilight, −18°; falls back to nautical −12° with a clear label at high-latitude summer, or "none" past
+  that), **moon** (phase/illumination + the dark-and-moonless sub-window), **Milky Way core** (a fixed
+  RA/Dec → alt/az calc for Sagittarius A*, RA 266.41684° / Dec −28.99411°, reusing the Solunar transit
+  finder's own inlined sidereal-time math — no star catalogue / ephemeris library; gracefully says "never
+  rises at this latitude" north of ~lat 61°, or "peaks at only N°, too low" when it clears the horizon but
+  not ~15°), and **cloud cover** (real NWS gridpoint `skyCover`, time-weighted over the dark hours; "unavailable"
+  outside the US). Plus an opt-in **Light pollution** map overlay (NASA GIBS VIIRS Black Marble 2016 raster,
+  off by default) toggleable from either this panel or the Layers panel's Environmental section — both
+  checkboxes stay in sync. The core calc was verified against Astronomy Engine to ~0.1°. See Architecture
+  notes' "Tonight's Sky" entry for the full design and verification.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -7934,6 +7948,90 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       persists across tab switches and a full reload defaults it to off. Zero console errors; `node --check`
       clean on the main inline block + `service-worker.js`.
   - APP_VERSION 2.77.0 → 2.78.0, SHELL_CACHE v206 → v207.
+- Tonight's Sky (Tools → Tonight's Sky, `#nightsky-panel`) — a read-only "how dark / how good for
+  stargazing tonight" summary, built entirely on SunCalc + ~15 lines of inlined star-position math + the
+  existing NWS weather integration. Not a tab on the Sun/Moon panel (deliberately kept separate so that
+  panel doesn't get overloaded); a plain `.floating-panel` in `FLOATING_PANEL_IDS` only (NOT
+  `PANEL_SCRIM_IDS` — like `sunrise-panel`/`compass-panel`, the map stays interactive/visible behind it so
+  the light-pollution overlay it toggles is actually visible). Closes via its own × or when another panel
+  opens.
+  - **"Tonight"**: `openNightSkyPanel()` anchors to the current calendar day if the local hour is ≥ 12,
+    else yesterday — so at 2 AM it still describes the night in progress. No date picker (v1).
+  - **Galactic core position** (`galacticCoreAltAz(ms, lat, lng)`): the Milky Way's bright core (Sagittarius
+    A*) is a FIXED point among the stars — J2000 **RA 266.41684° (`GALCORE_RA`), Dec −28.99411°
+    (`GALCORE_DEC`)** — precession moves it a few arcmin/decade, negligible, so no star catalogue or
+    ephemeris library is needed. A plain hour-angle → alt/az conversion reusing the Solunar transit
+    finder's own inlined helpers (`_solToDays`, `_solSiderealTime`, same J2000 epoch as SunCalc) and the
+    existing `azToCompassBearing` for the bearing. **Verified against Astronomy Engine** (`DefineStar` +
+    `Equator` + `Horizon`) at 6 places equator→lat 65°: matches to **~0.1°** when the core is well above the
+    horizon (the regime that matters), ~0.5° near/below the horizon (atmospheric refraction — irrelevant for
+    a ≥15° threshold). `NIGHTSKY_CORE_ALT_MIN = 15` (below this = too much airmass / horizon murk).
+  - **`computeTonightSky(date, lat, lng)`** returns everything about the night that starts on `date`:
+    - **True dark** window from `SunCalc.getTimes(...).night` / next day's `.nightEnd` (astronomical
+      twilight, sun −18°). At high-latitude summer these are `NaN` (sun never reaches −18°) → falls back to
+      nautical dusk/dawn (−12°, `darkKind:'nautical'`, penalised 0.7× in the rating and labelled "never
+      fully dark tonight"); past even that → `darkStart == null`, "no real darkness at this latitude
+      tonight".
+    - **Moon-up intervals** across the night, stitched from `getMoonTimes` for both calendar days, seeded by
+      sampling `getMoonPosition().altitude > 0` at the scan start (so a moon already up at dusk with no
+      rise event in-window is still counted). **Moonless-dark** = the dark window minus the moon-up
+      intervals.
+    - **Galactic core**: 10-min sampling across the night tracks max altitude / bearing, and two
+      segment lists — `darkAbove` (core ≥ 15° AND in the dark window, moon ignored) and `darkMoonlessAbove`
+      (+ `getMoonPosition().altitude < 0`, i.e. moon fully below the horizon — a deliberately conservative
+      "the core is genuinely viewable" test). `clearsThreshold` = max alt ≥ 15°; `neverRises` = max alt < 0.
+  - **`nightSkyRating(ts, cloudPct)`** → `{score, rating}` (Excellent ≥ 0.75 / Good ≥ 0.55 / Fair ≥ 0.32 /
+    Poor). `score = 0.55·darkComp + 0.45·cloudComp + mwBonus`: `darkComp` scales with moonless-dark hours
+    (~5 h = full marks, ×0.7 if only nautical); `cloudComp = 1 − cloudPct/100` (unknown → neutral 0.6, not
+    rewarded); `mwBonus` up to +0.12 for ≥ 2 h of core in dark, moonless sky. A great-but-coreless winter
+    night still rates Excellent — the Milky Way core is a summer object and the rating says so separately
+    ("Milky Way: Never rises at this latitude").
+  - **Cloud cover** (`nightSkyFetchCloudPct`): NWS `points` → `forecastGridData` → `properties.skyCover.values`
+    (ISO-8601-interval `[{validTime:"<iso>/<dur>", value:%}]`), time-weighted mean over the dark window via
+    `parseIsoDuration` + `nightSkyCloudAvg`. 30-min in-memory cache keyed to a ~0.1°-rounded cell (same
+    pattern as `getCurrentConditions`). Null on any failure (out of US coverage, offline, server error) →
+    "unavailable (NWS covers the US only)". Fetched async — the panel renders immediately with everything
+    else, then re-renders the clouds row when it lands.
+  - **`renderNightSky(ts, cloudPct, cloudsPending)`**: a Solunar-style coloured summary card (one-line human
+    synthesis) + 4 detail rows (True dark / Moon / Milky Way / Clouds). The Milky Way row has 5 branches:
+    never-rises · rises-but-too-low (with peak alt/time/direction) · genuinely visible (window + peak +
+    compass direction) · high-in-dark-but-moonlit · up-only-before-dark.
+  - **Light pollution overlay** — `lightpollution-source`/`lightpollution-raster`, a plain `type:'raster'`
+    MapLibre layer (same shape as Snow Depth / NLCD), added in `reinitializeLayers()` LOW in the raster
+    stack (just above `publicland-raster`, below `nlcd-raster` and everything else) since it's opaque RGB
+    contextual base data shown at partial opacity. `LIGHTPOLLUTION_TILE_URL` = NASA GIBS WMTS
+    `VIIRS_Black_Marble` **2016** composite (`{z}/{y}/{x}`, WMTS row-before-col; max native zoom 8, ~500 m;
+    CORS `*`, no key). GIBS only publishes 2012 & 2016 of this product — 2016 is the newest — so it carries
+    a `.gmu-disclaimer` "2016 composite, not current" note (matching the AQI overlay's disclaimer pattern),
+    both in the Layers panel and in `#nightsky-panel`. `state.settings.lightPollutionOn` (default false) /
+    `lightPollutionOpacity` (default 0.55), with fixup lines and boot-restore like every other overlay.
+    **Toggle lives in two places** — the Layers panel Environmental section (`#lightpollution-toggle`, +
+    opacity slider + `?` hint panel `lh-lightpollution`, + in `LAYER_SECTION_TOGGLE_IDS.environmental` for
+    the count badge) AND `#nightsky-panel` (`#nightsky-lp-toggle`) — `setLightPollutionOn(on)` keeps both
+    checkboxes in sync from either entry point. Deliberately NOT wired into `OVERLAY_OFFLINE_TOGGLE_SOURCE`
+    / `DOWNLOAD_LAYERS` for v1 (no explicit "download this area" support — a possible follow-up).
+  - **Debug hook**: `window.FieldMapDebug.tonightSky('2026-09-10', 35.2, -111.65)` → `{rating, core, ts}` for
+    sanity-checking any night (the panel itself always shows the current one).
+  - **Verification**: (1) `galacticCoreAltAz` cross-checked against Astronomy Engine (see above). (2)
+    `computeTonightSky` extracted verbatim and run in Node against real SunCalc for 7 place/date combos —
+    Flagstaff full moon Aug 28 = **Poor**, no moonless-dark, "core up+dark but moonlit"; Flagstaff new moon
+    Sep 10 = **Excellent**, 8.5 h moonless, "core VISIBLE 8:09–9:39 PM peak 23° SSW"; Flagstaff winter Dec 15
+    = **Excellent** sky but "core never rises"; Fairbanks summer solstice = "dark: NONE" + "core never
+    rises"; Ushuaia winter (85 % moon) = **Poor**, a 13-min moonless core sliver; Miami first-quarter =
+    core visible-but-moonlit. (3) Live in the real browser: the panel opens/computes/renders correctly at
+    Flagstaff / Big Bend TX / Miami / Fairbanks (nautical-fallback label + "never rises" both confirmed on a
+    real high-latitude run); **real NWS cloud data** flows through ("partly cloudy · avg 56 %", "clear ·
+    avg 10 %", "overcast · avg 91 %"); via the debug hook, the "Excellent + core VISIBLE" and equator
+    (peak 59°, long window) happy paths confirmed against the shipped code; the GIBS raster **renders real
+    imagery** (screenshot: Las Vegas / LA / Phoenix light domes bright, Death Valley / Grand Canyon /
+    Kaibab dark, basemap labels + pins on top), toggles on/off correctly from **both** the Layers panel and
+    the Tonight's Sky panel with the checkboxes staying in sync, opacity slider drives `raster-opacity`
+    live, and `state.settings` persists. Layer confirmed at stack position just above `publicland-raster`.
+    Zero console errors from the feature. `node --check` clean on all 4 inline `<script>` blocks +
+    `service-worker.js`. APP_VERSION 2.78.0 → 2.79.0, SHELL_CACHE v207 → v208. Standing sandbox caveat:
+    the app's own MapLibre style intermittently stalls here, so the raster render was confirmed via a
+    window where it caught up (screenshot above) plus direct `fetch()`+`createImageBitmap` decode of the
+    real GIBS tiles at z3–z8.
 
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
@@ -11034,3 +11132,26 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
       forecast has `skyCover` (%). Fold in as a 4th input reusing that.
     Dead ends flagged: World Atlas 2016 raw data (NC licence), lightpollutionmap.info (no public API), GIBS
     daily DNB (too noisy for an LP baseline). No code was written or changed this session.
+- Session (Tonight's Sky tool v1) — built the feature the prior research session scoped: a Tools →
+  Tonight's Sky panel answering "how dark will it get here tonight, is it good for stargazing." Three
+  inputs, all from stuff the app already has: (a) darkness — SunCalc astronomical twilight (already used
+  by the Sun tab) + moon rise/set/illumination (already used by Solunar), giving a true-dark and a
+  dark-AND-moonless window; (b) Milky Way galactic core — a ~15-line inline fixed-RA/Dec → alt/az calc
+  (Sagittarius A*, 266.41684° / −28.99411°, reusing the Solunar transit finder's own inlined sidereal-time
+  math — no star catalogue / ephemeris library), giving the window (if any) when the core is ≥15° in a
+  dark, moonless sky; (c) cloud cover — real NWS gridpoint `skyCover`, time-weighted over the dark hours.
+  Synthesised into a Solunar-style Excellent/Good/Fair/Poor rating + a one-line human summary. Plus an
+  opt-in Light pollution map overlay (NASA GIBS VIIRS Black Marble 2016 raster, off by default, toggleable
+  from the panel OR the Layers panel with the two checkboxes kept in sync), carrying a "2016 composite,
+  not current" disclaimer matching the AQI overlay's pattern. High-latitude edge cases handled explicitly:
+  a nautical-twilight fallback with a clear label when the sun never reaches −18°, and "the Milky Way core
+  never rises at this latitude" north of ~lat 61°. Verified: the core calc against Astronomy Engine (~0.1°
+  when the core is up); `computeTonightSky` extracted verbatim and run in Node across 7 real place/date
+  combos (full moon → Poor + core moonlit; new moon → Excellent + core visible; winter → Excellent sky but
+  core never rises; Fairbanks solstice → no dark + core never rises; etc.); live in the browser the panel
+  computes and renders correctly at 4+ real locations with real NWS cloud data, the "Excellent + core
+  VISIBLE" and equator happy paths confirmed via a new `FieldMapDebug.tonightSky()` hook, and the GIBS
+  raster confirmed rendering real imagery (Vegas/LA/Phoenix light domes bright, dark-sky areas dark) with
+  the toggle working from both entry points and state persisting. Zero console errors; `node --check`
+  clean. See Architecture notes' "Tonight's Sky" entry for the full design and verification.
+  APP_VERSION 2.78.0 → 2.79.0, SHELL_CACHE v207 → v208.
