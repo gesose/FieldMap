@@ -260,6 +260,8 @@
   #sidebar-header-row2{display:flex;gap:6px;position:relative;}
   #sidebar-header-row2 > *{flex:1;}
   #sidebar-header-row2 .btn{width:100%;}
+  /* +Add / Tools — 44pt-equivalent touch target (was ~26px tall via .btn-small). */
+  #add-sheet-btn,#tools-sheet-btn{min-height:44px;padding:10px 16px;font-size:13px;}
   .dropdown-wrap{position:relative;}
   .dropdown-menu{
     position:absolute;top:calc(100% + 6px);left:0;z-index:950;min-width:150px;
@@ -372,7 +374,11 @@
   #map{flex:1;height:100%;background:#0e1210;position:relative;}
   #map.add-mode{cursor:crosshair;}
 
-  /* Modals */
+  /* Modals — COMMIT/CONFIRM family (with the bottom sheets). Desktop: centered card, radius
+     14, TWO widths only — 380 standard / 560 wide (.modal-wide). Mobile: the @media block
+     merges this with the sheet treatment (bottom-anchored, edge-to-edge, radius 16 top).
+     No backdrop-tap dismiss by design (Item 7) — the .panel-close x + a dirty-check on the
+     6 forms make "deliberate action to close" coherent, not arbitrary. */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(10,12,10,0.6);z-index:2000;
     display:flex;align-items:center;justify-content:center;padding:20px;
@@ -421,7 +427,7 @@
   }
   .modal-actions .btn-danger{margin-right:auto;}
 
-  .modal-wide{max-width:540px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;}
+  .modal-wide{max-width:560px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;}
   .modal-wide .modal-actions{position:sticky;bottom:0;background:var(--bg-elevated);padding-top:10px;border-top:1px solid var(--border);margin-top:auto;}
   /* A modal-wide with two .modal-actions rows (e.g. offline-modal's "Download this area"
      row followed later by its "Close" row) would otherwise both be position:sticky;bottom:0
@@ -655,26 +661,22 @@
      is on mobile too. Either way this stays screen-anchored, never click-point-anchored, so
      the near-edge occlusion bug this replaces can't recur regardless of viewport size. */
   @keyframes view-drawer-slide-up{ from{ transform:translateY(12px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+  /* Compact detail view — part of the PICK/READ family: 300px, radius 12, bottom-right.
+     (The expanded edit state below overrides to 380px — it hosts a COMMIT/CONFIRM form and
+     matches the modal family's width there.) No grab handle: the .panel-close x is the close. */
   #view-drawer{
     position:fixed;left:auto;bottom:24px;right:64px;z-index:1300;
-    width:380px;max-width:calc(100vw - var(--sidebar-width) - 90px);
+    width:300px;max-width:calc(100vw - var(--sidebar-width) - 90px);
     background:var(--bg-elevated);border:1px solid var(--border);
-    border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
+    border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
     max-height:60vh;overflow-y:auto;
-    padding:8px 16px 14px;
+    padding:14px 16px;
     animation:view-drawer-slide-up .18s ease-out;
   }
   #view-drawer.hidden{display:none;}
-  #view-drawer-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:2px auto 10px;}
-  #view-drawer-close-btn{
-    position:absolute;top:10px;right:12px;background:none;border:none;color:var(--text-muted);
-    font-size:20px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:6px;
-  }
-  #view-drawer-close-btn:hover{background:var(--bg-elevated-2);color:var(--text);}
 
-  /* Expanded (edit) state — grows taller to fit a full form (see expandDrawerForEdit).
-     Width/position are untouched, only height/scroll grow, so it stays anchored exactly
-     where the compact view was. */
+  /* Expanded (edit) state — hosts a COMMIT/CONFIRM form, so it widens to 380px (the modal
+     family's standard) and grows taller; position/anchor stay put. */
   #view-drawer.expanded{max-height:85vh;width:380px;max-width:calc(100vw - var(--sidebar-width) - 90px);}
 
   /* One shared expanded-edit form, not four: expandDrawerForEdit re-parents the SAME
@@ -685,16 +687,20 @@
      the DOM (and how it's framed visually) changes. These overrides strip the modal's own
      card chrome (background/border/padding/shadow/its own independent scroll) since
      #view-drawer now provides all of that — without them the moved content would render as
-     a card-inside-a-card with two competing scroll containers. The top header row's
-     duplicate Save/Cancel (.modal-header-actions) is hidden too: #view-drawer's own bottom
-     .modal-actions row (Delete/Cancel/Save, already part of the same moved markup) is the
-     only action row now, matching the batch spec's footer. */
+     a card-inside-a-card with two competing scroll containers. In the drawer (edit) the
+     footer is Delete + Save only — the .modal-cancel button does not appear here and the
+     .modal-header-actions row was removed entirely; the .panel-close x is the cancel
+     affordance (dirty-check gated). In the centered modal (new-item) the bottom Cancel+Save
+     row is the only action row. */
   #view-drawer-content .modal{
     background:none;border:none;border-radius:0;width:auto;max-width:none;
     padding:0;max-height:none;overflow-y:visible;box-shadow:none;position:static;
   }
   #view-drawer-content .modal-header-actions{display:none;}
+  #view-drawer-content .modal-cancel{display:none;}
   #view-drawer-content .modal-actions{margin-left:0;margin-right:0;padding-left:0;padding-right:0;}
+  /* Compact detail view — keep the title/first row clear of the .panel-close x. */
+  #view-drawer:not(.expanded) #view-drawer-content > :first-child{padding-right:36px;}
 
   /* Scrim behind popover panels (Layers/Filter/Settings/Weather/Wildlife/GMU picker + the
      sort/export dropdown menus — see PANEL_SCRIM_IDS) — sits above the map and sidebar
@@ -706,17 +712,19 @@
      PANEL_SCRIM_IDS for why. */
   #panel-scrim{position:fixed;inset:0;z-index:1050;background:rgba(10,12,10,0.35);}
   #panel-scrim.hidden{display:none;}
+  /* PICK / READ family — one desktop standard: 300px, radius 12, bottom-right anchor,
+     position:relative-equivalent (position:absolute) as the containing block for .panel-close.
+     Every member (layers, filter, settings, nightsky, sunrise, weather, wildlife, trip-picker,
+     gmu-state, compass, tap-stack, #view-drawer) renders through this rule with ZERO inline
+     width/position. Mobile: the inset full-width drawer override in the @media block below. */
   .floating-panel{
-    position:absolute;bottom:24px;right:64px;z-index:1500;width:260px;
+    position:absolute;bottom:24px;right:64px;z-index:1500;width:300px;
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
     padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.45);
-    max-width:calc(100vw - 80px);
+    max-width:calc(100vw - 80px);max-height:calc(100vh - 48px);overflow-y:auto;
   }
   .floating-panel.hidden{display:none;}
   .floating-panel h2{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin:0 0 10px;font-weight:600;}
-  #filter-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
-  #layers-panel{max-height:calc(100vh - 100px);overflow-y:auto;}
-  #nightsky-panel{width:300px;}
   .layer-hint-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px;line-height:1;vertical-align:middle;border-radius:50%;border:1px solid var(--border);width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;}
   .layer-hint-btn:hover{color:var(--text);}
   .layer-hint-text{display:none;font-size:11px;color:var(--text-muted);margin:4px 0 6px;line-height:1.4;}
@@ -764,6 +772,28 @@
   .link-btn{background:none;border:none;padding:0;font-size:11px;color:var(--text-muted);cursor:pointer;text-decoration:underline;}
   .link-btn:hover{color:var(--text);}
 
+  /* Shared close affordance — one component for every panel, drawer, sheet, and modal.
+     44x44 touch target (Apple HIG), absolutely anchored top-right of the surface's own
+     card (every host establishes a containing block: .modal / .floating-panel / #view-drawer
+     / #compass-panel / .bottom-sheet-panel are all position:relative|absolute|fixed).
+     The visible glyph is small; the hit area is the whole 44px square. Replaces the former
+     .link-btn "x", .layer-hint-btn circle, bespoke #view-drawer-close-btn, and the lone
+     "x Close" text link on Compass. */
+  .panel-close{
+    position:absolute;top:4px;right:4px;z-index:5;
+    width:44px;height:44px;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    background:none;border:none;padding:0;margin:0;
+    color:var(--text-muted);cursor:pointer;border-radius:10px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .panel-close:hover{color:var(--text);background:var(--bg-elevated-2);}
+  .panel-close svg{width:18px;height:18px;display:block;pointer-events:none;}
+  /* Give every hosting header room so a long title never runs under the button. */
+  .floating-panel h2,
+  .modal h2,
+  .bottom-sheet-section:first-child{padding-right:40px;}
+
   #map-controls{position:absolute;bottom:24px;right:14px;z-index:1100;display:flex;flex-direction:column;gap:10px;transition:opacity .2s ease;}
   /* "Show zoom buttons" off (Session 27) — hides just zoom-in-btn/zoom-out-btn (the .zoom-btn
      pair); north-reset-btn and every other icon in the cluster stay, per spec. Scoped to
@@ -771,7 +801,7 @@
      exists. */
   #map-controls.zoom-buttons-hidden .zoom-btn{display:none;}
   .map-icon-btn{
-    width:40px;height:40px;border-radius:50%;
+    width:44px;height:44px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);
     display:flex;align-items:center;justify-content:center;cursor:pointer;
     box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative;
@@ -784,23 +814,21 @@
   #map.measure-mode{cursor:crosshair;}
   #map.polygon-mode{cursor:crosshair;}
 
-  /* Bottom sheets */
+  /* Bottom sheets — COMMIT/CONFIRM family (with modals). No grab handle: the .panel-close
+     x is the close affordance. */
   .bottom-sheet-overlay{
     position:fixed;inset:0;z-index:2000;
     background:rgba(0,0,0,0.5);display:flex;align-items:flex-end;
   }
   .bottom-sheet-overlay.hidden{display:none;}
   .bottom-sheet-panel{
+    position:relative;
     background:var(--bg-elevated);border-top:1px solid var(--border);
     border-radius:16px 16px 0 0;width:100%;padding-bottom:env(safe-area-inset-bottom,0);
     max-height:80vh;overflow-y:auto;
   }
-  .bottom-sheet-handle{
-    width:36px;height:4px;background:var(--border);border-radius:2px;
-    margin:10px auto 4px;
-  }
   .bottom-sheet-section{
-    padding:8px 16px 4px;text-transform:uppercase;
+    padding:14px 16px 4px;text-transform:uppercase;
   }
   .bottom-sheet-grid{
     display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px 12px 8px;
@@ -941,16 +969,25 @@
      tap-stack needed, so its DOM/CSS was renamed and generalized rather than building a
      parallel one from scratch). Same visual structure and ids/classes, just generic (no
      per-pin dot/icon/edit/delete — those were pin-specific and dropped along with the rename). */
+  /* Tap-stack uses the PICK/READ family anchor + width (Item 3 — folded off its old
+     bottom-center anchor), but keeps its own edge-to-edge internal structure (full-bleed
+     header divider, un-inset rows) so it doesn't get the .floating-panel content padding. */
   #tap-stack-panel{
-    position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
-    z-index:1500;min-width:260px;max-width:340px;width:max-content;
+    position:absolute;bottom:24px;right:64px;
+    z-index:1500;width:300px;max-width:calc(100vw - 80px);
     background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px;
     box-shadow:0 4px 16px rgba(0,0,0,0.5);overflow:hidden;
   }
   #tap-stack-panel.hidden{display:none;}
+  /* Compass panel — a .floating-panel (Item 2/3, no inline styles); these are its only
+     content-specific tweaks (mono readout, centred), and z-index bumped so it clears the
+     item draw-bars it can coexist with. */
+  #compass-panel{font-family:var(--font-mono);text-align:center;z-index:1400;}
+  /* Trip picker sits above the modals it can be opened from (a creation form's Trip field). */
+  #trip-picker-panel{z-index:2100;}
   #tap-stack-panel-header{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:10px 14px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;
+    padding:12px 44px 12px 14px;border-bottom:1px solid var(--border);
     font-size:12px;font-weight:600;color:var(--text-muted);
   }
   #tap-stack-panel-title{font-size:13px;font-weight:600;color:var(--text);}
@@ -1179,9 +1216,17 @@
 
   /* Mobile */
   @media (max-width:760px){
-    /* Modal: start from top on mobile so content isn't hidden above fold */
-    .modal-overlay{ align-items:flex-start; padding:12px; }
-    .modal{ max-height:calc(100dvh - 24px); }
+    /* COMMIT/CONFIRM family on mobile — modals and bottom sheets render identically:
+       bottom-anchored, edge-to-edge, radius 16 top, up to 92vh tall. This is the "merge the
+       mobile .modal and .bottom-sheet-* treatment" consolidation — the audit found the two
+       were already nearly the same shape. */
+    .modal-overlay,.bottom-sheet-overlay{ align-items:flex-end; justify-content:center; padding:0; }
+    .modal,.modal-wide,.bottom-sheet-panel{
+      width:100%;max-width:none;
+      border-radius:16px 16px 0 0;
+      max-height:92vh;
+    }
+    .modal{ padding-bottom:calc(20px + env(safe-area-inset-bottom,0)); }
     /* Sidebar bottom sheet */
     #mobile-handle{display:flex;justify-content:center;padding:6px 0 0;cursor:pointer;order:0;}
     #mobile-handle svg{opacity:0.4;transition:opacity 0.15s;}
@@ -1352,16 +1397,18 @@
     /* Fade out (not display:none, so the fade transition can run) the icon row while the bottom
        sheet is expanded, so it doesn't overlap or clutter the expanded pin list. */
     body.sidebar-open #map-controls{opacity:0;pointer-events:none;}
-    .map-icon-btn{width:38px;height:38px;}
+    .map-icon-btn{width:44px;height:44px;}
 
-    /* Floating panels: full-width above bottom sheet */
+    /* PICK/READ family on mobile — one rule for every member: inset full-width drawer,
+       14px both edges, lifted 88px above the collapsed sidebar bar, radius 12. Zero
+       per-panel width overrides — the desktop base is 300px, this is width:auto, and no
+       member carries an inline width anymore (Item 2/3). */
     .floating-panel{
       bottom:88px;right:14px;left:14px;
       width:auto;max-width:none;
+      max-height:60vh;
     }
-    #filter-panel,#layers-panel{max-height:48vh;}
-    /* Tonight's Sky: match #layers-panel full-width mobile behavior (desktop stays 300px via the rule above) */
-    #nightsky-panel{width:auto;}
+    #filter-panel,#layers-panel{max-height:52vh;}
 
     /* View drawer: on mobile this becomes the true edge-to-edge bottom sheet the feature is
        named for — desktop's small anchored card (see the base #view-drawer rule) would be
@@ -1395,13 +1442,11 @@
       width:auto;max-width:none;max-height:85vh;
     }
 
-    /* Compass panel: same edge-to-edge bottom anchor as #view-drawer on mobile (matching
-       desktop's position fix above) — still position:fixed, still no scrim, map stays
-       interactive underneath exactly as before. */
-    #compass-panel{
-      left:14px;right:14px;bottom:88px;
-      min-width:0;width:auto;
-    }
+    /* Compass panel is now a plain .floating-panel (Item 2/3) — it inherits the family's
+       mobile rule above (inset 14px, bottom:88px, width:auto). No panel-specific mobile
+       rule needed anymore; its old inline position (the reason its previous @media block
+       was dead code) is gone. It stays out of PANEL_SCRIM_IDS so the map is still
+       interactive underneath while it's open. */
 
     /* Sunrise panel: docked above the sidebar bar on mobile */
     #sunrise-panel.sunrise-docked-panel{
@@ -1423,13 +1468,11 @@
     }
     /* Times list visibility in docked mode controlled by JS only */
 
-    /* Draw bar, polygon bar, elev bar: centered above bottom sheet. bottom:138px (not 90px, this
-       row's old value) — Session 28 turned #map-controls into a full-width horizontal row at
-       bottom:90px (was previously a narrow right-side column these centered bars never actually
-       overlapped), so these now need to clear ITS full width too: 90px + 38px icon height + 10px
-       margin = 138px. */
+    /* Draw bar, polygon bar, elev bar: centered above bottom sheet. Must clear #map-controls'
+       full-width horizontal row at bottom:90px: 90px + 44px icon height (bumped from 38px for
+       the 44pt touch-target standard) + 10px margin = 144px. */
     #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar,#rangering-bar{
-      bottom:138px;
+      bottom:144px;
       left:50%;right:auto;
       transform:translateX(-50%);
       font-size:12px;
@@ -1437,10 +1480,11 @@
     }
     #draw-bar-actions,#polygon-bar-actions{gap:9px;justify-content:space-between;}
 
-    /* Cluster panel: full-width above bottom sheet */
+    /* Tap-stack (Item 3 — folded off its old bottom-center anchor): same mobile inset
+       full-width treatment as the .floating-panel family, just spelled out since it keeps
+       its own edge-to-edge internal structure and isn't a .floating-panel. */
     #tap-stack-panel{
-      bottom:98px;left:14px;right:14px;
-      max-width:none;transform:none;
+      bottom:88px;left:14px;right:14px;width:auto;max-width:none;
     }
     #tap-stack-panel-list{max-height:200px;}
 
@@ -1785,11 +1829,9 @@
      still-open modal, receiving zero pointer events — every click/keystroke silently landed on
      the modal instead, which is what actually broke the Compass bearing-save trip picker. -->
 
-<div id="trip-picker-panel" class="floating-panel hidden" style="max-height:70vh;overflow-y:auto;width:300px;z-index:2100;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-    <h2 id="trip-picker-title" style="margin:0;">Switch trip</h2>
-    <button class="layer-hint-btn" id="trip-picker-close-btn" aria-label="Close" style="width:20px;height:20px;font-size:13px;">×</button>
-  </div>
+<div id="trip-picker-panel" class="floating-panel hidden">
+  <h2 id="trip-picker-title">Switch trip</h2>
+  <button class="panel-close" id="trip-picker-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <input type="text" id="trip-picker-search" placeholder="Search trips…" autocomplete="off"
     style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;font-family:var(--font-sans);margin-bottom:10px;">
   <div id="trip-picker-list" style="display:flex;flex-direction:column;gap:4px;"></div>
@@ -1806,7 +1848,8 @@
 </div>
 
 <!-- Settings panel (accessible via Tools → Settings) -->
-<div id="settings-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;">
+<div id="settings-panel" class="floating-panel hidden">
+  <button class="panel-close" id="settings-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <h2>Settings</h2>
 
   <div class="layer-section-header" style="margin-top:4px;">ACCOUNT</div>
@@ -1906,7 +1949,7 @@
 <!-- +Add bottom sheet -->
 <div id="add-sheet" class="bottom-sheet-overlay hidden">
   <div class="bottom-sheet-panel">
-    <div class="bottom-sheet-handle"></div>
+    <button class="panel-close" data-close="add-sheet" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <div class="bottom-sheet-section">CREATE</div>
     <div class="bottom-sheet-grid">
       <button class="sheet-cell" id="sheet-add-pin-btn">
@@ -1986,14 +2029,13 @@
         <div class="sheet-label">Import file</div>
       </button>
     </div>
-    <button class="btn btn-ghost btn-block sheet-cancel-btn" id="add-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
   </div>
 </div>
 
 <!-- Tools bottom sheet -->
 <div id="tools-sheet" class="bottom-sheet-overlay hidden">
   <div class="bottom-sheet-panel">
-    <div class="bottom-sheet-handle"></div>
+    <button class="panel-close" data-close="tools-sheet" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <div class="bottom-sheet-section">TOOLS</div>
     <div class="bottom-sheet-grid">
       <button class="sheet-cell" id="sheet-measure-btn">
@@ -2125,20 +2167,19 @@
         <div class="sheet-label">Weather</div>
       </button>
     </div>
-    <button class="btn btn-ghost btn-block sheet-cancel-btn" id="tools-sheet-cancel-btn" style="margin:8px 16px 12px;width:calc(100% - 32px);">Cancel</button>
   </div>
 </div>
 
 <!-- Sunrise / Sunset panel -->
-<div id="sunrise-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;width:300px;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+<div id="sunrise-panel" class="floating-panel hidden">
+  <button class="panel-close" id="sunrise-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;padding-right:36px;">
     <h2 style="margin:0;">Sunrise &amp; Sunset</h2>
-    <div style="display:flex;gap:8px;align-items:center;">
+    <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
       <button id="sunrise-toggle-times-btn" class="link-btn" style="font-size:12px;color:var(--text-muted);">Hide times</button>
       <button id="sunrise-compact-btn" title="Compact view (more map)" aria-label="Toggle compact view">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,8 10,13 15,8"/></svg>
       </button>
-      <button class="link-btn" id="sunrise-close-btn" style="font-size:18px;">×</button>
     </div>
   </div>
   <div class="sunrise-detail" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
@@ -2214,15 +2255,12 @@
      FLOATING_PANEL_IDS's scrim membership (PANEL_SCRIM_IDS/OUTSIDE_CLICK_DISMISS_IDS), so the
      map stays fully interactive underneath it (tapping to set a bearing, panning while it's
      open) exactly as before — only the anchor POSITION now matches #view-drawer's (previous
-     restyle pass matched the visual card treatment but left position at top-center, which this
-     fixes). Desktop position/mobile override below are copied directly from #view-drawer's own
-     rule. --><div id="compass-panel" class="hidden" style="
-  position:fixed;left:auto;bottom:24px;right:64px;
-  z-index:1400;background:var(--bg-elevated);
-  border:1px solid var(--border);border-radius:14px;padding:10px 16px;
-  box-shadow:0 4px 16px rgba(0,0,0,0.45);min-width:200px;text-align:center;
-  font-family:var(--font-mono);">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+     restyle pass matched the visual card treatment but left position at top-center). It is now
+     a plain .floating-panel (Item 2/3 of the close/container consolidation) — no inline
+     position/width, so the mobile @media treatment actually applies. Stays out of
+     PANEL_SCRIM_IDS so the map is interactive underneath while it's open. --><div id="compass-panel" class="floating-panel hidden">
+  <button class="panel-close" id="compass-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-right:28px;">
     <div>
       <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">FACING</div>
       <div id="compass-heading-display" style="font-size:22px;font-weight:700;color:var(--text);">– –°</div>
@@ -2232,10 +2270,9 @@
       <div id="compass-target-bearing" style="font-size:16px;font-weight:700;color:var(--yellow);"></div>
       <div id="compass-target-dist" style="font-size:12px;color:var(--text-muted);"></div>
     </div>
-    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
       <button id="compass-save-target-btn" class="btn btn-small hidden" style="white-space:nowrap;">Save bearing</button>
       <button id="compass-center-toggle-btn" class="btn btn-small" style="white-space:nowrap;font-size:10px;" title="Switch origin between GPS location and map center">📍 My Location</button>
-      <button id="compass-close-btn" class="link-btn" style="font-size:11px;color:var(--text-muted);">✕ Close</button>
     </div>
   </div>
   <div id="compass-status" style="font-size:10px;color:var(--text-muted);margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
@@ -2244,11 +2281,9 @@
 </div>
 
 <!-- Weather panel -->
-<div id="weather-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-    <h2 style="margin:0;">Weather</h2>
-    <button class="link-btn" id="weather-close-btn" style="font-size:18px;">×</button>
-  </div>
+<div id="weather-panel" class="floating-panel hidden">
+  <button class="panel-close" id="weather-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <h2>Weather</h2>
   <div id="weather-location" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
   <div id="weather-loading" style="font-size:13px;color:var(--text-muted);text-align:center;padding:20px;">Loading…</div>
   <div id="weather-content" class="hidden">
@@ -2263,11 +2298,9 @@
 </div>
 
 <!-- Tonight's Sky panel -->
-<div id="nightsky-panel" class="floating-panel hidden" style="max-height:80vh;overflow-y:auto;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-    <h2 style="margin:0;">Tonight's Sky</h2>
-    <button class="link-btn" id="nightsky-close-btn" style="font-size:18px;">×</button>
-  </div>
+<div id="nightsky-panel" class="floating-panel hidden">
+  <button class="panel-close" id="nightsky-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <h2>Tonight's Sky</h2>
   <div id="nightsky-location" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
   <div id="nightsky-summary"></div>
   <div id="nightsky-detail"></div>
@@ -2287,7 +2320,8 @@
 
 <!-- About modal -->
 <div class="modal-overlay hidden" id="about-modal">
-  <div class="modal" style="text-align:center;max-width:340px;">
+  <div class="modal" style="text-align:center;">
+    <button class="panel-close" data-close="about-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px;">Field<span style="color:var(--accent);">Map</span></div>
     <div id="about-version" style="font-size:13px;color:var(--text-muted);margin-bottom:18px;font-family:var(--font-mono);"></div>
     <div style="text-align:left;font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.6;">
@@ -2309,8 +2343,7 @@
     </div>
     <button class="btn btn-ghost btn-block" id="replay-tour-btn" style="margin-bottom:8px;">Replay app tour</button>
     <button class="btn btn-ghost btn-block" id="check-update-btn" style="margin-bottom:8px;">Check for updates</button>
-    <div id="check-update-status" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;min-height:16px;"></div>
-    <button class="btn btn-ghost btn-block" id="about-close-btn">Close</button>
+    <div id="check-update-status" style="font-size:11px;color:var(--text-muted);min-height:16px;"></div>
   </div>
 </div>
 
@@ -2318,13 +2351,13 @@
      #about-version above; see showBootTimingDebugView() for why this exists (viewing [BOOT]
      console diagnostics with no DevTools/computer access, e.g. an iOS home-screen PWA). -->
 <div class="modal-overlay hidden" id="boot-timing-modal">
-  <div class="modal" style="text-align:left;max-width:420px;">
-    <div style="font-size:15px;font-weight:600;margin-bottom:4px;">Boot timing</div>
+  <div class="modal modal-wide" style="text-align:left;">
+    <button class="panel-close" data-close="boot-timing-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div style="font-size:15px;font-weight:600;margin-bottom:4px;padding-right:40px;">Boot timing</div>
     <div class="hint" style="margin-bottom:10px;">Most recent launch, plus recent history below it. Share a screenshot or use Copy if reporting this.</div>
     <pre id="boot-timing-text" style="white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:11px;line-height:1.5;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:50vh;overflow:auto;margin:0 0 12px;"></pre>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-ghost" id="boot-timing-copy-btn" style="flex:1;">Copy</button>
-      <button class="btn btn-ghost" id="boot-timing-close-btn" style="flex:1;">Close</button>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="boot-timing-copy-btn">Copy</button>
     </div>
   </div>
 </div>
@@ -2398,6 +2431,8 @@
 </div>
 
 <div id="layers-panel" class="floating-panel hidden">
+  <button class="panel-close" id="layers-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <h2>Layers</h2>
 
   <div class="layer-section" data-section="base">
     <button type="button" class="layer-section-toggle" data-section-toggle="base">
@@ -2804,11 +2839,9 @@
 
 </div>
 
-<div id="gmu-state-panel" class="floating-panel hidden" style="width:260px;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-    <h2 style="margin:0;">GMU Boundaries</h2>
-    <button class="link-btn" id="gmu-state-close-btn" style="font-size:18px;">×</button>
-  </div>
+<div id="gmu-state-panel" class="floating-panel hidden">
+  <button class="panel-close" id="gmu-state-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <h2>GMU Boundaries</h2>
   <select id="gmu-state-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
     <option value="az">Arizona</option>
     <option value="id">Idaho</option>
@@ -2825,11 +2858,9 @@
   <p class="gmu-disclaimer" id="gmu-disclaimer-statepanel"></p>
 </div>
 
-<div id="wildlife-panel" class="floating-panel hidden" style="width:300px;max-height:80vh;overflow-y:auto;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-    <h2 style="margin:0;">Wildlife Layers</h2>
-    <button class="link-btn" id="wildlife-close-btn" style="font-size:18px;">×</button>
-  </div>
+<div id="wildlife-panel" class="floating-panel hidden">
+  <button class="panel-close" id="wildlife-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <h2>Wildlife Layers</h2>
   <!-- Session 54 restructure: Big Game / Upland Game / Fish replace the old 2-level Habitats+
        Migrations tab / Big Game+Upland Birds+Small Game subtab structure. Species-first, not
        source-first: pick a species within a category, THEN see only whichever of Habitat range /
@@ -2928,6 +2959,7 @@
 </div>
 
 <div id="filter-panel" class="floating-panel hidden">
+  <button class="panel-close" id="filter-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <h2>Filters</h2>
   <input type="text" id="search-input" placeholder="Search name or notes…" style="margin-bottom:12px;">
 
@@ -3014,9 +3046,9 @@
 <!-- Tap-stack item list panel (Session 46) — shown when 2+ tappable features overlap at one
      point; renamed/generalized from the old, never-called openClusterPanel/#cluster-panel. -->
 <div id="tap-stack-panel" class="hidden">
+  <button class="panel-close" id="tap-stack-panel-close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <div id="tap-stack-panel-header">
     <span id="tap-stack-panel-title">Items here</span>
-    <button id="tap-stack-panel-close" class="link-btn" style="font-size:16px;line-height:1;">×</button>
   </div>
   <div id="tap-stack-panel-list"></div>
 </div>
@@ -3032,13 +3064,8 @@
 <!-- Pin add/edit modal -->
 <div class="modal-overlay hidden" id="pin-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="pin-modal-title">Add pin</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="pin-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="pin-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="pin-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="pin-modal-title">Add pin</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="pin-quick-tags-row"></div>
@@ -3060,7 +3087,7 @@
     <div class="coord-display">Lat <span id="pin-lat">—</span> · Lng <span id="pin-lng">—</span></div>
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="pin-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="pin-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="pin-cancel-btn">Cancel</button>
       <button class="btn btn-ghost hidden" id="pin-move-btn">Move</button>
       <button class="btn btn-primary" id="pin-save-btn">Save pin</button>
     </div>
@@ -3070,13 +3097,8 @@
 <!-- Track/route edit modal -->
 <div class="modal-overlay hidden" id="track-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="track-modal-title">Save route</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="track-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="track-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="track-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="track-modal-title">Save route</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="track-quick-tags-row"></div>
@@ -3098,7 +3120,7 @@
     <div class="coord-display" id="track-point-count"></div>
     <div class="modal-actions">
       <button class="btn btn-danger" id="track-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="track-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="track-cancel-btn">Cancel</button>
       <button class="btn btn-ghost hidden" id="track-edit-shape-btn">Edit shape</button>
       <button class="btn btn-primary" id="track-save-btn">Save route</button>
     </div>
@@ -3108,13 +3130,8 @@
 <!-- Polygon/area edit modal -->
 <div class="modal-overlay hidden" id="polygon-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="polygon-modal-title">New area</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="polygon-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="polygon-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="polygon-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="polygon-modal-title">New area</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="polygon-quick-tags-row"></div>
@@ -3136,7 +3153,7 @@
     <div id="polygon-area-display" class="coord-display" style="min-height:18px;"></div>
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="polygon-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="polygon-cancel-modal-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="polygon-cancel-modal-btn">Cancel</button>
       <button class="btn btn-ghost hidden" id="polygon-edit-shape-btn">Edit shape</button>
       <button class="btn btn-primary" id="polygon-save-btn">Save area</button>
     </div>
@@ -3146,13 +3163,8 @@
 <!-- Bearing modal -->
 <div class="modal-overlay hidden" id="bearing-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="bearing-modal-title">Save bearing</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="bearing-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="bearing-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="bearing-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="bearing-modal-title">Save bearing</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="bearing-quick-tags-row"></div>
@@ -3174,7 +3186,7 @@
     <div class="coord-display" id="bearing-meta-display"></div>
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="bearing-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="bearing-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="bearing-cancel-btn">Cancel</button>
       <button class="btn btn-ghost hidden" id="bearing-remap-btn">Edit endpoints</button>
       <button class="btn btn-primary" id="bearing-save-btn">Save bearing</button>
     </div>
@@ -3197,13 +3209,8 @@
 <!-- Range Ring edit modal -->
 <div class="modal-overlay hidden" id="rangering-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="rangering-modal-title">Range ring</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="rangering-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="rangering-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="rangering-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="rangering-modal-title">Range ring</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="rangering-quick-tags-row"></div>
@@ -3235,7 +3242,7 @@
     <div class="coord-display" id="rangering-meta-display"></div>
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="rangering-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="rangering-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="rangering-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="rangering-save-btn">Save range ring</button>
     </div>
   </div>
@@ -3244,13 +3251,8 @@
 <!-- Buffer edit modal -->
 <div class="modal-overlay hidden" id="buffer-modal">
   <div class="modal">
-    <div class="modal-header-row">
-      <h2 id="buffer-modal-title">Buffer</h2>
-      <div class="modal-header-actions">
-        <button class="btn btn-ghost" id="buffer-cancel-btn-top">Cancel</button>
-        <button class="btn btn-primary" id="buffer-save-btn-top">Save</button>
-      </div>
-    </div>
+    <button class="panel-close" data-close="buffer-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="buffer-modal-title">Buffer</h2>
     <div style="margin-bottom:14px;">
       <div class="modal-section-label">Quick category</div>
       <div class="chip-row" id="buffer-quick-tags-row"></div>
@@ -3282,7 +3284,7 @@
     <div class="coord-display" id="buffer-meta-display"></div>
     <div class="modal-actions">
       <button class="btn btn-danger hidden" id="buffer-delete-btn">Delete</button>
-      <button class="btn btn-ghost" id="buffer-cancel-btn">Cancel</button>
+      <button class="btn btn-ghost modal-cancel" id="buffer-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="buffer-save-btn">Save buffer</button>
     </div>
   </div>
@@ -3291,6 +3293,7 @@
 <!-- Bulk edit modal -->
 <div class="modal-overlay hidden" id="bulk-modal">
   <div class="modal">
+    <button class="panel-close" data-close="bulk-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2 id="bulk-modal-title">Edit selected</h2>
     <label><span>Add tags (leave blank to skip)</span>
       <div class="chip-row" id="bulk-tags-row"></div>
@@ -3299,7 +3302,6 @@
     <label><span>Set date (leave blank to skip)</span><input type="date" id="bulk-date"></label>
     <p class="hint">Tags get added to whatever each item already has. Trip and date overwrite the current value for every selected item.</p>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="bulk-modal-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="bulk-modal-apply-btn">Apply</button>
     </div>
   </div>
@@ -3308,10 +3310,10 @@
 <!-- Bulk delete confirmation modal -->
 <div class="modal-overlay hidden" id="bulk-delete-modal">
   <div class="modal">
+    <button class="panel-close" data-close="bulk-delete-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2 id="bulk-delete-modal-title">Delete selected?</h2>
     <p class="hint" id="bulk-delete-modal-body" style="margin-bottom:16px;font-size:13px;color:var(--text);">This will permanently delete the selected items. This cannot be undone.</p>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="bulk-delete-cancel-btn">Cancel</button>
       <button class="btn btn-danger" id="bulk-delete-confirm-btn">Delete permanently</button>
     </div>
   </div>
@@ -3320,11 +3322,11 @@
 <!-- Find duplicates modal -->
 <div class="modal-overlay hidden" id="find-dupes-modal">
   <div class="modal modal-wide">
+    <button class="panel-close" data-close="find-dupes-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2>Find duplicates</h2>
     <p class="hint" id="find-dupes-summary" style="margin-bottom:12px;"></p>
     <div id="find-dupes-list" style="max-height:50vh;overflow-y:auto;margin-bottom:14px;"></div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="find-dupes-close-btn">Close</button>
       <button class="btn btn-danger" id="find-dupes-delete-btn" disabled>Delete checked</button>
     </div>
   </div>
@@ -3333,6 +3335,7 @@
 <!-- Share item / trip modal -->
 <div class="modal-overlay hidden" id="share-modal">
   <div class="modal">
+    <button class="panel-close" data-close="share-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2 id="share-modal-title">Share item</h2>
     <div id="share-modal-form">
       <p class="hint" id="share-modal-summary" style="margin-bottom:12px;"></p>
@@ -3343,7 +3346,6 @@
       <div id="share-modal-existing" class="hidden"></div>
       <div id="share-modal-error" class="hidden" style="font-size:12px;color:#e05a3a;margin-top:8px;"></div>
       <div class="modal-actions" style="margin-top:14px;">
-        <button class="btn btn-ghost" id="share-modal-cancel-btn">Cancel</button>
         <button class="btn btn-primary" id="share-modal-create-btn">Share</button>
       </div>
     </div>
@@ -3353,8 +3355,7 @@
         <input type="text" id="share-modal-result-link" readonly onclick="this.select()" style="font-size:11px;">
       </label>
       <div class="modal-actions" style="margin-top:14px;">
-        <button class="btn btn-ghost" id="share-modal-copy-link-btn">Copy link</button>
-        <button class="btn btn-primary" id="share-modal-done-btn">Done</button>
+        <button class="btn btn-primary" id="share-modal-copy-link-btn">Copy link</button>
       </div>
     </div>
   </div>
@@ -3363,6 +3364,7 @@
 <!-- Shared item unavailable (wrong account / revoked) -->
 <div class="modal-overlay hidden" id="share-unavailable-modal">
   <div class="modal">
+    <button class="panel-close" data-close="share-unavailable-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2>Shared item unavailable</h2>
     <p id="share-unavailable-msg" style="font-size:13px;margin-bottom:14px;"></p>
     <div class="modal-actions">
@@ -3373,7 +3375,8 @@
 
 <!-- One-time layer disclaimer (Light Pollution / AQI-Smoke) — shown the first time each is toggled on -->
 <div class="modal-overlay hidden" id="layer-disclaimer-modal">
-  <div class="modal" style="max-width:340px;">
+  <div class="modal">
+    <button class="panel-close" data-close="layer-disclaimer-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2 id="layer-disclaimer-title"></h2>
     <p id="layer-disclaimer-body" style="font-size:13px;line-height:1.55;color:var(--text-muted);margin:6px 0 0;"></p>
     <div class="modal-actions">
@@ -3385,6 +3388,7 @@
 <!-- Offline maps modal -->
 <div class="modal-overlay hidden" id="offline-modal">
   <div class="modal modal-wide">
+    <button class="panel-close" data-close="offline-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2>Download offline area</h2>
     <p class="hint" id="offline-area-summary" style="margin-bottom:12px;"></p>
 
@@ -3430,16 +3434,13 @@
       </div>
       <div id="offline-areas-list"></div>
     </div>
-
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="offline-close-btn">Close</button>
-    </div>
   </div>
 </div>
 
 <!-- Import confirm modal -->
 <div class="modal-overlay hidden" id="import-modal">
   <div class="modal modal-wide">
+    <button class="panel-close" data-close="import-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2 id="import-modal-title">Import pins &amp; tracks</h2>
     <p class="hint" id="import-summary" style="margin-bottom:10px;"></p>
     <label style="margin-bottom:10px;"><span>Set tag for all (optional shortcut)</span>
@@ -3457,7 +3458,6 @@
       <div id="import-track-list"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="import-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="import-confirm-btn">Import</button>
     </div>
   </div>
@@ -3466,8 +3466,7 @@
 <div id="panel-scrim" class="hidden"></div>
 
 <div id="view-drawer" class="hidden">
-  <div id="view-drawer-handle"></div>
-  <button id="view-drawer-close-btn" aria-label="Close">&times;</button>
+  <button class="panel-close" id="view-drawer-close-btn" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <div id="view-drawer-content"></div>
 </div>
 
@@ -3476,6 +3475,7 @@
 <!-- Tag management modal -->
 <div class="modal-overlay hidden" id="tags-modal">
   <div class="modal modal-wide">
+    <button class="panel-close" data-close="tags-modal" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h2>Manage tags</h2>
     <div id="tags-manage-list"></div>
     <div id="tag-editor-form">
@@ -3487,8 +3487,20 @@
     <p class="hint">Pick a built-in icon, or type any short text or emoji instead. Leave blank for a plain colored dot.</p>
     <div class="modal-actions">
       <button class="btn btn-ghost hidden" id="tag-cancel-edit-btn">Cancel edit</button>
-      <button class="btn btn-ghost" id="tags-close-btn">Close</button>
       <button class="btn btn-primary" id="tag-save-btn">Add tag</button>
+    </div>
+  </div>
+</div>
+
+<!-- Discard-changes confirm (Item 5) — shown only when x/Esc/Cancel is triggered on one of the
+     6 edit/creation forms while it has unsaved changes. z-index above the modals it guards. -->
+<div class="modal-overlay hidden" id="discard-changes-modal" style="z-index:2200;">
+  <div class="modal" style="max-width:320px;">
+    <h2>Discard changes?</h2>
+    <p style="font-size:13px;color:var(--text-muted);margin:0 0 4px;">You have unsaved changes on this form.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="discard-keep-btn">Keep editing</button>
+      <button class="btn btn-danger" id="discard-confirm-btn">Discard</button>
     </div>
   </div>
 </div>
@@ -3613,7 +3625,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.79.2';
+  var APP_VERSION = '2.80.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -11235,6 +11247,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     drawerEl.classList.remove('hidden'); // defensive — every current caller only ever runs this while the drawer's compact view is already open, but don't depend on that holding forever
     drawerEl.classList.add('expanded');
     drawerExpandedType = type;
+    captureFormBaseline(type); // Item 5 — snapshot the freshly-populated fields for the dirty check
+  }
+
+  // ── Dirty-check for the 6 edit/creation forms (Item 5) ──
+  // formSnapshot serializes every user-editable field of a form to a single string; the open
+  // functions call captureFormBaseline() right after populating the fields (from an existing
+  // item, or from defaults for a new one); requestCloseFormModal compares a fresh snapshot to
+  // that baseline and, only if they differ, routes the close through the "Discard changes?"
+  // confirm instead of closing straight away. Save/Delete never go through this — they close
+  // via their own paths.
+  var formBaseline = {};
+  function _fv(id){ var e = document.getElementById(id); return e ? String(e.value == null ? '' : e.value) : ' '; }
+  function formSnapshot(type){
+    var tripBtn = document.getElementById(type + '-trip-btn');
+    var statusLbl = document.getElementById(type + '-status-label');
+    var tagRow = document.getElementById(type + '-tags-row');
+    var parts = [
+      _fv(type + '-name'),
+      _fv(type + '-notes'),
+      _fv(type + '-date'),
+      tripBtn ? (tripBtn.dataset.tripId || '') : '',
+      statusLbl ? (statusLbl.textContent || '') : '',
+      tagRow ? Array.prototype.map.call(tagRow.querySelectorAll('.chip.active'), function(c){ return c.dataset.tagId; }).sort().join(',') : ''
+    ];
+    if (type === 'rangering'){ parts.push(_fv('rangering-radii'), _fv('rangering-unit')); }
+    if (type === 'buffer'){ parts.push(_fv('buffer-width'), _fv('buffer-unit')); }
+    return parts.join('');
+  }
+  function captureFormBaseline(type){ formBaseline[type] = formSnapshot(type); }
+  function formIsDirty(type){
+    return formBaseline[type] != null && formSnapshot(type) !== formBaseline[type];
+  }
+  // Is this form actually the one on screen right now? (centered modal open, OR expanded in
+  // the drawer.) Guards the Escape handler from running a discard check against a stale
+  // baseline for a form that isn't even visible.
+  function formModalIsOpen(type){
+    var m = document.getElementById(type + '-modal');
+    return (m && !m.classList.contains('hidden')) || drawerExpandedType === type;
+  }
+  var _discardOnConfirm = null;
+  function showDiscardConfirm(onDiscard){
+    _discardOnConfirm = onDiscard;
+    document.getElementById('discard-changes-modal').classList.remove('hidden');
+  }
+  function hideDiscardConfirm(){
+    _discardOnConfirm = null;
+    document.getElementById('discard-changes-modal').classList.add('hidden');
+  }
+  // The dirty-check close entry point — wired to each form's .panel-close x, its .modal-cancel
+  // button, and the Escape key. closeFn is the type's own real close*Modal (unchanged).
+  function requestCloseFormModal(type, closeFn){
+    if (!formIsDirty(type)){ closeFn(); return; }
+    showDiscardConfirm(function(){ formBaseline[type] = null; closeFn(); });
   }
 
   // Moves the type's fields back to their home overlay — so the classic new-item flow
@@ -14294,6 +14359,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     renderStatusPicker('track-status-row', 'track-status-label', function(k){ selectedTrackStatus = k; }, selectedTrackStatus);
     renderTrackTagChips([]);
     document.getElementById('track-modal').classList.remove('hidden');
+    captureFormBaseline('track');
     // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
     // sensible default (defaultTrackName) so Save works immediately with no typing needed.
   }
@@ -14437,6 +14503,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       // Brand-new pin (Add pin via +Add sheet / addMode map tap) — unaffected by Batch 2,
       // keeps the classic centered modal exactly as before.
       document.getElementById('pin-modal').classList.remove('hidden');
+      captureFormBaseline('pin'); // Item 5 — baseline includes the pre-filled defaults
     }
     // No auto-focus here on purpose — focusing the Name field immediately pops the mobile
     // keyboard and pushes the header (title, Save/Cancel) out of view before the user has
@@ -16927,6 +16994,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     } else {
       // Brand-new area (draw-finish flow) — unaffected by Batch 2, classic centered modal.
       document.getElementById('polygon-modal').classList.remove('hidden');
+      captureFormBaseline('polygon');
     }
     // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
     // sensible default (defaultAreaName) on new areas so Save works immediately.
@@ -17223,6 +17291,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     modal.dataset.distMiles = dist;
     document.getElementById('bearing-delete-btn').classList.add('hidden');
     document.getElementById('bearing-modal').classList.remove('hidden');
+    captureFormBaseline('bearing');
     // No auto-focus on purpose — see openPinModal's comment for why. Pre-filled with a
     // sensible default (bearingAutoName) so Save works immediately.
   }
@@ -17542,6 +17611,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('rangering-meta-display').textContent = 'Center: ' + centerLL.lat.toFixed(5) + ', ' + centerLL.lng.toFixed(5);
     document.getElementById('rangering-delete-btn').classList.add('hidden');
     document.getElementById('rangering-modal').classList.remove('hidden');
+    captureFormBaseline('rangering');
     // No auto-focus on purpose — see openPinModal's comment for why.
   }
 
@@ -17749,6 +17819,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('buffer-meta-display').textContent = points.length + ' points';
     document.getElementById('buffer-delete-btn').classList.add('hidden');
     document.getElementById('buffer-modal').classList.remove('hidden');
+    captureFormBaseline('buffer');
     // No auto-focus on purpose — see openPinModal's comment for why.
   }
 
@@ -24619,6 +24690,49 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('mvum-disclaimer').textContent = MVUM_DISCLAIMER;
     document.getElementById('lh-lightpollution-disclaimer').textContent = LIGHTPOLLUTION_DISCLAIMER;
     document.getElementById('lh-aqismoke-disclaimer').textContent = AQI_SMOKE_DISCLAIMER;
+
+    // ── Shared close affordance (Item 1) ──
+    // One .panel-close x per surface. Panels with their own close fn keep it (wired below in
+    // their own sections); everything with a data-close attribute is dispatched here. Form
+    // modals route through the dirty check; a couple of modals need teardown; the rest hide.
+    var _hideById = function(id){ var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
+    var PANEL_CLOSE_DISPATCH = {
+      'pin-modal':       function(){ requestCloseFormModal('pin', closePinModal); },
+      'track-modal':     function(){ requestCloseFormModal('track', closeTrackModal); },
+      'polygon-modal':   function(){ requestCloseFormModal('polygon', closePolygonModal); },
+      'bearing-modal':   function(){ requestCloseFormModal('bearing', closeBearingModal); },
+      'rangering-modal': function(){ requestCloseFormModal('rangering', closeRangeRingModal); },
+      'buffer-modal':    function(){ requestCloseFormModal('buffer', closeBufferModal); },
+      'import-modal':    function(){ pendingImportPins = []; pendingImportTracks = []; _hideById('import-modal'); },
+      'share-modal':     function(){ closeShareModal(); },
+      'offline-modal':   function(){
+        if (offlineDownloadInProgress){
+          if (!confirm('A download is still in progress. Close anyway? (It will be cancelled.)')) return;
+          cancelOfflineDownload();
+        }
+        _hideById('offline-modal');
+      },
+      'tags-modal':      function(){ cancelTagEdit(); _hideById('tags-modal'); }
+    };
+    document.querySelectorAll('.panel-close[data-close]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = btn.dataset.close;
+        (PANEL_CLOSE_DISPATCH[id] || function(){ _hideById(id); })();
+      });
+    });
+    // The 3 previously close-less panels get their x wired straight to closeAllPanels
+    // (which hides every floating panel + drops the scrim — same as a scrim tap).
+    ['layers-close-btn','filter-close-btn','settings-close-btn'].forEach(function(bid){
+      var b = document.getElementById(bid);
+      if (b) b.addEventListener('click', closeAllPanels);
+    });
+    // Discard-changes confirm (Item 5)
+    document.getElementById('discard-keep-btn').addEventListener('click', hideDiscardConfirm);
+    document.getElementById('discard-confirm-btn').addEventListener('click', function(){
+      var fn = _discardOnConfirm;
+      hideDiscardConfirm();
+      if (fn) fn();
+    });
     document.getElementById('layer-disclaimer-ok-btn').addEventListener('click', function(){
       document.getElementById('layer-disclaimer-modal').classList.add('hidden');
     });
@@ -24673,9 +24787,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('add-sheet-btn').addEventListener('click', function(){
       closeAllPanels();
       document.getElementById('add-sheet').classList.remove('hidden');
-    });
-    document.getElementById('add-sheet-cancel-btn').addEventListener('click', function(){
-      document.getElementById('add-sheet').classList.add('hidden');
     });
     document.getElementById('add-sheet').addEventListener('click', function(e){
       if (e.target === document.getElementById('add-sheet')) document.getElementById('add-sheet').classList.add('hidden');
@@ -25156,14 +25267,16 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     initLayerSections();
     initPanelScrim();
     document.getElementById('view-drawer-close-btn').addEventListener('click', function(){
-      // While expanded (editing), × means the same thing its Cancel button does — closeView
-      // Drawer refuses to close mid-edit at all (see its own comment), so route through the
-      // right type's Cancel instead of leaving this button looking dead.
-      if (drawerExpandedType === 'pin') closePinModal();
-      else if (drawerExpandedType === 'track') closeTrackModal();
-      else if (drawerExpandedType === 'polygon') closePolygonModal();
-      else if (drawerExpandedType === 'bearing') closeBearingModal();
-      else closeViewDrawer();
+      // While expanded (editing), × is the cancel affordance — dirty-check gated (Item 4/5).
+      // closeViewDrawer refuses to close mid-edit at all (see its own comment), so route
+      // through requestCloseFormModal (which either closes straight away, or shows the
+      // "Discard changes?" confirm first). Compact detail view → just close.
+      var t = drawerExpandedType;
+      if (!t){ closeViewDrawer(); return; }
+      var closeFn = t === 'pin' ? closePinModal : t === 'track' ? closeTrackModal :
+        t === 'polygon' ? closePolygonModal : t === 'bearing' ? closeBearingModal :
+        t === 'rangering' ? closeRangeRingModal : t === 'buffer' ? closeBufferModal : closeViewDrawer;
+      requestCloseFormModal(t, closeFn);
     });
 
     // Restore layer toggle states. This runs before the map/style has actually loaded
@@ -25390,9 +25503,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('check-update-btn').textContent = 'Check for updates';
       document.getElementById('about-modal').classList.remove('hidden');
     });
-    document.getElementById('about-close-btn').addEventListener('click', function(){
-      document.getElementById('about-modal').classList.add('hidden');
-    });
     document.getElementById('replay-tour-btn').addEventListener('click', function(){
       document.getElementById('about-modal').classList.add('hidden');
       startFeatureTour();
@@ -25419,9 +25529,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         }
       });
     })();
-    document.getElementById('boot-timing-close-btn').addEventListener('click', function(){
-      document.getElementById('boot-timing-modal').classList.add('hidden');
-    });
     document.getElementById('boot-timing-copy-btn').addEventListener('click', function(){
       copyBootTimingText(document.getElementById('boot-timing-text').textContent);
     });
@@ -25524,9 +25631,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       closeAllPanels();
       document.getElementById('tools-sheet').classList.remove('hidden');
     });
-    document.getElementById('tools-sheet-cancel-btn').addEventListener('click', function(){
-      document.getElementById('tools-sheet').classList.add('hidden');
-    });
     document.getElementById('tools-sheet').addEventListener('click', function(e){
       if (e.target === document.getElementById('tools-sheet')) document.getElementById('tools-sheet').classList.add('hidden');
     });
@@ -25587,11 +25691,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       setMaplibreStyle(this.value);
       scheduleSave();
     });
-    // Pin modal
+    // Pin modal — Cancel (centered-modal only; hidden in the drawer) and the .panel-close x
+    // both route through the dirty-check close path. Save closes directly (no gate).
     document.getElementById('pin-save-btn').addEventListener('click', savePinFromModal);
-    document.getElementById('pin-cancel-btn').addEventListener('click', closePinModal);
-    document.getElementById('pin-save-btn-top').addEventListener('click', savePinFromModal);
-    document.getElementById('pin-cancel-btn-top').addEventListener('click', closePinModal);
+    document.getElementById('pin-cancel-btn').addEventListener('click', function(){ requestCloseFormModal('pin', closePinModal); });
     // Second entry point for the same "Move" action already on the popup's overflow menu —
     // lets you jump straight into it from the Edit modal instead of closing Edit and
     // reopening the overflow menu separately.
@@ -25612,9 +25715,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     // Track modal
     document.getElementById('track-save-btn').addEventListener('click', saveTrackFromModal);
-    document.getElementById('track-cancel-btn').addEventListener('click', closeTrackModal);
-    document.getElementById('track-save-btn-top').addEventListener('click', saveTrackFromModal);
-    document.getElementById('track-cancel-btn-top').addEventListener('click', closeTrackModal);
+    document.getElementById('track-cancel-btn').addEventListener('click', function(){ requestCloseFormModal('track', closeTrackModal); });
     document.getElementById('track-name').addEventListener('focus', function(){
       if (!editingTrackId) this.select();
     });
@@ -25635,9 +25736,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     // Polygon modal
     document.getElementById('polygon-save-btn').addEventListener('click', savePolygonFromModal);
-    document.getElementById('polygon-cancel-modal-btn').addEventListener('click', closePolygonModal);
-    document.getElementById('polygon-save-btn-top').addEventListener('click', savePolygonFromModal);
-    document.getElementById('polygon-cancel-btn-top').addEventListener('click', closePolygonModal);
+    document.getElementById('polygon-cancel-modal-btn').addEventListener('click', function(){ requestCloseFormModal('polygon', closePolygonModal); });
     document.getElementById('polygon-name').addEventListener('focus', function(){
       if (!editingPolygonId) this.select();
     });
@@ -25657,9 +25756,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // Bearing modal
     document.getElementById('bearing-save-btn').addEventListener('click', saveBearingFromModal);
-    document.getElementById('bearing-cancel-btn').addEventListener('click', closeBearingModal);
-    document.getElementById('bearing-save-btn-top').addEventListener('click', saveBearingFromModal);
-    document.getElementById('bearing-cancel-btn-top').addEventListener('click', closeBearingModal);
+    document.getElementById('bearing-cancel-btn').addEventListener('click', function(){ requestCloseFormModal('bearing', closeBearingModal); });
     document.getElementById('bearing-name').addEventListener('focus', function(){
       if (!editingBearingId) this.select();
     });
@@ -25713,9 +25810,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       setRangeRingMode(false);
     });
     document.getElementById('rangering-save-btn').addEventListener('click', saveRangeRingFromModal);
-    document.getElementById('rangering-cancel-btn').addEventListener('click', closeRangeRingModal);
-    document.getElementById('rangering-save-btn-top').addEventListener('click', saveRangeRingFromModal);
-    document.getElementById('rangering-cancel-btn-top').addEventListener('click', closeRangeRingModal);
+    document.getElementById('rangering-cancel-btn').addEventListener('click', function(){ requestCloseFormModal('rangering', closeRangeRingModal); });
     document.getElementById('rangering-name').addEventListener('focus', function(){
       if (!editingRangeRingId) this.select();
     });
@@ -25728,9 +25823,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // Buffer edit modal
     document.getElementById('buffer-save-btn').addEventListener('click', saveBufferFromModal);
-    document.getElementById('buffer-cancel-btn').addEventListener('click', closeBufferModal);
-    document.getElementById('buffer-save-btn-top').addEventListener('click', saveBufferFromModal);
-    document.getElementById('buffer-cancel-btn-top').addEventListener('click', closeBufferModal);
+    document.getElementById('buffer-cancel-btn').addEventListener('click', function(){ requestCloseFormModal('buffer', closeBufferModal); });
     document.getElementById('buffer-name').addEventListener('focus', function(){
       if (!editingBufferId) this.select();
     });
@@ -25918,8 +26011,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       e.stopPropagation();
       pickTripToShare();
     });
-    document.getElementById('share-modal-cancel-btn').addEventListener('click', closeShareModal);
-    document.getElementById('share-modal-done-btn').addEventListener('click', closeShareModal);
     document.getElementById('share-modal-create-btn').addEventListener('click', submitShareModal);
     document.getElementById('share-modal-email').addEventListener('keydown', function(e){
       if (e.key === 'Enter'){ e.preventDefault(); submitShareModal(); }
@@ -26165,10 +26256,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       if (e.target.files[0]) handleImportFile(e.target.files[0]);
       e.target.value = '';
     });
-    document.getElementById('import-cancel-btn').addEventListener('click', function(){
-      pendingImportPins = []; pendingImportTracks = [];
-      document.getElementById('import-modal').classList.add('hidden');
-    });
     document.getElementById('import-confirm-btn').addEventListener('click', confirmImport);
     var bulkSel = document.getElementById('import-bulk-category');
     bulkSel.innerHTML = '<option value="" disabled selected>Choose a tag…</option>';
@@ -26247,27 +26334,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         'This will permanently delete ' + n + ' selected item' + (n===1?'':'s') + '. This cannot be undone.';
       document.getElementById('bulk-delete-modal').classList.remove('hidden');
     });
-    document.getElementById('bulk-delete-cancel-btn').addEventListener('click', function(){
-      document.getElementById('bulk-delete-modal').classList.add('hidden');
-    });
     document.getElementById('bulk-delete-confirm-btn').addEventListener('click', confirmBulkDelete);
-    document.getElementById('bulk-modal-cancel-btn').addEventListener('click', function(){
-      document.getElementById('bulk-modal').classList.add('hidden');
-    });
     document.getElementById('bulk-modal-apply-btn').addEventListener('click', applyBulkEdit);
 
     document.getElementById('manage-tags-btn').addEventListener('click', function(){
       renderTagsManageList();
       document.getElementById('tags-modal').classList.remove('hidden');
     });
-    document.getElementById('find-dupes-close-btn').addEventListener('click', function(){
-      document.getElementById('find-dupes-modal').classList.add('hidden');
-    });
     document.getElementById('find-dupes-delete-btn').addEventListener('click', executeDupesDelete);
-    document.getElementById('tags-close-btn').addEventListener('click', function(){
-      cancelTagEdit();
-      document.getElementById('tags-modal').classList.add('hidden');
-    });
     document.getElementById('tag-save-btn').addEventListener('click', saveTagFromForm);
     document.getElementById('tag-cancel-edit-btn').addEventListener('click', cancelTagEdit);
 
@@ -26285,13 +26359,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('offline-download-btn').addEventListener('click', startOfflineDownload);
     document.getElementById('offline-cancel-download-btn').addEventListener('click', cancelOfflineDownload);
     document.getElementById('offline-clear-all-btn').addEventListener('click', clearAllOfflineAreas);
-    document.getElementById('offline-close-btn').addEventListener('click', function(){
-      if (offlineDownloadInProgress){
-        if (!confirm('A download is still in progress. Close anyway? (It will be cancelled.)')) return;
-        cancelOfflineDownload();
-      }
-      document.getElementById('offline-modal').classList.add('hidden');
-    });
 
     document.getElementById('mobile-handle').addEventListener('click', function(){
       var isOpen = document.getElementById('sidebar').classList.toggle('open');
@@ -26309,23 +26376,39 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     document.addEventListener('keydown', function(e){
       if (e.key === 'Escape'){
+        // Discard-changes confirm open → Esc means "keep editing"; consume it and do nothing else.
+        if (!document.getElementById('discard-changes-modal').classList.contains('hidden')){
+          hideDiscardConfirm();
+          return;
+        }
         document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
-        closePinModal();
-        closeTrackModal();
+        // The 6 edit/creation forms — Esc respects the dirty check (Item 5/6). Only the one
+        // actually on screen is touched; the rest are no-ops.
+        ['pin','track','polygon','bearing','rangering','buffer'].forEach(function(t){
+          if (!formModalIsOpen(t)) return;
+          var closeFn = t === 'pin' ? closePinModal : t === 'track' ? closeTrackModal :
+            t === 'polygon' ? closePolygonModal : t === 'bearing' ? closeBearingModal :
+            t === 'rangering' ? closeRangeRingModal : closeBufferModal;
+          requestCloseFormModal(t, closeFn);
+        });
         document.getElementById('import-modal').classList.add('hidden');
         document.getElementById('tags-modal').classList.add('hidden');
         document.getElementById('bulk-modal').classList.add('hidden');
         document.getElementById('bulk-delete-modal').classList.add('hidden');
         document.getElementById('find-dupes-modal').classList.add('hidden');
-        document.getElementById('polygon-modal').classList.add('hidden');
         document.getElementById('onboarding-modal').classList.add('hidden');
         document.getElementById('about-modal').classList.add('hidden');
         document.getElementById('layer-disclaimer-modal').classList.add('hidden');
+        // Item 6 — these 5 modals were previously missing Esc handling entirely (the 3 edit
+        // forms among them — bearing/rangering/buffer — are covered by the form loop above).
+        closeShareModal();
+        document.getElementById('share-unavailable-modal').classList.add('hidden');
         closeFeatureTour();
         document.getElementById('boot-timing-modal').classList.add('hidden');
         document.getElementById('add-sheet').classList.add('hidden');
         document.getElementById('tools-sheet').classList.add('hidden');
         if (!offlineDownloadInProgress) document.getElementById('offline-modal').classList.add('hidden');
+        if (addMode) setAddMode(false); // was previously handled by the unconditional closePinModal() call above
         if (polygonMode) setPolygonMode(false);
         if (elevTapMode) setElevTapMode(false);
         if (compassActive) closeCompassPanel();

@@ -1052,6 +1052,99 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   ~1-1.5s (just JSON-parsing the larger cached blob, no recomputation) — confirmed for both Idaho and Utah.
 
 ## Architecture notes
+
+### Panel / modal / sheet close & container standard (Session — close/container consolidation)
+The big consolidation acting on the "Close & Container Audit" (published artifact). Every dismissable
+surface in the app now follows ONE of two families, chosen by ROLE, with ONE shared close affordance.
+
+- **`.panel-close`** — the single shared close component (Item 1). Absolutely positioned top-right of the
+  host card (`top:4px;right:4px`), a **44×44 hit target** (Apple HIG) with an 18px inline-SVG × glyph
+  centred in it. Used on: all 11 floating panels (layers/filter/settings/sunrise/weather/nightsky/wildlife/
+  trip-picker/gmu-state/compass/tap-stack), `#view-drawer`, both bottom sheets, and 16 of 18 modals. It
+  **replaced** the former `.link-btn "×"` (×5), `.layer-hint-btn` circle (trip-picker), two bespoke variants
+  (tap-stack, `#view-drawer-close-btn`), and Compass's lone `"✕ Close"` text link. The 3 previously
+  close-less panels (layers/filter/settings) each gained a real `<h2>` title + this ×; layers-panel's
+  title is new ("Layers"). Every host establishes a containing block already (`.modal` is
+  `position:relative`, `.floating-panel` is `position:absolute`, `#view-drawer`/`#compass-panel` are
+  `position:fixed`, `.bottom-sheet-panel` got `position:relative`). `.floating-panel h2` / `.modal h2` /
+  `.bottom-sheet-section:first-child` carry `padding-right:40px` so a long title never runs under the button.
+  - **Deliberate exception (flagged, not an oversight):** `#onboarding-modal` and `#trip-startup-modal`
+    have NO `.panel-close`. Both are documented first-run *decision gates* with their own explicit
+    "proceed" affordances ("Continue as guest →" / "Continue this trip"); a corner × would be redundant
+    with those and ambiguous about which choice it makes. `trip-startup-modal`'s own HTML comment already
+    says "every one of the 3 buttons is a real, explicit decision, so there is no passive/accidental way to
+    dismiss this." One-line revert if the team wants full uniformity.
+  - **Also un-bumped:** `#share-unavailable-modal` keeps its "OK" and `#layer-disclaimer-modal` keeps its
+    "Got it" — both are pure acknowledgment gates (read the message, confirm) where leaving *only* a corner
+    × would be worse UX for the one thing that modal exists to do. They ALSO got the × (so the mechanism is
+    consistent), just kept the acknowledgment button too.
+- **Touch targets (Item 1, second half):** `.map-icon-btn` 40→44px desktop, 38→44px mobile (the mobile
+  `#draw-bar`/`#polygon-bar`/etc. clearance offset moved 138→144px to match). `#add-sheet-btn` /
+  `#tools-sheet-btn` `min-height:44px` (were ~26px via `.btn-small`).
+- **PICK / READ family** (Item 3) — all 11 floating panels + `#view-drawer` (compact) + tap-stack +
+  compass. **Desktop:** bottom-right card, **one width: 300px**, radius 12, `bottom:24px;right:64px`,
+  `max-height:calc(100vh - 48px);overflow-y:auto` — all folded into `.floating-panel` itself, **zero inline
+  width/position on any member.** Compass is now literally `class="floating-panel"` (+ a tiny
+  `#compass-panel{font-family:var(--font-mono);text-align:center;z-index:1400}` rule); its old inline
+  `position:fixed;...` (the reason its `@media` block was dead code — Bug 3) is gone. tap-stack keeps its
+  own edge-to-edge internal structure (full-bleed header divider, un-inset rows) but now matches the family
+  anchor/width. **Mobile (`@media max-width:760px`):** inset full-width drawer — `left:14px;right:14px;
+  bottom:88px;width:auto;max-width:none`, radius 12. One rule, no per-panel overrides — this is what
+  fixed **Bug 2** (weather/wildlife/trip-picker/gmu-state were stuck at their inline 300/260px) and
+  **Bug 3** (compass rendered pinned bottom-right overlapping the map-controls row).
+  - `#view-drawer` base width 380→300, radius 14→12 (compact detail view). `#view-drawer.expanded`
+    **stays 380px** — it hosts a COMMIT/CONFIRM edit form there, so it matches the modal family width.
+  - **`#sunrise-panel`'s `.sunrise-docked-panel` edge-to-edge map-shrinking mobile dock is UNTOUCHED** —
+    deliberate panel-specific opt-in per the spec, not generalized or removed.
+- **COMMIT / CONFIRM family** (Item 3) — all 18 `.modal-overlay` modals + both `.bottom-sheet-overlay`
+  sheets. **Desktop:** centred card, radius 14, **two widths only** — `.modal` 380px standard /
+  `.modal-wide` 560px (was 540; the 340px `about`/`layer-disclaimer` and 420px `boot-timing` inline
+  outliers removed — 4 widths → 2). **Mobile:** `.modal-overlay,.bottom-sheet-overlay{align-items:flex-end;
+  padding:0}` + `.modal,.modal-wide,.bottom-sheet-panel{width:100%;max-width:none;border-radius:16px 16px 0
+  0;max-height:92vh}` — modals and sheets now render **identically** as bottom sheets on mobile (the audit
+  found the two treatments were already nearly the same — this merges them).
+  - **Item 7 — modals still do NOT dismiss on backdrop tap.** Deliberate, verified live both viewports.
+    The dirty-check below is what makes "deliberate action to close" coherent rather than arbitrary.
+- **Grab handles removed entirely** (Item 8) — `#view-drawer-handle` and both `.bottom-sheet-handle`
+  elements + their CSS deleted. They were never drag targets; the × is the close. No swipe-to-dismiss
+  built (explicitly out of scope).
+- **Edit-form redundancy fixed** (Item 4):
+  - The 6 edit/creation modals (pin/track/polygon/bearing/rangering/buffer) **lost their top
+    `.modal-header-actions` row** (the duplicate Cancel+Save) — header is now just `<h2>` + the ×.
+  - Their bottom `Cancel` button gained class `.modal-cancel`; `#view-drawer-content .modal-cancel
+    {display:none}` hides it **in the expanded drawer** (edit) — so the drawer footer is **× + Save +
+    Delete** only, per spec. The **centred modal (new-item)** keeps the bottom `Cancel`+`Save` row.
+  - The × in the expanded drawer (`#view-drawer-close-btn`) routes through the dirty check (below).
+- **Dirty-check pattern for all 6 forms** (Item 5) — `formSnapshot(type)` serialises name / notes / date /
+  trip-btn `data-tripId` / `#<type>-status-label` textContent (a stable proxy for the selected status
+  swatch) / sorted active `.chip` tag ids / + `radii,unit` (rangering) or `width,unit` (buffer) into one
+  string. `captureFormBaseline(type)` is called at the end of `expandDrawerForEdit()` (covers all 6 edit
+  paths) and in each new-item open path (`openPinModal` else-branch, `openTrackModalForNew`,
+  `openPolygonModal` else-branch, `openBearingModalForNew`, `openRangeRingModalForNew`,
+  `openBufferModalForNew`) — the baseline **includes the pre-filled defaults**, so an untouched form is
+  not dirty. `requestCloseFormModal(type, closeFn)` — wired to the ×, the `.modal-cancel` button, and
+  Escape — closes straight away if `!formIsDirty(type)`, else shows **`#discard-changes-modal`**
+  ("Discard changes?" · **Keep editing** / **Discard**, z-index 2200). Save/Delete never go through this.
+  `formModalIsOpen(type)` guards the Escape handler from running the check against a stale baseline for a
+  form that isn't visible. Live-verified both directions on pin (name edit) and track (status-swatch
+  change).
+- **Escape coverage** (Item 6) — added to `bearing-modal`, `rangering-modal`, `buffer-modal` (via the
+  dirty-check form loop), `share-modal` (`closeShareModal()`), `share-unavailable-modal`. Escape while the
+  discard confirm is open = "keep editing" (consumes the key, does nothing else). **Regression caught &
+  fixed during verification:** the old handler called `closePinModal()` unconditionally, which also did
+  `setAddMode(false)` — the new conditional form loop skips that when no modal is open, so add-mode got
+  stuck after Escape; added an explicit `if (addMode) setAddMode(false)` to the handler.
+- **Removed dead wiring:** the 12 `-btn-top` listeners, `add-sheet-cancel-btn`/`tools-sheet-cancel-btn`,
+  and the individual `about-close-btn`/`boot-timing-close-btn`/`offline-close-btn`/`import-cancel-btn`/
+  `find-dupes-close-btn`/`tags-close-btn`/`bulk-modal-cancel-btn`/`bulk-delete-cancel-btn`/
+  `share-modal-cancel-btn`/`share-modal-done-btn` handlers. Replaced by one delegated
+  `.panel-close[data-close]` dispatcher in `bindUI` (`PANEL_CLOSE_DISPATCH` map: form modals → dirty
+  check; import/share/offline/tags → teardown + hide; everything else → plain hide). `.link-btn` /
+  `.layer-hint-btn` classes themselves are NOT retired — still used for many inline text buttons (draw
+  bars, filter All/None, etc.); only their use *as a panel close* is gone.
+- `node --check` clean; live-verified at 2560px desktop and a real 390px `<iframe>`. APP_VERSION
+  2.79.2 → 2.80.0, SHELL_CACHE v210 → v211.
+
 - MapLibre large-dataset payload ceiling: `updateData()` pattern (Session 60) — resolves, definitively, the
   open question left by an earlier (undocumented — a real CLAUDE.md gap, not a false lead) research session:
   whether MapLibre's `GeoJSONSource.setData()` crash on very large datasets (see the Washington "What's
@@ -11287,3 +11380,40 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   panels). Screenshot-confirmed. Desktop 300px fix untouched. Flagged not fixed (out of scope): `#weather-panel`
   / `#wildlife-panel` have the identical latent inline-width bug on mobile. Zero console errors; `node --check`
   clean. APP_VERSION 2.79.1 → 2.79.2, SHELL_CACHE v209 → v210.
+- Session (close & container consolidation) — the large multi-surface cleanup acting on the "Close &
+  Container Audit" (published artifact earlier this session). 8 finalized items, implemented as specified,
+  verified live at 2560px desktop AND a real 390px `<iframe>` per item. See Architecture notes' "Panel /
+  modal / sheet close & container standard" entry for the full design; summary:
+  - **Item 1 — one shared `.panel-close` (× icon, 44×44, top-right)** on every panel, drawer, sheet, and 16
+    of 18 modals; retired the 4 old close-button styles + Compass's "✕ Close" text link; the 3 close-less
+    panels (layers/filter/settings) each got a real `<h2>` + ×. Also bumped `.map-icon-btn` 40/38→44 and
+    `+Add`/`Tools` ~26→44px tall. **Deliberate exceptions (flagged):** `onboarding-modal` /
+    `trip-startup-modal` keep their decision-gate design (no ×); `share-unavailable`/`layer-disclaimer` keep
+    their OK/"Got it" acknowledgment button *and* got the ×.
+  - **Item 2/3 — Bugs 2 & 3 fixed:** weather/wildlife/trip-picker/gmu-state/compass all had an inline width
+    (or inline position) beating the `@media` full-width rule — same class as the Tonight's Sky regression.
+    All inline width/position removed; the PICK/READ family (11 panels + `#view-drawer` compact + tap-stack
+    + compass) is now one `.floating-panel` rule: desktop 300px / radius 12 / bottom-right, mobile inset
+    full-width (`left/right:14px`, `bottom:88px`). Confirmed live at 386px: **all 10 render rectW=358, L14,
+    Rgap14, Bgap88** — the 5 previously-stuck ones fixed, compass no longer overlaps the map-controls row.
+    tap-stack folded off its bottom-center anchor. **Sun/Moon's edge-to-edge map-shrinking dock left exactly
+    as-is.** COMMIT/CONFIRM family (18 modals + 2 sheets): 4 desktop widths → 2 (380 / 560), and mobile
+    modals + sheets now render identically as bottom sheets (radius 16 top, `align-items:flex-end`).
+  - **Item 4 — Edit Pin redundancy gone:** the 6 edit forms lost their top Cancel+Save row; in the expanded
+    drawer the bottom Cancel is hidden (`.modal-cancel` + a `#view-drawer-content` rule) so the footer is
+    **× + Save + Delete**; the centred new-item modal keeps its bottom Cancel+Save.
+  - **Item 5 — dirty-check on all 6 forms:** `formSnapshot`/`captureFormBaseline`/`requestCloseFormModal` +
+    a `#discard-changes-modal`. ×/Esc/Cancel on an *unchanged* form closes instantly; on a *changed* form
+    shows "Discard changes?" (Keep editing / Discard). Live-verified both directions on pin (name) and
+    track (status swatch) — a genuine no-op close and a real discard-with-changes are correctly
+    distinguished.
+  - **Item 6 — Esc coverage:** added to bearing/rangering/buffer (via the dirty-check loop), share-modal,
+    share-unavailable. Regression caught & fixed: the old unconditional `closePinModal()` also cleared
+    add-mode — added an explicit `if (addMode) setAddMode(false)` to the handler.
+  - **Item 7 — modals still do NOT dismiss on backdrop tap** (verified both viewports, left exactly as-is).
+  - **Item 8 — grab handles removed** (`#view-drawer-handle` + both `.bottom-sheet-handle`, elements + CSS).
+    No swipe-to-dismiss built (out of scope).
+  Removed all the now-dead close-button wiring (12 `-btn-top` listeners + ~10 individual modal/sheet close
+  handlers), replaced by one delegated `.panel-close[data-close]` dispatcher. `node --check` clean; zero
+  FieldMap console errors (only the sandbox's long-documented maplibre `_updateElevation` terrain noise).
+  APP_VERSION 2.79.2 → 2.80.0, SHELL_CACHE v210 → v211.
