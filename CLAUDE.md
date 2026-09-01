@@ -11417,3 +11417,72 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   handlers), replaced by one delegated `.panel-close[data-close]` dispatcher. `node --check` clean; zero
   FieldMap console errors (only the sandbox's long-documented maplibre `_updateElevation` terrain noise).
   APP_VERSION 2.79.2 → 2.80.0, SHELL_CACHE v210 → v211.
+
+- **Session (v2.80.1 — mobile bottom-bar clearance + radius, regression fix from the consolidation above).**
+  The consolidation's Item-1 touch-target bump grew `#add-sheet-btn`/`#tools-sheet-btn` from ~26px to a 44px
+  min-height. That bar is `#sidebar`, which collapses to a fixed bottom bar on mobile — real-device measure
+  (iPhone 16 Pro, 402×874pt): collapsed bar = **92px** tall (was ~88). Every "clear the bar" constant
+  (`.floating-panel` mobile `bottom:88px`, `#map-controls` mobile `bottom:90px`, `#view-drawer` /
+  `#tap-stack-panel` / `#sunrise-panel.sunrise-docked-panel` at 88, `#draw-bar`&co at 144) was tuned to the
+  OLD height and never re-measured — live confirmed at 402×874: map-controls sat **−2px** into the bar,
+  floating panels **−4px** (drop-shadow blended into the bar).
+  - **`--mobile-bar-clearance` (`:root`, JS-updated live)** replaces the whole family of hardcoded guesses —
+    this bug class (a hardcoded px constant silently invalidated by an unrelated height change) has now
+    shipped twice (Tonight's Sky width, then this), so it's fixed structurally. `updateMobileBarClearance()`
+    (next to `updateSearchBarPosition`, same live-measure pattern) computes `#mobile-handle.offsetHeight +
+    #sidebar-header.offsetHeight − #mobile-sort-row height` (the collapsed chrome — subtracting the sort row
+    keeps the reading right even if it fires while the sheet is `.open`) `+ env(safe-area-inset-bottom)` (via
+    a throwaway probe element — 0 on this app today since it has no `<meta viewport-fit=cover>`, but
+    forward-compatible) `+ 12px` visible gap. Fired on load, `document.fonts.ready`, a 400ms settle,
+    `resize`, and `orientationchange` (+250ms). Desktop branch sets it to `24px` (nothing references it there
+    — every consuming rule is inside `@media max-width:760px`). Live at 402×874: var = **103px**, every
+    surface now clears the bar by **+11px**. `#draw-bar`&co use `calc(var(--mobile-bar-clearance) + 44px +
+    10px)` (bar clearance + the icon-row's own height + gap) — compositional, not a second magic number.
+    Desktop (2560px) fully unaffected — every panel/modal/bar measured identical to before.
+  - **Corner radius — root cause found, not papered over.** The mobile rule `border-radius:16px 16px 0 0`
+    for `.modal,.modal-wide,.bottom-sheet-panel` IS present in the media query and DOES render correctly in
+    Chrome. The flat corners are the iOS/WebKit bug where **`overflow` clipping ignores a NON-UNIFORM
+    `border-radius`** on a scroll container (`.modal`/`.sheet` are `overflow-y:auto`) — which is exactly why
+    `.floating-panel`'s own uniform 12px + overflow:auto already renders fine on the real device while these
+    don't. Fix: **uniform `border-radius:16px`** on the mobile rule — the element is pinned to the viewport
+    bottom (`align-items:flex-end`), so the bottom corners are at/below the screen edge and never visible;
+    uniform 16px is pixel-identical to `16px 16px 0 0` for the visible top corners, and iOS clips a uniform
+    radius correctly. `#sunrise-panel.sunrise-docked-panel` got the same treatment (uniform `16px !important`,
+    matching the edge-to-edge sheet/modal family it visually belongs with; its map-shrink dock behaviour is
+    untouched). **Flagged, cannot be verified in the sandbox** — Chrome renders `16px` and `16px 16px 0 0`
+    identically; final iOS confirmation is Geoff's device.
+  - **"Name this spot…" tap-anywhere quick-capture** — confirmed live it's `#view-drawer` in `'tap'` mode
+    (`showViewDrawer('tap', …)` from `openTapAnywhereDrawer`), NOT `.floating-panel` and NOT bespoke. **The
+    task's "opens from Create → Mark my location" is wrong** — Mark my location opens the classic `#pin-modal`;
+    the "Name this spot…" drawer (Save / Directions / Share) opens from a **bare map tap**. It's the one
+    `#view-drawer` state that's a create-a-thing form, so its sibling is the Add-pin modal, not the pin
+    detail card. New `#view-drawer.drawer-tap` class — `showViewDrawer` does
+    `el.classList.toggle('drawer-tap', type === 'tap')`, `closeViewDrawer` removes it; a save morphs the
+    drawer to a `'pin'` view which clears it. Mobile CSS: edge-to-edge (`left:0;right:0`), flush
+    (`bottom:0`), uniform `16px` radius, no side/bottom border — **identical width/radius/position to the
+    Add-pin modal** (verified live: both left:0, w:402, radius 16px, flush bottom). Kept: no scrim (the
+    tap-map-to-discard-the-draft behaviour is documented-deliberate). Every OTHER `#view-drawer` use keeps
+    the inset 14px card — verified live that opening a pin detail after a tap-capture correctly drops the
+    class (no leak).
+  - Verified live at a real 402×874 `<iframe>` (Geoff's device size) throughout, plus a full 2560px desktop
+    regression pass. `node --check` clean, zero new console errors. APP_VERSION 2.80.0 → 2.80.1, SHELL_CACHE
+    v211 → v212.
+- Session (v2.80.1 — mobile bottom-bar clearance + container radius; regression fix from the v2.80.0
+  close/container consolidation). The Item-1 44px touch-target bump grew the collapsed mobile bottom bar
+  (#sidebar) ~88→92px; every hardcoded "clear the bar" constant (88/90/144px) was tuned to the old height
+  and never re-measured — confirmed live at Geoffs real device size (402×874): map-controls sat -2px INTO
+  the bar, floating panels -4px. Task 1: replaced the whole family of guesses with a JS-measured
+  --mobile-bar-clearance CSS var (updateMobileBarClearance() — collapsed-chrome height + safe-area probe +
+  12px gap; on load / fonts.ready / resize / orientationchange), refactored .floating-panel / #map-controls
+  / #view-drawer / #tap-stack-panel / #sunrise-panel.sunrise-docked-panel to reference it, and #draw-bar&co
+  to calc(var(...) + 44px + 10px). Live @402: +11px gap everywhere; desktop untouched. Task 2: root-caused
+  the flat modal/sheet corners to the iOS overflow-clip-ignores-non-uniform-border-radius bug (CSS is
+  correct + Chrome-fine; .floating-panels uniform radius already renders right on-device) — fixed with a
+  UNIFORM border-radius:16px on the mobile rule (bottom corners are off-screen, so identical look, iOS
+  clips it); same for the sunrise dock. FLAGGED: not verifiable in the Chrome sandbox, needs Geoffs
+  device. Task 3: the "Name this spot..." popup is #view-drawer in tap mode (NOT .floating-panel, NOT
+  bespoke; and it opens from a bare map tap, not Mark my location which the task got wrong) — new
+  #view-drawer.drawer-tap class (toggled by showViewDrawer for type===tap) renders it edge-to-edge / flush
+  / uniform 16px, identical to the Add-pin modal; no scrim kept (deliberate); every other view-drawer use
+  keeps the inset card, verified no leak. See Architecture notes' close/container section for full detail.
+  node --check clean, zero new console errors. APP_VERSION 2.80.0 -> 2.80.1, SHELL_CACHE v211 -> v212.

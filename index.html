@@ -30,6 +30,16 @@
     --danger:#a23b2e;
     --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    /* Mobile bottom-bar clearance — the `bottom:` value a floating surface uses to sit CLEARLY
+       above the collapsed mobile sidebar bar (#sidebar), with a visible gap. Recomputed live
+       by updateMobileBarClearance() on load / resize / orientationchange from the bar's real
+       measured height (+ safe-area-inset-bottom + a fixed gap). This replaces the family of
+       hardcoded 88px/90px/144px guesses that silently went stale when the +Add/Tools buttons
+       were bumped to a 44px touch target (bar grew ~88→92px, every clearance constant was still
+       tuned to the old height). Fallback below is deliberately CORRECT-ish (not the old broken
+       88) for the pre-measurement instant on first paint. Only referenced inside the
+       max-width:760px media query — desktop is unaffected. */
+    --mobile-bar-clearance:104px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;font-family:var(--font-sans);background:var(--bg);color:var(--text);}
@@ -1223,7 +1233,14 @@
     .modal-overlay,.bottom-sheet-overlay{ align-items:flex-end; justify-content:center; padding:0; }
     .modal,.modal-wide,.bottom-sheet-panel{
       width:100%;max-width:none;
-      border-radius:16px 16px 0 0;
+      /* UNIFORM radius, not `16px 16px 0 0` — these are scroll containers (overflow-y:auto),
+         and iOS/WebKit renders an ASYMMETRIC border-radius on an overflow-clipped element with
+         SQUARE corners (the well-known bug; a uniform radius on the same element clips fine,
+         which is exactly why .floating-panel's uniform 12px already renders correctly on the
+         real device while these showed flat). The element is pinned to the viewport bottom
+         (align-items:flex-end), so the bottom corners are at/below the screen edge and never
+         visible — uniform 16px looks identical to 16px-16px-0-0 for the visible top corners. */
+      border-radius:16px;
       max-height:92vh;
     }
     .modal{ padding-bottom:calc(20px + env(safe-area-inset-bottom,0)); }
@@ -1364,8 +1381,10 @@
     /* Hide Leaflet native zoom — use pinch-to-zoom on mobile */
     .leaflet-control-zoom{display:none !important;}
 
-    /* Push Leaflet attribution above the bottom sheet, shrink it on mobile */
-    .leaflet-bottom.leaflet-left{margin-bottom:88px;transition:margin-bottom .25s ease;}
+    /* Push Leaflet attribution above the bottom sheet, shrink it on mobile. (Leaflet is gone
+       post-MapLibre-migration — these are almost certainly dead — but kept on the same
+       --mobile-bar-clearance reference as everything else for consistency.) */
+    .leaflet-bottom.leaflet-left{margin-bottom:var(--mobile-bar-clearance);transition:margin-bottom .25s ease;}
     .leaflet-control-attribution{font-size:9px;padding:1px 5px;}
 
     /* Search bar (Session 28): renders BELOW the top chip row(s) instead of overlapping them —
@@ -1384,13 +1403,12 @@
     /* Icon cluster (Session 28): single horizontal row across the bottom, full width, replacing
        the old bottom-right vertical column — trimmed to the 6 icons that still live here (zoom
        in/out, north/reset, search, layers, locate; Filter and Download moved into the Tools
-       sheet this same session, see #map-controls' own HTML comment). bottom:90px is unchanged
-       from the old column's own bottom offset — still just clearing the collapsed sidebar bar,
-       a constraint that has nothing to do with the column-vs-row shape change. justify-content:
-       space-between spreads the 6 round buttons evenly across the full width rather than
-       stretching or resizing them — .map-icon-btn's own 38px size is untouched. */
+       sheet this same session, see #map-controls' own HTML comment). `bottom` now references
+       --mobile-bar-clearance (measured live) instead of a hardcoded 90px — the button bump to
+       44px grew the sidebar bar past what 90px cleared, leaving this row overlapping it by ~2px.
+       justify-content:space-between spreads the 6 round buttons evenly across the full width. */
     #map-controls{
-      bottom:90px;left:14px;right:14px;top:auto;
+      bottom:var(--mobile-bar-clearance);left:14px;right:14px;top:auto;
       flex-direction:row;justify-content:space-between;gap:0;
       width:auto;
     }
@@ -1400,11 +1418,11 @@
     .map-icon-btn{width:44px;height:44px;}
 
     /* PICK/READ family on mobile — one rule for every member: inset full-width drawer,
-       14px both edges, lifted 88px above the collapsed sidebar bar, radius 12. Zero
-       per-panel width overrides — the desktop base is 300px, this is width:auto, and no
-       member carries an inline width anymore (Item 2/3). */
+       14px both edges, lifted CLEAR of the collapsed sidebar bar (--mobile-bar-clearance,
+       measured live — was a hardcoded 88px that the button bump silently invalidated),
+       radius 12. Zero per-panel width overrides. */
     .floating-panel{
-      bottom:88px;right:14px;left:14px;
+      bottom:var(--mobile-bar-clearance);right:14px;left:14px;
       width:auto;max-width:none;
       max-height:60vh;
     }
@@ -1417,10 +1435,26 @@
        situation. All 4 corners rounded (not flush against any real screen edge, floating
        88px above the bottom the same way .floating-panel does here). */
     #view-drawer{
-      left:14px;right:14px;bottom:88px;
+      left:14px;right:14px;bottom:var(--mobile-bar-clearance);
       width:auto;max-width:none;
       border-radius:14px;border:1px solid var(--border);
       max-height:48vh;
+    }
+    /* Tap-anywhere quick-capture — the "Name this spot…" popup with Save / Directions / Share,
+       opened by a bare tap on the map (openTapAnywhereDrawer → showViewDrawer('tap', …); NOT
+       Create → Mark my location, which opens the classic #pin-modal). It's the ONE #view-drawer
+       state that belongs with the COMMIT/CONFIRM family
+       rather than the inset PICK/READ card: it has a text input + auto-detected chips + a Save
+       that CREATES a pin, and its functional sibling is the Add-pin modal. So on mobile it
+       renders IDENTICALLY to that modal — edge-to-edge, flush to the viewport bottom, uniform
+       16px radius. The one deliberate difference kept from #view-drawer: NO scrim (the
+       tap-anywhere flow's map-stays-interactive / tap-map-to-discard-the-draft behaviour is
+       documented-deliberate — a blocking backdrop would break it). Every OTHER #view-drawer use
+       (pin/track/area/bearing detail, GMU/USFS/wildlife/migration info cards, the expanded edit
+       form) keeps the inset card. */
+    #view-drawer.drawer-tap{
+      left:0;right:0;bottom:0;width:auto;max-width:none;max-height:85vh;
+      border-radius:16px;border-left:none;border-right:none;border-bottom:none;
     }
 
     /* Expanded (edit) state on mobile — CRITICAL FIX: without this, #view-drawer.expanded's
@@ -1443,17 +1477,23 @@
     }
 
     /* Compass panel is now a plain .floating-panel (Item 2/3) — it inherits the family's
-       mobile rule above (inset 14px, bottom:88px, width:auto). No panel-specific mobile
-       rule needed anymore; its old inline position (the reason its previous @media block
-       was dead code) is gone. It stays out of PANEL_SCRIM_IDS so the map is still
-       interactive underneath while it's open. */
+       mobile rule above (inset 14px, bottom:var(--mobile-bar-clearance), width:auto). No
+       panel-specific mobile rule needed anymore; its old inline position (the reason its
+       previous @media block was dead code) is gone. It stays out of PANEL_SCRIM_IDS so the
+       map is still interactive underneath while it's open. */
 
-    /* Sunrise panel: docked above the sidebar bar on mobile */
+    /* Sunrise panel: docked above the sidebar bar on mobile (edge-to-edge, map shrinks to fit
+       above it — a deliberate panel-specific opt-in, unchanged here). `bottom` now references
+       --mobile-bar-clearance (was a hardcoded 88px). Radius is UNIFORM 16px — matching the
+       bottom-sheet/modal family it visually belongs with (edge-to-edge, no side inset), and
+       for the same iOS reason: an asymmetric radius on this overflow:auto element renders
+       square-cornered on the real device. Its geometry (left:0/right:0) means the bottom
+       corners sit at the screen edges and read as flat regardless. */
     #sunrise-panel.sunrise-docked-panel{
       position:fixed !important;
-      bottom:88px !important; left:0 !important; right:0 !important;
+      bottom:var(--mobile-bar-clearance) !important; left:0 !important; right:0 !important;
       top:auto !important;
-      border-radius:16px 16px 0 0 !important;
+      border-radius:16px !important;
       border-bottom:none !important;
       max-height:none !important;
       overflow-y:auto;
@@ -1468,11 +1508,12 @@
     }
     /* Times list visibility in docked mode controlled by JS only */
 
-    /* Draw bar, polygon bar, elev bar: centered above bottom sheet. Must clear #map-controls'
-       full-width horizontal row at bottom:90px: 90px + 44px icon height (bumped from 38px for
-       the 44pt touch-target standard) + 10px margin = 144px. */
+    /* Draw bar, polygon bar, elev bar: centered, stacked ABOVE the map-controls icon row (which
+       itself sits at --mobile-bar-clearance). Expressed compositionally — bar clearance + the
+       icon row's own 44px height + a 10px gap — so it tracks the live clearance value instead
+       of being a second independent magic number that drifts stale on its own. */
     #draw-bar,#measure-result,#polygon-bar,#elev-bar,#bearing-bar,#rangering-bar{
-      bottom:144px;
+      bottom:calc(var(--mobile-bar-clearance) + 44px + 10px);
       left:50%;right:auto;
       transform:translateX(-50%);
       font-size:12px;
@@ -1484,7 +1525,7 @@
        full-width treatment as the .floating-panel family, just spelled out since it keeps
        its own edge-to-edge internal structure and isn't a .floating-panel. */
     #tap-stack-panel{
-      bottom:88px;left:14px;right:14px;width:auto;max-width:none;
+      bottom:var(--mobile-bar-clearance);left:14px;right:14px;width:auto;max-width:none;
     }
     #tap-stack-panel-list{max-height:200px;}
 
@@ -3625,7 +3666,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.80.0';
+  var APP_VERSION = '2.80.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -9143,6 +9184,46 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     searchBar.style.top = (stackRect.bottom + 8) + 'px';
   }
 
+  // --mobile-bar-clearance (see :root) — the `bottom` value floating surfaces use to sit
+  // CLEARLY above the collapsed mobile sidebar bar. Measured live so a future change to the
+  // bar's height (like the +Add/Tools 44px touch-target bump that silently broke the old
+  // hardcoded 88/90/144px constants) never re-invalidates it. The bar is #sidebar; its
+  // ALWAYS-visible collapsed chrome is #mobile-handle + the always-on part of #sidebar-header
+  // (#sidebar-header-row1 — #mobile-sort-row inside the header, and #sidebar-scroll-area below
+  // it, only render when .open). Subtracting #mobile-sort-row's live height keeps the reading
+  // correct even if this fires while the sheet happens to be open.
+  var MOBILE_BAR_GAP_PX = 12; // the actual visible gap we want between the bar and things above it
+  var _safeAreaBottomProbe = null;
+  function readSafeAreaInsetBottom(){
+    // env() isn't readable from JS — probe it via a throwaway element (0 on this app today,
+    // since it has no <meta viewport-fit=cover>, but harmless and forward-compatible).
+    try {
+      if (!_safeAreaBottomProbe){
+        _safeAreaBottomProbe = document.createElement('div');
+        _safeAreaBottomProbe.style.cssText = 'position:fixed;left:-9999px;bottom:0;width:0;height:env(safe-area-inset-bottom,0px);pointer-events:none;';
+        document.body.appendChild(_safeAreaBottomProbe);
+      }
+      return _safeAreaBottomProbe.getBoundingClientRect().height || 0;
+    } catch(e){ return 0; }
+  }
+  function updateMobileBarClearance(){
+    if (window.innerWidth > 760){
+      // Desktop never references the property, but keep it defined & sane in case a rule
+      // ever does — no bar there.
+      document.documentElement.style.setProperty('--mobile-bar-clearance', '24px');
+      return;
+    }
+    var handle = document.getElementById('mobile-handle');
+    var header = document.getElementById('sidebar-header');
+    var sortRow = document.getElementById('mobile-sort-row');
+    if (!handle || !header) return;
+    var barH = handle.offsetHeight
+             + header.offsetHeight
+             - (sortRow ? sortRow.getBoundingClientRect().height : 0);
+    var clearance = Math.round(barH + readSafeAreaInsetBottom() + MOBILE_BAR_GAP_PX);
+    document.documentElement.style.setProperty('--mobile-bar-clearance', clearance + 'px');
+  }
+
   function setMaplibreStyle(styleName){
     loadStyle(styleName)
       .then(function(styleObj){
@@ -11202,7 +11283,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (viewDrawerOpenRef && viewDrawerOpenRef.type === 'tap') discardTapAnywhereDraft();
     resetOpenPopupRefs();
     viewDrawerOpenRef = null;
-    if (el) el.classList.add('hidden');
+    if (el){ el.classList.add('hidden'); el.classList.remove('drawer-tap'); }
     document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
   }
 
@@ -11219,7 +11300,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     viewDrawerOpenRef = { type: type, id: id };
     setViewDrawerContent(html);
     var el = document.getElementById('view-drawer');
-    if (el) el.classList.remove('hidden'); // no-op (and no animation replay) if already open — see the CSS comment on #view-drawer's slide-up keyframe
+    if (el){
+      // 'tap' (the bare-map-tap "Name this spot…" quick-capture) renders edge-to-edge on
+      // mobile, matching its functional sibling the Add-pin modal — see #view-drawer.drawer-tap's
+      // CSS. Every other type keeps the inset PICK/READ card. A save morphs the same drawer to a
+      // 'pin' view, which lands here again and clears the class.
+      el.classList.toggle('drawer-tap', type === 'tap');
+      el.classList.remove('hidden'); // no-op (and no animation replay) if already open — see the CSS comment on #view-drawer's slide-up keyframe
+    }
   }
 
   // Shared .remove() shim for the 4 read-only reference-data types (GMU/USFS/wildlife/
@@ -25905,6 +25993,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // second hardcoded number.
     updateSearchBarPosition();
     window.addEventListener('resize', updateSearchBarPosition);
+    // --mobile-bar-clearance: measure the collapsed sidebar bar now, and keep it live across
+    // rotation / breakpoint crossings. orientationchange fires before the new layout settles on
+    // some devices, so re-measure a beat later too. Also re-measure once web fonts have
+    // resolved — button height (and therefore bar height) shifts slightly when the real font
+    // swaps in for the fallback.
+    updateMobileBarClearance();
+    setTimeout(updateMobileBarClearance, 400);
+    if (document.fonts && document.fonts.ready){ document.fonts.ready.then(updateMobileBarClearance); }
+    window.addEventListener('resize', updateMobileBarClearance);
+    window.addEventListener('orientationchange', function(){
+      updateMobileBarClearance();
+      setTimeout(updateMobileBarClearance, 250);
+    });
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
     document.getElementById('zoom-in-btn').addEventListener('click', function(){ map.zoomIn(); });
     document.getElementById('zoom-out-btn').addEventListener('click', function(){ map.zoomOut(); });
