@@ -1417,96 +1417,55 @@
     body.sidebar-open #map-controls{opacity:0;pointer-events:none;}
     .map-icon-btn{width:44px;height:44px;}
 
-    /* PICK/READ family on mobile — one rule for every member: inset full-width drawer,
-       14px both edges, lifted CLEAR of the collapsed sidebar bar (--mobile-bar-clearance,
-       measured live — was a hardcoded 88px that the button bump silently invalidated),
-       radius 12. Zero per-panel width overrides. */
+    /* ── ONE mobile container family (Session — mobile container unification) ──
+       Every bottom surface that isn't a modal/sheet now renders the same way on mobile: a
+       full-width edge-to-edge dock, pinned above the collapsed sidebar bar, with the map
+       genuinely SHRUNK above it (panelDockSync — a MutationObserver on each surface's own
+       `hidden` class — sets #map's bottom inset to the surface's top edge and calls
+       map.resize(), so MapLibre repaints at the smaller size and the attribution line
+       visibly shifts up). This is the generalization of Sunrise's original bespoke dock
+       (sunriseDockOpen/Close, now gone) to Settings / Filters / Weather / Tonight's Sky /
+       Compass / Layers and the #view-drawer detail / 'tap' capture / expanded-edit states.
+       UNIFORM 16px radius — same iOS overflow-clip reason as the modal/sheet family (an
+       asymmetric radius on an overflow:auto element renders square-cornered on the device);
+       the left:0/right:0 geometry hides the bottom corners regardless. z-index 1400 matches
+       the old Sunrise dock (clears the item draw-bars it can coexist with).
+       Non-docking .floating-panel members (wildlife-panel, gmu-state-panel, trip-picker-panel
+       — secondary pickers, and trip-picker opens OVER modals) keep the lighter inset card
+       via the plain .floating-panel rule below. */
     .floating-panel{
       bottom:var(--mobile-bar-clearance);right:14px;left:14px;
       width:auto;max-width:none;
       max-height:60vh;
     }
-    #filter-panel,#layers-panel{max-height:52vh;}
-
-    /* View drawer: on mobile this becomes the true edge-to-edge bottom sheet the feature is
-       named for — desktop's small anchored card (see the base #view-drawer rule) would be
-       cramped at phone widths, and .floating-panel already establishes "full width, lifted
-       above the collapsed mobile sidebar bar" as this app's mobile pattern for exactly this
-       situation. All 4 corners rounded (not flush against any real screen edge, floating
-       88px above the bottom the same way .floating-panel does here). */
+    .floating-panel.panel-docked,
     #view-drawer{
-      left:14px;right:14px;bottom:var(--mobile-bar-clearance);
-      width:auto;max-width:none;
-      border-radius:14px;border:1px solid var(--border);
-      max-height:48vh;
-    }
-    /* Tap-anywhere quick-capture — the "Name this spot…" popup with Save / Directions / Share,
-       opened by a bare tap on the map (openTapAnywhereDrawer → showViewDrawer('tap', …); NOT
-       Create → Mark my location, which opens the classic #pin-modal). It's the ONE #view-drawer
-       state that belongs with the COMMIT/CONFIRM family
-       rather than the inset PICK/READ card: it has a text input + auto-detected chips + a Save
-       that CREATES a pin, and its functional sibling is the Add-pin modal. So on mobile it
-       renders IDENTICALLY to that modal — edge-to-edge, flush to the viewport bottom, uniform
-       16px radius. The one deliberate difference kept from #view-drawer: NO scrim (the
-       tap-anywhere flow's map-stays-interactive / tap-map-to-discard-the-draft behaviour is
-       documented-deliberate — a blocking backdrop would break it). Every OTHER #view-drawer use
-       (pin/track/area/bearing detail, GMU/USFS/wildlife/migration info cards, the expanded edit
-       form) keeps the inset card. */
-    #view-drawer.drawer-tap{
-      left:0;right:0;bottom:0;width:auto;max-width:none;max-height:85vh;
-      border-radius:16px;border-left:none;border-right:none;border-bottom:none;
-    }
-
-    /* Expanded (edit) state on mobile — CRITICAL FIX: without this, #view-drawer.expanded's
-       desktop-only rule (higher specificity than the plain #view-drawer rule just above, since
-       id+class beats id alone regardless of which media query each is defined in) kept
-       winning even on mobile, computing max-width:calc(100vw - 330px - 90px) — NEGATIVE on any
-       viewport narrower than 420px, collapsing the entire expanded edit form down to a
-       near-zero-width sliver with all its content crushed and overflowing vertically instead
-       of wrapping. This is what a "narrow, clipped vertical sliver with unreadable/overlapping
-       content" report was actually describing — a pre-existing gap in the mobile CSS since
-       Session 12's expand-in-place work (never actually exercised at a real mobile viewport's
-       EXPANDED width until this session's investigation, only the compact view was previously
-       screenshot-verified at 390px), not something the trip-picker itself broke — the
-       trip-picker's extra field just made the already-broken container's content noticeably
-       taller/more obviously wrong. Same edge-to-edge width as the compact view above, just
-       taller (mirrors the desktop pattern: expanded grows taller than compact, position/width
-       otherwise unchanged). */
-    #view-drawer.expanded{
-      width:auto;max-width:none;max-height:85vh;
-    }
-
-    /* Compass panel is now a plain .floating-panel (Item 2/3) — it inherits the family's
-       mobile rule above (inset 14px, bottom:var(--mobile-bar-clearance), width:auto). No
-       panel-specific mobile rule needed anymore; its old inline position (the reason its
-       previous @media block was dead code) is gone. It stays out of PANEL_SCRIM_IDS so the
-       map is still interactive underneath while it's open. */
-
-    /* Sunrise panel: docked above the sidebar bar on mobile (edge-to-edge, map shrinks to fit
-       above it — a deliberate panel-specific opt-in, unchanged here). `bottom` now references
-       --mobile-bar-clearance (was a hardcoded 88px). Radius is UNIFORM 16px — matching the
-       bottom-sheet/modal family it visually belongs with (edge-to-edge, no side inset), and
-       for the same iOS reason: an asymmetric radius on this overflow:auto element renders
-       square-cornered on the real device. Its geometry (left:0/right:0) means the bottom
-       corners sit at the screen edges and read as flat regardless. */
-    #sunrise-panel.sunrise-docked-panel{
       position:fixed !important;
-      bottom:var(--mobile-bar-clearance) !important; left:0 !important; right:0 !important;
-      top:auto !important;
+      bottom:var(--mobile-bar-clearance) !important;
+      left:0 !important; right:0 !important; top:auto !important;
+      width:auto !important; max-width:none !important;
+      border:1px solid var(--border) !important;
+      border-left:none !important; border-right:none !important; border-bottom:none !important;
       border-radius:16px !important;
-      border-bottom:none !important;
-      max-height:none !important;
+      max-height:calc(100vh - var(--mobile-bar-clearance) - 132px) !important;
       overflow-y:auto;
       z-index:1400;
-      width:auto !important;
     }
-    /* Map shrinks — bottom set by JS to panel top edge */
-    #map.sunrise-docked{
+    /* Expanded (edit) form — worth a bit more of the screen than a detail card, and there's
+       no map interaction to preserve mid-edit anyway. (Also still needs to explicitly beat
+       the base #view-drawer.expanded desktop rule's width:380px/max-width:calc(100vw-330px-90px),
+       which is NEGATIVE below 420px — the "clipped vertical sliver" bug from Session 12.) */
+    #view-drawer.expanded{
+      width:auto !important; max-width:none !important;
+      max-height:calc(100vh - var(--mobile-bar-clearance) - 64px) !important;
+    }
+    /* The map, while any docked surface is open — #map's bottom inset is set live by
+       panelDockSync to the docked surface's own measured top edge. */
+    #map.map-docked{
       position:absolute !important;
       top:0 !important; left:0 !important; right:0 !important;
       height:auto !important;
     }
-    /* Times list visibility in docked mode controlled by JS only */
 
     /* Draw bar, polygon bar, elev bar: centered, stacked ABOVE the map-controls icon row (which
        itself sits at --mobile-bar-clearance). Expressed compositionally — bar clearance + the
@@ -3666,7 +3625,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.80.1';
+  var APP_VERSION = '2.81.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -9224,6 +9183,85 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.documentElement.style.setProperty('--mobile-bar-clearance', clearance + 'px');
   }
 
+  // ── Docked bottom-sheet family (mobile) — the generalization of Sunrise's old bespoke dock ──
+  // On mobile, exactly ONE of these surfaces can be open at a time; whichever is open gets the
+  // full-width .panel-docked CSS (a no-op marker for #view-drawer, whose own mobile rule already
+  // renders full-width) AND the map is SHRUNK above it — #map's bottom inset is driven to the
+  // surface's own measured top edge and map.resize() is called, so MapLibre repaints smaller
+  // and the attribution line visibly shifts up. Driven by one MutationObserver per surface
+  // (watching its `class`), so EVERY show/hide path (the × button, Escape, an outside-click,
+  // closeAllPanels, another panel opening, expand↔collapse of the edit form) triggers
+  // dock/undock with zero per-call-site wiring — this is why it can't drift stale the way the
+  // old hand-wired sunriseDockClose() (present in only 2 of the ~8 real close paths) could.
+  // Deliberately excludes wildlife-panel / gmu-state-panel (secondary pickers) and
+  // trip-picker-panel (opens OVER modals — must never resize the map out from under one).
+  var DOCK_PANEL_IDS = ['sunrise-panel','nightsky-panel','weather-panel','compass-panel','layers-panel','filter-panel','settings-panel','view-drawer'];
+  var _mapDockedFor = null; // id of the surface currently owning #map's shrunk state
+
+  function _panelDockableOpenId(){
+    for (var i = 0; i < DOCK_PANEL_IDS.length; i++){
+      var el = document.getElementById(DOCK_PANEL_IDS[i]);
+      if (el && !el.classList.contains('hidden')) return DOCK_PANEL_IDS[i];
+    }
+    return null;
+  }
+
+  function _panelDockMeasure(id){
+    var panel = document.getElementById(id);
+    var mapEl = document.getElementById('map');
+    if (!panel || !mapEl || !map || panel.classList.contains('hidden')) return;
+    // The panel is already positioned (.panel-docked / #view-drawer's own mobile rule), so its
+    // rendered top edge — read synchronously here, inside the observer's microtask, before the
+    // next paint — is exactly where #map should end. No 1-frame flash of the un-shrunk map.
+    var top = panel.getBoundingClientRect().top;
+    var inset = Math.max(0, Math.round(window.innerHeight - top));
+    if (mapEl.style.bottom !== inset + 'px') mapEl.style.bottom = inset + 'px';
+    var c = map.getCenter();
+    map.resize();
+    // resize() already preserves the center lng/lat (so there's no drift), but re-assert it so
+    // the visible strip stays put and any center-anchored overlay (the sun/moon arc) redraws
+    // where it's actually visible rather than half-hidden behind the sheet.
+    map.jumpTo({ center: [c.lng, c.lat], zoom: map.getZoom(), animate: false });
+    if (id === 'sunrise-panel' && typeof updateSkyDiagram === 'function') updateSkyDiagram();
+  }
+
+  function panelDockSync(){
+    var mapEl = document.getElementById('map');
+    if (!mapEl) return;
+    var openId = (window.innerWidth <= 760) ? _panelDockableOpenId() : null;
+
+    DOCK_PANEL_IDS.forEach(function(id){
+      if (id === 'view-drawer') return; // full-width via its own mobile rule; no marker class needed
+      var el = document.getElementById(id);
+      if (!el) return;
+      var want = (id === openId);
+      if (el.classList.contains('panel-docked') !== want) el.classList.toggle('panel-docked', want);
+    });
+
+    if (openId === _mapDockedFor){
+      if (openId) _panelDockMeasure(openId); // same surface still open — content height may have changed
+      return;
+    }
+    if (!openId){
+      // nothing docked (or we crossed to desktop) — restore the map to full size
+      mapEl.classList.remove('map-docked');
+      mapEl.style.bottom = '';
+      _mapDockedFor = null;
+      if (map) map.resize(); // resize() preserves center — no drift
+      return;
+    }
+    mapEl.classList.add('map-docked');
+    _mapDockedFor = openId;
+    _panelDockMeasure(openId);
+  }
+
+  function initPanelDockObservers(){
+    DOCK_PANEL_IDS.forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) new MutationObserver(panelDockSync).observe(el, { attributes: true, attributeFilter: ['class'] });
+    });
+  }
+
   function setMaplibreStyle(styleName){
     loadStyle(styleName)
       .then(function(styleObj){
@@ -11283,8 +11321,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (viewDrawerOpenRef && viewDrawerOpenRef.type === 'tap') discardTapAnywhereDraft();
     resetOpenPopupRefs();
     viewDrawerOpenRef = null;
-    if (el){ el.classList.add('hidden'); el.classList.remove('drawer-tap'); }
+    if (el){ el.classList.add('hidden'); }
     document.querySelectorAll('.popup-overflow-menu.show').forEach(function(m){ m.classList.remove('show'); });
+    panelDockSync(); // restore the map (observer also catches this)
   }
 
   function showViewDrawer(type, id, html){
@@ -11301,13 +11340,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     setViewDrawerContent(html);
     var el = document.getElementById('view-drawer');
     if (el){
-      // 'tap' (the bare-map-tap "Name this spot…" quick-capture) renders edge-to-edge on
-      // mobile, matching its functional sibling the Add-pin modal — see #view-drawer.drawer-tap's
-      // CSS. Every other type keeps the inset PICK/READ card. A save morphs the same drawer to a
-      // 'pin' view, which lands here again and clears the class.
-      el.classList.toggle('drawer-tap', type === 'tap');
+      // On mobile #view-drawer renders as one full-width docked bottom sheet for EVERY state —
+      // detail card, the 'tap' quick-capture, and the expanded edit form — matching the one
+      // container family (see #view-drawer's own @media rule and the .panel-docked family).
+      // The old 'tap'-only .drawer-tap special case is gone.
       el.classList.remove('hidden'); // no-op (and no animation replay) if already open — see the CSS comment on #view-drawer's slide-up keyframe
     }
+    panelDockSync(); // dock + shrink the map (also covers a content swap while already open, which the observer misses)
   }
 
   // Shared .remove() shim for the 4 read-only reference-data types (GMU/USFS/wildlife/
@@ -11336,6 +11375,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     drawerEl.classList.add('expanded');
     drawerExpandedType = type;
     captureFormBaseline(type); // Item 5 — snapshot the freshly-populated fields for the dirty check
+    panelDockSync(); // form is taller — re-shrink the map to fit
   }
 
   // ── Dirty-check for the 6 edit/creation forms (Item 5) ──
@@ -11437,6 +11477,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     returnExpandedModalHome();
     document.getElementById('view-drawer').classList.remove('expanded');
     refreshCompactViewForCurrentDrawerItem();
+    panelDockSync(); // back to the shorter compact card — re-measure
   }
 
   // Standard geo destination link (Google Maps directions) — one universal URL, left to the
@@ -21308,20 +21349,10 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   // ── Sunrise-panel tab state + renderers ──
   var sunPanelTab = 'sun'; // 'sun' | 'moon' | 'solunar'
 
-  // Re-measure the mobile dock (panel height drives #map's bottom inset) and redraw the arc at
-  // the new map size. No-op on desktop, where the panel floats and doesn't resize the map.
-  function remeasureSunriseDock(){
-    var panel = document.getElementById('sunrise-panel');
-    if (!panel || !panel.classList.contains('sunrise-docked-panel')) return;
-    requestAnimationFrame(function(){ requestAnimationFrame(function(){
-      var h = panel.offsetHeight || 180;
-      document.getElementById('map').style.bottom = (88 + h) + 'px';
-      var prevCenter = map.getCenter();
-      map.resize();
-      map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
-      updateSkyDiagram();
-    }); });
-  }
+  // Sunrise's mobile dock is now just a member of the shared docked-panel family — this
+  // re-runs the generic re-measure (panel content height changed without a hidden-toggle, e.g.
+  // a tab switch or the compact/times toggle). No-op on desktop (panelDockSync's own guard).
+  function remeasureSunriseDock(){ panelDockSync(); }
 
   // Compact view: hide everything tagged .sunrise-detail, shrinking the panel so the map area
   // above it grows and the sun/moon arc has room. Never shown on the Solunar tab (no map overlay).
@@ -21472,6 +21503,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var panel = document.getElementById('nightsky-panel');
     panel.classList.remove('hidden');
     closeAllPanels_except('nightsky-panel');
+    panelDockSync(); // dock + shrink the map on mobile
     var center = map.getCenter();
     // "Tonight": after noon local → the coming night; before noon → the night in progress.
     var anchor = new Date();
@@ -21597,37 +21629,6 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     remeasureSunriseDock(); // the mobile dock sizes itself to panel height — re-measure after the content swap
   }
 
-  function sunriseDockOpen(){
-    if (window.innerWidth > 760) return;
-    var panel = document.getElementById('sunrise-panel');
-    var mapEl = document.getElementById('map');
-    panel.classList.add('sunrise-docked-panel');
-    var timesList = document.getElementById('sunrise-times-list');
-    if (timesList) timesList.style.display = 'none';
-    var toggleBtn = document.getElementById('sunrise-toggle-times-btn');
-    if (toggleBtn) toggleBtn.textContent = 'Show times';
-    mapEl.classList.add('sunrise-docked');
-    requestAnimationFrame(function(){ requestAnimationFrame(function(){
-      var panelH = panel.offsetHeight || 180;
-      mapEl.style.bottom = (88 + panelH) + 'px';
-      // Capture center before resize, then re-center after so arc draws in middle of shrunken map
-      var prevCenter = map.getCenter();
-      map.resize();
-      map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
-      if (SUNRISE_ARC_ON) renderSunArc(map.getCenter(), sunDate);
-    }); });
-  }
-
-  function sunriseDockClose(){
-    if (window.innerWidth > 760) return;
-    var panel = document.getElementById('sunrise-panel');
-    var mapEl = document.getElementById('map');
-    panel.classList.remove('sunrise-docked-panel');
-    mapEl.classList.remove('sunrise-docked');
-    mapEl.style.bottom = '';
-    map.resize();
-  }
-
   function openSunrisePanel(){
     if (!sunDate) sunDate = new Date();
     document.getElementById('sunrise-panel').classList.remove('hidden');
@@ -21635,7 +21636,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     moonSliderMinutes = null;
     if (window._sunSliderInit) window._sunSliderInit();
     if (window._moonSliderInit) window._moonSliderInit();
-    sunriseDockOpen();
+    // In the mobile dock the panel eats real screen height, so start with the times list
+    // collapsed (the "Show times" toggle brings it back). Desktop floats — leave it alone.
+    if (window.innerWidth <= 760){
+      var timesList = document.getElementById('sunrise-times-list');
+      if (timesList) timesList.style.display = 'none';
+      var toggleBtn = document.getElementById('sunrise-toggle-times-btn');
+      if (toggleBtn) toggleBtn.textContent = 'Show times';
+    }
+    panelDockSync(); // dock + shrink the map (the MutationObserver also fires, but do it now so it's synchronous with the open)
     renderSunriseTimes(map.getCenter(), sunDate);
     renderActiveSunPanelTab();
     var compactBtn = document.getElementById('sunrise-compact-btn');
@@ -22090,7 +22099,8 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     FLOATING_PANEL_IDS.forEach(function(id){
       if (id !== keepId) document.getElementById(id) && document.getElementById(id).classList.add('hidden');
     });
-    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); clearMoonArc(); sunriseDockClose(); }
+    if (wasSunriseOpen && keepId !== 'sunrise-panel'){ clearSunArc(); clearMoonArc(); }
+    panelDockSync(); // undock / re-dock the map for whatever's left open (also handled by the observers)
   }
 
   function setElevTapMode(on){
@@ -22213,6 +22223,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     deactivateAllTools('compass');
     document.getElementById('compass-panel').classList.remove('hidden');
     compassActive = true;
+    panelDockSync(); // dock + shrink the map on mobile (observer also fires)
     // Get GPS position and watch it — shared with the locate button and coords/elevation
     // toggle's own device GPS poll as of Session 37, see subscribeSharedGps's own comment.
     if (navigator.geolocation){
@@ -22364,6 +22375,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('compass-center-toggle-btn').textContent = '📍 My Location';
     document.getElementById('compass-heading-display').textContent = '– –°';
     currentGpsLatLng = null;
+    panelDockSync(); // restore the map (observer also catches this)
   }
 
   // ── Weather (NWS free API) ──
@@ -22377,6 +22389,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.getElementById('weather-panel').classList.remove('hidden');
     closeAllPanels_except('weather-panel');
     closeViewDrawer();
+    panelDockSync(); // dock + shrink the map on mobile
     var center = latlng || map.getCenter();
     var key = Math.round(center.lat * 10) + ',' + Math.round(center.lng * 10);
     document.getElementById('weather-location').textContent = center.lat.toFixed(3) + '°N, ' + Math.abs(center.lng).toFixed(3) + '°W';
@@ -22714,6 +22727,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       .setLngLat([latlng.lng, latlng.lat])
       .addTo(map);
     showViewDrawer('tap', 'new', tapAnywhereDrawerHtml());
+    // On mobile the drawer shrinks the map (panelDockSync) — recentre so the just-dropped
+    // marker sits in the middle of the visible strip rather than possibly under the sheet.
+    if (window.innerWidth <= 760) map.easeTo({ center: [latlng.lng, latlng.lat], duration: 220 });
 
     getElevationFt(latlng.lat, latlng.lng).then(function(ft){
       if (!tapAnywhereState || tapAnywhereState.latlng !== latlng) return; // dismissed/superseded since
@@ -24215,7 +24231,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var el = document.getElementById(id);
       if (el) el.classList.add('hidden');
     });
-    if (wasSunriseOpen){ clearSunArc(); clearMoonArc(); sunriseDockClose(); }
+    if (wasSunriseOpen){ clearSunArc(); clearMoonArc(); }
     // #view-drawer isn't in FLOATING_PANEL_IDS (different dismiss model — no scrim, map
     // stays interactive), but should still close whenever something else is about to take
     // over the screen. This one hook point covers both required dismiss paths: a plain
@@ -24226,6 +24242,9 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // The tap-stack "← Back to list" pill (Session 46) isn't a FLOATING_PANEL_IDS member either
     // (it's a tiny fixed pill, not a panel with a scrim) — same reasoning, hide it here too.
     hideTapStackBackBar();
+    // Restore the map now (synchronously with the dismiss) — the per-panel class observers
+    // will also fire, but they run a microtask later.
+    panelDockSync();
   }
 
   // ---------- Cloud sync bridge ----------
@@ -24915,24 +24934,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('nightsky-close-btn').addEventListener('click', function(){
       document.getElementById('nightsky-panel').classList.add('hidden');
+      panelDockSync();
     });
     document.getElementById('sunrise-toggle-times-btn').addEventListener('click', function(){
       var timesEl = document.getElementById('sunrise-times-list');
       var isHidden = timesEl.style.display === 'none';
       timesEl.style.display = isHidden ? '' : 'none';
       this.textContent = isHidden ? 'Hide times' : 'Show times';
-      // Re-measure dock height if docked
-      var panel = document.getElementById('sunrise-panel');
-      if (panel.classList.contains('sunrise-docked-panel')){
-        requestAnimationFrame(function(){ requestAnimationFrame(function(){
-          var h = panel.offsetHeight || 180;
-          document.getElementById('map').style.bottom = (88 + h) + 'px';
-          var prevCenter = map.getCenter();
-          map.resize();
-          map.jumpTo({ center: [prevCenter.lng, prevCenter.lat], zoom: map.getZoom() });
-          updateSkyDiagram();
-        }); });
-      }
+      remeasureSunriseDock(); // panel height changed — re-shrink the map to fit (no-op on desktop)
     });
     document.getElementById('sunrise-compact-btn').addEventListener('click', function(){
       state.settings.sunPanelCompact = !state.settings.sunPanelCompact;
@@ -24956,7 +24965,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       document.getElementById('sunrise-panel').classList.add('hidden');
       clearSunArc();
       clearMoonArc();
-      sunriseDockClose();
+      panelDockSync(); // restore the map (observer also catches this)
     });
     // prev / next / date-input keep whatever moon-position time the user picked (so "plan the
     // same shot the next night" just works); only "Today" snaps the moon diagram back to now.
@@ -25122,6 +25131,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('weather-close-btn').addEventListener('click', function(){
       document.getElementById('weather-panel').classList.add('hidden');
+      panelDockSync();
     });
 
     // ── P2 Layer toggles ──
@@ -25733,7 +25743,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var panel = document.getElementById('settings-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
-      if (willOpen) panel.classList.remove('hidden');
+      if (willOpen){ panel.classList.remove('hidden'); panelDockSync(); }
     });
 
     // Settings panel controls
@@ -26001,10 +26011,15 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     updateMobileBarClearance();
     setTimeout(updateMobileBarClearance, 400);
     if (document.fonts && document.fonts.ready){ document.fonts.ready.then(updateMobileBarClearance); }
-    window.addEventListener('resize', updateMobileBarClearance);
+    initPanelDockObservers(); // one MutationObserver per docked surface — see DOCK_PANEL_IDS
+    window.addEventListener('resize', function(){
+      updateMobileBarClearance();
+      panelDockSync(); // re-measure / undock on a breakpoint or orientation change (clearance must update first)
+    });
     window.addEventListener('orientationchange', function(){
       updateMobileBarClearance();
-      setTimeout(updateMobileBarClearance, 250);
+      panelDockSync();
+      setTimeout(function(){ updateMobileBarClearance(); panelDockSync(); }, 250);
     });
     document.getElementById('locate-btn').addEventListener('click', handleLocateBtn);
     document.getElementById('zoom-in-btn').addEventListener('click', function(){ map.zoomIn(); });
@@ -26016,7 +26031,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var panel = document.getElementById('layers-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
-      if (willOpen){ panel.classList.remove('hidden'); updateOverlayOfflineAvailability(); updateLayerSectionCounts(); }
+      if (willOpen){ panel.classList.remove('hidden'); panelDockSync(); updateOverlayOfflineAvailability(); updateLayerSectionCounts(); }
     });
     document.getElementById('active-layers-chip').addEventListener('click', function(e){
       e.stopPropagation();
@@ -26030,7 +26045,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       var panel = document.getElementById('filter-panel');
       var willOpen = panel.classList.contains('hidden');
       closeAllPanels();
-      if (willOpen) panel.classList.remove('hidden');
+      if (willOpen){ panel.classList.remove('hidden'); panelDockSync(); }
     });
 
     // ---------- Active Trip UI (Stage 2) ----------

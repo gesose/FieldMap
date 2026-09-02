@@ -1144,6 +1144,65 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   bars, filter All/None, etc.); only their use *as a panel close* is gone.
 - `node --check` clean; live-verified at 2560px desktop and a real 390px `<iframe>`. APP_VERSION
   2.79.2 → 2.80.0, SHELL_CACHE v210 → v211.
+- **Session (v2.81.0 — mobile container unification: one docked family for every bottom surface).**
+  Collapses the "which surface gets which mobile treatment" split down to ONE family. Everything that isn't
+  a `.modal`/`.bottom-sheet-panel` now docks the same way on mobile: full-width edge-to-edge, pinned above
+  the sidebar bar (`bottom:var(--mobile-bar-clearance)`), uniform 16px radius, top border only, AND the map
+  genuinely SHRINKS above it (`#map.map-docked` + a JS-driven bottom inset + `map.resize()`, so MapLibre
+  repaints smaller and the Mapbox/OSM attribution line visibly shifts up). This is Sunrise's old bespoke
+  dock, generalized. Applies to: `sunrise-panel`, `nightsky-panel`, `weather-panel`, `compass-panel`,
+  `layers-panel`, `filter-panel`, `settings-panel`, and `#view-drawer` (every state — pin/track/area/…
+  detail card, the 'tap' quick-capture, the expanded edit form). Deliberately NOT: `wildlife-panel` /
+  `gmu-state-panel` (secondary pickers) or `trip-picker-panel` (opens OVER modals — must never resize the
+  map out from under one) — those keep the lighter inset `.floating-panel` card.
+  - **`panelDockSync()` + one `MutationObserver` per surface** (watching its `class`, `initPanelDockObservers()`
+    in `bindUI`). This is the key architectural improvement over the old hand-wired `sunriseDockOpen`/`Close`,
+    which lived in only ~2 of the ~8 real close paths (`closeAllPanels`/`closeAllPanels_except`) and had no
+    hook for the × button, Escape, an outside-click, or another panel opening — a class of "drift stale"
+    bug. The observer catches EVERY hidden↔visible transition regardless of code path, plus the
+    `.expanded`↔compact toggle of the edit form. Observer callbacks are microtasks (run before the next
+    paint), and `_panelDockMeasure` reads the panel's rendered `getBoundingClientRect().top` and does
+    `map.resize()`+`jumpTo` all synchronously in that microtask — so there's no 1-frame flash of the
+    un-shrunk map. Explicit `panelDockSync()` calls were ALSO added at the main open/close sites (each panel
+    opener, `closeAllPanels`, `closeCompassPanel`, `closeViewDrawer`, `showViewDrawer`, `expandDrawerForEdit`,
+    `collapseDrawerFromEdit`, `remeasureSunriseDock`) for immediacy; the observer is the reliable catch-all.
+    Idempotent — 2-3 redundant calls per transition, each `map.resize()` ~2-5ms.
+  - **Desktop is a complete no-op**: `panelDockSync` guards `window.innerWidth <= 760`; on desktop `openId`
+    resolves `null`, `_mapDockedFor` stays `null`, `null === null` → early return with ZERO map calls.
+    `.panel-docked`/`#map.map-docked` are never applied, `#map.style.bottom` never touched. Verified: 18
+    desktop panel open/close cycles at 2560px — every panel still 300px bottom-right / radius 12, map never
+    resizes, no drift.
+  - **`max-height: calc(100vh - var(--mobile-bar-clearance) - 132px)`** on the docked rule caps the tall
+    panels (Layers/Filter/Settings, and Sunrise-with-times) at ~639px so ≥132px of map always stays visible
+    (this matches the ~132-146px strip Sunrise's old `max-height:none` dock left in the same case). Short
+    panels (Compass ~95px, Tonight's Sky ~389px, Weather) render at their natural height and the map gets
+    the rest. The expanded edit form gets `-64px` (a form is worth more of the screen; no map interaction
+    mid-edit).
+  - **`#view-drawer` changes**: base mobile rule is now the docked look (was the inset 14px card); the
+    `.drawer-tap` class from v2.80.1 is GONE (redundant — every state is now edge-to-edge); `showViewDrawer`
+    no longer toggles it. `openTapAnywhereDrawer` adds a `map.easeTo({center: latlng, duration:220})` on
+    mobile so the just-dropped temp marker sits in the visible strip rather than possibly under the sheet.
+  - **Removed**: `sunriseDockOpen()`, `sunriseDockClose()`, the `sunrise-docked-panel`/`#map.sunrise-docked`
+    CSS, and the inline double-rAF re-measure in the `sunrise-toggle-times-btn` handler. `remeasureSunriseDock()`
+    is now a one-liner `= panelDockSync`. `openSunrisePanel` inlines the "collapse the times list on mobile"
+    content-prep that `sunriseDockOpen` used to do.
+  - **Stress test (task's explicit Compass/Filters rapid-toggle ask) — flagged, NOT meaningfully measurable
+    in-sandbox.** The sandbox throttles `requestAnimationFrame` hard (confirmed: <0.3 fps even in a
+    foreground automation tab / same-origin iframe), so per-cycle timing was dominated by the throttle
+    (~3s/cycle), not this code. FUNCTIONALLY every one of 10+ rapid Filter cycles was correct (dock on open,
+    full restore on close, no state accumulation, clean final state). The mechanism is LIGHTER than
+    Sunrise's shipped double-rAF dock (synchronous measure, no frame wait). Real-device confirmation of
+    Compass/Filters rapid-toggle feel is the one open item.
+  - **Verified live** at a real 402×874 `<iframe>` (iPhone 16 Pro pt): all 7 config panels dock full-width /
+    radius 16 / map shrinks (attribution shifts) / clean restore with no center drift; the full pin
+    lifecycle (tap → 'tap' drawer → Save → 'pin' detail → Edit data expand → collapse → close) all docked,
+    footer actions (Directions/Share/Edit data/⋮) fit and aren't clipped; Sunrise's sun/moon arc still
+    redraws in the visible strip on open + tab/times toggle. Desktop 2560px unregressed. `node --check`
+    clean. Console: the only errors are the sandbox's long-documented flaky maplibre `_updateElevation`
+    terrain-render noise (appeared once during heavy iframe stress, absent on 2× clean boots + an 18-cycle
+    desktop stress, and equally present/absent on the deployed 2.80.1 under the same conditions — not a
+    regression). Two test pins created on geoff's real account during verification were deleted (tombstones
+    recorded, count back to baseline). APP_VERSION 2.80.1 → 2.81.0, SHELL_CACHE v212 → v213.
 
 - MapLibre large-dataset payload ceiling: `updateData()` pattern (Session 60) — resolves, definitively, the
   open question left by an earlier (undocumented — a real CLAUDE.md gap, not a false lead) research session:
@@ -11486,3 +11545,27 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   / uniform 16px, identical to the Add-pin modal; no scrim kept (deliberate); every other view-drawer use
   keeps the inset card, verified no leak. See Architecture notes' close/container section for full detail.
   node --check clean, zero new console errors. APP_VERSION 2.80.0 -> 2.80.1, SHELL_CACHE v211 -> v212.
+- Session (v2.81.0 — mobile container unification): collapsed the "which bottom surface gets which mobile
+  treatment" split down to ONE family. Studied Sunrise's existing dock first (a real map-container resize +
+  map.resize(), driven by a bespoke sunriseDockOpen/Close wired into only ~2 of the ~8 real close paths),
+  then generalized it: a `panelDockSync()` + one MutationObserver per surface (on its `class`) so every
+  hidden↔visible path triggers dock/undock with zero per-call wiring, plus explicit calls at the main
+  open/close sites for immediacy. Applied to Sunrise/Tonight's Sky/Weather/Compass/Layers/Filters/Settings
+  and #view-drawer (all states — detail card, 'tap' capture, expanded edit form; the v2.80.1 .drawer-tap
+  class is gone, redundant now). Deliberately excluded wildlife-panel/gmu-state-panel (secondary pickers)
+  and trip-picker-panel (opens over modals). On mobile each docks full-width edge-to-edge above the sidebar
+  bar, uniform 16px radius, and the map SHRINKS above it (attribution line visibly shifts). Desktop is a
+  complete no-op (window.innerWidth<=760 guard; verified 18 open/close cycles at 2560px, zero map resize,
+  every panel still 300px bottom-right/radius 12). max-height cap on the docked rule keeps ≥132px of map
+  visible for the tall panels (matches Sunrise's historical strip); short panels take their natural height.
+  Verified live at a real 402×874 iframe: all 7 config panels + the full pin lifecycle (tap→save→detail→
+  edit→collapse→close) dock/restore correctly with no center drift, footer actions fit, Sunrise's arc
+  redraws in the visible strip. **Flagged**: the task's explicit Compass/Filters rapid-toggle stress test
+  couldn't be meaningfully timed — the sandbox throttles rAF to <0.3fps even foregrounded, so cycle times
+  were the throttle not the code; functionally every one of 10+ rapid cycles was correct (dock/restore/no
+  accumulation), and the mechanism is lighter than Sunrise's shipped double-rAF dock, but real-device
+  rapid-toggle feel is the one open check. Console: only the sandbox's long-documented flaky maplibre
+  `_updateElevation` terrain noise (equally present/absent on the deployed 2.80.1 — not a regression).
+  Two test pins on geoff's real account created + deleted (tombstones recorded, count back to baseline).
+  node --check clean. APP_VERSION 2.80.1 -> 2.81.0, SHELL_CACHE v212 -> v213. See Architecture notes'
+  close/container section, its own v2.81.0 sub-bullet, for full detail.
