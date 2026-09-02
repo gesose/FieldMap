@@ -10,7 +10,7 @@
 //    Firestore has its own IndexedDB-based offline queueing built in — our cache
 //    logic would only get in the way of that.
 
-var SHELL_CACHE = 'fieldmap-shell-v213';
+var SHELL_CACHE = 'fieldmap-shell-v214';
 var TILE_CACHE = 'fieldmap-tiles-v1'; // unchanged on purpose — keeps existing offline tiles intact across app updates
 // GMU per-state boundary cache — written directly from index.html (not this file's fetch
 // handler), but Cache Storage is shared per-origin regardless of who created an entry, so it
@@ -95,6 +95,11 @@ var SHELL_FILES = [
   './topo-style.json',
   './topo-dark-style.json',
   './aerial-streets-style.json',
+  // FSTopo (USFS) base layer — a MapLibre style generated from the Esri FSBasemap vector-tile
+  // service's own root.json (sprite/glyphs/source url pre-absolutized, a background layer
+  // injected — see LOCAL_STYLE_FILES.fstopo's comment in index.html). Precached for the same
+  // cold-boot-offline reason as the other three local styles above.
+  './fstopo-style.json',
   // MapLibre GL JS — self-hosted (see index.html's <script>/<link> tags) rather than loaded
   // from unpkg, specifically so it's guaranteed present on a genuine cold boot. It used to be
   // a bare unpkg.com CDN <script src> with no SHELL_FILES entry at all: that relied entirely
@@ -171,6 +176,11 @@ var TILE_HOSTS = [
   'gis.blm.gov',
   'services1.arcgis.com',
   'services8.arcgis.com',
+  // Esri-hosted vector/raster TILE service host (distinct from the services*.arcgis.com
+  // feature-service hosts above) — backs the FSTopo (USFS) base layer's .pbf vector tiles
+  // plus its sprite/glyph resources, all under FSBasemap_20240617/VectorTileServer. Same
+  // stale-while-revalidate + offline-download-header protection as every other tile host.
+  'tiles.arcgis.com',
   'nominatim.openstreetmap.org',
   'api.openrouteservice.org',
   'mapservices.weather.noaa.gov',

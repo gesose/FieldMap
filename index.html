@@ -1904,6 +1904,7 @@
       <option value="aerial">Aerial</option>
       <option value="aerial-streets">Aerial + topo</option>
       <option value="usgstopo">USGS Topo</option>
+      <option value="fstopo">FSTopo</option>
     </select>
   </div>
   <div style="padding:0 0 10px;">
@@ -2461,6 +2462,10 @@
           <input type="radio" name="base-layer" id="base-layer-usgstopo" value="usgstopo">
           USGS Topo
         </label>
+        <label class="radio-opt">
+          <input type="radio" name="base-layer" id="base-layer-fstopo" value="fstopo">
+          FSTopo
+        </label>
       </div>
     </div>
   </div>
@@ -2877,6 +2882,16 @@
   </div>
   <div id="wildlife-loading" style="font-size:12px;color:var(--text-muted);display:none;margin-bottom:8px;">Loading species data…</div>
   <div id="wildlife-standard-body">
+    <!-- Fish state-first flow (Session — FSTopo + fish state-first flow): fish data is genuinely
+         pre-split by state, so the Fish tab picks a STATE first and the species dropdown below is
+         then scoped to only that state's own species. Shown only on the Fish tab (see
+         setWildlifeTopCategory). Big Game / Upland Game are species-first and never show this. -->
+    <div id="wildlife-fish-state-row" style="display:none;margin-bottom:8px;">
+      <label class="hint" style="display:block;margin-bottom:4px;font-size:11px;">State</label>
+      <select id="wildlife-fish-state-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;"></select>
+      <p class="hint" id="wildlife-fish-state-note" style="margin:6px 0 0;font-size:11px;line-height:1.4;"></p>
+      <p class="hint" id="wildlife-fish-state-attribution" style="margin:4px 0 0;font-size:11px;line-height:1.4;"></p>
+    </div>
     <select id="wildlife-species-select" style="width:100%;padding:7px 10px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:4px;">
       <option value="">Select a species…</option>
     </select>
@@ -3625,7 +3640,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.81.0';
+  var APP_VERSION = '2.82.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -4187,11 +4202,26 @@
   var MAPBOX_STYLES = {
     aerial: 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9?access_token=' + MAPBOX_TOKEN
   };
-  // Custom Studio styles, refreshed locally via refresh-style.js — see LOCAL_STYLE_FILES in that script
+  // Custom Studio styles, refreshed locally via refresh-style.js — see LOCAL_STYLE_FILES in that script.
+  // fstopo is the USDA Forest Service national basemap ("Forest Service Basemap", AGOL item
+  // 2e1593463c30495e9c802098527e3d1b, service FSBasemap_20240617/VectorTileServer — actively
+  // maintained, item modified mid-2026 despite the dated service name). RESEARCH FINDING, flagged
+  // rather than papered over: there is no live national *raster* FSTopo/WMTS endpoint anymore —
+  // the legacy apps.fs.usda.gov/arcx/.../EDW_FSTopo_01/MapServer tile cache (still referenced by
+  // old third-party guides) 404s; the current product is vector-tile-only. So fstopo-style.json
+  // is the Esri vector style's own root.json with its relative sprite/glyphs/source URLs
+  // rewritten to absolute tiles.arcgis.com ones, its `esri` source pointed at a static
+  // tiles:[...] array (byte-identical to DOWNLOAD_LAYERS.fstopo.urlTemplate, so live and
+  // offline-downloaded tile requests match — same offline-parity idea as
+  // patchStyleForOfflineTileParity, just baked in at generate time), maxzoom capped at 16 to
+  // match the downloader, plus one injected white `background` layer (the Esri style has none of
+  // its own). CORS on tiles.arcgis.com is open; no token needed. Re-generate: fetch
+  // .../VectorTileServer/resources/styles/root.json and re-apply those transforms.
   var LOCAL_STYLE_FILES = {
     topo:            './topo-style.json',
     'topo-dark':     './topo-dark-style.json',
-    'aerial-streets':'./aerial-streets-style.json'
+    'aerial-streets':'./aerial-streets-style.json',
+    fstopo:          './fstopo-style.json'
   };
   // Plain raster basemaps that don't need a full Mapbox Studio style document (sprite/glyphs/
   // vector sources) — just one raster source + layer, built inline instead of fetched. USGS
@@ -5321,6 +5351,17 @@
   // is part of the same cross-tab data-loss bug this whole per-category split fixes).
   var wildlifeMasterOnByCategory = { biggame: true, uplandgame: true, fish: true };
 
+  // Fish uses a STATE-FIRST flow (Session — FSTopo + fish state-first flow): pick a state, then
+  // the species dropdown is scoped to only that state's own species. This is deliberate and NOT
+  // applied to Big Game / Upland Game — see CLAUDE.md's "Wildlife not state-first (deliberate)"
+  // note: GAP habitat range is continuous/national and CMT migration corridors deliberately
+  // cross state lines, so a state-first cut would misrepresent that data; fish data is genuinely
+  // pre-split by state (WA SWIFD / AZ Trout Challenge / NV / OR / NM — each its own dataset), so
+  // it's the one category where a state-first cut is honest. `wildlifeFishStateKey` is the
+  // currently-selected fish state (a key into STATE_DATA_SOURCES.fish), persisted via
+  // state.settings.wildlifeFishStateKey; null only transiently before the first render.
+  var wildlifeFishStateKey = null;
+
   // ── Migration corridors (compiled 10-state USGS Corridor Mapping Team data, Session 26) ──
   // lives in the same Wildlife Layers panel/tab-bar shell as a 4th tab, but is otherwise a
   // self-contained system (own source/layers/state), not folded into the generic
@@ -5769,6 +5810,24 @@
       }
     });
     return out;
+  }
+
+  // ── Fish state-first flow helpers (Session — FSTopo + fish state-first flow) ────────────────
+  // Fish data is genuinely pre-split by state, so the Fish tab picks a STATE first and then only
+  // shows that state's own species. (Big Game / Upland Game stay species-first — see CLAUDE.md.)
+  function fishStateOptions(){
+    var byState = STATE_DATA_SOURCES.fish || {};
+    return Object.keys(byState)
+      .filter(function(k){ return !byState[k].disabled; }) // same "omit, not grey out" treatment as Session 65's disabled flag
+      .map(function(k){ return { stateKey: k, stateName: byState[k].state }; });
+  }
+  function fishSpeciesForState(stateKey){
+    var src = STATE_DATA_SOURCES.fish && STATE_DATA_SOURCES.fish[stateKey];
+    return (src && src.species) ? Object.keys(src.species) : [];
+  }
+  function defaultFishStateKey(){
+    var opts = fishStateOptions();
+    return opts.length ? opts[0].stateKey : null;
   }
   var stateDataCache = {}; // 'topCategory|speciesName|stateKey' -> merged FeatureCollection, cached for the session
   var stateDataLoadCallbacks = {};
@@ -11904,7 +11963,7 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (!map.hasImage('offline-placeholder-pattern')){
       map.addImage('offline-placeholder-pattern', buildOfflinePlaceholderPattern());
     }
-    var styleHasOwnBackground = ['topo', 'topo-dark', 'aerial-streets'].indexOf(state.settings.maplibreStyle || 'topo') !== -1;
+    var styleHasOwnBackground = ['topo', 'topo-dark', 'aerial-streets', 'fstopo'].indexOf(state.settings.maplibreStyle || 'topo') !== -1;
     if (!styleHasOwnBackground && !map.getLayer('offline-placeholder-bg')){
       var firstLayerId = map.getStyle().layers[0] ? map.getStyle().layers[0].id : undefined;
       map.addLayer({ id: 'offline-placeholder-bg', type: 'background', paint: { 'background-pattern': 'offline-placeholder-pattern' } }, firstLayerId);
@@ -19885,6 +19944,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     // Aerial and Aerial + Topo's satellite backdrop share this same raster tileset too.
     satellite:  { label:'Satellite imagery (Aerial / Aerial + Topo)', urlTemplate:'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=' + MAPBOX_TOKEN, minNativeZoom:0, maxNativeZoom:19, avgKB:23 },
     usgstopo:   { label:'USGS Topo', urlTemplate:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', minNativeZoom:1, maxNativeZoom:16, avgKB:16 },
+    // FSTopo — the USFS national vector-tile basemap (see LOCAL_STYLE_FILES.fstopo's own comment
+    // for why this is vector .pbf, not raster). {z}/{y}/{x} order (ArcGIS row/col), same as
+    // usgstopo/publicland; tileUrlForLayer's .replace is order-agnostic. maxNativeZoom:16 caps a
+    // Z9-15 default download at the same tile COUNT as vectorbase (the 512px vector LOD grid
+    // indexes identically to the standard 256px XYZ grid — same geographic extent per z/x/y). The
+    // style's `esri` source uses this exact template as a static tiles:[...] array, so a live tile
+    // request while offline is byte-identical to what the downloader cached — no
+    // patchStyleForOfflineTileParity rewrite needed for this source. avgKB:18 from real curl
+    // sampling across Z9-16 over three western national forests (13-24 KB/tile mid-zoom, denser
+    // than vectorbase's ~10) — a Z9-15 FSTopo area download runs ~1.8x a Topo one, still well
+    // within reason at the default range. Sprite + glyph resources are NOT per-tile — they ride
+    // the SW's opportunistic tiles.arcgis.com caching (added to TILE_HOSTS) the first time FSTopo
+    // is browsed online, same as the Mapbox styles' own sprite/glyphs.
+    fstopo:     { label:'FSTopo (USFS)', urlTemplate:'https://tiles.arcgis.com/tiles/gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer/tile/{z}/{y}/{x}.pbf', minNativeZoom:2, maxNativeZoom:16, avgKB:18 },
     // DEM matches FIELDMAP_DEM_SOURCE exactly (mapbox.terrain-rgb, not the style-embedded
     // mapbox-dem source — see the terrain block in reinitializeLayers for why those two are
     // deliberately different sources). avgKB:85 was the most consequential Session 35 fix —
@@ -19968,16 +20041,17 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     timberthinning: { label:'Timber thinning history', bboxUrlBuilder: timberThinningTileUrl, minNativeZoom:DISTURBANCE_MIN_ZOOM, maxNativeZoom:DISTURBANCE_MIN_ZOOM, avgKB:120 }
   };
 
-  // Which underlying source(s) each of the 5 user-facing base layers actually needs.
+  // Which underlying source(s) each user-facing base layer actually needs.
   var BASE_LAYER_SOURCES = {
     topo: ['vectorbase'],
     'topo-dark': ['vectorbase'],
     aerial: ['satellite'],
     'aerial-streets': ['vectorbase', 'satellite'],
-    usgstopo: ['usgstopo']
+    usgstopo: ['usgstopo'],
+    fstopo: ['fstopo']
   };
   var BASE_LAYER_DOWNLOAD_LABELS = {
-    topo: 'Topo', 'topo-dark': 'Topo Dark', aerial: 'Aerial', 'aerial-streets': 'Aerial + Topo', usgstopo: 'USGS Topo'
+    topo: 'Topo', 'topo-dark': 'Topo Dark', aerial: 'Aerial', 'aerial-streets': 'Aerial + Topo', usgstopo: 'USGS Topo', fstopo: 'FSTopo'
   };
 
   function lonToTileX(lon, z){ return Math.floor((lon+180)/360 * Math.pow(2,z)); }
@@ -22826,14 +22900,24 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     }
     var stateSources = STATE_DATA_SOURCES[topCategory];
     if (stateSources){
-      Object.keys(stateSources).forEach(function(stateKey){
-        var src = stateSources[stateKey];
-        if (src.type === 'perSpecies' || src.type === 'localFile' || src.type === 'attributeFiltered'){
-          Object.keys(src.species).forEach(function(sp){
-            if (!byName[sp]){ byName[sp] = { name: sp, category: null, codes: [], sample: null }; order.push(sp); }
-          });
-        }
-      });
+      if (topCategory === 'fish'){
+        // Fish is state-first (Session — FSTopo + fish state-first flow): the species list is
+        // ONLY the currently-selected state's own species (fishSpeciesForState), not the union
+        // across every state. A species not present in this state is simply absent from the
+        // dropdown — hidden entirely, not shown greyed-out.
+        fishSpeciesForState(wildlifeFishStateKey).forEach(function(sp){
+          if (!byName[sp]){ byName[sp] = { name: sp, category: null, codes: [], sample: null }; order.push(sp); }
+        });
+      } else {
+        Object.keys(stateSources).forEach(function(stateKey){
+          var src = stateSources[stateKey];
+          if (src.type === 'perSpecies' || src.type === 'localFile' || src.type === 'attributeFiltered'){
+            Object.keys(src.species).forEach(function(sp){
+              if (!byName[sp]){ byName[sp] = { name: sp, category: null, codes: [], sample: null }; order.push(sp); }
+            });
+          }
+        });
+      }
     }
     // Group first (in the category's hunting-relevant order, unmapped species trailing into
     // "Other"), alphabetical by display name within each group.
@@ -22893,6 +22977,19 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function renderWildlifeSpeciesDropdown(){
     var select = document.getElementById('wildlife-species-select');
     var groups = wildlifeSpeciesGroups(wildlifeActiveTopCategory);
+    // Fish state-first: if the active fish species isn't in the currently-selected state's list
+    // (a stale restore, or the catalog changed between sessions), drop it — a species that can't
+    // appear in the dropdown must not stay silently "active". Done inline (not via
+    // setWildlifeSpecies) to avoid re-entrancy through this same render path.
+    if (wildlifeActiveTopCategory === 'fish'){
+      var actFish = wildlifeActiveByCategory.fish;
+      if (actFish && !groups.some(function(g){ return g.name === actFish.speciesName; })){
+        wildlifeActiveByCategory.fish = null;
+        wildlifeOnByCategory.fish = false;
+        clearWildlifeStateData('fish');
+        persistWildlifeSettings();
+      }
+    }
     // groups is already sorted by group order, so same-group entries are contiguous —
     // bucket them into <optgroup>s as we walk the list rather than pre-grouping separately.
     var html = '<option value="">Select a species…</option>';
@@ -22934,7 +23031,59 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     document.querySelectorAll('.wildlife-tab-btn[data-topcategory]').forEach(function(btn){
       btn.classList.toggle('active', btn.dataset.topcategory === topCategory);
     });
+    // Fish state-first flow (Session — FSTopo + fish state-first flow): the state <select> row
+    // shows only on the Fish tab, above the species dropdown. Big Game / Upland Game stay
+    // species-first and never show it.
+    var fishStateRow = document.getElementById('wildlife-fish-state-row');
+    if (fishStateRow) fishStateRow.style.display = (topCategory === 'fish') ? '' : 'none';
+    if (topCategory === 'fish') renderFishStateSelect();
     ensureTopCategoryLoaded(topCategory);
+  }
+
+  // Populates the Fish tab's state <select> + its source note/attribution from
+  // STATE_DATA_SOURCES.fish, validating (and repairing) wildlifeFishStateKey against the live
+  // catalog. Called from setWildlifeTopCategory('fish') before the species dropdown renders, and
+  // again after a state pick.
+  function renderFishStateSelect(){
+    var select = document.getElementById('wildlife-fish-state-select');
+    if (!select) return;
+    var opts = fishStateOptions();
+    if (!wildlifeFishStateKey || !opts.some(function(o){ return o.stateKey === wildlifeFishStateKey; })){
+      wildlifeFishStateKey = opts.length ? opts[0].stateKey : null;
+    }
+    select.innerHTML = opts.map(function(o){
+      return '<option value="' + escapeHtml(o.stateKey) + '">' + escapeHtml(o.stateName) + '</option>';
+    }).join('');
+    select.value = wildlifeFishStateKey || '';
+    var src = STATE_DATA_SOURCES.fish && STATE_DATA_SOURCES.fish[wildlifeFishStateKey];
+    document.getElementById('wildlife-fish-state-note').textContent = (src && src.note) ? src.note : '';
+    document.getElementById('wildlife-fish-state-attribution').textContent = (src && src.attribution) ? 'Source: ' + src.attribution : '';
+  }
+
+  // Fish state pick — re-scopes the species dropdown to the new state and handles the "the
+  // species I had selected doesn't exist in this state" edge case by clearing the selection
+  // rather than silently keeping an invalid one active (task requirement).
+  function setWildlifeFishState(stateKey){
+    if (!STATE_DATA_SOURCES.fish || !STATE_DATA_SOURCES.fish[stateKey] || STATE_DATA_SOURCES.fish[stateKey].disabled) return;
+    wildlifeFishStateKey = stateKey;
+    // Keep setWildlifeSpecies's "carry last state forward" logic aligned with the state-first
+    // pick — for fish, the selected state IS the source of truth, so a later species pick must
+    // never resurrect a previously-used state.
+    wildlifeStateDataLastStateByCategory.fish = stateKey;
+    state.settings.wildlifeFishStateKey = stateKey;
+    scheduleSave();
+    renderFishStateSelect();
+    var cur = wildlifeActiveByCategory.fish;
+    var curName = cur ? cur.speciesName : '';
+    var stillValid = curName && fishSpeciesForState(stateKey).indexOf(curName) !== -1;
+    if (curName && !stillValid){
+      setWildlifeSpecies('fish', '');       // clears species + its State Data + re-renders toggles
+      renderWildlifeSpeciesDropdown();      // rebuild the (now re-scoped) list with nothing selected
+      showToast(wildlifeDisplayName(curName) + ' isn’t in ' + STATE_DATA_SOURCES.fish[stateKey].state + '’s fish data — selection cleared');
+    } else {
+      renderWildlifeSpeciesDropdown();      // rebuild scoped list; keeps curName selected if still present
+      if (stillValid) setWildlifeStateDataState(stateKey); // reload that species' data for the new state
+    }
   }
 
   // Opens #wildlife-panel directly to the given category's species picker — shared by the
@@ -23159,13 +23308,20 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
 
     // State Data — inline checkbox + state <select>, only if at least one confirmed state
     // source has this species for this top-level category (Session 55: no longer a separate
-    // popout screen — see the panel's own HTML comment).
-    var stateOptions = stateDataOptionsFor(wildlifeActiveTopCategory, speciesName);
-    var pendingNoData = wildlifeStateDataNoDataForByCategory[wildlifeActiveTopCategory];
-    var showNoDataForThisSpecies = pendingNoData && pendingNoData.speciesName === speciesName;
-    if (stateOptions.length || showNoDataForThisSpecies){
-      stateDataSection.style.display = '';
-      renderStateDataSection(speciesName);
+    // popout screen — see the panel's own HTML comment). Session — FSTopo + fish state-first
+    // flow: the Fish tab does NOT show this section at all — its state selection lives in the
+    // dedicated #wildlife-fish-state-row above the species dropdown, and picking a species
+    // auto-loads that state's data (there's no separate "State Data" on/off checkbox for fish;
+    // the Layers-panel Fish row is the single global on/off). Big Game / Upland Game keep this
+    // section exactly as before.
+    if (wildlifeActiveTopCategory !== 'fish'){
+      var stateOptions = stateDataOptionsFor(wildlifeActiveTopCategory, speciesName);
+      var pendingNoData = wildlifeStateDataNoDataForByCategory[wildlifeActiveTopCategory];
+      var showNoDataForThisSpecies = pendingNoData && pendingNoData.speciesName === speciesName;
+      if (stateOptions.length || showNoDataForThisSpecies){
+        stateDataSection.style.display = '';
+        renderStateDataSection(speciesName);
+      }
     }
   }
 
@@ -24879,6 +25035,13 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
         wildlifeStateDataOnByCategory[tc] = !!savedSd.on;
       }
     });
+    // Fish state-first flow (Session — FSTopo + fish state-first flow) — restore the selected
+    // fish state: its own persisted key, else the last State-Data state the Fish tab used, else
+    // the first catalog state. Validated (must be a real, non-disabled fish state).
+    var savedFishState = state.settings.wildlifeFishStateKey
+      || (savedStateDataByCategory.fish && savedStateDataByCategory.fish.stateKey);
+    wildlifeFishStateKey = (savedFishState && STATE_DATA_SOURCES.fish && STATE_DATA_SOURCES.fish[savedFishState] && !STATE_DATA_SOURCES.fish[savedFishState].disabled)
+      ? savedFishState : defaultFishStateKey();
     wildlifeActiveTopCategory = state.settings.wildlifeTopCategory || wildlifeActiveTopCategory;
     migrationActiveSpecies = state.settings.migrationSpecies || null;
     migrationsOn = !!state.settings.migrationsOn;
@@ -25507,7 +25670,18 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
       btn.addEventListener('click', function(){ setWildlifeTopCategory(btn.dataset.topcategory); });
     });
     document.getElementById('wildlife-species-select').addEventListener('change', function(){
-      setWildlifeSpecies(wildlifeActiveTopCategory, this.value);
+      var tc = wildlifeActiveTopCategory;
+      setWildlifeSpecies(tc, this.value);
+      // Fish state-first flow: picking a species auto-loads the currently-selected state's data
+      // for it (there's no separate "State Data" checkbox for fish). setWildlifeSpecies's own
+      // "carry last state forward" logic may already have loaded it — only fire this when it
+      // hasn't (or loaded a different species), so there's no redundant fetch.
+      if (tc === 'fish' && this.value && wildlifeFishStateKey){
+        var sd = wildlifeStateDataActiveByCategory.fish;
+        if (!sd || sd.speciesName !== this.value || sd.stateKey !== wildlifeFishStateKey){
+          setWildlifeStateDataState(wildlifeFishStateKey);
+        }
+      }
     });
     document.getElementById('wildlife-habitat-toggle').addEventListener('change', function(){
       setWildlifeOn(this.checked);
@@ -25570,6 +25744,11 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     });
     document.getElementById('wildlife-statedata-select').addEventListener('change', function(){
       setWildlifeStateDataState(this.value);
+    });
+    // Fish state-first flow (Session — FSTopo + fish state-first flow) — the Fish tab's own
+    // state <select>, above the species dropdown.
+    document.getElementById('wildlife-fish-state-select').addEventListener('change', function(){
+      setWildlifeFishState(this.value);
     });
     // Reflect whatever was just restored from settings (species name/dot, checked state)
     // immediately — doesn't need the map, just the wildlifeActive/wildlifeOn/migrationsOn

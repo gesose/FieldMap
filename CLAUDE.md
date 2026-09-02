@@ -989,6 +989,29 @@ already fully MapLibre-native before this session, despite CLAUDE.md previously 
   layer its own `fieldmap-layerdisclaimer-<id>` flag, the onboarding-tour "shown once" mechanism), leaving
   **GMU** as the only always-visible Layers-panel disclaimer. See Architecture notes' "Tonight's Sky" entry
   for the full design and verification.
+- FSTopo (USFS) is a 6th base-layer option (Session — FSTopo base map + fish state-first flow) alongside
+  Topo / Topo Dark / Aerial / Aerial + Topo / USGS Topo — same radio-button family in the Layers panel, the
+  Settings default-layer `<select>`, and the offline-download picker. Research first, not guessed: the legacy
+  national raster FSTopo endpoint (`apps.fs.usda.gov/.../EDW_FSTopo_01/MapServer`) is DEAD (404) — the current
+  product is an Esri VECTOR tile service, `FSBasemap_20240617/VectorTileServer` on `tiles.arcgis.com`
+  (`tile/{z}/{y}/{x}.pbf`, 512px LODs 0-19, CORS-open, no token, curl-confirmed live). Wired via a new local
+  style file `fstopo-style.json` (generated from the service's own `root.json` — sprite/glyphs/source-url
+  pre-absolutized, a `background` layer injected since the Esri style has none) that flows through the
+  existing `loadStyle()` local-file branch with zero new code paths; offline parity is baked in (the style
+  source's `tiles:[...]` array is byte-identical to `DOWNLOAD_LAYERS.fstopo.urlTemplate`, so
+  `patchStyleForOfflineTileParity` is a no-op for it). `avgKB:18` / `maxNativeZoom:16` — a Z9-15 download runs
+  ~1.8x a Topo one, no unreasonable-size warning. `tiles.arcgis.com` added to the SW's `TILE_HOSTS` (tiles +
+  sprite/glyphs). See Architecture notes' "FSTopo base layer" entry.
+- Fish (Wildlife Layers) is now STATE-FIRST (Session — FSTopo base map + fish state-first flow): pick a
+  state, then the species dropdown shows ONLY that state's own species (species not in the state are hidden
+  entirely, not greyed out). Fish data is genuinely pre-split by state (WA SWIFD / OR offline-processed / AZ
+  Trout Challenge / NV / NM), so a state-first cut is honest. The old species-first "State Data" checkbox is
+  GONE from the fish view (the Layers-panel Fish row is the single global on/off); picking a species
+  auto-loads the selected state's data. Edge case handled: changing state to one where the active species
+  doesn't exist CLEARS the selection (with a toast) rather than silently keeping an invalid one active. Big
+  Game / Upland Game are UNCHANGED — still species-first, still have the State Data checkbox+select — this is
+  deliberate, see Architecture notes' "Fish state-first flow" entry and its "Wildlife not state-first
+  (deliberate)" note.
 
 ## What's broken (expected, to be fixed in later sessions)
 - ~~Washington's State Data fish layer crashes MapLibre's `setData()`~~ — FIXED (Session — Washington fish
@@ -8279,6 +8302,139 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
     — its `import` statement is a known, expected false positive for the extract-and-`new Function()` check,
     unrelated to this CSS-only change). APP_VERSION 2.79.1 → 2.79.2, SHELL_CACHE v209 → v210.
 
+- FSTopo base layer (Session — FSTopo base map + fish state-first flow) — a 6th base-layer radio option.
+  - **Research (curl-confirmed live this session, not assumed from docs):** the national raster FSTopo tile
+    cache old third-party guides still reference (`apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FSTopo_01/
+    MapServer`) is DEAD — returns an ArcGIS error body (HTTP 200 wrapper, `{"error":{"code":404}}`). The
+    live, current product is the Esri **vector** tile service `https://tiles.arcgis.com/tiles/
+    gGHDlz6USftL5Pau/arcgis/rest/services/FSBasemap_20240617/VectorTileServer` (AGOL item
+    `2e1593463c30495e9c802098527e3d1b`, "Forest Service Basemap" / GTAC). `tile/{z}/{y}/{x}.pbf` (confirmed
+    {z}/{y}/{x} order from the service's own `tiles` array), `tileInfo` 512px rows/cols, LODs 0-19,
+    `capabilities: TilesOnly,Tilemap`, CORS reflects the requesting Origin, no token. Sprite
+    (`resources/sprites/sprite.json`+`.png`) and glyphs (`resources/fonts/{fontstack}/{range}.pbf`) all live
+    and CORS-open. A sample z10 tile is ~9.6KB pbf. USFS public data — no restrictive licence terms.
+  - **`fstopo-style.json`** (repo root, next to `topo-style.json` etc.) — a MapLibre v8 style generated from
+    the service's own `resources/styles/root.json` (609 layers) with 3 transforms: `sprite`/`glyphs` rewritten
+    from relative to absolute `tiles.arcgis.com` URLs; `sources.esri` given `{type:'vector', tiles:['.../tile/
+    {z}/{y}/{x}.pbf'], maxzoom:16, bounds:[...from fullExtent...], attribution:'&copy; <a ...>USDA Forest
+    Service</a> (GTAC)'}` (a static `tiles:[...]` array, NOT a `url:` TileJSON descriptor — same offline-
+    parity reasoning as `patchStyleForOfflineTileParity`); and a `{id:'fstopo-background', type:'background',
+    paint:{'background-color':'#ffffff'}}` layer injected as `layers[0]` since the Esri style ships no
+    background (map area would show the app's dark CSS bg through gaps otherwise). 610 layers, ~262KB, valid
+    JSON. To regenerate: re-fetch `root.json`, re-apply the same 3 transforms.
+  - **Wiring — the local-style-file path, zero new code branches:** `LOCAL_STYLE_FILES.fstopo =
+    './fstopo-style.json'` — flows through `loadStyle()`'s existing `if (LOCAL_STYLE_FILES[styleName])` branch
+    (its `mapbox://` sprite/glyphs/url regexes and `line-join:none→miter` fix are all harmless no-ops on this
+    file; `patchStyleForOfflineTileParity` matches nothing since the `esri` source has no `.url`). Added:
+    `'fstopo'` to `reinitializeLayers`'s `styleHasOwnBackground` list (it now injects its own background);
+    `DOWNLOAD_LAYERS.fstopo` (`urlTemplate` byte-identical to the style source's `tiles[0]`, `minNativeZoom:2`,
+    `maxNativeZoom:16`, `avgKB:18` — a real z10 tile measured ~9.6KB, 18 covers denser road/urban tiles);
+    `BASE_LAYER_SOURCES.fstopo = ['fstopo']` (auto-adds the offline-picker checkbox via
+    `renderOfflineBaseLayerChecks`'s `Object.keys(BASE_LAYER_SOURCES)` loop); `BASE_LAYER_DOWNLOAD_LABELS.fstopo
+    = 'FSTopo'`; the Layers-panel `<label class="radio-opt">` + `#base-layer-fstopo` radio; the Settings
+    `#settings-default-layer` `<option>`. `setMaplibreStyle`, the boot radio-restore
+    (`base-layer-${maplibreStyle}`), and `tileUrlForLayer`'s order-agnostic `{z}/{y}/{x}` replace all handle
+    it generically. `reinitializeLayers`'s terrain block always adds `FIELDMAP_DEM_SOURCE` regardless of
+    style, so FSTopo gets 3D terrain/elevation for free.
+  - **`service-worker.js`:** `'./fstopo-style.json'` added to `SHELL_FILES` (precached like the other 3 local
+    styles — cold-boot-offline); `'tiles.arcgis.com'` added to `TILE_HOSTS` (distinct from the
+    `services*.arcgis.com` feature-service hosts already there — this is the vector/raster TILE host, and it
+    also serves the sprite/glyph resources). `SHELL_CACHE` v213 → v214.
+  - **Verified live** (already-connected Chrome extension, local `python -m http.server`, after SW-unregister
+    + Cache-Storage-clear): FSTopo renders a genuine, detailed USFS topo map at Flagstaff AZ (contours,
+    street grid + labels, building footprints, water, NF-land green tint, section grid) — screenshot-
+    confirmed at both 2560px desktop and a real 402×874 `<iframe>`. Attribution shows "© USDA Forest Service
+    (GTAC)" on both. `reinitializeLayers` re-adds all 6 custom FieldMap sources onto the FSTopo style
+    (layerCount 723, pins/tracks/polygons/bearings/rangerings/buffers all present). Full base-layer cycle
+    (topo → usgstopo → topo → fstopo → aerial-streets → fstopo) survives — FSTopo re-renders correctly after
+    the round-trip, tiles route through the SW (43 `.pbf` tiles cached, 0 in Resource Timing = SW-
+    intercepted, confirming the `TILE_HOSTS` add). Real offline download via the production
+    `startOfflineDownload()`: `completed:37, failed:0`, 7 tiles stamped with the `X-FieldMap-Offline-Download`
+    protection header, saved area `baseLayerIds:["fstopo"]`, offline picker shows a "FSTopo" checkbox with a
+    reasonable Z9-15 estimate (~1.8x Topo, no size warning; even Z9-16 stays modest). **Zero NEW console
+    errors** — the `maplibre-gl.js` `Cannot read properties of undefined (reading 'send')` bursts on every
+    `setStyle({diff:false})` are the sandbox's long-documented Actor/worker teardown noise, PROVEN pre-
+    existing this session via a control test (topo↔usgstopo↔topo, zero FSTopo involved) producing the
+    identical bursts. `node --check` clean. APP_VERSION 2.81.0 → 2.82.0.
+
+- Fish state-first flow (Session — FSTopo base map + fish state-first flow) — the Wildlife Layers Fish tab
+  is now STATE-FIRST instead of species-first (Big Game / Upland Game unchanged — see the "Wildlife not
+  state-first (deliberate)" note at the end of this entry).
+  - **The flow:** Fish on/off (the Layers-panel `#wildlife-fish-quick-toggle` master toggle — kept, the
+    single global on/off) → **State `<select>`** (`#wildlife-fish-state-select`, a NEW row above the species
+    dropdown, shown only on the Fish tab) → **Species `<select>`** scoped to ONLY that state's own species.
+    Species not present in the selected state are absent from the dropdown entirely (hidden, not greyed).
+    Picking a species auto-loads that state's data — there is NO "State Data" on/off checkbox in the fish
+    view any more (`#wildlife-statedata-section` stays hidden for fish; it's untouched for Big Game / Upland
+    Game).
+  - **What "State Data" checkbox did before, and why it's redundant for fish:** `#wildlife-statedata-toggle`
+    was the visibility on/off for the fetched per-species state layer. For fish, ALL data is state data (no
+    GAP/national baseline), so "pick a state + pick a species" already fully determines the layer, and the
+    Layers-panel Fish row is the on/off — the extra checkbox was pure redundancy. For Big Game / Upland Game
+    it is NOT redundant (State Data is one of several sources per species, alongside Habitat range /
+    Migrations), so it stays there.
+  - **Implementation** (all in the classic `<script>` IIFE + one HTML block):
+    - `wildlifeFishStateKey` (module var, a key into `STATE_DATA_SOURCES.fish`), persisted as
+      `state.settings.wildlifeFishStateKey`. Helpers: `fishStateOptions()` (non-`disabled` fish states, in
+      catalog order — WA/OR/AZ/NV/NM today), `fishSpeciesForState(stateKey)`, `defaultFishStateKey()`.
+    - `wildlifeSpeciesGroups('fish')` — the ONE hook: for `topCategory === 'fish'` it scopes the species set
+      to `fishSpeciesForState(wildlifeFishStateKey)` instead of the union across all states. Everything
+      downstream (`renderWildlifeSpeciesDropdown`, `setWildlifeSpecies`'s lookup, `renderSpeciesToggles`'s
+      lookup) inherits the scoping for free.
+    - `renderWildlifeSpeciesDropdown()` — a stale-species guard for fish: if the active fish species isn't in
+      the current state's list (a stale restore, or a catalog change between sessions), it nulls
+      `wildlifeActiveByCategory.fish` + `clearWildlifeStateData('fish')` inline (not via `setWildlifeSpecies`,
+      to avoid re-entrancy through this same render path).
+    - `setWildlifeTopCategory` — shows `#wildlife-fish-state-row` only for the Fish tab, and calls
+      `renderFishStateSelect()` (populates the state `<select>` + its own note/attribution, validates/repairs
+      `wildlifeFishStateKey`).
+    - `setWildlifeFishState(stateKey)` — the state-`<select>` change handler. Sets + persists
+      `wildlifeFishStateKey`, keeps `wildlifeStateDataLastStateByCategory.fish` aligned (so
+      `setWildlifeSpecies`'s "carry last state forward" logic can't resurrect a previously-used state),
+      re-renders the scoped species dropdown, and: if the active species ISN'T in the new state →
+      `setWildlifeSpecies('fish', '')` + a `showToast('<species> isn't in <state>'s fish data — selection
+      cleared')`; if it IS still valid → keeps it selected and `setWildlifeStateDataState(stateKey)` reloads
+      its data for the new state.
+    - `renderSpeciesToggles()` — guarded: `if (wildlifeActiveTopCategory !== 'fish')` around the State Data
+      section block, so the old checkbox+select never shows for fish.
+    - The `#wildlife-species-select` change handler — for fish, after `setWildlifeSpecies`, fires
+      `setWildlifeStateDataState(wildlifeFishStateKey)` unless `setWildlifeSpecies`'s own carry-forward
+      already loaded that exact species+state (no redundant fetch).
+    - Boot restore (bindUI) — `wildlifeFishStateKey = state.settings.wildlifeFishStateKey ||
+      savedStateDataByCategory.fish?.stateKey || defaultFishStateKey()`, validated against the live catalog.
+      The existing per-category `wildlifeStateDataActiveByCategory.fish` / boot-time `style.load` restore
+      path already handle re-fetching the fish layer on reload with zero changes.
+    - New HTML: `#wildlife-fish-state-row` (a `State` label + `#wildlife-fish-state-select` +
+      `#wildlife-fish-state-note` + `#wildlife-fish-state-attribution`) inserted before `#wildlife-species-select`.
+  - **Verified live** (already-connected Chrome, after SW-unregister + Cache-clear; the app's own map was in
+    the long-documented sandbox render-stall for parts of this, worked around with FSTopo + isolated checks):
+    state `<select>` shows WA/OR/AZ/NV/NM above the species dropdown; species dropdown correctly scoped per
+    state (WA=23, OR=34, AZ=6, NV=1, NM=38 — each exactly matching that state's `STATE_DATA_SOURCES.fish[k]
+    .species` keys); switching state repopulates species + updates the note/attribution; picking a species
+    fires the real fetch (`RainbowTrout.geojson` HTTP 200 3.1MB; AZ `troutChallenge` 3×HTTP 200 → 26
+    features in the shared source) and updates the active-layers chip ("<species> — <state> data"); the
+    **edge case** works both ways — Apache Trout (AZ-only) → switch to Oregon → species CLEARED + toast
+    "Apache Trout isn't in Oregon's fish data — selection cleared"; Rainbow Trout (in both OR and AZ) →
+    switch OR→AZ → species KEPT, data reloaded for AZ. **Restore** verified deterministically (the sandbox's
+    stuck render loop starves the debounced `setTimeout(persist,700)` — a pre-existing app-wide limitation,
+    not this feature — so a simulated persisted `state` was written directly): reload with `wildlifeFishStateKey:
+    'nm'` + fish active = Rio Grande Cutthroat Trout → Fish tab active, state `<select>` = "New Mexico",
+    species `<select>` = "Rio Grande Cutthroat Trout", dropdown scoped to NM's 38, Layers-panel Fish row
+    checked. **Big Game / Upland Game unchanged** — confirmed live: Big Game stays species-first (16 species,
+    real "Deer & Elk / Pronghorn / Mountain Game / Bear / Predators & Small Big Game" groups), no fish state
+    row, and picking Elk still shows Habitat range + Migrations + the **State Data section WITH its checkbox
+    and `<select>`** ("Nevada"). Desktop + real 402×874 `<iframe>` both verified; zero console errors from the
+    fish flow (5-state cycle + species picks + edge cases + clear). `node --check` clean. APP_VERSION 2.81.0
+    → 2.82.0.
+  - **Wildlife not state-first (deliberate, not an oversight):** Big Game / Upland Game (GAP habitat range +
+    CMT migration corridors) intentionally do NOT get a state-first filter. GAP habitat range is a
+    continuous, national raster/vector layer — there's no per-state split to expose. CMT migration corridors
+    deliberately cross state lines (a herd's corridor spans OR↔NV, AZ↔NM, etc. — see
+    `MIGRATION_SPECIES_NAME_MAP` and the multi-state herd data). Forcing either into a state-first cut would
+    MISREPRESENT the data, not just fail to help. Fish gets it because fish data is genuinely pre-split by
+    state agency (WA SWIFD, AZ Trout Challenge, NV NDOW, OR ODFW offline dataset, NM NMDGF) — game data
+    isn't structured that way and shouldn't be made to look like it is.
+
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
 - Session 2: Pin rendering (maplibregl.Marker), 4→3-style switcher (Street removed, topo default via local
@@ -11569,3 +11725,36 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   Two test pins on geoff's real account created + deleted (tombstones recorded, count back to baseline).
   node --check clean. APP_VERSION 2.80.1 -> 2.81.0, SHELL_CACHE v212 -> v213. See Architecture notes'
   close/container section, its own v2.81.0 sub-bullet, for full detail.
+- Session (FSTopo base map + fish state-first flow) — two independent tasks in one release. TASK 1: added
+  FSTopo (USFS) as a 6th base-layer radio option. Research-first, curl-confirmed live: the legacy national
+  raster FSTopo endpoint is dead (404 error body); the current product is the Esri vector tile service
+  `FSBasemap_20240617/VectorTileServer` on `tiles.arcgis.com` (`tile/{z}/{y}/{x}.pbf`, 512px LODs 0-19,
+  CORS-open, no token). Wired via a new local style file `fstopo-style.json` (generated from the service's
+  own `root.json`, sprite/glyphs/source-url pre-absolutized, a `background` layer injected) that flows
+  through the existing `loadStyle()` local-file path with zero new code branches. `DOWNLOAD_LAYERS.fstopo` +
+  `BASE_LAYER_SOURCES` + `BASE_LAYER_DOWNLOAD_LABELS` + the Layers-panel radio + the Settings default-layer
+  option; `tiles.arcgis.com` added to the SW's `TILE_HOSTS` + `fstopo-style.json` to `SHELL_FILES`. Offline
+  parity baked in (style source `tiles:[...]` == `DOWNLOAD_LAYERS.fstopo.urlTemplate`). Verified live
+  desktop + 402×874: renders a genuine detailed USFS topo map, attribution "© USDA Forest Service (GTAC)",
+  survives the full 6-layer switch cycle (`reinitializeLayers` re-adds all custom sources), tiles route
+  through the SW (43 cached, SW-intercepted), real offline download completes (37 tiles, 0 failed, 7
+  protection-header-stamped, `baseLayerIds:["fstopo"]`), ~1.8x Topo size at Z9-15 with no size warning.
+  Zero NEW console errors (the `maplibre-gl.js` `.send` noise proven pre-existing via a no-FSTopo control
+  test). TASK 2: made the Wildlife Layers Fish tab STATE-FIRST — a state `<select>` above the species
+  dropdown, species scoped to only that state's species (hidden entirely if not present), the old
+  species-first "State Data" checkbox removed from the fish view (the Layers-panel Fish row is the global
+  on/off), and the edge case handled (changing state to one lacking the active species clears it + toasts).
+  Big Game / Upland Game deliberately unchanged — still species-first, still have the State Data checkbox
+  (GAP habitat range is national, CMT migration corridors deliberately cross state lines — a state-first
+  cut would misrepresent them; fish data is genuinely pre-split by state agency). Investigated the current
+  fish schema first (WA SWIFD `attributeFiltered` / OR offline `localFile` / AZ+NV `perSpecies` / NM
+  `attributeFiltered`) and confirmed what the checkbox does before removing it. One hook in
+  `wildlifeSpeciesGroups('fish')` (scope to `fishSpeciesForState(wildlifeFishStateKey)`) does most of the
+  work; a stale-species guard in `renderWildlifeSpeciesDropdown`, a new `setWildlifeFishState`, a
+  `renderFishStateSelect`, and small branches in `setWildlifeTopCategory` / `renderSpeciesToggles` / the
+  species-select change handler / bindUI restore complete it. Verified live desktop + 402×874 across all 5
+  states, real fetches, both edge-case directions, and restore (deterministically, via a written simulated
+  persisted `state` — the sandbox's stuck render loop starves the debounced `setTimeout(persist)`, a
+  pre-existing app-wide limitation, not this feature). Zero console errors from the fish flow. `node
+  --check` clean on all 4 inline `<script>` blocks + `service-worker.js`. APP_VERSION 2.81.0 → 2.82.0,
+  SHELL_CACHE v213 → v214.
