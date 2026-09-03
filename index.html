@@ -932,6 +932,17 @@
   .sunrise-time-row.highlight { background:rgba(194,98,45,0.08);border-radius:6px;padding:7px 6px;margin:0 -6px; }
   .sunrise-time-row.highlight .sunrise-time-icon { color:var(--accent); }
   .sunrise-time-row.highlight .sunrise-time-value { color:var(--accent); }
+  /* First Light / Last Light — accent text, no filled box, so they read as "key" without
+     competing with the Sunrise/Sunset highlight rows they bracket */
+  .sunrise-time-row.twilight-ref .sunrise-time-icon,
+  .sunrise-time-row.twilight-ref .sunrise-time-label,
+  .sunrise-time-row.twilight-ref .sunrise-time-value { color:var(--accent); }
+  .sunrise-time-row.twilight-ref .sunrise-time-label { font-weight:600; }
+  .sunrise-twilight-note {
+    font-size:11px;line-height:1.45;color:var(--text);
+    background:rgba(194,98,45,0.10);border-left:3px solid var(--accent);
+    border-radius:5px;padding:8px 10px;margin:0 0 8px;
+  }
   .weather-hour-cell {
     display:flex;flex-direction:column;align-items:center;gap:3px;
     min-width:50px;padding:6px 3px;border-right:1px solid var(--border);
@@ -3640,7 +3651,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.82.2';
+  var APP_VERSION = '2.83.0';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -21757,23 +21768,37 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     var phaseDefs = [
       { key:'nightEnd',      icon:'☆', label:'Astronomical dawn',           highlight:false },
       { key:'nauticalDawn',  icon:'◌', label:'Nautical dawn',               highlight:false },
-      { key:'dawn',          icon:'◐', label:'Civil dawn',                   highlight:false },
+      { key:'dawn',          icon:'◐', label:'First Light',                  highlight:false, twilightRef:true },
       { key:'sunrise',       icon:'↑', label:'Sunrise',                     highlight:true  },
       { key:'goldenHourEnd', icon:'◑', label:'Golden hour ends',            highlight:false },
       { key:'solarNoon',     icon:'◉', label:'Solar noon',                  highlight:false },
       { key:'goldenHour',    icon:'◑', label:'Golden hour begins',          highlight:false },
       { key:'sunset',        icon:'↓', label:'Sunset',                      highlight:true  },
-      { key:'dusk',          icon:'◐', label:'Civil dusk',                   highlight:false },
+      { key:'dusk',          icon:'◐', label:'Last Light',                   highlight:false, twilightRef:true },
       { key:'nauticalDusk',  icon:'◌', label:'Nautical dusk',               highlight:false },
       { key:'night',         icon:'★', label:'Full dark',                    highlight:false }
     ];
     var list = document.getElementById('sunrise-times-list');
     list.innerHTML = '';
+    // First Light / Last Light are raw astronomical reference points (civil twilight) — NOT a
+    // legal-hunting-hours figure. Kept deliberately plain-labelled and paired with this note so
+    // the app never asserts a legal determination (same principle as Range Ring / Buffer).
+    // Skipped at high latitudes near the summer solstice where the sun never reaches -6° and
+    // SunCalc returns no dawn/dusk (matching how the twilight rows themselves are omitted then).
+    var flValid = times.dawn && !isNaN(times.dawn.getTime());
+    var llValid = times.dusk && !isNaN(times.dusk.getTime());
+    if (flValid || llValid){
+      var twilightNote = document.createElement('div');
+      twilightNote.className = 'sunrise-twilight-note';
+      twilightNote.textContent = 'First Light and Last Light are astronomical reference points, not legal hunting hours. ' +
+        'Many states base legal hunting hours on a fixed offset from sunrise/sunset, not on twilight — confirm your state’s current rule.';
+      list.appendChild(twilightNote);
+    }
     phaseDefs.forEach(function(ph){
       var t = times[ph.key];
       if (!t || isNaN(t.getTime())) return;
       var row = document.createElement('div');
-      row.className = 'sunrise-time-row' + (ph.highlight ? ' highlight' : '');
+      row.className = 'sunrise-time-row' + (ph.highlight ? ' highlight' : '') + (ph.twilightRef ? ' twilight-ref' : '');
       row.innerHTML =
         '<span class="sunrise-time-icon" style="font-size:14px;color:var(--text-muted);">' + ph.icon + '</span>' +
         '<span class="sunrise-time-label">' + ph.label + '</span>' +

@@ -8165,6 +8165,36 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
       persists across tab switches and a full reload defaults it to off. Zero console errors; `node --check`
       clean on the main inline block + `service-worker.js`.
   - APP_VERSION 2.77.0 → 2.78.0, SHELL_CACHE v206 → v207.
+  - **Session (First Light / Last Light)** — deliberately NOT "legal hunting hours" (that needs per-state/
+    species/season regulatory research with real legal stakes, and conflicts with the app's "no legal
+    figures, generic disclaimers only" principle — same reasoning as Range Ring/Buffer). Instead: surface
+    the raw civil-twilight reference points many states anchor their rules to, clearly labelled, without the
+    app asserting a legal determination. **Investigation**: the Sun tab's expanded "Show times" list already
+    rendered civil twilight — as "Civil dawn" (`times.dawn`) / "Civil dusk" (`times.dusk`), jargon-labelled
+    and buried among the 11-row astronomical/nautical/civil twilight list. So this is a rename + emphasis +
+    disclaimer, not a new calculation. SunCalc's `dawn`/`dusk` = civil twilight (sun at −6°); cross-checked
+    live against sunrise-sunset.org's independent implementation for the OR test coords (45.032, −119.276) on
+    3 dates — agrees to ~1–2 min (tighter than the ~3-min sunrise agreement); SunCalc sunrise itself matches
+    NOAA to the minute. **Build**: `phaseDefs` labels `'Civil dawn'`→`'First Light'`, `'Civil dusk'`→`'Last
+    Light'` (keys unchanged), plus a new `twilightRef:true` flag → `.sunrise-time-row.twilight-ref` (accent
+    text + bold label, no filled box — reads as "key" without competing with the Sunrise/Sunset `.highlight`
+    rows it brackets: morning bracket First Light→Sunrise, evening bracket Sunset→Last Light). Disclaimer:
+    `.sunrise-twilight-note` (accent-tinted bg + 3px accent left-border, 11px) prepended into
+    `#sunrise-times-list` by `renderSunriseTimes` — so it inherits the list's visibility (hidden by "Hide
+    times", hidden in `sun-compact` via `.sunrise-detail`) with zero extra wiring. Text: "First Light and
+    Last Light are astronomical reference points, not legal hunting hours. Many states base legal hunting
+    hours on a fixed offset from sunrise/sunset, not on twilight — confirm your state's current rule." — no
+    "civil twilight" jargon, uses the task's exact core sentence, never phrased as approximating any state's
+    legal hours. High-latitude summer edge case: when the sun never reaches −6° SunCalc returns Invalid Date
+    for `dawn`/`dusk` — the existing `isNaN(t.getTime())` guard already skips those rows, and a new
+    `flValid || llValid` check skips the disclaimer too (no orphaned note). NO nautical twilight added, no
+    state-specific offsets/claims anywhere. **Verified live** (desktop + real 402px `<iframe>`, `mediaMobile`
+    true): First Light always before sunrise / Last Light always after sunset, by a margin that genuinely
+    varies — OR 45°N: 29 min (equinoxes) → 34 min (winter solstice) → 37–38 min (summer solstice);
+    Fairbanks 65°N: 85 min (winter solstice), rows + disclaimer correctly ABSENT at summer solstice (white
+    nights, no civil twilight). "Hide times" / compact toggle both correctly hide the note with the list.
+    Zero console errors across rapid date-changes + toggles + tab switches (live `window.onerror` trap).
+    `node --check` clean. APP_VERSION 2.82.2 → 2.83.0 (minor — new feature), SHELL_CACHE v216 → v217.
 - Tonight's Sky (Tools → Tonight's Sky, `#nightsky-panel`) — a read-only "how dark / how good for
   stargazing tonight" summary, built entirely on SunCalc + ~15 lines of inlined star-position math + the
   existing NWS weather integration. Not a tab on the Sun/Moon panel (deliberately kept separate so that
@@ -11869,3 +11899,18 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   live in-app render verification (825–848 features painting at z8/z8.2/z10.5, 3 clean desktop screenshots,
   independent SVG comparison, and the honestly-flagged mobile-iframe verification gap). APP_VERSION 2.82.1 →
   2.82.2, SHELL_CACHE v215 → v216.
+- Session (First Light / Last Light) — added civil-twilight begin/end to the Sun/Moon panel's expanded
+  "Show times" view as plain-labelled "First Light" / "Last Light", deliberately NOT as "legal hunting
+  hours" (per-state regulatory research, real legal stakes — conflicts with the app's no-legal-figures
+  principle, same reasoning as Range Ring/Buffer). Investigation confirmed the list ALREADY rendered civil
+  twilight as jargon ("Civil dawn"/"Civil dusk", `times.dawn`/`times.dusk`) — so this is a rename + accent
+  emphasis + disclaimer, not a new calc. SunCalc `dawn`/`dusk` cross-checked live vs sunrise-sunset.org's
+  independent implementation (OR test coords, 3 dates) — agrees to ~1–2 min. Disclaimer (accent-tinted
+  callout prepended into `#sunrise-times-list`, so it inherits the list's hide/compact behavior): the task's
+  exact sentence plus a "not legal hunting hours" lead-in, no "civil twilight" jargon. High-latitude summer
+  edge case handled (no `dawn`/`dusk` → rows + note both omitted). No nautical twilight, no state offsets.
+  Verified live desktop + real 402px `<iframe>`: First Light before sunrise / Last Light after sunset by a
+  margin that genuinely swings with season+latitude (OR 45°N 29→38 min; Fairbanks 65°N 85 min winter,
+  absent in summer). "Hide times"/compact both hide the note. Zero console errors; `node --check` clean.
+  See the Solunar Architecture entry's "Session (First Light / Last Light)" sub-bullet for full detail.
+  APP_VERSION 2.82.2 → 2.83.0 (minor — new feature), SHELL_CACHE v216 → v217.
