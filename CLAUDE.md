@@ -8435,6 +8435,41 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
     state agency (WA SWIFD, AZ Trout Challenge, NV NDOW, OR ODFW offline dataset, NM NMDGF) — game data
     isn't structured that way and shouldn't be made to look like it is.
 
+- State Data overlay survives a base-layer switch (Session — fish overlay disappears on base-layer switch)
+  — a real bug: with a fish species active, switching the base map (Topo→Aerial etc.) made the fish overlay
+  vanish, and switching BACK didn't restore it, only a restart did. Root cause confirmed in source (not the
+  working theory that "fish was never added to the re-add list"): `reinitializeLayers()` (fired on every
+  `map.setStyle({diff:false})`) DOES re-add the `wildlife-statedata-{tc}-source`/4-layer set — but EMPTY and
+  hidden, with no data re-seed, unlike GAP wildlife whose source is re-seeded straight from `wildlifeCache`
+  in the `addSource()` call and whose filter is re-applied by `updateWildlifeMapFilter()` at the tail.
+  `updateWildlifeStateDataMapFilter()` was also NOT in that tail (State Data has its own separate filter
+  fn). The one place that repopulated State Data — the boot-time `style.load` restore block — is guarded
+  `!overlayDataRestoredOnInit` (first load only). Affects ALL State Data (Big Game/Upland Game/Fish — the
+  shared Session 56 `wildlife-statedata-*` infra), not just fish.
+  - **Fix:** new `reseedWildlifeStateDataAfterStyleReset()`, called from `reinitializeLayers()`'s tail
+    (next to `updateWildlifeMapFilter`/`updateMigrationMapFilter`), plus `updateWildlifeStateDataMapFilter()`
+    right after it. For each category with an active State Data selection it re-applies the ALREADY-FETCHED
+    in-memory data — `stateDataCache[tc + '|' + species + '|' + stateKey]` for the normal path (via the
+    existing `applyStateDataToSource`), `nhdTieredLoad[tc].tiers` for the 4 tiered Oregon species (re-applies
+    only the tiers whose `loaded` flag was set, preserving the progressive-loading state). NO network
+    fall-back is added — if the data genuinely isn't in memory it's just left for the selection's own normal
+    load path, mirroring how GAP wildlife only ever re-seeds from its own in-memory cache. No-op on the very
+    first `style.load` (cache empty — the boot-restore block handles that); real work on every subsequent
+    base-layer switch. Deliberately only touches the State Data re-seed — GAP wildlife / FSTopo / migration
+    / draw-preview re-seed in `reinitializeLayers` are untouched.
+  - **Verified live** (desktop + 402×874, worked around the sandbox's Mapbox-style stall with
+    FSTopo↔USGS Topo, both of which reliably fire `style.load`): fish overlay survives fstopo→usgstopo, a
+    full 6-style detour (usgstopo→topo→topo-dark→aerial→aerial-streets→back to fstopo), and the switch-back —
+    ZERO restart, ZERO network re-fetch (`data/fish/oregon/RainbowTrout.geojson` fetched exactly once across
+    the whole cycle — restored from `stateDataCache`, so it survives a switch offline too), layers
+    `visible` + `querySourceFeatures`/`queryRenderedFeatures` non-zero + rendering (screenshot). Tiered
+    branch verified with Coastal Cutthroat Trout at zoom 12 — survives the switch, `nhdTierVisibilityFilter`
+    re-applied (all 3 tiers), no re-fetch. GAP wildlife (Big Game Elk) survives the same 6-style cycle
+    unchanged (`big_game-species.geojson` also fetched once). FSTopo basemap restores. Big Game's
+    species-first flow + State Data checkbox intact. Zero new console errors (only the pre-existing
+    `maplibre-gl.js` `setStyle` Actor-teardown noise). `node --check` clean. APP_VERSION 2.82.0 → 2.82.1,
+    SHELL_CACHE v214 → v215.
+
 ## Session history
 - Session 1: Leaflet → MapLibre swap, base layers, GPS dot, scale bar, zoom controls
 - Session 2: Pin rendering (maplibregl.Marker), 4→3-style switcher (Street removed, topo default via local
@@ -11758,3 +11793,20 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   pre-existing app-wide limitation, not this feature). Zero console errors from the fish flow. `node
   --check` clean on all 4 inline `<script>` blocks + `service-worker.js`. APP_VERSION 2.81.0 → 2.82.0,
   SHELL_CACHE v213 → v214.
+- Session (fish overlay disappears on base-layer switch) — real bug: with a fish species active, switching
+  the base map made the fish overlay vanish and switching back didn't restore it (only a restart did).
+  Confirmed the root cause in source AND live: `reinitializeLayers()` (fired on every base-layer switch) DOES
+  re-add the shared `wildlife-statedata-{tc}-*` source/layers — but EMPTY + hidden, with no data re-seed
+  (unlike GAP wildlife, re-seeded from `wildlifeCache` in the `addSource()` call), and
+  `updateWildlifeStateDataMapFilter()` wasn't in the tail either; the boot-restore that repopulates it is
+  first-load-only. Affects all State Data (Big Game/Upland Game/Fish), not just fish. Fix: new
+  `reseedWildlifeStateDataAfterStyleReset()` in `reinitializeLayers()`'s tail re-applies the
+  already-fetched in-memory data (`stateDataCache` normal path, `nhdTieredLoad.tiers` for the 4 tiered
+  Oregon species, preserving loaded-tier state) + `updateWildlifeStateDataMapFilter()`. No network
+  fall-back (mirrors GAP wildlife's in-memory-only re-seed) → survives a base-layer switch offline too.
+  Verified live desktop + 402×874: fish overlay survives fstopo↔usgstopo and a full 6-style detour, restores
+  on switch-back with ZERO restart and ZERO re-fetch (RainbowTrout.geojson fetched exactly once across the
+  whole cycle); tiered branch (Coastal Cutthroat Trout) verified with the tier-visibility filter re-applied;
+  GAP wildlife (Big Game Elk) + FSTopo basemap both survive the same cycle unchanged; Big Game species-first
+  flow + State Data checkbox intact. Zero new console errors (only pre-existing maplibre `setStyle` noise).
+  `node --check` clean. APP_VERSION 2.82.0 → 2.82.1, SHELL_CACHE v214 → v215.

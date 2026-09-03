@@ -3640,7 +3640,7 @@
   var NO_TRIP_LABEL = '(No trip)';
   var DEFAULT_CENTER = [33.4484, -112.0740]; // Phoenix, AZ
   var DEFAULT_ZOOM = 9;
-  var APP_VERSION = '2.82.0';
+  var APP_VERSION = '2.82.1';
   var APP_RELEASE_DATE = 'July 2026';
 
   // ---------- Boot timing diagnostics (Session 50) — on-screen, no DevTools required ----------
@@ -13492,6 +13492,14 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
     if (gpsDotState !== 'off') updateGpsAccuracyCircle(lastGpsAccuracyM);
     updateWildlifeMapFilter();
     updateMigrationMapFilter();
+    // Session (fish overlay disappears on base-layer switch) — re-seed each active State Data
+    // selection's in-memory data + visibility (map.setStyle wiped it; the wildlife-statedata-{tc}-*
+    // block above just re-added it EMPTY). No-op on the first style.load (nothing cached yet — the
+    // boot-time restore block handles that); the real work is on every SUBSEQUENT base-layer
+    // switch. Also re-applies State Data visibility, which updateWildlifeMapFilter/
+    // updateMigrationMapFilter above do NOT cover (State Data has its own separate filter fn).
+    reseedWildlifeStateDataAfterStyleReset();
+    updateWildlifeStateDataMapFilter();
     renderOfflineBoundaries();
     updateOverlayOfflineAvailability();
 
@@ -23541,6 +23549,57 @@ c-0.55,0.947-1.327,1.376-2.337,1.281C34.967,64.11,33.597,63.673,31.874,62.886z"/
   function clearWildlifeStateDataSource(tc){
     var srcObj = map && map.getSource('wildlife-statedata-' + tc + '-source');
     if (srcObj) srcObj.setData({ type: 'FeatureCollection', features: [] });
+  }
+
+  // Session (fish overlay disappears on base-layer switch) — map.setStyle({diff:false}) (fired on
+  // every base-layer switch) wipes every custom source/layer; reinitializeLayers() re-adds the
+  // wildlife-statedata-{tc}-* source+layers but EMPTY and hidden (see that block), and — unlike
+  // GAP wildlife, whose sources are re-seeded straight from wildlifeCache in the addSource() call
+  // and whose paint/filter is re-applied by updateWildlifeMapFilter() at the tail — nothing
+  // re-populates State Data's data or re-applies its visibility on a non-first style.load (the
+  // one place that did, the boot-time restore block, is guarded by !overlayDataRestoredOnInit).
+  // Result: a fish (or any State Data) overlay vanishes on a base-layer switch and only a full
+  // restart brings it back. This restores each category's active State Data selection from the
+  // ALREADY-FETCHED in-memory data — stateDataCache for the normal path, nhdTieredLoad.tiers for
+  // the 4 tiered Oregon species (preserving which tiers were loaded) — so the overlay survives a
+  // base-layer switch with zero network re-fetch, working offline too. A network fall-back is
+  // deliberately NOT added here: if the data genuinely isn't in memory it just isn't restored
+  // this pass, and the selection's own normal load path (or the next zoom tick, for tiered) picks
+  // it up — this mirrors GAP wildlife, which likewise only re-seeds from its in-memory cache.
+  function reseedWildlifeStateDataAfterStyleReset(){
+    if (!map) return;
+    WILDLIFE_TOP_CATEGORIES.forEach(function(tc){
+      var active = wildlifeStateDataActiveByCategory[tc];
+      if (!active) return;
+      var srcObj = map.getSource('wildlife-statedata-' + tc + '-source');
+      if (!srcObj) return;
+      var tiered = nhdTieredLoad[tc];
+      if (tiered && tiered.tiers && tiered.speciesName === active.speciesName && tiered.stateKey === active.stateKey){
+        // Tiered Oregon species: re-apply whichever tiers had already been loaded before the
+        // switch — nhdTieredLoad.loaded is left untouched, so the progressive-loading state (and
+        // the zoom-reactive tier-visibility filter, reapplied via updateWildlifeStateDataMapFilter
+        // below) carries straight over.
+        srcObj.setData({ type: 'FeatureCollection', features: [] });
+        var seededAny = false;
+        ['major', 'medium', 'minor'].forEach(function(tierKey){
+          if (tiered.loaded[tierKey] && tiered.tiers[tierKey] && tiered.tiers[tierKey].length){
+            srcObj.updateData({ add: tiered.tiers[tierKey] });
+            seededAny = true;
+          }
+        });
+        if (seededAny) updateWildlifeStateDataMapFilter();
+        return;
+      }
+      var src = STATE_DATA_SOURCES[tc] && STATE_DATA_SOURCES[tc][active.stateKey];
+      var cacheKey = (src && src.type === 'unified')
+        ? (tc + '|unified|' + active.stateKey)
+        : (tc + '|' + active.speciesName + '|' + active.stateKey);
+      var cached = stateDataCache[cacheKey];
+      if (cached){
+        applyStateDataToSource(tc, active.stateKey, cached);
+        updateWildlifeStateDataMapFilter();
+      }
+    });
   }
 
   // Session 72 — progressive zoom-tiered loading for the 4 Oregon fish species (Coastal
