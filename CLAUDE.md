@@ -2556,6 +2556,36 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   blocks. APP_VERSION bumped 2.29.0 → 2.30.0, SHELL_CACHE bumped v135 → v136. The old West Goose Lake POC
   file (`data/ungulate-migrations/elk-west-goose-lake.geojson`) was deleted from the repo after confirming
   via a whole-repo grep that nothing else referenced its path.
+  - **Session (WA-cap / git-cleanup / mule-deer mapshaper) — `cmt_migrations_mule_deer.geojson` simplified**:
+    at 31.2 MB raw / 7.95 MB gz it was the single largest file the app loads (2,377 features vs. 145 for
+    pronghorn, 355 for elk — driven by feature COUNT, not per-feature density: 484 verts/feat, comparable to
+    elk's 517). Vertex density checked first, per instruction: bytes/vertex is a useless signal here (~28
+    uniform across all 4 CMT files, an artifact of consistent coordinate formatting — same finding as the
+    Oregon fish pipeline), and mule_deer's per-feature vertex count is moderate, NOT the extreme case (like
+    pronghorn's 3,557 v/feat or Oregon fish GreenSturgeon's 9,236) that forced Oregon fish down to 2%. So
+    the pipeline's **documented standard 8%** applies (CLAUDE.md's own Oregon-fish entry: "defaulted to 2%
+    (not the standard 8%)"). `mapshaper -simplify visvalingam weighted keep-shapes percentage=8%` →
+    **7.40 MB raw / 1.97 MB gz** (76% / 75% reduction). All 2,377 features preserved, every feature's
+    property VALUES byte-identical (nothing renamed/dropped — `herdid`/`useclass`/`definition`/`species`/
+    `type`/`states`, and `states` stays a real array like `["AZ"]`), 0 null geometry, 264,475 vertices
+    retained (23% — higher than the nominal 8% because `keep-shapes` protects small features and Visvalingam
+    weighted retains more). 19 features shifted MultiPolygon→Polygon (mapshaper collapsing a degenerate
+    sliver ring) — feature count unchanged, renders identically. Verified live in the real app: migration
+    load dropped from ~1 s+ to 260 ms fetch+parse; `migration-source` populates with all 2,377 Mule Deer
+    features (Corridor 791 / Stopover 660 / WinterRange 908 / AnnualRange 18); `migration-fill` +
+    `migration-line` both `visible` and painting 825–848 features per viewport (confirmed via
+    `queryRenderedFeatures` on the real map, not a harness); 3 real desktop screenshots at z8 / z8.2 / z10.5
+    (typical-to-closer-than-typical scouting zooms) show the branching dendritic corridor structure fully
+    intact with smooth natural edges — zero visible faceting or shape degradation. Independent standalone-SVG
+    comparison (original vs 8% vs 3% at herd-region zoom) confirmed visually indistinguishable. **Mobile
+    verification gap, flagged honestly**: the 402 px `<iframe>` correctly matched the mobile media query
+    (`matchMedia('(max-width:760px)')` true) but its nested second app instance's migration source never
+    finished loading in the sandbox (render-loop stall in the nested instance — a documented sandbox
+    limitation, not a code issue). Migration rendering is the identical `migration-fill`/`migration-line`
+    GeoJSON code path at any viewport width — there is no mobile-specific migration rendering — so corridor-
+    shape fidelity is viewport-independent and fully covered by the desktop + SVG verification. Zero console
+    errors. `node --check` clean on all 4 inline `<script>` blocks + `service-worker.js`. APP_VERSION 2.82.1
+    → 2.82.2, SHELL_CACHE v215 → v216.
 - Floating info stack (Session 24) — the coordinate/elevation readout, scale bar, active-trip chip, and a
   new active-layers indicator are one consolidated column now (`#floating-info-stack`), not four
   independently `position:absolute`-placed elements each guessing the previous one's rendered height (the
@@ -5793,10 +5823,12 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
     increase from the 3 new fields doesn't approach the V8 string-length/payload ceiling this whole mechanism
     exists to avoid.
   - **Backups**: `data/fish/oregon/_preNhdJoin_backup/` holds the untouched pre-join originals for all 4
-    species, created before the first write and deliberately left OUT of this session's git commit (kept
-    locally, not pushed) — the previous commit in git history already preserves the identical pre-join
-    content, so committing a second, duplicate ~90MB copy into the repo would be pure bloat with no real
-    recovery benefit git history doesn't already provide.
+    species, created before the first write. This note originally claimed they were "deliberately left OUT of
+    this session's git commit (kept locally, not pushed)" — that was WRONG; all 4 files (~86 MB) had in fact
+    been committed. Corrected in the WA-cap / git-cleanup housekeeping session: `git rm --cached` untracked
+    them (working-tree copies kept on the machine), and `data/fish/oregon/_preNhdJoin_backup/` was added to a
+    new `.gitignore` so they can't be re-added. The previous commit in git history still preserves the
+    identical pre-join content, so nothing is actually lost.
   - Scratch working files (the tile-fetch scripts, the 1.9GB of raw fetched NHD tiles, and the intermediate
     join-script iterations that hit the memory/sentinel bugs above) live in this session's own scratchpad
     directory, not the repo — reusable if this join is ever re-run (e.g. once the 4 species are eventually
@@ -11810,3 +11842,30 @@ surface in the app now follows ONE of two families, chosen by ROLE, with ONE sha
   GAP wildlife (Big Game Elk) + FSTopo basemap both survive the same cycle unchanged; Big Game species-first
   flow + State Data checkbox intact. Zero new console errors (only pre-existing maplibre `setStyle` noise).
   `node --check` clean. APP_VERSION 2.82.0 → 2.82.1, SHELL_CACHE v214 → v215.
+- Session (WA record-cap check / committed-backup removal / mule-deer mapshaper) — 3-part housekeeping.
+  **TASK 1 (read-only correctness check — CLOSED AS NON-ISSUE)**: WA's live SWIFD ArcGIS layer caps each
+  response at 2,000 records. Queried the real per-species feature count for all 23 WA species via one
+  `groupBy` stats request: 8 species exceed 2,000 — Coho Salmon 16,215, Steelhead Trout 13,925, Chinook
+  Salmon 8,445, Cutthroat Trout 8,272, Chum Salmon 6,746, Rainbow Trout 5,884, Pink Salmon 5,185, Bull Trout
+  3,788. BUT the app's `attributeFiltered` fetch path routes through `fetchStateDataLayerPaged`, which
+  genuinely paginates via `resultOffset`/`resultRecordCount` (page size 2,000, continues until a short page)
+  — confirmed live: `resultOffset=0` and `resultOffset=2000` return disjoint OBJECTID sets (server honours
+  pagination), and `resultOffset=16000&resultRecordCount=500` returns exactly 215 (16,000+215 = Coho's real
+  16,215 total). Also matches prior sessions' observed "9 pages for Coho" / "~35-request full fetch of the
+  73,373-feature table". So no WA species is actually truncated in the app — the cap is real per-request but
+  fully worked around. Nothing to fix. Numbers reported to Geoff; no app change.
+  **TASK 2 (repo hygiene)**: `data/fish/oregon/_preNhdJoin_backup/` (4 files, ~86 MB) was tracked in git,
+  contradicting Session 71's own note that claimed it was "kept locally, deliberately not committed".
+  Confirmed via `git grep` that the only references anywhere are CLAUDE.md prose — nothing in `index.html`,
+  `service-worker.js`, or any JS/JSON. `git rm --cached` untracked all 4 (working-tree copies kept on
+  Geoff's machine), created a new `.gitignore` listing `data/fish/oregon/_preNhdJoin_backup/` so they can't
+  be re-added, and corrected the stale Session 71 note. The previous commit in history still preserves the
+  identical pre-join content, so nothing is lost. App unaffected (nothing referenced the files); `node
+  --check` clean.
+  **TASK 3 (mule-deer mapshaper)**: `cmt_migrations_mule_deer.geojson` 31.2 MB → 7.4 MB (8% Visvalingam
+  weighted, `keep-shapes`) — see the "Migration corridors" Architecture entry's own "Session (WA-cap /
+  git-cleanup / mule-deer mapshaper)" sub-bullet for the full before/after, the vertex-density check that
+  justified the standard 8% (not the Oregon-fish 2%), the property/geometry-integrity validation, and the
+  live in-app render verification (825–848 features painting at z8/z8.2/z10.5, 3 clean desktop screenshots,
+  independent SVG comparison, and the honestly-flagged mobile-iframe verification gap). APP_VERSION 2.82.1 →
+  2.82.2, SHELL_CACHE v215 → v216.

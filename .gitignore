@@ -1,0 +1,9 @@
+# Local-only pre-processing backups — kept on the working machine, never committed.
+# Session 71's own note said these were "kept locally, deliberately not committed";
+# they had in fact been committed (~86 MB). Untracked in the WA-cap / git-cleanup housekeeping session.
+data/fish/oregon/_preNhdJoin_backup/
+
+# scratch / OS
+*.log
+.DS_Store
+Thumbs.db
